@@ -30,7 +30,7 @@ fn on_quit_click(sender: *u8) {
     app.terminate(sender);
 }
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
 
     // ---- App + delegate ----

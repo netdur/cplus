@@ -85,7 +85,7 @@ fn abs_diff(x: f32, y: f32) -> f32 {
     return y - x;
 }
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     let a: [f32; 16] = build_a();
     let b: [f32; 16] = build_b();
     let s: f32 = dot_scalar(a, b);

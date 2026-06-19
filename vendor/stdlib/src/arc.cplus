@@ -28,7 +28,7 @@ import "stdlib/atomic" as atomic;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
-pub struct Arc[T] {
+struct Arc[T] {
     ctrl: *u8,
 }
 
@@ -44,7 +44,7 @@ unsafe impl Arc[T: Send + Sync]: Sync {}
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
 // over-aligned T motivates it).
-pub fn new[T](take v: T) -> Arc[T] {
+fn new[T](take v: T) -> Arc[T] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
@@ -62,7 +62,7 @@ impl Arc[T] {
     // Arc carries the same ctrl pointer that's already visible to this
     // thread; no happens-before relationship is established by the
     // increment itself.
-    pub fn clone(this) -> Arc[T] {
+    fn clone(this) -> Arc[T] {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
@@ -72,7 +72,7 @@ impl Arc[T] {
 
     // Current strong-reference count (snapshot — racy under load,
     // useful for tests + debugging only).
-    pub fn strong_count(this) -> u64 {
+    fn strong_count(this) -> u64 {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
@@ -105,7 +105,7 @@ impl Arc[T] {
 // `Arc[NonCopy]` still works through `clone` / `strong_count` / Drop.
 impl Arc[T: Copy] {
     // Read inner T (bitwise copy).
-    pub fn get(this) -> T {
+    fn get(this) -> T {
         let header: usize = 8 as usize;
         let value_ptr: *T = unsafe { (this.ctrl + header) as *T };
         return unsafe { *value_ptr };

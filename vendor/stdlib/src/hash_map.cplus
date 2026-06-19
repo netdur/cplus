@@ -61,7 +61,7 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
-pub struct HashMap[K: Copy, V: Copy] {
+struct HashMap[K: Copy, V: Copy] {
     keys: *K,
     vals: *V,
     occupied: *u8,
@@ -76,7 +76,7 @@ pub struct HashMap[K: Copy, V: Copy] {
 // would therefore double-free or leak. The bound makes sema reject such an
 // instantiation (E0502) at the use site instead of miscompiling it. Drop-aware
 // keys/values are a separate feature, not a soundness patch.
-pub fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
+fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
     return HashMap[K, V] {
         keys: unsafe { 0 as *K },
         vals: unsafe { 0 as *V },
@@ -87,17 +87,17 @@ pub fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
 }
 
 impl HashMap[K, V] {
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         return this.len;
     }
 
-    pub fn capacity(this) -> usize {
+    fn capacity(this) -> usize {
         return this.cap;
     }
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
-    pub fn insert(ref this, take k: K, take v: V) {
+    fn insert(ref this, take k: K, take v: V) {
         if this.cap == (0 as usize) {
             this.grow_to(16 as usize);
         }
@@ -128,7 +128,7 @@ impl HashMap[K, V] {
     }
 
     // Look up `k`. Returns Ok(v) on hit, Err(NotFound) on miss.
-    pub fn get(this, k: K) -> result::Result[V, result::IoError] {
+    fn get(this, k: K) -> result::Result[V, result::IoError] {
         if this.cap == (0 as usize) {
             return result::io_err::[V](result::IoError::NotFound);
         }
@@ -153,7 +153,7 @@ impl HashMap[K, V] {
         return result::io_err::[V](result::IoError::NotFound);  // unreachable
     }
 
-    pub fn contains_key(this, k: K) -> bool {
+    fn contains_key(this, k: K) -> bool {
         return match this.get(k) {
             result::Result[V, result::IoError]::Ok(_) => true,
             result::Result[V, result::IoError]::Err(_) => false,
@@ -243,6 +243,6 @@ impl HashMap[K, V] {
 // v0.0.3 alias retained so existing callers don't have to migrate
 // immediately. The shape is identical to the generic form; users can
 // switch to `hash_map::new::[str, i32]()` directly when convenient.
-pub fn new_str_int_map() -> HashMap[str, i32] {
+fn new_str_int_map() -> HashMap[str, i32] {
     return new::[str, i32]();
 }

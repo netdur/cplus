@@ -47,7 +47,7 @@ extern fn pthread_cond_wait(c: *u8, m: *u8) -> i32;
 extern fn pthread_cond_signal(c: *u8) -> i32;
 extern fn pthread_cond_broadcast(c: *u8) -> i32;
 
-pub struct Channel[T] {
+struct Channel[T] {
     ctrl: *u8,
 }
 
@@ -61,7 +61,7 @@ unsafe impl Channel[T: Send]: Sync {}
 
 // Outcome of a recv: Value carries a popped element; Closed signals the
 // channel was closed and the buffer drained.
-pub enum RecvResult[T] {
+enum RecvResult[T] {
     Value(T),
     Closed,
 }
@@ -81,7 +81,7 @@ fn off_buffer() -> usize { return 160 as usize; }
 fn off_closed() -> usize { return 168 as usize; }
 fn header_bytes() -> usize { return 176 as usize; }
 
-pub fn new[T]() -> Channel[T] {
+fn new[T]() -> Channel[T] {
     let total: usize = header_bytes();
     let raw: *u8 = unsafe { malloc(total) };
     // refcount = 1
@@ -112,7 +112,7 @@ pub fn new[T]() -> Channel[T] {
 
 impl Channel[T] {
     // Atomic refcount inc; share the heap block.
-    pub fn clone(this) -> Channel[T] {
+    fn clone(this) -> Channel[T] {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
@@ -121,7 +121,7 @@ impl Channel[T] {
     }
 
     // Push a value. Never blocks (buffer grows).
-    pub fn send(this, take v: T) {
+    fn send(this, take v: T) {
         let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
         let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
         let _e1: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
@@ -167,7 +167,7 @@ impl Channel[T] {
 
     // Blocking receive. Returns Value(v) on a pop, Closed when the
     // channel is closed AND the buffer is empty.
-    pub fn recv(this) -> RecvResult[T] {
+    fn recv(this) -> RecvResult[T] {
         let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
         let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
         let head_ptr: *usize = unsafe { (this.ctrl + off_head()) as *usize };
@@ -199,7 +199,7 @@ impl Channel[T] {
     // Mark the channel closed; wake every blocked receiver. Senders
     // can still call `send` after close — that's the caller's bug
     // (no enforcement in v0.0.4).
-    pub fn close(this) {
+    fn close(this) {
         let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
         let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
         let closed_ptr: *u64 = unsafe { (this.ctrl + off_closed()) as *u64 };
@@ -211,7 +211,7 @@ impl Channel[T] {
     }
 
     // Snapshot of refcount. Racy except in single-threaded use.
-    pub fn strong_count(this) -> u64 {
+    fn strong_count(this) -> u64 {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }

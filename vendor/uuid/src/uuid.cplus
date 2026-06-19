@@ -9,8 +9,8 @@ extern fn open(path: *u8, flags: i32) -> i32;
 extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn close(fd: i32) -> i32;
 
-pub struct Uuid {
-    pub bytes: [u8; 16],
+struct Uuid {
+    bytes: [u8; 16],
 }
 
 fn zero_uuid() -> Uuid {
@@ -38,7 +38,7 @@ fn hex_offset_for_byte(idx: usize) -> usize {
 }
 
 impl Uuid {
-    pub fn new_v4() -> option::Option[Uuid] {
+    fn new_v4() -> option::Option[Uuid] {
         // Read 16 random bytes from /dev/urandom — portable across
         // macOS and Linux (replaces the v0.0.9 arc4random_buf path,
         // which was BSD/Darwin-only). `addr_of` writes directly into
@@ -68,7 +68,7 @@ impl Uuid {
         return option::some::[Uuid](uuid);
     }
 
-    pub fn parse(s: str) -> option::Option[Uuid] {
+    fn parse(s: str) -> option::Option[Uuid] {
         if #str_len(s) != (36 as usize) {
             return option::Option[Uuid]::None;
         }
@@ -104,7 +104,7 @@ impl Uuid {
     // snprintf into a 37-byte stack buffer can't run out of space. The
     // result is heap-allocated by `str::to_text()` so the caller owns
     // the storage.
-    pub fn to_text(this) -> text::Text {
+    fn to_text(this) -> text::Text {
         var buf: [u8; 37] = [
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,

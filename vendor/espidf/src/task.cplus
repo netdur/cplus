@@ -5,12 +5,12 @@
 
 extern fn usleep(us: u32) -> i32;
 
-pub fn delay_ms(ms: u32) {
+fn delay_ms(ms: u32) {
     let _r: i32 = unsafe { usleep(ms * 1000) };
     return;
 }
 
-pub fn delay_us(us: u32) {
+fn delay_us(us: u32) {
     let _r: i32 = unsafe { usleep(us) };
     return;
 }

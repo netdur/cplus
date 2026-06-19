@@ -241,7 +241,7 @@ impl Emitter {
             line.push_str(&format!(" -> {ret_cplus}"));
         }
         line.push_str(";\n");
-        line.push_str(&format!("pub fn {name}("));
+        line.push_str(&format!("fn {name}("));
         line.push_str(&params_out.join(", "));
         line.push(')');
         if ret_cplus != "()" {
@@ -282,7 +282,7 @@ impl Emitter {
             let size_bytes = guess_record_size(decl);
             let size = size_bytes.unwrap_or(8); // conservative fallback
             self.out.push_str(&format!(
-                "#[repr(C)] pub struct {name} {{ pub _bytes: [u8; {size}] }}\n"
+                "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
             ));
             self.out.push_str(&format!(
                 "// `{name}` is a C union — fields share storage. Access fields\n\
@@ -291,7 +291,7 @@ impl Emitter {
             return;
         }
         // struct: walk fields, emit a #[repr(C)] struct.
-        self.out.push_str(&format!("#[repr(C)] pub struct {name} {{\n"));
+        self.out.push_str(&format!("#[repr(C)] struct {name} {{\n"));
         let inner = decl.get("inner").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         let mut bitfields: Vec<(String, String, u32, u32)> = Vec::new(); // (parent, name, bit_offset, width)
         let mut bit_cursor: u32 = 0;
@@ -313,7 +313,7 @@ impl Emitter {
                 // Flush the accumulated bitfield run into a storage field.
                 let bytes = ((bit_cursor + 7) / 8).max(1);
                 let _ = bytes;
-                self.out.push_str(&format!("    pub _packed{storage_field_idx}: u32,\n"));
+                self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
                 storage_field_idx += 1;
                 bit_cursor = 0;
             }
@@ -326,7 +326,7 @@ impl Emitter {
                     continue;
                 }
             };
-            let field_prefix = if cplus_ty.starts_with('*') { "pub opaque " } else { "pub " };
+            let field_prefix = if cplus_ty.starts_with('*') { "opaque " } else { "" };
             self.out.push_str(&format!(
                 "    {field_prefix}{}: {},\n",
                 sanitize_ident(&fname),
@@ -334,7 +334,7 @@ impl Emitter {
             ));
         }
         if !bitfields.is_empty() {
-            self.out.push_str(&format!("    pub _packed{storage_field_idx}: u32,\n"));
+            self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
         }
         self.out.push_str("}\n");
         // Emit bitfield accessors after the struct.
@@ -343,7 +343,7 @@ impl Emitter {
             let mask: u64 = if width >= 32 { 0xFFFF_FFFF } else { (1u64 << width) - 1 };
             self.out.push_str(&format!(
                 "impl {parent} {{\n\
-                 \x20   pub fn {fname}(self) -> u32 {{ return (self._packed0 >> ({off} as u32)) & ({mask} as u32); }}\n\
+                 \x20   fn {fname}(self) -> u32 {{ return (self._packed0 >> ({off} as u32)) & ({mask} as u32); }}\n\
                  }}\n",
             ));
         }
@@ -367,7 +367,7 @@ impl Emitter {
             {
                 if let Ok(cplus_ty) = map_c_type_to_cplus(lhs.trim()) {
                     self.out.push_str(&format!(
-                        "pub type {} = {};\n",
+                        "type {} = {};\n",
                         sanitize_ident(name),
                         cplus_ty
                     ));
@@ -571,7 +571,7 @@ fn sanitize_ident(name: &str) -> String {
     // C+ reserved keywords that might collide with C identifiers.
     const RESERVED: &[&str] = &[
         "fn", "let", "mut", "if", "else", "return", "while", "for", "loop",
-        "match", "struct", "enum", "impl", "pub", "extern", "import", "as",
+        "match", "struct", "enum", "impl", "pub", "export", "extern", "import", "as",
         "self", "Self", "true", "false", "unsafe", "guard", "type",
     ];
     if RESERVED.iter().any(|r| *r == name) {

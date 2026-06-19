@@ -75,62 +75,62 @@ extern fn vDSP_maxvD(a: *f64, stride_a: i64, c: *f64, n: u64);
 // `vdsp::` provides the namespace). Keep the suffix-D distinction for
 // f64 — matches Apple's convention.
 
-pub fn vadd(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
+fn vadd(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
     unsafe { vDSP_vadd(a, sa, b, sb, c, sc, n); }
     return;
 }
 
-pub fn vadd_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
+fn vadd_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
     unsafe { vDSP_vaddD(a, sa, b, sb, c, sc, n); }
     return;
 }
 
-pub fn vmul(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
+fn vmul(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
     unsafe { vDSP_vmul(a, sa, b, sb, c, sc, n); }
     return;
 }
 
-pub fn vmul_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
+fn vmul_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
     unsafe { vDSP_vmulD(a, sa, b, sb, c, sc, n); }
     return;
 }
 
-pub fn vsmul(a: *f32, sa: i64, s: *f32, c: *f32, sc: i64, n: u64) {
+fn vsmul(a: *f32, sa: i64, s: *f32, c: *f32, sc: i64, n: u64) {
     unsafe { vDSP_vsmul(a, sa, s, c, sc, n); }
     return;
 }
 
-pub fn vsmul_d(a: *f64, sa: i64, s: *f64, c: *f64, sc: i64, n: u64) {
+fn vsmul_d(a: *f64, sa: i64, s: *f64, c: *f64, sc: i64, n: u64) {
     unsafe { vDSP_vsmulD(a, sa, s, c, sc, n); }
     return;
 }
 
-pub fn dotpr(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, n: u64) {
+fn dotpr(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, n: u64) {
     unsafe { vDSP_dotpr(a, sa, b, sb, c, n); }
     return;
 }
 
-pub fn dotpr_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, n: u64) {
+fn dotpr_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, n: u64) {
     unsafe { vDSP_dotprD(a, sa, b, sb, c, n); }
     return;
 }
 
-pub fn meanv(a: *f32, sa: i64, c: *f32, n: u64) {
+fn meanv(a: *f32, sa: i64, c: *f32, n: u64) {
     unsafe { vDSP_meanv(a, sa, c, n); }
     return;
 }
 
-pub fn meanv_d(a: *f64, sa: i64, c: *f64, n: u64) {
+fn meanv_d(a: *f64, sa: i64, c: *f64, n: u64) {
     unsafe { vDSP_meanvD(a, sa, c, n); }
     return;
 }
 
-pub fn maxv(a: *f32, sa: i64, c: *f32, n: u64) {
+fn maxv(a: *f32, sa: i64, c: *f32, n: u64) {
     unsafe { vDSP_maxv(a, sa, c, n); }
     return;
 }
 
-pub fn maxv_d(a: *f64, sa: i64, c: *f64, n: u64) {
+fn maxv_d(a: *f64, sa: i64, c: *f64, n: u64) {
     unsafe { vDSP_maxvD(a, sa, c, n); }
     return;
 }

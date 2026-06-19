@@ -24,16 +24,16 @@ fn find_byte(ptr: *u8, len: usize, b: u8) -> option::Option[usize] {
     return option::Option[usize]::None;
 }
 
-pub struct Arg {
-    pub name: str,
-    pub short_name: str,
-    pub long_name: str,
-    pub help: str,
-    pub is_flag: bool,
-    pub required: bool,
+struct Arg {
+    name: str,
+    short_name: str,
+    long_name: str,
+    help: str,
+    is_flag: bool,
+    required: bool,
 }
 
-pub fn new_arg(name: str) -> Arg {
+fn new_arg(name: str) -> Arg {
     return Arg {
         name: name,
         short_name: "",
@@ -47,41 +47,41 @@ pub fn new_arg(name: str) -> Arg {
 impl Arg {
     // Convention shim — matches stdlib's `Type::new`. Equivalent to
     // package-level `clap::new_arg(name)`.
-    pub fn new(name: str) -> Arg {
+    fn new(name: str) -> Arg {
         return new_arg(name);
     }
 
-    pub fn short(ref this, s: str) -> Arg {
+    fn short(ref this, s: str) -> Arg {
         this.short_name = s;
         return this;
     }
-    pub fn long(ref this, l: str) -> Arg {
+    fn long(ref this, l: str) -> Arg {
         this.long_name = l;
         return this;
     }
-    pub fn flag(ref this) -> Arg {
+    fn flag(ref this) -> Arg {
         this.is_flag = true;
         return this;
     }
-    pub fn required(ref this) -> Arg {
+    fn required(ref this) -> Arg {
         this.required = true;
         return this;
     }
-    pub fn help(ref this, h: str) -> Arg {
+    fn help(ref this, h: str) -> Arg {
         this.help = h;
         return this;
     }
 }
 
-pub struct App {
-    pub name: str,
-    pub version: str,
-    pub author: str,
-    pub about: str,
-    pub args: vec::Vec[Arg],
+struct App {
+    name: str,
+    version: str,
+    author: str,
+    about: str,
+    args: vec::Vec[Arg],
 }
 
-pub fn new_app(name: str) -> App {
+fn new_app(name: str) -> App {
     return App {
         name: name,
         version: "",
@@ -107,23 +107,23 @@ fn write_out(fd: i32, s: str) {
 impl App {
     // Convention shim — matches stdlib's `Type::new`. Equivalent to
     // package-level `clap::new_app(name)`.
-    pub fn new(name: str) -> App {
+    fn new(name: str) -> App {
         return new_app(name);
     }
 
-    pub fn version(ref this, v: str) -> App {
+    fn version(ref this, v: str) -> App {
         this.version = v;
         return this;
     }
-    pub fn author(ref this, a: str) -> App {
+    fn author(ref this, a: str) -> App {
         this.author = a;
         return this;
     }
-    pub fn about(ref this, ab: str) -> App {
+    fn about(ref this, ab: str) -> App {
         this.about = ab;
         return this;
     }
-    pub fn arg(ref this, take argument: Arg) -> App {
+    fn arg(ref this, take argument: Arg) -> App {
         this.args.push(argument);
         return this;
     }
@@ -154,7 +154,7 @@ impl App {
         return option::Option[Arg]::None;
     }
 
-    pub fn print_help_and_exit(this) {
+    fn print_help_and_exit(this) {
         let fd: i32 = 1; // stdout
         write_out(fd, this.name);
         write_out(fd, "\n");
@@ -246,7 +246,7 @@ impl App {
     // pre-v0.0.9 `get_matches()` shortcut that called `_NSGetArgc/Argv`
     // directly was Darwin-only and has been dropped to keep this
     // package portable.
-    pub fn get_matches_from(this, take args: vec::Vec[str]) -> ArgMatches {
+    fn get_matches_from(this, take args: vec::Vec[str]) -> ArgMatches {
         var matches: map::HashMap[str, str] = map::new::[str, str]();
         var positionals: vec::Vec[str] = vec::new::[str]();
 
@@ -400,17 +400,17 @@ impl App {
     }
 }
 
-pub struct ArgMatches {
-    pub matches: map::HashMap[str, str],
-    pub positionals: vec::Vec[str],
+struct ArgMatches {
+    matches: map::HashMap[str, str],
+    positionals: vec::Vec[str],
 }
 
 impl ArgMatches {
-    pub fn is_present(this, name: str) -> bool {
+    fn is_present(this, name: str) -> bool {
         return this.matches.contains_key(name);
     }
 
-    pub fn value_of(this, name: str) -> option::Option[str] {
+    fn value_of(this, name: str) -> option::Option[str] {
         let res = this.matches.get(name);
         guard let result::Result[str, result::IoError]::Ok(val) = res else {
             return option::Option[str]::None;
@@ -418,11 +418,11 @@ impl ArgMatches {
         return option::some::[str](val);
     }
 
-    pub fn positional_count(this) -> usize {
+    fn positional_count(this) -> usize {
         return this.positionals.len();
     }
 
-    pub fn positional_at(this, i: usize) -> str {
+    fn positional_at(this, i: usize) -> str {
         return vec::at_copy::[str](this.positionals, i);
     }
 }

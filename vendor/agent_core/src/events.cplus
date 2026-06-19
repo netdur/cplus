@@ -23,7 +23,7 @@ import "./identity" as identity;
 
 // The curated verb vocabulary (plan.agent-core.md §7.2). Discrete/committed
 // semantic events only; grows deliberately.
-pub enum Verb {
+enum Verb {
     Clicked,
     Changed,
     Submitted,
@@ -63,7 +63,7 @@ fn verb_index(v: Verb) -> i32 {
     };
 }
 
-pub fn verb_eq(a: Verb, b: Verb) -> bool {
+fn verb_eq(a: Verb, b: Verb) -> bool {
     return verb_index(a) == verb_index(b);
 }
 
@@ -72,17 +72,17 @@ fn is_ui_changed(v: Verb) -> bool {
 }
 
 // An event: which node it came from (NodeId) and what happened. Copy.
-pub struct Event {
-    pub source: usize,
-    pub verb: Verb,
+struct Event {
+    source: usize,
+    verb: Verb,
 }
 
-pub fn event(source: usize, verb: Verb) -> Event {
+fn event(source: usize, verb: Verb) -> Event {
     return Event { source: source, verb: verb };
 }
 
 // A subscription: a conjunction of optional filters. Copy (no owned storage).
-pub struct Subscription {
+struct Subscription {
     node: option::Option[usize],
     verb: option::Option[Verb],
     role: option::Option[identity::Role],
@@ -90,7 +90,7 @@ pub struct Subscription {
 
 // Everything: no filters (every event in the whole app). Narrow with the
 // builder methods below.
-pub fn everything() -> Subscription {
+fn everything() -> Subscription {
     return Subscription {
         node: option::Option[usize]::None,
         verb: option::Option[Verb]::None,
@@ -100,13 +100,13 @@ pub fn everything() -> Subscription {
 
 impl Subscription {
     // Restrict to a subtree: events from this node or any descendant.
-    pub fn on_node(this, n: usize) -> Subscription {
+    fn on_node(this, n: usize) -> Subscription {
         return Subscription { node: option::Option[usize]::Some(n), verb: this.verb, role: this.role };
     }
-    pub fn on_verb(this, v: Verb) -> Subscription {
+    fn on_verb(this, v: Verb) -> Subscription {
         return Subscription { node: this.node, verb: option::Option[Verb]::Some(v), role: this.role };
     }
-    pub fn on_role(this, r: identity::Role) -> Subscription {
+    fn on_role(this, r: identity::Role) -> Subscription {
         return Subscription { node: this.node, verb: this.verb, role: option::Option[identity::Role]::Some(r) };
     }
 }
@@ -138,7 +138,7 @@ fn is_ancestor_or_self(reg: identity::Registry, n: usize, source: usize) -> bool
 // reading a struct-typed field by value out of `this` is a partial move the
 // move-checker rejects, but Option/enum fields copy fine, so the subscriber
 // stores them flat and passes them here.
-pub fn matches(reg: identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
+fn matches(reg: identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
     let verb_ok: bool = match verb_f {
         option::Option[Verb]::Some(v) => verb_eq(v, verb),
         option::Option[Verb]::None => true,
@@ -162,7 +162,7 @@ pub fn matches(reg: identity::Registry, node_f: option::Option[usize], verb_f: o
 // A subscriber: a filter plus a bounded FIFO of matched events. `head` is the
 // dequeue cursor (poll advances it instead of shifting); the backing Vec is
 // compacted once the cursor passes `cap` so it stays bounded.
-pub struct Subscriber {
+struct Subscriber {
     // The filter, stored flat (see `matches` for why not a `Subscription` field).
     node: option::Option[usize],
     verb: option::Option[Verb],
@@ -173,7 +173,7 @@ pub struct Subscriber {
     dropped: usize,
 }
 
-pub fn subscriber(filter: Subscription, cap: usize) -> Subscriber {
+fn subscriber(filter: Subscription, cap: usize) -> Subscriber {
     return Subscriber {
         node: filter.node,
         verb: filter.verb,
@@ -187,12 +187,12 @@ pub fn subscriber(filter: Subscription, cap: usize) -> Subscriber {
 
 impl Subscriber {
     // Events waiting to be polled.
-    pub fn pending(this) -> usize {
+    fn pending(this) -> usize {
         return this.queue.len() -% this.head;
     }
 
     // Events dropped to date due to overflow.
-    pub fn dropped_count(this) -> usize {
+    fn dropped_count(this) -> usize {
         return this.dropped;
     }
 
@@ -232,7 +232,7 @@ impl Subscriber {
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
     // `ui_changed` coalesces to at most one pending; on overflow the oldest event
     // is dropped (dropped-count bumped). Never blocks.
-    pub fn offer(ref this, reg: identity::Registry, ev: Event) {
+    fn offer(ref this, reg: identity::Registry, ev: Event) {
         let src: usize = ev.source;
         let vb: Verb = ev.verb;
         if !matches(reg, this.node, this.verb, this.role, src, vb) {
@@ -251,7 +251,7 @@ impl Subscriber {
     }
 
     // Dequeue the oldest pending event, or None.
-    pub fn poll(ref this) -> option::Option[Event] {
+    fn poll(ref this) -> option::Option[Event] {
         if this.head >= this.queue.len() {
             return option::Option[Event]::None;
         }

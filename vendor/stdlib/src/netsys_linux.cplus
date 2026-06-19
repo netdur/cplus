@@ -6,24 +6,24 @@
 extern fn __errno_location() -> *i32;
 
 // Current thread's errno value.
-pub fn errno() -> i32 {
+fn errno() -> i32 {
     let p: *i32 = unsafe { __errno_location() };
     return unsafe { *p };
 }
 
 // O_NONBLOCK for fcntl(F_SETFL). Linux: 04000 octal = 0x800.
-pub fn o_nonblock() -> i32 { return 0x800 as i32; }
+fn o_nonblock() -> i32 { return 0x800 as i32; }
 
 // EAGAIN (== EWOULDBLOCK on Linux): 11.
-pub fn eagain() -> i32 { return 11 as i32; }
+fn eagain() -> i32 { return 11 as i32; }
 
 // setsockopt level / optname for SO_REUSEADDR. Linux (asm-generic):
 // SOL_SOCKET=1, SO_REUSEADDR=2.
-pub fn sol_socket() -> i32 { return 1 as i32; }
-pub fn so_reuseaddr() -> i32 { return 2 as i32; }
+fn sol_socket() -> i32 { return 1 as i32; }
+fn so_reuseaddr() -> i32 { return 2 as i32; }
 
 // First two bytes of `sockaddr_in`. Linux has no `sin_len`: the struct
 // starts with `sa_family_t sin_family` (a 2-byte field), so for AF_INET=2
 // the little-endian bytes are [2, 0].
-pub fn sa_family_byte0() -> u8 { return 2 as u8; }
-pub fn sa_family_byte1() -> u8 { return 0 as u8; }
+fn sa_family_byte0() -> u8 { return 2 as u8; }
+fn sa_family_byte1() -> u8 { return 0 as u8; }

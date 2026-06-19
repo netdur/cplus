@@ -60,10 +60,10 @@ extern fn objc_msg_id_pipeline(recv: *u8, sel: *u8, fn_obj: *u8, err_out: *u8) -
 extern fn objc_msg_void_pipeline(recv: *u8, sel: *u8, pipeline: *u8);
 
 #[repr(C)]
-pub struct MTLSize {
-    pub width: usize,
-    pub height: usize,
-    pub depth: usize,
+struct MTLSize {
+    width: usize,
+    height: usize,
+    depth: usize,
 }
 
 // Structured error type for Metal operations. Replaces the v0.0.9
@@ -71,7 +71,7 @@ pub struct MTLSize {
 // of an unspecific `None`, so they can distinguish "no Metal device
 // on this host" from "shader compile failed" without parsing
 // NSError strings.
-pub enum MetalError {
+enum MetalError {
     NoDefaultDevice,
     LibraryLoadFailed,
     FunctionNotFound,
@@ -87,71 +87,71 @@ extern fn objc_msg_dispatch(
 );
 
 // Helpers
-pub fn cls(name: *u8) -> *u8 {
+fn cls(name: *u8) -> *u8 {
     return unsafe { objc_getClass(name) };
 }
 
-pub fn sel(name: *u8) -> *u8 {
+fn sel(name: *u8) -> *u8 {
     return unsafe { sel_registerName(name) };
 }
 
-pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
+fn msg_id(recv: *u8, selector: *u8) -> *u8 {
     return unsafe { objc_msg_id(recv, selector) };
 }
 
-pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
+fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
     return unsafe { objc_msg_id_id(recv, selector, arg) };
 }
 
-pub fn msg_id_id_ptr(recv: *u8, selector: *u8, arg: *u8, err_out: *u8) -> *u8 {
+fn msg_id_id_ptr(recv: *u8, selector: *u8, arg: *u8, err_out: *u8) -> *u8 {
     return unsafe { objc_msg_id_id_ptr(recv, selector, arg, err_out) };
 }
 
-pub fn msg_void(recv: *u8, selector: *u8) {
+fn msg_void(recv: *u8, selector: *u8) {
     unsafe { objc_msg_void(recv, selector); };
 }
 
-pub fn msg_id_ptr_len_opt(recv: *u8, selector: *u8, ptr: *u8, len: usize, opts: u64) -> *u8 {
+fn msg_id_ptr_len_opt(recv: *u8, selector: *u8, ptr: *u8, len: usize, opts: u64) -> *u8 {
     return unsafe { objc_msg_id_ptr_len_opt(recv, selector, ptr, len, opts) };
 }
 
-pub fn msg_void_buf_idx(recv: *u8, selector: *u8, buf: *u8, offset: usize, idx: usize) {
+fn msg_void_buf_idx(recv: *u8, selector: *u8, buf: *u8, offset: usize, idx: usize) {
     unsafe { objc_msg_void_buf_idx(recv, selector, buf, offset, idx); };
 }
 
-pub fn msg_ptr(recv: *u8, selector: *u8) -> *u8 {
+fn msg_ptr(recv: *u8, selector: *u8) -> *u8 {
     return unsafe { objc_msg_ptr(recv, selector) };
 }
 
-pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+fn msg_u64(recv: *u8, selector: *u8) -> u64 {
     return unsafe { objc_msg_u64(recv, selector) };
 }
 
-pub fn msg_id_usize_u64(recv: *u8, selector: *u8, len: usize, opts: u64) -> *u8 {
+fn msg_id_usize_u64(recv: *u8, selector: *u8, len: usize, opts: u64) -> *u8 {
     return unsafe { objc_msg_id_usize_u64(recv, selector, len, opts) };
 }
 
-pub fn mtl_create_system_default_device() -> *u8 {
+fn mtl_create_system_default_device() -> *u8 {
     return unsafe { MTLCreateSystemDefaultDevice() };
 }
 
 // Release a +1-retained Objective-C object. Safe to call with a null
 // pointer (objc_release tolerates nil).
-pub fn release(obj: *u8) {
+fn release(obj: *u8) {
     if obj == unsafe { 0 as *u8 } { return; }
     unsafe { objc_release(obj); }
     return;
 }
 
-pub fn msg_id_pipeline(recv: *u8, selector: *u8, fn_obj: *u8, err_out: *u8) -> *u8 {
+fn msg_id_pipeline(recv: *u8, selector: *u8, fn_obj: *u8, err_out: *u8) -> *u8 {
     return unsafe { objc_msg_id_pipeline(recv, selector, fn_obj, err_out) };
 }
 
-pub fn msg_void_pipeline(recv: *u8, selector: *u8, pipeline: *u8) {
+fn msg_void_pipeline(recv: *u8, selector: *u8, pipeline: *u8) {
     unsafe { objc_msg_void_pipeline(recv, selector, pipeline); };
 }
 
-pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
+fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
     // v0.0.9 follow-up (addr_of): pre-`addr_of` this had to malloc
     // a 48-byte slot, memcpy both MTLSize args in, dispatch, and free.
     // Now the by-value parameters live on the stack and we pass their
@@ -162,7 +162,7 @@ pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSiz
 
 // Converts a C+ str to an Objective-C NSString.
 // Retains or copies the string bytes.
-pub fn ns_string(s: str) -> *u8 {
+fn ns_string(s: str) -> *u8 {
     let clazz: *u8 = cls(#str_ptr("NSString\0"));
     let selector: *u8 = sel(#str_ptr("stringWithBytes:length:encoding:\0"));
     let utf8_encoding: u64 = 4 as u64; // NSUTF8StringEncoding
@@ -170,14 +170,14 @@ pub fn ns_string(s: str) -> *u8 {
 }
 
 // Wraps pre-allocated bytes as an NSData without copying them.
-pub fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
+fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
     let clazz: *u8 = cls(#str_ptr("NSData\0"));
     let selector: *u8 = sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
     return unsafe { objc_msg_id_ptr_len_free(clazz, selector, ptr, len, 0 as i8) };
 }
 
 // Creates a dispatch_data_t from raw bytes.
-pub fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
+fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
     return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
 }
 

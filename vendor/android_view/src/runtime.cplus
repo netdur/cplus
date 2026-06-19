@@ -7,65 +7,65 @@
 
 import "jni/jni" as jni;
 
-pub type Context = jni::jobject;
-pub type Activity = jni::jobject;
-pub type JavaObject = jni::jobject;
+type Context = jni::jobject;
+type Activity = jni::jobject;
+type JavaObject = jni::jobject;
 
-pub struct Env {
-    pub opaque env: *jni::JNIEnv,
+struct Env {
+    opaque env: *jni::JNIEnv,
 }
 
-pub fn from_native(envp: *jni::JNIEnv) -> Env {
+fn from_native(envp: *jni::JNIEnv) -> Env {
     return Env { env: envp };
 }
 
 impl Env {
-    pub fn get_version(this) -> jni::jint {
+    fn get_version(this) -> jni::jint {
         return unsafe { (*(*this.env)).GetVersion(this.env) };
     }
 
-    pub fn find_class(this, name: *u8) -> jni::jclass {
+    fn find_class(this, name: *u8) -> jni::jclass {
         return unsafe { (*(*this.env)).FindClass(this.env, name) };
     }
 
-    pub fn get_method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
+    fn get_method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
         return unsafe { (*(*this.env)).GetMethodID(this.env, cls, name, sig) };
     }
 
-    pub fn exception_occurred(this) -> jni::jthrowable {
+    fn exception_occurred(this) -> jni::jthrowable {
         return unsafe { (*(*this.env)).ExceptionOccurred(this.env) };
     }
 
-    pub fn exception_clear(this) {
+    fn exception_clear(this) {
         unsafe { (*(*this.env)).ExceptionClear(this.env); };
     }
 
-    pub fn new_global_ref(this, obj: jni::jobject) -> jni::jobject {
+    fn new_global_ref(this, obj: jni::jobject) -> jni::jobject {
         return unsafe { (*(*this.env)).NewGlobalRef(this.env, obj) };
     }
 
-    pub fn delete_global_ref(this, obj: jni::jobject) {
+    fn delete_global_ref(this, obj: jni::jobject) {
         unsafe { (*(*this.env)).DeleteGlobalRef(this.env, obj); };
     }
 
-    pub fn delete_local_ref(this, obj: jni::jobject) {
+    fn delete_local_ref(this, obj: jni::jobject) {
         unsafe { (*(*this.env)).DeleteLocalRef(this.env, obj); };
     }
 
     // `utf8` must be NUL-terminated modified UTF-8, matching JNI's
     // NewStringUTF contract. String-literal call sites should include `\0`.
-    pub fn new_string_utf(this, utf8: *u8) -> jni::jstring {
+    fn new_string_utf(this, utf8: *u8) -> jni::jstring {
         return unsafe { (*(*this.env)).NewStringUTF(this.env, utf8) };
     }
 
-    pub fn method(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
+    fn method(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
         let cls: jni::jclass = this.find_class(class_name);
         let mid: jni::jmethodID = this.get_method_id(cls, name, sig);
         this.delete_local_ref(cls);
         return mid;
     }
 
-    pub fn new_object_0(this, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
+    fn new_object_0(this, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
         let cls: jni::jclass = this.find_class(class_name);
         let ctor: jni::jmethodID = this.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
         let obj: jni::jobject = unsafe {
@@ -75,7 +75,7 @@ impl Env {
         return obj;
     }
 
-    pub fn new_object_1(this, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
+    fn new_object_1(this, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let cls: jni::jclass = this.find_class(class_name);
         let ctor: jni::jmethodID = this.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
         var args: [jni::JValue; 1] = [arg0];
@@ -86,18 +86,18 @@ impl Env {
         return obj;
     }
 
-    pub fn call_void_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
+    fn call_void_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, 0 as *jni::JValue); };
     }
 
-    pub fn call_void_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
+    fn call_void_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 1] = [arg0];
         unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
-    pub fn call_void_2(
+    fn call_void_2(
         this,
         obj: jni::jobject,
         class_name: *u8,
@@ -111,12 +111,12 @@ impl Env {
         unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
-    pub fn call_object_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
+    fn call_object_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         return unsafe { (*(*this.env)).CallObjectMethodA(this.env, obj, mid, 0 as *u8) };
     }
 
-    pub fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
+    fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 1] = [arg0];
         return unsafe {
@@ -124,30 +124,30 @@ impl Env {
         };
     }
 
-    pub fn exception_check(this) -> i8 {
+    fn exception_check(this) -> i8 {
         return unsafe { (*(*this.env)).ExceptionCheck(this.env) } as i8;
     }
 
-    pub fn retain_local_as_global(this, local: jni::jobject) -> jni::jobject {
+    fn retain_local_as_global(this, local: jni::jobject) -> jni::jobject {
         let global: jni::jobject = this.new_global_ref(local);
         this.delete_local_ref(local);
         return global;
     }
 }
 
-pub fn arg_object(obj: jni::jobject) -> jni::JValue {
+fn arg_object(obj: jni::jobject) -> jni::JValue {
     return jni::arg_object(obj);
 }
 
-pub fn arg_int(v: i32) -> jni::JValue {
+fn arg_int(v: i32) -> jni::JValue {
     return jni::arg_int(v as jni::jint);
 }
 
-pub fn arg_bool(v: i8) -> jni::JValue {
+fn arg_bool(v: i8) -> jni::JValue {
     return jni::arg_bool(v as jni::jboolean);
 }
 
-pub fn arg_long(v: i64) -> jni::JValue {
+fn arg_long(v: i64) -> jni::JValue {
     return jni::arg_long(v as jni::jlong);
 }
 

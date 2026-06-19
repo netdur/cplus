@@ -30,7 +30,7 @@ extern fn cublasSgemv_v2(
 ) -> i32;
 
 // cublasOperation_t.
-pub enum Op {
+enum Op {
     N, // no transpose      (CUBLAS_OP_N = 0)
     T, // transpose         (CUBLAS_OP_T = 1)
     C, // conjugate transpose (CUBLAS_OP_C = 2)
@@ -45,8 +45,8 @@ fn op_raw(o: Op) -> i32 {
     return v;
 }
 
-pub struct Handle {
-    pub raw: *u8,
+struct Handle {
+    raw: *u8,
 }
 
 // Void wrapper around `cublasDestroy_v2` so `drop` releases the field as a
@@ -58,7 +58,7 @@ fn handle_destroy(h: *u8) {
 }
 
 // Create a cuBLAS context (one per thread/stream; cache it).
-pub fn handle_new() -> result::Result[Handle, runtime::CudaError] {
+fn handle_new() -> result::Result[Handle, runtime::CudaError] {
     let slot: *u8 = unsafe { malloc(8 as usize) };
     let pp: **u8 = unsafe { slot as **u8 };
     let rc: i32 = unsafe { cublasCreate_v2(pp) };
@@ -74,7 +74,7 @@ impl Handle {
     // Single-precision GEMM: C = alpha * op(A) * op(B) + beta * C.
     // Column-major; `a`/`b`/`c` are device pointers (`DeviceBuffer.dptr`).
     // Returns the raw cublasStatus_t (0 = success).
-    pub fn sgemm(
+    fn sgemm(
         this,
         transa: Op, transb: Op,
         m: i32, n: i32, k: i32,
@@ -102,7 +102,7 @@ impl Handle {
     // Column-major; `a`/`x`/`y` are device pointers. The matrix-vector form
     // behind vector search (`scores = database @ query`). Returns the raw
     // cublasStatus_t (0 = success).
-    pub fn sgemv(
+    fn sgemv(
         this,
         trans: Op,
         m: i32, n: i32,

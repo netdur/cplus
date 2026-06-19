@@ -5,88 +5,88 @@
 // of `Mat4x4`. Dot product is straight `mul.sum()` over all 4 lanes;
 // no swizzle gymnastics needed.
 
-pub struct Vec4 {
+struct Vec4 {
     v: f32x4,
 }
 
 impl Vec4 {
     // Construction --------------------------------------------------
 
-    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+    fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
         return Vec4 { v: f32x4::new(x, y, z, w) };
     }
 
-    pub fn splat(s: f32) -> Vec4 {
+    fn splat(s: f32) -> Vec4 {
         return Vec4 { v: f32x4::splat(s) };
     }
 
-    pub fn zero() -> Vec4 {
+    fn zero() -> Vec4 {
         return Vec4 { v: f32x4::splat(0.0f32) };
     }
 
     // Lane accessors ------------------------------------------------
 
-    pub fn x(this) -> f32 { return this.v.lane(0 as u32); }
-    pub fn y(this) -> f32 { return this.v.lane(1 as u32); }
-    pub fn z(this) -> f32 { return this.v.lane(2 as u32); }
-    pub fn w(this) -> f32 { return this.v.lane(3 as u32); }
+    fn x(this) -> f32 { return this.v.lane(0 as u32); }
+    fn y(this) -> f32 { return this.v.lane(1 as u32); }
+    fn z(this) -> f32 { return this.v.lane(2 as u32); }
+    fn w(this) -> f32 { return this.v.lane(3 as u32); }
 
     // Arithmetic ----------------------------------------------------
 
-    pub fn add(this, o: Vec4) -> Vec4 {
+    fn add(this, o: Vec4) -> Vec4 {
         return Vec4 { v: this.v.add(o.v) };
     }
 
-    pub fn sub(this, o: Vec4) -> Vec4 {
+    fn sub(this, o: Vec4) -> Vec4 {
         return Vec4 { v: this.v.sub(o.v) };
     }
 
-    pub fn mul(this, o: Vec4) -> Vec4 {
+    fn mul(this, o: Vec4) -> Vec4 {
         return Vec4 { v: this.v.mul(o.v) };
     }
 
-    pub fn scale(this, s: f32) -> Vec4 {
+    fn scale(this, s: f32) -> Vec4 {
         return Vec4 { v: this.v.mul(f32x4::splat(s)) };
     }
 
-    pub fn neg(this) -> Vec4 {
+    fn neg(this) -> Vec4 {
         return Vec4 { v: this.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
     }
 
     // Geometric ops -------------------------------------------------
 
-    pub fn dot(this, o: Vec4) -> f32 {
+    fn dot(this, o: Vec4) -> f32 {
         return this.v.mul(o.v).sum();
     }
 
-    pub fn len2(this) -> f32 {
+    fn len2(this) -> f32 {
         return this.dot(this);
     }
 
-    pub fn length(this) -> f32 {
+    fn length(this) -> f32 {
         return f_sqrt(this.dot(this));
     }
 
-    pub fn normalize(this) -> Vec4 {
+    fn normalize(this) -> Vec4 {
         let inv: f32 = 1.0f32 / this.length();
         return this.scale(inv);
     }
 
     // Lane-wise helpers ---------------------------------------------
 
-    pub fn min(this, o: Vec4) -> Vec4 {
+    fn min(this, o: Vec4) -> Vec4 {
         return Vec4 { v: this.v.min(o.v) };
     }
 
-    pub fn max(this, o: Vec4) -> Vec4 {
+    fn max(this, o: Vec4) -> Vec4 {
         return Vec4 { v: this.v.max(o.v) };
     }
 
-    pub fn clamp(this, lo: Vec4, hi: Vec4) -> Vec4 {
+    fn clamp(this, lo: Vec4, hi: Vec4) -> Vec4 {
         return this.max(lo).min(hi);
     }
 
-    pub fn lerp(this, o: Vec4, t: f32) -> Vec4 {
+    fn lerp(this, o: Vec4, t: f32) -> Vec4 {
         let diff: f32x4 = o.v.sub(this.v);
         let tv: f32x4 = f32x4::splat(t);
         return Vec4 { v: diff.fma(tv, this.v) };
@@ -94,11 +94,11 @@ impl Vec4 {
 
     // Inner accessor for `mat4x4` cross-module use ------------------
 
-    pub fn raw(this) -> f32x4 {
+    fn raw(this) -> f32x4 {
         return this.v;
     }
 
-    pub fn from_raw(v: f32x4) -> Vec4 {
+    fn from_raw(v: f32x4) -> Vec4 {
         return Vec4 { v: v };
     }
 }

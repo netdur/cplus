@@ -1,71 +1,71 @@
 import "./runtime" as rt;
 
-pub struct AutoreleasePool {
-    pub opaque obj: *u8,
+struct AutoreleasePool {
+    opaque obj: *u8,
 }
 
 impl AutoreleasePool {
-    pub fn new() -> AutoreleasePool {
+    fn new() -> AutoreleasePool {
         let pool_cls: *u8 = rt::get_class(#str_ptr("NSAutoreleasePool\0"));
         let pool_alloc: *u8 = rt::msg_id(pool_cls, rt::sel(#str_ptr("alloc\0")));
         let pool: *u8 = rt::msg_id(pool_alloc, rt::sel(#str_ptr("init\0")));
         return AutoreleasePool { obj: pool };
     }
 
-    pub fn drain(this) {
+    fn drain(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("drain\0")));
     }
 }
 
-pub struct Application {
-    pub opaque obj: *u8,
+struct Application {
+    opaque obj: *u8,
 }
 
 impl Application {
-    pub fn shared() -> Application {
+    fn shared() -> Application {
         let nsapp_cls: *u8 = rt::get_class(#str_ptr("NSApplication\0"));
         let app: *u8 = rt::msg_id(nsapp_cls, rt::sel(#str_ptr("sharedApplication\0")));
         return Application { obj: app };
     }
 
-    pub fn set_activation_policy(this, policy: i64) {
+    fn set_activation_policy(this, policy: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setActivationPolicy:\0")), policy);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn activate(this, ignoring_other_apps: i8) {
+    fn activate(this, ignoring_other_apps: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps);
     }
 
-    pub fn run(this) {
+    fn run(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("run\0")));
     }
 
-    pub fn stop(this, sender: *u8) {
+    fn stop(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("stop:\0")), sender);
     }
 
-    pub fn terminate(this, sender: *u8) {
+    fn terminate(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
 
-    pub fn hide(this, sender: *u8) {
+    fn hide(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("hide:\0")), sender);
     }
 
-    pub fn unhide(this, sender: *u8) {
+    fn unhide(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("unhide:\0")), sender);
     }
 
-    pub fn set_main_menu(this, menu: *u8) {
+    fn set_main_menu(this, menu: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMainMenu:\0")), menu);
     }
 }
 
-pub fn create_app_delegate(should_terminate_imp: fn(*u8, *u8, *u8) -> i8) -> *u8 {
+fn create_app_delegate(should_terminate_imp: fn(*u8, *u8, *u8) -> i8) -> *u8 {
     let nsobject_cls: *u8 = rt::get_class(#str_ptr("NSObject\0"));
     let existing: *u8 = rt::get_class(#str_ptr("CAppDelegate\0"));
     var delegate_cls: *u8 = existing;

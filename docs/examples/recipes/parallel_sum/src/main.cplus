@@ -22,7 +22,7 @@ fn sum_range(r: Range) -> i64 {
     return total;
 }
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     let left: Range = Range { start: 1 as i64, end: 501 as i64 };
     let right: Range = Range { start: 501 as i64, end: 1001 as i64 };
 

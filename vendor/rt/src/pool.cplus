@@ -21,21 +21,21 @@ import "stdlib/option" as option;
 #[no_alloc] #[no_block]
 fn pool_none() -> u32 { return 4294967295 as u32; }
 
-pub struct FixedPoolU64 {
+struct FixedPoolU64 {
     // Slot storage — payload for each index.
-    pub slots: [u64; 1024],
+    slots: [u64; 1024],
     // Intrusive free-list: `links[i]` is the next free slot after `i`
     // (only meaningful while `i` is free), or the sentinel at the tail.
-    pub links: [u32; 1024],
+    links: [u32; 1024],
     // Index of the first free slot, or the sentinel when the pool is full.
-    pub free_head: u32,
-    pub in_use: usize,
+    free_head: u32,
+    in_use: usize,
 }
 
 impl FixedPoolU64 {
     // Build a pool with every slot free, linked 0 → 1 → … → 1023 → sentinel.
     #[no_alloc] #[no_block]
-    pub fn new() -> FixedPoolU64 {
+    fn new() -> FixedPoolU64 {
         var p: FixedPoolU64 = FixedPoolU64 {
             slots: [0u64; 1024],
             links: [0u32; 1024],
@@ -55,21 +55,21 @@ impl FixedPoolU64 {
         return p;
     }
 
-    pub fn capacity(this) -> usize { return 1024 as usize; }
+    fn capacity(this) -> usize { return 1024 as usize; }
 
     #[no_alloc] #[no_block]
-    pub fn in_use_count(this) -> usize { return this.in_use; }
+    fn in_use_count(this) -> usize { return this.in_use; }
 
     #[no_alloc] #[no_block]
-    pub fn available(this) -> usize { return (1024 as usize) -% this.in_use; }
+    fn available(this) -> usize { return (1024 as usize) -% this.in_use; }
 
     #[no_alloc] #[no_block]
-    pub fn is_full(this) -> bool { return this.free_head == pool_none(); }
+    fn is_full(this) -> bool { return this.free_head == pool_none(); }
 
     // Claim a free slot. Returns its index, or `None` (without blocking)
     // when the pool is exhausted.
     #[no_alloc] #[no_block]
-    pub fn acquire(ref this) -> option::Option[u32] {
+    fn acquire(ref this) -> option::Option[u32] {
         if this.free_head == pool_none() {
             return option::Option[u32]::None;
         }
@@ -83,7 +83,7 @@ impl FixedPoolU64 {
     // release; releasing a slot that is not in use corrupts the free list,
     // so callers are responsible for release-once discipline.
     #[no_alloc] #[no_block]
-    pub fn release(ref this, idx: u32) {
+    fn release(ref this, idx: u32) {
         this.links[idx as usize] = this.free_head;
         this.free_head = idx;
         this.in_use = this.in_use -% (1 as usize);
@@ -91,10 +91,10 @@ impl FixedPoolU64 {
     }
 
     #[no_alloc] #[no_block]
-    pub fn get(this, idx: u32) -> u64 { return this.slots[idx as usize]; }
+    fn get(this, idx: u32) -> u64 { return this.slots[idx as usize]; }
 
     #[no_alloc] #[no_block]
-    pub fn set(ref this, idx: u32, v: u64) { this.slots[idx as usize] = v; return; }
+    fn set(ref this, idx: u32, v: u64) { this.slots[idx as usize] = v; return; }
 }
 
 // ---------------- Unit tests ----------------

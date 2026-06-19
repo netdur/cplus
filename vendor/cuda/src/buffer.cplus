@@ -14,9 +14,9 @@ extern fn cudaMemcpy(dst: *u8, src: *u8, count: usize, kind: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
-pub struct DeviceBuffer {
-    pub dptr: *u8,   // device pointer (opaque on host)
-    pub size: usize, // bytes
+struct DeviceBuffer {
+    dptr: *u8,   // device pointer (opaque on host)
+    size: usize, // bytes
 }
 
 // Void wrapper around `cudaFree` so `drop` releases the field as a bare
@@ -29,7 +29,7 @@ fn device_free(p: *u8) {
 }
 
 // Allocate `size` bytes of device memory.
-pub fn alloc(size: usize) -> result::Result[DeviceBuffer, runtime::CudaError] {
+fn alloc(size: usize) -> result::Result[DeviceBuffer, runtime::CudaError] {
     // cudaMalloc writes the device pointer into a `void**`; stage it in a
     // host slot, then read it back (C+ has no address-of-local).
     let slot: *u8 = unsafe { malloc(8 as usize) };
@@ -46,14 +46,14 @@ pub fn alloc(size: usize) -> result::Result[DeviceBuffer, runtime::CudaError] {
 impl DeviceBuffer {
     // Copy up to `min(bytes, this.size)` bytes from host `src` into this
     // device buffer. Returns the raw cudaError_t (0 = success).
-    pub fn copy_from_host(this, src: *u8, bytes: usize) -> i32 {
+    fn copy_from_host(this, src: *u8, bytes: usize) -> i32 {
         let n: usize = if bytes < this.size { bytes } else { this.size };
         return unsafe { cudaMemcpy(this.dptr, src, n, runtime::memcpy_host_to_device()) };
     }
 
     // Copy up to `min(bytes, this.size)` bytes from this device buffer into
     // host `dst`. Returns the raw cudaError_t (0 = success).
-    pub fn copy_to_host(this, dst: *u8, bytes: usize) -> i32 {
+    fn copy_to_host(this, dst: *u8, bytes: usize) -> i32 {
         let n: usize = if bytes < this.size { bytes } else { this.size };
         return unsafe { cudaMemcpy(dst, this.dptr, n, runtime::memcpy_device_to_host()) };
     }

@@ -4,20 +4,20 @@ import "./runtime" as runtime;
 import "./buffer" as buffer;
 import "./pipeline" as pipeline;
 
-pub struct CommandQueue {
-    pub raw: *u8,
+struct CommandQueue {
+    raw: *u8,
 }
 
-pub struct CommandBuffer {
-    pub raw: *u8,
+struct CommandBuffer {
+    raw: *u8,
 }
 
-pub struct ComputeCommandEncoder {
-    pub raw: *u8,
+struct ComputeCommandEncoder {
+    raw: *u8,
 }
 
 impl CommandQueue {
-    pub fn new_command_buffer(this) -> CommandBuffer {
+    fn new_command_buffer(this) -> CommandBuffer {
         if this.raw == unsafe { 0 as *u8 } {
             return CommandBuffer { raw: unsafe { 0 as *u8 } };
         }
@@ -34,7 +34,7 @@ impl CommandQueue {
 }
 
 impl CommandBuffer {
-    pub fn new_compute_encoder(this) -> ComputeCommandEncoder {
+    fn new_compute_encoder(this) -> ComputeCommandEncoder {
         if this.raw == unsafe { 0 as *u8 } {
             return ComputeCommandEncoder { raw: unsafe { 0 as *u8 } };
         }
@@ -43,7 +43,7 @@ impl CommandBuffer {
         return ComputeCommandEncoder { raw: enc_raw };
     }
 
-    pub fn commit(this) {
+    fn commit(this) {
         if this.raw == unsafe { 0 as *u8 } {
             return;
         }
@@ -52,7 +52,7 @@ impl CommandBuffer {
         return;
     }
 
-    pub fn wait_until_completed(this) {
+    fn wait_until_completed(this) {
         if this.raw == unsafe { 0 as *u8 } {
             return;
         }
@@ -69,7 +69,7 @@ impl CommandBuffer {
 }
 
 impl ComputeCommandEncoder {
-    pub fn set_pipeline(this, state: pipeline::ComputePipelineState) {
+    fn set_pipeline(this, state: pipeline::ComputePipelineState) {
         // v0.0.12 — `borrow state`: `setComputePipelineState:` doesn't
         // transfer ownership of the pipeline; the caller keeps it alive.
         // Pre-fix the param was consumed (default-move post-v0.0.10) which
@@ -83,7 +83,7 @@ impl ComputeCommandEncoder {
         return;
     }
 
-    pub fn set_buffer(this, index: usize, buf: buffer::Buffer) {
+    fn set_buffer(this, index: usize, buf: buffer::Buffer) {
         // v0.0.12 — `borrow buf`: `setBuffer:offset:atIndex:` doesn't
         // retain the buffer. Same default-move trap as set_pipeline above;
         // also blocked calling `encoder.set_buffer(0, b)` followed by any
@@ -96,7 +96,7 @@ impl ComputeCommandEncoder {
         return;
     }
 
-    pub fn dispatch(this, groups: runtime::MTLSize, per_group: runtime::MTLSize) {
+    fn dispatch(this, groups: runtime::MTLSize, per_group: runtime::MTLSize) {
         if this.raw == unsafe { 0 as *u8 } {
             return;
         }
@@ -105,7 +105,7 @@ impl ComputeCommandEncoder {
         return;
     }
 
-    pub fn end_encoding(this) {
+    fn end_encoding(this) {
         if this.raw == unsafe { 0 as *u8 } {
             return;
         }

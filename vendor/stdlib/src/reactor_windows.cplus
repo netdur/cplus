@@ -67,7 +67,7 @@ fn ptr_is_null(p: *u8) -> bool {
 }
 
 // Lazily allocate + init the reactor on first use. Idempotent.
-pub fn ensure() -> *u8 {
+fn ensure() -> *u8 {
     let cur: *u8 = unsafe { #reactor_get_state() };
     if !ptr_is_null(cur) { return cur; }
     let state: *u8 = unsafe { malloc(header_bytes()) };
@@ -152,12 +152,12 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 
 // Record an fd for read-readiness. Not wired to IOCP yet (see header): the
 // fd is parked so `waiter_count` is accurate, but it is never woken.
-pub fn register_read(fd: i32, hdl: *u8) {
+fn register_read(fd: i32, hdl: *u8) {
     register_fd(fd, hdl);
     return;
 }
 
-pub fn register_write(fd: i32, hdl: *u8) {
+fn register_write(fd: i32, hdl: *u8) {
     register_fd(fd, hdl);
     return;
 }
@@ -189,7 +189,7 @@ fn register_fd(fd: i32, hdl: *u8) {
 // Register a one-shot timer that fires `ms` milliseconds from now and
 // resumes `hdl`. Stored as an absolute Win32 tick deadline; poll_one_event
 // sleeps to the earliest deadline and resumes its handle.
-pub fn register_timer(ms: u64, hdl: *u8) {
+fn register_timer(ms: u64, hdl: *u8) {
     let state: *u8 = ensure();
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     let ct_slot: *i32 = unsafe { (state + off_cap_timers()) as *i32 };
@@ -218,7 +218,7 @@ pub fn register_timer(ms: u64, hdl: *u8) {
 // Wait for one event. The only wakeable source on Windows today is a timer:
 // pick the earliest deadline, sleep until it, resume its handle, and
 // swap-remove it. Returns true if a coroutine was resumed.
-pub fn poll_one_event() -> bool {
+fn poll_one_event() -> bool {
     let state: *u8 = ensure();
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     let n: i32 = unsafe { *nt_slot };
@@ -258,7 +258,7 @@ pub fn poll_one_event() -> bool {
 }
 
 // Drain the spawn_local / yield task queue: resume each handle once.
-pub fn drain_pending() -> i32 {
+fn drain_pending() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let n: i32 = unsafe { *np_slot };
@@ -279,7 +279,7 @@ pub fn drain_pending() -> i32 {
 }
 
 // Push a coroutine handle to the pending queue.
-pub fn enqueue_pending(hdl: *u8) {
+fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
@@ -299,14 +299,14 @@ pub fn enqueue_pending(hdl: *u8) {
 }
 
 // Snapshot of pending event-side work — fd waiters plus active timers.
-pub fn waiter_count() -> i32 {
+fn waiter_count() -> i32 {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     return unsafe { *nw_slot } +% unsafe { *nt_slot };
 }
 
-pub fn pending_count() -> i32 {
+fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     return unsafe { *np_slot };
@@ -314,7 +314,7 @@ pub fn pending_count() -> i32 {
 
 // Register `awaiter` as waiting on `awaitee`. Append-only; removed by
 // `notify_completed` (swap-remove).
-pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
+fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
@@ -340,7 +340,7 @@ pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
 
 // Linear scan for an awaiter registered on `awaitee`; if found, swap-remove
 // and enqueue the awaiter for resumption.
-pub fn notify_completed(awaitee: *u8) {
+fn notify_completed(awaitee: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };

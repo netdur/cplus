@@ -16789,21 +16789,23 @@ mod tests {
     }
 
     #[test]
-    fn fix_c_pub_fn_keeps_default_cc() {
-        // v0.0.8 fix C: `pub fn` has external linkage and must keep C
-        // cc so its callers (other modules, the C ABI) can invoke it.
+    fn fix_c_export_fn_keeps_default_cc() {
+        // v0.0.8 fix C (v0.0.24 #10): an `export` fn has external linkage and
+        // must keep C cc so its C-ABI callers can invoke it. (A plain public
+        // fn is internal-linkage-eligible and may be fastcc — exporting is what
+        // pins the C convention.)
         let ir = gen_src(
-            "pub fn pub_api(x: i32) -> i32 { return x +% x; }\n\
+            "export fn pub_api(x: i32) -> i32 { return x +% x; }\n\
              fn main() -> i32 { return 0; }",
         );
-        // No `fastcc` after `define ` on the pub fn.
+        // No `fastcc` after `define ` on the exported fn.
         assert!(
             ir.contains("define i32 @pub_api(i32 noundef %0)"),
-            "pub fn must keep default cc, got:\n{ir}"
+            "exported fn must keep default cc, got:\n{ir}"
         );
         assert!(
             !ir.contains("define fastcc i32 @pub_api"),
-            "pub fn must NOT be fastcc, got:\n{ir}"
+            "exported fn must NOT be fastcc, got:\n{ir}"
         );
     }
 
@@ -19515,7 +19517,7 @@ mod tests {
     // ---- v0.0.3 Phase 5 Slice 5B: thread::spawn + JoinHandle::join ----
 
     const THREAD_PRELUDE: &str =
-        "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
+        "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
 
     #[test]
     fn thread_spawn_emits_pthread_create_and_trampoline() {
@@ -19580,7 +19582,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_for_bool_uses_align_1() {
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn flag() -> bool { return true; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[bool] = unsafe { #thread_spawn::[bool](flag) }; \
@@ -19661,7 +19663,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_emits_pthread_create_and_indexed_trampoline() {
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](21 as i32, double) }; \
@@ -19693,7 +19695,7 @@ mod tests {
         //   fn_ptr:      @ 8
         //   result_slot: @ 16 (i32, 4 bytes — slot ends at 20)
         //   input_slot:  @ 20 (i32, aligned)
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](7 as i32, double) }; \
@@ -19712,7 +19714,7 @@ mod tests {
     fn thread_spawn_with_for_i64_input_lives_at_offset_16() {
         // i64 result is 8 bytes; result slot at offset 8..16. i64
         // input aligned to 8 = offset 16.
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i64] = unsafe { #thread_spawn_with::[i64, i64](5 as i64, negate) }; \
@@ -19733,7 +19735,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_distinct_io_pairs_get_distinct_trampolines() {
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn d32(x: i32) -> i32 { return x; } \
                    fn d64(x: i64) -> i64 { return x; } \
                    fn main() -> i32 { \
@@ -19754,7 +19756,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_outside_unsafe_is_rejected() {
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = #thread_spawn_with::[i32, i32](21 as i32, double); \
@@ -19772,7 +19774,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
-        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32](21 as i32, double) }; \
@@ -20180,7 +20182,7 @@ mod tests {
         // 8-byte `Point` param (matching clang's aarch64-darwin output).
         let ir = gen_src(
             "#[repr(C)] struct Point { x: i32, y: i32 }\n\
-             pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }",
+             export extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }",
         );
         // Look for the @square define with coerced i64 param.
         assert!(
@@ -20193,7 +20195,7 @@ mod tests {
     fn pub_extern_fn_with_small_struct_return_coerces_to_i64() {
         let ir = gen_src(
             "#[repr(C)] struct Point { x: i32, y: i32 }\n\
-             pub extern fn make(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }",
+             export extern fn make(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }",
         );
         // 8-byte struct return: `define i64 @make(...)` with packed coerce on ret.
         assert!(
@@ -20211,7 +20213,7 @@ mod tests {
     fn pub_extern_fn_with_mid_struct_param_coerces_to_array_i64() {
         let ir = gen_src(
             "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
-             pub extern fn sum(p: Pair) -> i64 { return p.a + p.b; }",
+             export extern fn sum(p: Pair) -> i64 { return p.a + p.b; }",
         );
         // 16-byte two-eightbyte param coerces to the target's register-pair
         // type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }` on x86_64-sysv.
@@ -20233,7 +20235,7 @@ mod tests {
     fn pub_extern_fn_with_large_struct_param_passes_indirect() {
         let ir = gen_src(
             "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
-             pub extern fn sum(t: Triple) -> i64 { return t.a + t.b + t.c; }",
+             export extern fn sum(t: Triple) -> i64 { return t.a + t.b + t.c; }",
         );
         // >16 byte struct param: bare `ptr` (no byval on aarch64-darwin).
         assert!(
@@ -20248,7 +20250,7 @@ mod tests {
         // generalized in 5.D from `Ty::String` only to any Indirect class.
         let ir = gen_src(
             "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
-             pub extern fn make() -> Triple { return Triple { a: 1 as i64, b: 2 as i64, c: 3 as i64 }; }"
+             export extern fn make() -> Triple { return Triple { a: 1 as i64, b: 2 as i64, c: 3 as i64 }; }"
         );
         assert!(
             ir.contains("void @make(ptr sret("),
@@ -20283,7 +20285,7 @@ mod tests {
     fn pub_extern_fn_with_scalar_args_no_coercion() {
         // Pure-scalar signatures don't trigger any coercion machinery —
         // the C ABI and C+ ABI agree on scalar passing.
-        let ir = gen_src("pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }");
+        let ir = gen_src("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }");
         assert!(
             ir.contains("i32 @add(i32 noundef") && !ir.contains("@add(i64"),
             "scalar-only export must not coerce, got:\n{ir}"
@@ -20926,7 +20928,7 @@ mod tests {
     fn struct_literal_static_emits_constant_aggregate() {
         let ir = gen_src_mono(
             "struct P { x: i32, y: f32, ok: bool }\n\
-             pub static S: P = P { x: 7, y: 1.5f32, ok: true };\n\
+             static S: P = P { x: 7, y: 1.5f32, ok: true };\n\
              fn main() -> i32 { return S.x; }",
         );
         // The global is a constant struct in declared field order, with the
@@ -20942,7 +20944,7 @@ mod tests {
         // Source field order is reversed; output must follow the declared order.
         let ir = gen_src_mono(
             "struct P { a: i32, b: i32 }\n\
-             pub static S: P = P { b: 2, a: 1 };\n\
+             static S: P = P { b: 2, a: 1 };\n\
              fn main() -> i32 { return S.a; }",
         );
         assert!(
@@ -20956,7 +20958,7 @@ mod tests {
         let ir = gen_src_mono(
             "struct Inner { a: i32 }\n\
              struct Outer { i: Inner, n: i32 }\n\
-             pub static O: Outer = Outer { i: Inner { a: 5 }, n: 6 };\n\
+             static O: Outer = Outer { i: Inner { a: 5 }, n: 6 };\n\
              fn main() -> i32 { return O.n; }",
         );
         assert!(
@@ -20969,7 +20971,7 @@ mod tests {
     fn f16_struct_field_static_emits_half_constant() {
         let ir = gen_src_mono(
             "struct W { a: f16, b: f16 }\n\
-             pub static G: W = W { a: 1.0f16, b: 1.5f16 };\n\
+             static G: W = W { a: 1.0f16, b: 1.5f16 };\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(

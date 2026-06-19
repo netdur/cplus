@@ -6,7 +6,7 @@
 import "./expr" as expr;
 import "./ops" as ops;
 
-pub fn evaluate(e: expr::Expr) -> i32 {
+fn evaluate(e: expr::Expr) -> i32 {
     return match e {
         expr::Expr::Lit(v) => v,
         expr::Expr::Add(a, b) => ops::add(a, b),

@@ -8,6 +8,6 @@
 
 extern fn tiny_artifact_double(n: i32) -> i32;
 
-pub fn double(n: i32) -> i32 {
+fn double(n: i32) -> i32 {
     return unsafe { tiny_artifact_double(n) };
 }

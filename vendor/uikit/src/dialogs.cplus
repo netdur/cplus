@@ -1,12 +1,12 @@
 import "./runtime" as rt;
 import "./convert" as convert;
 
-pub struct AlertController {
-    pub obj: *u8,
+struct AlertController {
+    obj: *u8,
 }
 
 impl AlertController {
-    pub fn new(title: str, message: str, style: i64) -> AlertController {
+    fn new(title: str, message: str, style: i64) -> AlertController {
         let cls: *u8 = rt::get_class(#str_ptr("UIAlertController\0"));
         let alert: *u8 = rt::msg_id_id_id_i64(
             cls,
@@ -22,17 +22,17 @@ impl AlertController {
         rt::release(this.obj);
     }
 
-    pub fn add_action(this, action: *u8) {
+    fn add_action(this, action: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addAction:\0")), action);
     }
 }
 
-pub struct AlertAction {
-    pub opaque obj: *u8,
+struct AlertAction {
+    opaque obj: *u8,
 }
 
 impl AlertAction {
-    pub fn new(title: str, style: i64) -> *u8 {
+    fn new(title: str, style: i64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIAlertAction\0"));
         return rt::msg_id_id_i64_id(
             cls,
@@ -44,4 +44,4 @@ impl AlertAction {
     }
 }
 
-pub type Alert = AlertController;
+type Alert = AlertController;

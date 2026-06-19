@@ -44,7 +44,7 @@ struct Tm {
     tm_isdst: i32,
 }
 
-pub enum Level {
+enum Level {
     Trace,
     Debug,
     Info,
@@ -55,7 +55,7 @@ pub enum Level {
 static MAX_LEVEL: i32 = 2; // Info level by default
 static USE_COLORS: bool = true;
 
-pub fn set_max_level(l: Level) {
+fn set_max_level(l: Level) {
     let val: i32 = match l {
         Level::Trace => 0,
         Level::Debug => 1,
@@ -67,7 +67,7 @@ pub fn set_max_level(l: Level) {
     return;
 }
 
-pub fn get_max_level() -> Level {
+fn get_max_level() -> Level {
     let val: i32 = unsafe { MAX_LEVEL };
     if val == 0 { return Level::Trace; }
     if val == 1 { return Level::Debug; }
@@ -76,7 +76,7 @@ pub fn get_max_level() -> Level {
     return Level::Error;
 }
 
-pub fn set_use_colors(b: bool) {
+fn set_use_colors(b: bool) {
     unsafe { USE_COLORS = b; }
     return;
 }
@@ -168,11 +168,11 @@ fn log_impl(l: Level, msg: str) {
     return;
 }
 
-pub fn trace(msg: str) { log_impl(Level::Trace, msg); return; }
-pub fn debug(msg: str) { log_impl(Level::Debug, msg); return; }
-pub fn info(msg: str) { log_impl(Level::Info, msg); return; }
-pub fn warn(msg: str) { log_impl(Level::Warn, msg); return; }
-pub fn error(msg: str) { log_impl(Level::Error, msg); return; }
+fn trace(msg: str) { log_impl(Level::Trace, msg); return; }
+fn debug(msg: str) { log_impl(Level::Debug, msg); return; }
+fn info(msg: str) { log_impl(Level::Info, msg); return; }
+fn warn(msg: str) { log_impl(Level::Warn, msg); return; }
+fn error(msg: str) { log_impl(Level::Error, msg); return; }
 
 // ---------------- Unit tests ----------------
 // Statics are now wired in `cpc test` via G-028 fix; these tests

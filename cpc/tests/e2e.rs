@@ -558,7 +558,7 @@ fn monomorphize_turbofish_same_offset_no_collision() {
     symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
     let mod_a = "import \"stdlib/vec\" as vec;\n\
                  struct Aaa { x: i32 }\n\
-                 pub fn fa() -> usize {\n\
+                 fn fa() -> usize {\n\
                  \x20   var v: vec::Vec[Aaa] = vec::new::[Aaa]();\n\
                  \x20   v.push(Aaa { x: 1 });\n\
                  \x20   return v.len();\n\
@@ -612,11 +612,11 @@ fn monomorphize_inferred_same_offset_no_collision() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/idlib.cplus"),
-        "pub fn id[T](take x: T) -> T { return x; }\n",
+        "fn id[T](take x: T) -> T { return x; }\n",
     )
     .unwrap();
     let mod_a = "import \"./idlib\" as g;\n\
-                 pub fn fa() -> i32 { let v: i32 = 1; return g::id(v); }\n";
+                 fn fa() -> i32 { let v: i32 = 1; return g::id(v); }\n";
     std::fs::write(dir.join("src/modA.cplus"), mod_a).unwrap();
     // Byte-identical except the 3-char type name and 2-char fn name → the
     // inferred `g::id(v)` calls share a byte offset.
@@ -925,8 +925,8 @@ fn zero_initialized_static_aggregate_cross_lang_g033() {
     std::fs::write(
         &cplus_src,
         "#[repr(C)] struct S { a: i32, b: i64, opaque c: *u8 }\n\
-         pub static MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
-         pub static MUT_STRUCT:    S         = #zero::[S]();\n\
+         static MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+         static MUT_STRUCT:    S         = #zero::[S]();\n\
          extern fn c_set_table(idx: i32, val: i32);\n\
          extern fn c_set_struct(a: i32, b: i64);\n\
          fn main() -> i32 {\n\
@@ -1245,7 +1245,7 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
     // The bad static lives in lib.cplus; main.cplus is the entry and is clean.
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub static BAD: i32 = 1 + 2;\npub fn ok() -> i32 { return 0; }\n",
+        "static BAD: i32 = 1 + 2;\nfn ok() -> i32 { return 0; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -2896,12 +2896,12 @@ fn public_type_alias_facade_reexports_struct_literals_and_methods() {
     std::fs::write(
         dir.join("src/types.cplus"),
         r#"
-pub struct Point {
-    pub x: i32,
+struct Point {
+    x: i32,
 }
 
 impl Point {
-    pub fn new(x: i32) -> Point {
+    fn new(x: i32) -> Point {
         return Point { x: x };
     }
 }
@@ -2913,7 +2913,7 @@ impl Point {
         r#"
 import "./types" as types;
 
-pub type Point = types::Point;
+type Point = types::Point;
 "#,
     )
     .unwrap();
@@ -3076,7 +3076,7 @@ fn cross_file_sema_error_renders_in_imported_file() {
     // points into math.cplus, NOT main.cplus.
     std::fs::write(
         dir.join("src/math.cplus"),
-        "pub fn square(n: i32) -> i32 { return 1.5; }\n",
+        "fn square(n: i32) -> i32 { return 1.5; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -3112,7 +3112,7 @@ fn cross_file_private_field_read_emits_e0403() {
     std::fs::write(
         dir.join("src/geom.cplus"),
         // v0.0.24 #10: visibility is name-based — `x` is public, `_y` is private.
-        "pub struct Point { x: i32, _y: i32 }\nimpl Point { pub fn new(x: i32, y: i32) -> Point { return Point { x: x, _y: y }; } }\n",
+        "struct Point { x: i32, _y: i32 }\nimpl Point { fn new(x: i32, y: i32) -> Point { return Point { x: x, _y: y }; } }\n",
     )
     .unwrap();
     std::fs::write(
@@ -3149,7 +3149,7 @@ fn cross_file_public_field_read_works() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/geom.cplus"),
-        "pub struct Point { pub x: i32, pub y: i32 }\nimpl Point { pub fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; } }\n",
+        "struct Point { x: i32, y: i32 }\nimpl Point { fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; } }\n",
     )
     .unwrap();
     std::fs::write(
@@ -3178,7 +3178,7 @@ fn cross_file_struct_literal_private_field_emits_e0403() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/geom.cplus"),
-        "pub struct Point { x: i32, _y: i32 }\n",
+        "struct Point { x: i32, _y: i32 }\n",
     )
     .unwrap();
     std::fs::write(
@@ -3349,7 +3349,7 @@ fn e0401_did_you_mean() {
     // "math.cplus" exists; the typo "maths.cplus" is one edit away.
     std::fs::write(
         dir.join("src/math.cplus"),
-        "pub fn square(n: i32) -> i32 { return n * n; }\n",
+        "fn square(n: i32) -> i32 { return n * n; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -3837,7 +3837,7 @@ fn test_attribute_pub_rejected_e0359() {
     let src = dir.join("bad.cplus");
     std::fs::write(
         &src,
-        "#[test] pub fn t() { return; }\nfn main() -> i32 { return 0; }\n",
+        "#[test] export fn t() { return; }\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let bin = dir.join("bad");
@@ -3849,7 +3849,7 @@ fn test_attribute_pub_rejected_e0359() {
         .expect("invoke cpc");
     assert!(
         !out.status.success(),
-        "expected compile failure for pub on #[test]"
+        "expected compile failure for export on #[test]"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0359"), "expected E0359, got: {stderr}");
@@ -8723,13 +8723,13 @@ fn phase11_doc_generator_writes_markdown() {
         &src,
         "\
 /// A point in 2D space.
-pub struct Point { pub x: i32, pub y: i32 }
+struct Point { x: i32, y: i32 }
 
 /// Sum two integers, wrapping on overflow.
-pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
+fn add(a: i32, b: i32) -> i32 { return a +% b; }
 
-/// Internal helper — not documented (and not pub).
-fn private(n: i32) -> i32 { return n; }
+/// Internal helper — not documented (`_`-private).
+fn _private(n: i32) -> i32 { return n; }
 ",
     )
     .unwrap();
@@ -8771,7 +8771,7 @@ fn phase11_doc_generator_preserves_fenced_doctests() {
 /// ```
 /// assert add(2, 3) == 5;
 /// ```
-pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
+fn add(a: i32, b: i32) -> i32 { return a +% b; }
 ",
     )
     .unwrap();
@@ -9167,7 +9167,7 @@ fn vendor_import_round_trips_end_to_end() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9230,7 +9230,7 @@ fn stale_cplus_extension_in_import_emits_e0858() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9266,7 +9266,7 @@ fn vendor_escape_emits_e0859() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9302,7 +9302,7 @@ fn bare_import_emits_e0853() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9340,12 +9340,12 @@ fn local_relative_imports_still_work_with_deps_declared() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/_dummy.cplus"),
-        "pub fn unused() -> i32 { return 0; }\n",
+        "fn unused() -> i32 { return 0; }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/helper.cplus"),
-        "pub fn local() -> i32 { return 7; }\n",
+        "fn local() -> i32 { return 7; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9409,7 +9409,7 @@ fn dep_link_table_libs_flow_through_to_linker() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/mathy/src/api.cplus"),
-        "pub fn answer() -> i32 { return 42; }\n",
+        "fn answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -9512,7 +9512,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     std::fs::create_dir_all(dir.join("vendor/tiny/src")).unwrap();
     std::fs::write(
         dir.join("vendor/tiny/src/api.cplus"),
-        "pub fn double(n: i32) -> i32 { return unsafe { tiny_double(n) }; }\n\
+        "fn double(n: i32) -> i32 { return unsafe { tiny_double(n) }; }\n\
          extern fn tiny_double(n: i32) -> i32;\n",
     )
     .unwrap();
@@ -9576,7 +9576,7 @@ fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/mathy/src/api.cplus"),
-        "pub fn answer() -> i32 { return unsafe { extra_answer() }; }\n\
+        "fn answer() -> i32 { return unsafe { extra_answer() }; }\n\
          extern fn extra_answer() -> i32;\n",
     )
     .unwrap();
@@ -9956,13 +9956,13 @@ fn cpc_bindgen_round_trips_via_c_library() {
     // get a safe surface and the raw extern stays private.
     assert!(bindings.contains("#[link_name = \"add_ints\"]"), "{bindings}");
     assert!(bindings.contains("extern fn __c_add_ints(a: i32, b: i32) -> i32;"), "{bindings}");
-    assert!(bindings.contains("pub fn add_ints(a: i32, b: i32) -> i32 {"), "{bindings}");
+    assert!(bindings.contains("fn add_ints(a: i32, b: i32) -> i32 {"), "{bindings}");
     assert!(bindings.contains("extern fn __c_max_u32(a: u32, b: u32) -> u32;"), "{bindings}");
-    assert!(bindings.contains("pub fn max_u32(a: u32, b: u32) -> u32 {"), "{bindings}");
+    assert!(bindings.contains("fn max_u32(a: u32, b: u32) -> u32 {"), "{bindings}");
     assert!(bindings.contains("extern fn __c_count_bytes(s: *i8) -> i64;"), "{bindings}");
-    assert!(bindings.contains("pub fn count_bytes(s: *i8) -> i64 {"), "{bindings}");
+    assert!(bindings.contains("fn count_bytes(s: *i8) -> i64 {"), "{bindings}");
     assert!(bindings.contains("extern fn __c_area_of_rect(w: f64, h: f64) -> f64;"), "{bindings}");
-    assert!(bindings.contains("pub fn area_of_rect(w: f64, h: f64) -> f64 {"), "{bindings}");
+    assert!(bindings.contains("fn area_of_rect(w: f64, h: f64) -> f64 {"), "{bindings}");
 
     // Consume the bindings the way generated bindings are actually used: as an
     // imported module. The safe `pub fn` wrappers are then module-mangled, so
@@ -10411,7 +10411,7 @@ fn cross_module_vec_in_result_no_double_free() {
         dir.join("vendor/stdlib/src/maker.cplus"),
         "import \"./vec\" as vec;\n\
          import \"./result\" as result;\n\
-         pub fn make_three_bytes() -> result::Result[vec::Vec[u8], result::IoError] {\n\
+         fn make_three_bytes() -> result::Result[vec::Vec[u8], result::IoError] {\n\
              var v: vec::Vec[u8] = vec::new::[u8]();\n\
              v.push(7 as u8);\n\
              v.push(8 as u8);\n\
@@ -10627,10 +10627,10 @@ fn stdlib_cross_module_generic_method_propagation() {
     std::fs::write(
         dir.join("vendor/stdlib/src/other.cplus"),
         "import \"./vec\" as vec;\n\
-         pub struct Maker { _x: i32 }\n\
-         pub fn make_maker() -> Maker { return Maker { _x: 0 as i32 }; }\n\
+         struct Maker { _x: i32 }\n\
+         fn make_maker() -> Maker { return Maker { _x: 0 as i32 }; }\n\
          impl Maker {\n\
-             pub fn make_buf(this) -> vec::Vec[u8] {\n\
+             fn make_buf(this) -> vec::Vec[u8] {\n\
                  var buf: vec::Vec[u8] = vec::new::[u8]();\n\
                  buf.push(7 as u8);\n\
                  return buf;\n\
@@ -10700,7 +10700,7 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
     std::fs::write(
         dir.join("src/maker.cplus"),
         "import \"stdlib/vec\" as vec;\n\
-         pub fn make_empty_buf() -> vec::Vec[u8] {\n\
+         fn make_empty_buf() -> vec::Vec[u8] {\n\
              return vec::new::[u8]();\n\
          }\n",
     )
@@ -12994,7 +12994,7 @@ fn async_method_on_user_struct_round_trip() {
          extern fn free(p: *u8);\n\
          struct PipeReader { fd: i32 }\n\
          impl PipeReader {\n\
-             pub async fn read_byte(ref this) -> i32 {\n\
+             async fn read_byte(ref this) -> i32 {\n\
                  let buf: *u8 = unsafe { malloc(1 as usize) };\n\
                  let n: isize = await net::read_fd_async(this.fd, buf, 1 as usize);\n\
                  let v: u8 = unsafe { *buf };\n\
@@ -14826,7 +14826,7 @@ fn phase1d_async_runs_clean_under_asan() {
     );
 }
 
-/// v0.0.5 Phase 2B: `pub gen fn iter(self) -> T` on a user struct.
+/// v0.0.5 Phase 2B: `gen fn iter(self) -> T` on a user struct.
 /// Mirror of Phase 4's `gen fn` lowering, threaded through the method
 /// path (`check_method` + `gen_gen_method`). Verifies:
 ///   - sema wraps return T → Iterator[T] at the method-sig site
@@ -14855,9 +14855,9 @@ fn phase2b_gen_method_on_struct() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/iterator\" as iterator;\n\
-         pub struct Counter { n: i32 }\n\
+         struct Counter { n: i32 }\n\
          impl Counter {\n\
-             pub gen fn iter(this) -> i32 {\n\
+             gen fn iter(this) -> i32 {\n\
                  var i: i32 = 0;\n\
                  while i < this.n {\n\
                      yield i;\n\
@@ -14916,24 +14916,24 @@ fn phase2c_enum_impl_methods_dispatch() {
         &src,
         "\
 extern fn printf(fmt: *u8, ...) -> i32;
-pub enum Tag { Yes, No }
+enum Tag { Yes, No }
 impl Tag {
-    pub fn flip(this) -> Tag {
+    fn flip(this) -> Tag {
         return match this {
             Tag::Yes => Tag::No,
             Tag::No => Tag::Yes,
         };
     }
-    pub fn is_yes(this) -> bool {
+    fn is_yes(this) -> bool {
         return match this {
             Tag::Yes => true,
             Tag::No => false,
         };
     }
 }
-pub enum Shape { Circle(i32), Square(i32) }
+enum Shape { Circle(i32), Square(i32) }
 impl Shape {
-    pub fn area(this) -> i32 {
+    fn area(this) -> i32 {
         return match this {
             Shape::Circle(r) => r *% r *% (3 as i32),
             Shape::Square(s) => s *% s,
@@ -15109,7 +15109,7 @@ fn phase2c_generic_enum_impl_synthesis() {
         dir.join("src/main.cplus"),
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             pub fn is_some(this) -> bool {\n\
+             fn is_some(this) -> bool {\n\
                  return match this {\n\
                      Maybe[T]::Some(_) => true,\n\
                      Maybe[T]::None => false,\n\
@@ -16032,7 +16032,7 @@ fn lib_target_produces_staticlib() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16061,7 +16061,7 @@ fn lib_target_produces_dylib_or_so() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16095,7 +16095,7 @@ fn lib_target_both_produces_a_and_dylib() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16115,7 +16115,7 @@ fn lib_target_both_produces_a_and_dylib() {
 
 #[test]
 fn lib_target_exposes_pub_symbols_unmangled() {
-    // The key property for C-consumability: `pub fn add` in src/lib.cplus
+    // The key property for C-consumability: `export fn add` in src/lib.cplus
     // ends up as the bare `_add` (Mach-O) / `add` (ELF) symbol — not the
     // path-mangled `_src.lib.add` that the resolver normally produces.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -16128,7 +16128,7 @@ fn lib_target_exposes_pub_symbols_unmangled() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "export fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16151,7 +16151,7 @@ fn lib_target_exposes_pub_symbols_unmangled() {
     // And the mangled form must NOT appear.
     assert!(
         !out.contains("src.lib.add"),
-        "expected `pub fn add` to skip path-mangling; got mangled form in:\n{out}"
+        "expected `fn add` to skip path-mangling; got mangled form in:\n{out}"
     );
 }
 
@@ -16172,8 +16172,8 @@ fn c_consumer_links_static_and_dynamic() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
-         pub fn sub(a: i32, b: i32) -> i32 { return a - b; }\n",
+        "export fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         export fn sub(a: i32, b: i32) -> i32 { return a - b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16250,7 +16250,7 @@ fn lib_target_rejects_fn_main_with_e0409() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -16290,7 +16290,7 @@ fn emit_obj_produces_relocatable_object() {
     let src = dir.join("foo.cplus");
     std::fs::write(
         &src,
-        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let out = dir.join("foo.o");
@@ -16320,10 +16320,11 @@ fn emit_obj_produces_relocatable_object() {
 
 #[test]
 fn lib_target_non_pub_fns_get_internal_linkage() {
-    // Phase 5 Slice 5.B: only `pub` items expose external symbols. A
-    // private helper called by a pub fn must NOT appear in `nm -g` output
-    // of the resulting `.a`. `-O2` may inline it away entirely, which is
-    // also fine (the assertion accepts either absent or internal).
+    // Phase 5 Slice 5.B (v0.0.24 #10): only `export` items expose external
+    // symbols. A non-exported helper called by an exported fn must NOT appear
+    // in `nm -g` output of the resulting `.a`. `-O2` may inline it away
+    // entirely, which is also fine (the assertion accepts either absent or
+    // internal).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -16334,7 +16335,7 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn pub_api(x: i32) -> i32 { return helper(x); }\n\
+        "export fn pub_api(x: i32) -> i32 { return helper(x); }\n\
          fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
     )
     .unwrap();
@@ -16379,10 +16380,10 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub struct Counter { v: i32 }\n\
+        "struct Counter { v: i32 }\n\
          impl Counter {\n\
-           pub fn make() -> Counter { return Counter { v: 0 }; }\n\
-           pub fn value(this) -> i32 { return this.v; }\n\
+           fn make() -> Counter { return Counter { v: 0 }; }\n\
+           fn value(this) -> i32 { return this.v; }\n\
            fn priv_bump(ref this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
          }\n",
     )
@@ -16530,8 +16531,8 @@ fn emit_header_basic_round_trip() {
     let src = dir.join("lib.cplus");
     std::fs::write(
         &src,
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
-         pub extern fn noop() { return; }\n",
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         export extern fn noop() { return; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16565,8 +16566,8 @@ fn emit_header_renders_repr_c_struct() {
     std::fs::write(
         &src,
         "#[repr(C)]\n\
-         pub struct Point { pub x: i32, pub y: i32 }\n\
-         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
+         export struct Point { x: i32, y: i32 }\n\
+         export extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16590,8 +16591,8 @@ fn emit_header_renders_plain_enum() {
     let src = dir.join("lib.cplus");
     std::fs::write(
         &src,
-        "pub enum Color { Red, Green, Blue }\n\
-         pub extern fn first() -> i32 { return 0; }\n",
+        "export enum Color { Red, Green, Blue }\n\
+         export extern fn first() -> i32 { return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16615,7 +16616,7 @@ fn emit_header_skips_non_pub_items() {
     let src = dir.join("lib.cplus");
     std::fs::write(
         &src,
-        "pub extern fn pub_api(x: i32) -> i32 { return helper(x); }\n\
+        "export extern fn pub_api(x: i32) -> i32 { return helper(x); }\n\
          fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
     )
     .unwrap();
@@ -16644,7 +16645,7 @@ fn emit_header_skips_extern_import_declarations() {
     std::fs::write(
         &src,
         "extern fn malloc(n: usize) -> *u8;\n\
-         pub extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n",
+         export extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16675,13 +16676,13 @@ fn emit_header_passes_clang_syntax_check() {
     std::fs::write(
         &src,
         "#[repr(C)]\n\
-         pub struct Vec3 { pub x: f32, pub y: f32, pub z: f32 }\n\
-         pub enum Shape { Circle, Square, Triangle }\n\
-         pub extern fn norm(v: Vec3) -> f32 {\n\
+         export struct Vec3 { x: f32, y: f32, z: f32 }\n\
+         export enum Shape { Circle, Square, Triangle }\n\
+         export extern fn norm(v: Vec3) -> f32 {\n\
            return v.x * v.x + v.y * v.y + v.z * v.z;\n\
          }\n\
-         pub extern fn area(s: Shape, side: f64) -> f64 { return side; }\n\
-         pub extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n",
+         export extern fn area(s: Shape, side: f64) -> f64 { return side; }\n\
+         export extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16728,7 +16729,7 @@ fn lib_build_writes_libname_h_alongside_artifacts() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16784,7 +16785,7 @@ fn aggregate_param_8_bytes_round_trips() {
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Point { x: i32, y: i32 }\n\
-         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
+         export extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16833,7 +16834,7 @@ fn aggregate_param_16_bytes_round_trips() {
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
-         pub extern fn sum_pair(p: Pair) -> i64 { return p.a + p.b; }\n",
+         export extern fn sum_pair(p: Pair) -> i64 { return p.a + p.b; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16882,7 +16883,7 @@ fn aggregate_param_24_bytes_indirect_round_trips() {
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
-         pub extern fn sum_triple(t: Triple) -> i64 { return t.a + t.b + t.c; }\n",
+         export extern fn sum_triple(t: Triple) -> i64 { return t.a + t.b + t.c; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16933,7 +16934,7 @@ fn aggregate_return_8_bytes_coerces() {
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Point { x: i32, y: i32 }\n\
-         pub extern fn make_point(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }\n",
+         export extern fn make_point(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -16987,7 +16988,7 @@ fn aggregate_return_24_bytes_sret() {
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
-         pub extern fn make_triple() -> Triple { return Triple { a: 11 as i64, b: 22 as i64, c: 33 as i64 }; }\n",
+         export extern fn make_triple() -> Triple { return Triple { a: 11 as i64, b: 22 as i64, c: 33 as i64 }; }\n",
     ).unwrap();
     let st = Command::new(cpc)
         .arg("build")
@@ -17044,8 +17045,8 @@ fn pub_extern_fn_round_trips_through_c() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub extern fn cab_add(a: i32, b: i32) -> i32 { return a + b; }\n\
-         pub extern fn cab_neg(x: i32) -> i32 { return -x; }\n",
+        "export extern fn cab_add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         export extern fn cab_neg(x: i32) -> i32 { return -x; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -17079,7 +17080,7 @@ fn pub_extern_fn_round_trips_through_c() {
         .arg(&bin)
         .status()
         .expect("clang link");
-    assert!(st.success(), "C link against pub extern fn lib failed");
+    assert!(st.success(), "C link against export extern fn lib failed");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(42), "expected 42 from cab_add(20, 22)");
 }
@@ -17089,7 +17090,7 @@ fn pub_extern_fn_with_str_param_is_rejected_e0410() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "pub extern fn echo(s: str) -> i32 { return 0; }\n").unwrap();
+    std::fs::write(&src, "export extern fn echo(s: str) -> i32 { return 0; }\n").unwrap();
     let out = Command::new(cpc)
         .arg("--emit-ll")
         .arg(&src)
@@ -21493,7 +21494,7 @@ fn single_file_local_import_compiles_and_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("helper.cplus"),
-        "pub fn answer() -> i32 { return 42; }\n",
+        "fn answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     let entry = dir.join("main.cplus");
@@ -21533,14 +21534,14 @@ fn single_file_emit_obj_local_import_compiles() {
     let dir = tempdir();
     std::fs::write(
         dir.join("util.cplus"),
-        "pub fn double(x: i32) -> i32 { return x +% x; }\n",
+        "fn double(x: i32) -> i32 { return x +% x; }\n",
     )
     .unwrap();
     let entry = dir.join("entry.cplus");
     std::fs::write(
         &entry,
         "import \"./util\" as u;\n\
-         pub fn main_shim() -> i32 { return u::double(21); }\n",
+         fn main_shim() -> i32 { return u::double(21); }\n",
     )
     .unwrap();
     let obj = dir.join("entry.o");
@@ -21972,7 +21973,7 @@ fn g023_struct_literal_field_init_does_not_double_drop() {
         dir.join("src/main.cplus"),
         "import \"stdlib/hash_map\" as map;\n\
          \n\
-         pub struct Wrap { pub m: map::HashMap[str, str] }\n\
+         struct Wrap { m: map::HashMap[str, str] }\n\
          \n\
          fn make() -> Wrap {\n\
              var m: map::HashMap[str, str] = map::new::[str, str]();\n\
@@ -22447,7 +22448,7 @@ fn g034_static_mut_indexed_write() {
     let bin = dir.join("g034");
     std::fs::write(
         &src,
-        "pub static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+        "static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
          fn fill() {\n\
              var i: usize = 0 as usize;\n\
              while i < (16 as usize) {\n\
@@ -22578,7 +22579,7 @@ fn graph_project() -> std::path::PathBuf {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "struct Point { pub x: i32, pub y: i32 }\n\
+        "struct Point { x: i32, y: i32 }\n\
          impl Point {\n\
              fn sum(this) -> i32 { return this.x +% this.y; }\n\
          }\n\
@@ -23880,7 +23881,7 @@ fn target_ios_emit_obj_produces_macho_arm64_object() {
     let src = dir.join("t.cplus");
     std::fs::write(
         &src,
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -23989,7 +23990,7 @@ fn target_ios_cdylib_crate_type_is_rejected() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub extern fn answer() -> i32 { return 42; }\n",
+        "export extern fn answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -24068,7 +24069,7 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub extern fn gadget_answer() -> i32 { return 42; }\n",
+        "export extern fn gadget_answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -24128,7 +24129,7 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/gadget/src/api.cplus"),
-        "pub fn answer() -> i32 { return 42; }\n",
+        "fn answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -24195,7 +24196,7 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/gadget/src/api.cplus"),
-        "pub fn answer() -> i32 { return 42; }\n",
+        "fn answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -24344,7 +24345,7 @@ fn target_android_missing_ndk_is_rejected_with_setup_hint() {
     let src = dir.join("t.cplus");
     std::fs::write(
         &src,
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     // A set-but-wrong $ANDROID_NDK_HOME is an error naming the variable,
@@ -24380,7 +24381,7 @@ fn target_android_emit_obj_produces_elf_aarch64_object() {
     let src = dir.join("t.cplus");
     std::fs::write(
         &src,
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let obj = dir.join("t_android.o");
@@ -24430,7 +24431,7 @@ fn target_android_staticlib_links_under_ndk_clang() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub extern fn droid_answer() -> i32 { return 42; }\n",
+        "export extern fn droid_answer() -> i32 { return 42; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -24529,11 +24530,11 @@ fn target_esp32_emits_32_bit_ir_with_xtensa_abi() {
          #[repr(C)] struct Big { a: i64, b: i64, c: i64, d: i64 }\n\
          extern fn c_take_v3(v: V3) -> i32;\n\
          extern fn c_take_big(b: Big) -> i64;\n\
-         pub extern fn use_usize(n: usize) -> usize {\n\
+         export extern fn use_usize(n: usize) -> usize {\n\
              let sz: usize = #size_of::[*u8]();\n\
              return n + sz;\n\
          }\n\
-         pub extern fn drive() -> i64 {\n\
+         export extern fn drive() -> i64 {\n\
              let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
              let b: Big = Big { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 };\n\
              let r1: i32 = unsafe { c_take_v3(v) };\n\
@@ -24594,9 +24595,9 @@ fn target_esp32_realtime_contract_holds_across_targets() {
     let good = dir.join("pid.cplus");
     std::fs::write(
         &good,
-        "#[repr(C)] pub struct PidOut { pub control: i32, pub integral: i32 }\n\
+        "#[repr(C)] struct PidOut { control: i32, integral: i32 }\n\
          #[realtime]\n\
-         pub extern fn pid_step(setpoint: i32, measured: i32, integral: i32) -> PidOut {\n\
+         export extern fn pid_step(setpoint: i32, measured: i32, integral: i32) -> PidOut {\n\
              let err: i32 = setpoint - measured;\n\
              return PidOut { control: (205 * err) / 256, integral: integral + err };\n\
          }\n",
@@ -24616,7 +24617,7 @@ fn target_esp32_realtime_contract_holds_across_targets() {
         &bad,
         "extern fn malloc(n: usize) -> *u8;\n\
          #[realtime]\n\
-         pub fn rt_with_alloc() -> *u8 {\n\
+         fn rt_with_alloc() -> *u8 {\n\
              return unsafe { malloc(64 as usize) };\n\
          }\n\
          fn main() -> i32 { return 0; }\n",
@@ -24639,7 +24640,7 @@ fn target_esp32_missing_esp_clang_is_rejected_with_setup_hint() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "pub extern fn f() -> i32 { return 1; }\n").unwrap();
+    std::fs::write(&src, "export extern fn f() -> i32 { return 1; }\n").unwrap();
     // Set-but-wrong $IDF_TOOLS_PATH errors naming the variable.
     let out = Command::new(cpc)
         .env_remove("CPC_ESP_CLANG")
@@ -24692,7 +24693,7 @@ fn target_esp32_emit_obj_produces_xtensa_elf_object() {
     let src = dir.join("t.cplus");
     std::fs::write(
         &src,
-        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+        "export extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
     )
     .unwrap();
     let obj = dir.join("t_esp32.o");
@@ -24888,7 +24889,7 @@ fn target_esp32_gated_stdlib_modules_fire_e0866() {
     for module in ["thread", "executor"] {
         std::fs::write(
             dir.join("src/lib.cplus"),
-            format!("import \"stdlib/{module}\" as m;\npub fn f() -> i32 {{ return 0; }}\n"),
+            format!("import \"stdlib/{module}\" as m;\nfn f() -> i32 {{ return 0; }}\n"),
         )
         .unwrap();
         let out = Command::new(cpc)
@@ -24920,7 +24921,7 @@ fn target_esp32_gated_stdlib_modules_fire_e0866() {
     // Heap modules stay available on the target.
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "import \"stdlib/vec\" as vec;\nimport \"stdlib/text\" as text;\npub fn f() -> i32 { return 0; }\n",
+        "import \"stdlib/vec\" as vec;\nimport \"stdlib/text\" as text;\nfn f() -> i32 { return 0; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -24943,7 +24944,7 @@ fn target_esp32_async_fn_fires_e0867() {
     let src = dir.join("t.cplus");
     std::fs::write(
         &src,
-        "pub fn helper() -> i32 { return 1; }\n\
+        "fn helper() -> i32 { return 1; }\n\
          async fn fetch() -> i32 { return helper(); }\n\
          fn main() -> i32 { return 0; }\n",
     )
@@ -25001,7 +25002,7 @@ import "android_view/android_view" as av;
 import "android_view/listener" as listener;
 import "jni/jni" as jni;
 
-pub extern fn Java_com_example_MainActivity_nativeCreateView(
+export extern fn Java_com_example_MainActivity_nativeCreateView(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     activity_obj: jni::jobject,
@@ -25026,7 +25027,7 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
 
 // The listener module's app hook (also exercises define-vs-import-declare
 // symbol dedup: android_view/listener *declares* this as an extern import).
-pub extern fn cplus_on_click(
+export extern fn cplus_on_click(
     envp: *jni::JNIEnv,
     token: i64,
     view: jni::jobject,
@@ -25035,7 +25036,7 @@ pub extern fn cplus_on_click(
     return;
 }
 
-pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
+export extern fn Java_com_example_NativeClickListener_nativeOnClick(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     token: i64,
@@ -25093,10 +25094,10 @@ fn target_esp32c3_emits_rv32_ir_and_object() {
         &src,
         "#[repr(C)] struct V3 { x: i32, y: i32, z: i32 }\n\
          extern fn c_take_v3(v: V3) -> i32;\n\
-         pub extern fn use_usize(n: usize) -> usize {\n\
+         export extern fn use_usize(n: usize) -> usize {\n\
              return n + #size_of::[*u8]();\n\
          }\n\
-         pub extern fn drive() -> i32 {\n\
+         export extern fn drive() -> i32 {\n\
              let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
              return unsafe { c_take_v3(v) };\n\
          }\n",
@@ -25229,7 +25230,7 @@ fn extern_import_of_program_defined_symbol_links_and_runs() {
     std::fs::write(
         dir.join("src/caller.cplus"),
         "extern fn app_hook(x: i32) -> i32;\n\
-         pub fn call_through_hook(x: i32) -> i32 {\n\
+         fn call_through_hook(x: i32) -> i32 {\n\
              return unsafe { app_hook(x) };\n\
          }\n",
     )
@@ -25237,7 +25238,7 @@ fn extern_import_of_program_defined_symbol_links_and_runs() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"./caller\" as caller;\n\
-         pub extern fn app_hook(x: i32) -> i32 {\n\
+         export extern fn app_hook(x: i32) -> i32 {\n\
              return x * 2 + 1;\n\
          }\n\
          fn main() -> i32 {\n\
@@ -25286,7 +25287,7 @@ fn espidf_firmware_project_passes_check() {
          #[realtime]\n\
          fn step(x: i32) -> i32 { return (205 * x) / 256; }\n\
          \n\
-         pub extern fn cplus_app_main() {\n\
+         export extern fn cplus_app_main() {\n\
              let _r0: i32 = gpio::reset(2);\n\
              let _r1: i32 = gpio::set_direction(2, gpio::mode_output());\n\
              var on: u32 = 0;\n\
@@ -25335,18 +25336,18 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
     // export-only-sret guard, not just Windows.
     std::fs::write(
         &src,
-        "#[repr(C)] pub struct Out3 { pub a: i32, pub b: i32, pub c: i32 }\n\
-         #[repr(C)] pub struct Out6 { pub a: i32, pub b: i32, pub c: i32, pub d: i32, pub e: i32, pub f: i32 }\n\
-         pub extern fn wrapped(x: i32) -> Out3 {\n\
+        "#[repr(C)] struct Out3 { a: i32, b: i32, c: i32 }\n\
+         #[repr(C)] struct Out6 { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32 }\n\
+         export extern fn wrapped(x: i32) -> Out3 {\n\
              return inner(x);\n\
          }\n\
-         pub fn inner(x: i32) -> Out3 {\n\
+         fn inner(x: i32) -> Out3 {\n\
              return Out3 { a: x + 1, b: x + 2, c: x + 3 };\n\
          }\n\
-         pub extern fn wrapped_wide(x: i32) -> Out6 {\n\
+         export extern fn wrapped_wide(x: i32) -> Out6 {\n\
              return inner_wide(x);\n\
          }\n\
-         pub fn inner_wide(x: i32) -> Out6 {\n\
+         fn inner_wide(x: i32) -> Out6 {\n\
              return Out6 { a: x + 1, b: x + 2, c: x + 3, d: x + 4, e: x + 5, f: x + 6 };\n\
          }\n\
          fn main() -> i32 {\n\
@@ -25412,7 +25413,7 @@ fn did_finish(recv: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
     return 1;
 }
 
-pub extern fn cplus_app_main(argc: i32, argv: *u8) -> i32 {
+export extern fn cplus_app_main(argc: i32, argv: *u8) -> i32 {
     return app::run(argc, argv, did_finish);
 }
 "#;
@@ -25586,44 +25587,44 @@ fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
 /// carries a value and a weight, `leaf(v)` constructs one, `boost(by)`
 /// is a method modifier, and `Builder::finish` returns an `Item` so
 /// nested `@group { ... }` blocks compose.
-const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
-     \x20   pub value: i32,\n\
-     \x20   pub weight: i32,\n\
+const DSL_GROUP_PACKAGE: &str = "struct Item {\n\
+     \x20   value: i32,\n\
+     \x20   weight: i32,\n\
      }\n\
      \n\
-     pub fn leaf(v: i32) -> Item {\n\
+     fn leaf(v: i32) -> Item {\n\
      \x20   return Item { value: v, weight: 1 };\n\
      }\n\
      \n\
      impl Item {\n\
-     \x20   pub fn boost(ref this, by: i32) {\n\
+     \x20   fn boost(ref this, by: i32) {\n\
      \x20       this.weight = this.weight + by;\n\
      \x20       return;\n\
      \x20   }\n\
      }\n\
      \n\
-     pub struct Builder {\n\
+     struct Builder {\n\
      \x20   sum: i32,\n\
      }\n\
      \n\
      impl Builder {\n\
-     \x20   pub fn new() -> Builder {\n\
+     \x20   fn new() -> Builder {\n\
      \x20       return Builder { sum: 0 };\n\
      \x20   }\n\
      \n\
-     \x20   pub fn add(ref this, item: Item) {\n\
+     \x20   fn add(ref this, item: Item) {\n\
      \x20       this.sum = this.sum + item.value * item.weight;\n\
      \x20       return;\n\
      \x20   }\n\
      \n\
-     \x20   pub fn finish(take this) -> Item {\n\
+     \x20   fn finish(take this) -> Item {\n\
      \x20       return Item { value: this.sum, weight: 1 };\n\
      \x20   }\n\
      }\n\
      \n\
      // A container element: takes a filled Builder, folds its children\n\
      // into one Item (weight 1).\n\
-     pub fn nest(b: Builder) -> Item {\n\
+     fn nest(b: Builder) -> Item {\n\
      \x20   return Item { value: b.sum, weight: 1 };\n\
      }\n";
 
@@ -25694,7 +25695,7 @@ fn builder_block_diagnostics_at_dsl_lines() {
     std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
     std::fs::write(
         dir.join("src/empty.cplus"),
-        "pub fn nothing() -> i32 {\n    return 0;\n}\n",
+        "fn nothing() -> i32 {\n    return 0;\n}\n",
     )
     .unwrap();
     let check = |main_src: &str| -> String {

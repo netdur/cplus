@@ -32,7 +32,7 @@
 
 import "./text" as text;
 
-pub enum CowStr {
+enum CowStr {
     // Borrowed view of someone else's storage. Caller asserts the
     // backing bytes outlive every CowStr that wraps them.
     View(str),
@@ -41,18 +41,18 @@ pub enum CowStr {
 }
 
 // Wrap a `str` (caller-owned-or-static bytes) as a Cow.
-pub fn from_view(s: str) -> CowStr {
+fn from_view(s: str) -> CowStr {
     return CowStr::View(s);
 }
 
 // Wrap an owned `Text` as a Cow. The Cow now owns the buffer.
-pub fn from_owned(take s: text::Text) -> CowStr {
+fn from_owned(take s: text::Text) -> CowStr {
     return CowStr::Owned(s);
 }
 
 // Whether the wrapped data is owned (true) or borrowed (false). Mostly
 // for diagnostics + tests.
-pub fn is_owned(c: CowStr) -> bool {
+fn is_owned(c: CowStr) -> bool {
     return match c {
         CowStr::View(_) => false,
         CowStr::Owned(_) => true,
@@ -60,7 +60,7 @@ pub fn is_owned(c: CowStr) -> bool {
 }
 
 // Length in bytes (works for both variants).
-pub fn len(c: CowStr) -> usize {
+fn len(c: CowStr) -> usize {
     return match c {
         CowStr::View(s) => #str_len(s),
         CowStr::Owned(s) => s.len(),
@@ -71,7 +71,7 @@ pub fn len(c: CowStr) -> usize {
 // and copy the bytes (`str::to_text()` does the malloc + memcpy).
 // Owned variant → unwrap and return the existing buffer (no extra
 // allocation, no copy).
-pub fn into_owned(take c: CowStr) -> text::Text {
+fn into_owned(take c: CowStr) -> text::Text {
     return match c {
         CowStr::View(s) => s.to_text(),
         CowStr::Owned(s) => s,

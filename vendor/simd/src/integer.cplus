@@ -19,24 +19,24 @@
 
 // Widening multiply of two 8-lane signed-byte vectors: each i8*i8
 // product is kept at full i16 precision (NEON `vmull_s8`). No lane wrap.
-pub fn mull_i8(a: i8x8, b: i8x8) -> i16x8 {
+fn mull_i8(a: i8x8, b: i8x8) -> i16x8 {
     return a.widen().mul(b.widen());
 }
 
 // Widening multiply of the low / high 8 lanes of two i8x16 vectors,
 // producing the 8 i16 products (NEON `vmull_s8` after `vget_low/high`).
-pub fn mull_lo_i8(a: i8x16, b: i8x16) -> i16x8 {
+fn mull_lo_i8(a: i8x16, b: i8x16) -> i16x8 {
     return mull_i8(a.low(), b.low());
 }
 
-pub fn mull_hi_i8(a: i8x16, b: i8x16) -> i16x8 {
+fn mull_hi_i8(a: i8x16, b: i8x16) -> i16x8 {
     return mull_i8(a.high(), b.high());
 }
 
 // Widening multiply-accumulate: `acc + (a * b)` at i16 precision (NEON
 // `vmlal_s8`). The caller is responsible for keeping the i16 accumulator
 // from overflowing; for long reductions accumulate in i32 via `dot_i32`.
-pub fn mlal_i8(acc: i16x8, a: i8x8, b: i8x8) -> i16x8 {
+fn mlal_i8(acc: i16x8, a: i8x8, b: i8x8) -> i16x8 {
     return acc.add(mull_i8(a, b));
 }
 
@@ -45,7 +45,7 @@ pub fn mlal_i8(acc: i16x8, a: i8x8, b: i8x8) -> i16x8 {
 // Widening pairwise add (NEON `vpaddlq_s8`): sum adjacent i8 lanes,
 // widening to i16. `out[k] = widen(v[2k]) + widen(v[2k+1])`. Implemented
 // by deinterleaving even / odd lanes (swizzle + low) then widen-adding.
-pub fn paddl_i8(v: i8x16) -> i16x8 {
+fn paddl_i8(v: i8x16) -> i16x8 {
     let evens: i8x8 = v.swizzle([
         0 as u32, 2 as u32, 4 as u32, 6 as u32,
         8 as u32, 10 as u32, 12 as u32, 14 as u32,
@@ -67,7 +67,7 @@ pub fn paddl_i8(v: i8x16) -> i16x8 {
 // (NEON `vdotq_s32` shape). Widens each i8 product to i16, then widens
 // the i16 partial sums to i32 before reducing, so the result is exact
 // for any i8 inputs (no i8 or i16 lane wrap).
-pub fn dot_i32(a: i8x16, b: i8x16) -> i32 {
+fn dot_i32(a: i8x16, b: i8x16) -> i32 {
     let plo: i16x8 = mull_lo_i8(a, b);   // 8 products from the low lanes
     let phi: i16x8 = mull_hi_i8(a, b);   // 8 products from the high lanes
     // Widen each i16x8 of products to i32 (split into i16x4 halves) and

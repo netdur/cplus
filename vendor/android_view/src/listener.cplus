@@ -39,9 +39,9 @@ export extern fn cplus_av_native_on_click(
 #[repr(C)]
 struct ClickMethodRecord {
     // Both point at static string literals; nothing owns or frees them.
-    pub opaque name: *u8,
-    pub opaque signature: *u8,
-    pub fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject),
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject),
 }
 
 // The adapter class, once loaded + bound: a jclass global ref (as usize —
@@ -123,7 +123,7 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
 
 // Wire a click handler with no host-side adapter class: the package's
 // embedded one is instantiated with `token` and installed on `view`.
-pub fn set_on_click(env: rt::Env, view: jni::jobject, token: i64) {
+fn set_on_click(env: rt::Env, view: jni::jobject, token: i64) {
     let cls: jni::jobject = ensure_listener_class(env, view);
     let ctor: jni::jmethodID = env.get_method_id(cls, #str_ptr("<init>\0"), #str_ptr("(J)V\0"));
     var args: [jni::JValue; 1] = [jni::arg_long(token as i64)];

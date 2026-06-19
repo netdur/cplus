@@ -2773,7 +2773,7 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
             dir.join("src/math.cplus"),
-            "pub fn square(n: i32) -> i32 { return n * n; }",
+            "fn square(n: i32) -> i32 { return n * n; }",
         )
         .unwrap();
         let main_src = r#"
@@ -3003,7 +3003,7 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
             dir.join("src/colors.cplus"),
-            "pub enum Color { Red, Green(i32), Blue }\n",
+            "enum Color { Red, Green(i32), Blue }\n",
         )
         .unwrap();
         let main_src = r#"
@@ -3058,7 +3058,7 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
             dir.join("src/colors.cplus"),
-            "pub enum Color { Red, Green, Blue }\n",
+            "enum Color { Red, Green, Blue }\n",
         )
         .unwrap();
         let main_src = r#"
@@ -3070,7 +3070,7 @@ mod tests {
         "#;
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
-        load_project(&main, &dir).expect("pub enum variants should be reachable");
+        load_project(&main, &dir).expect("enum variants should be reachable");
     }
 
     #[test]
@@ -3110,9 +3110,9 @@ mod tests {
         fs::write(
             dir.join("src/geom.cplus"),
             r#"
-            pub struct Point { pub x: i32, pub y: i32 }
+            struct Point { x: i32, y: i32 }
             impl Point {
-                pub fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
+                fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
             }
         "#,
         )

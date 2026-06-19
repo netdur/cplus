@@ -16,7 +16,7 @@ import "./runtime" as rt;
 
 // A view must opt into Auto Layout by turning off the autoresizing-mask
 // bridge, otherwise AppKit installs conflicting frame-derived constraints.
-pub fn use_constraints(view: *u8) {
+fn use_constraints(view: *u8) {
     rt::msg_void_i8(
         view,
         rt::sel(#str_ptr("setTranslatesAutoresizingMaskIntoConstraints:\0")),
@@ -26,55 +26,55 @@ pub fn use_constraints(view: *u8) {
 
 // ---- Anchors (getters on a view) ----
 
-pub fn leading(view: *u8) -> *u8 {
+fn leading(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("leadingAnchor\0")));
 }
 
-pub fn trailing(view: *u8) -> *u8 {
+fn trailing(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("trailingAnchor\0")));
 }
 
-pub fn left(view: *u8) -> *u8 {
+fn left(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("leftAnchor\0")));
 }
 
-pub fn right(view: *u8) -> *u8 {
+fn right(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("rightAnchor\0")));
 }
 
-pub fn top(view: *u8) -> *u8 {
+fn top(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("topAnchor\0")));
 }
 
-pub fn bottom(view: *u8) -> *u8 {
+fn bottom(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("bottomAnchor\0")));
 }
 
-pub fn width(view: *u8) -> *u8 {
+fn width(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("widthAnchor\0")));
 }
 
-pub fn height(view: *u8) -> *u8 {
+fn height(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("heightAnchor\0")));
 }
 
-pub fn center_x(view: *u8) -> *u8 {
+fn center_x(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("centerXAnchor\0")));
 }
 
-pub fn center_y(view: *u8) -> *u8 {
+fn center_y(view: *u8) -> *u8 {
     return rt::msg_id(view, rt::sel(#str_ptr("centerYAnchor\0")));
 }
 
 // ---- Constraint builders (anchor → anchor) ----
 
 // `anchor == other`.
-pub fn equal(anchor: *u8, other: *u8) -> *u8 {
+fn equal(anchor: *u8, other: *u8) -> *u8 {
     return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintEqualToAnchor:\0")), other);
 }
 
 // `anchor == other + constant`.
-pub fn equal_offset(anchor: *u8, other: *u8, constant: f64) -> *u8 {
+fn equal_offset(anchor: *u8, other: *u8, constant: f64) -> *u8 {
     return rt::msg_id_id_f64(
         anchor,
         rt::sel(#str_ptr("constraintEqualToAnchor:constant:\0")),
@@ -84,29 +84,29 @@ pub fn equal_offset(anchor: *u8, other: *u8, constant: f64) -> *u8 {
 }
 
 // `anchor >= other`.
-pub fn ge(anchor: *u8, other: *u8) -> *u8 {
+fn ge(anchor: *u8, other: *u8) -> *u8 {
     return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:\0")), other);
 }
 
 // `anchor <= other`.
-pub fn le(anchor: *u8, other: *u8) -> *u8 {
+fn le(anchor: *u8, other: *u8) -> *u8 {
     return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:\0")), other);
 }
 
 // ---- Constraint builders (dimension anchor → constant) ----
 
 // `dimension == constant` (width/height anchors only).
-pub fn equal_const(dimension: *u8, constant: f64) -> *u8 {
+fn equal_const(dimension: *u8, constant: f64) -> *u8 {
     return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintEqualToConstant:\0")), constant);
 }
 
 // `dimension >= constant`.
-pub fn ge_const(dimension: *u8, constant: f64) -> *u8 {
+fn ge_const(dimension: *u8, constant: f64) -> *u8 {
     return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintGreaterThanOrEqualToConstant:\0")), constant);
 }
 
 // `dimension <= constant`.
-pub fn le_const(dimension: *u8, constant: f64) -> *u8 {
+fn le_const(dimension: *u8, constant: f64) -> *u8 {
     return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), constant);
 }
 
@@ -114,34 +114,34 @@ pub fn le_const(dimension: *u8, constant: f64) -> *u8 {
 
 // Install a constraint. Returns the constraint so calls can be chained or
 // stored: `let c = layout::activate(layout::equal(a, b));`.
-pub fn activate(constraint: *u8) -> *u8 {
+fn activate(constraint: *u8) -> *u8 {
     rt::msg_void_i8(constraint, rt::sel(#str_ptr("setActive:\0")), 1 as i8);
     return constraint;
 }
 
-pub fn deactivate(constraint: *u8) -> *u8 {
+fn deactivate(constraint: *u8) -> *u8 {
     rt::msg_void_i8(constraint, rt::sel(#str_ptr("setActive:\0")), 0 as i8);
     return constraint;
 }
 
 // Whether a constraint is currently installed (`-[NSLayoutConstraint isActive]`).
-pub fn is_active(constraint: *u8) -> i8 {
+fn is_active(constraint: *u8) -> i8 {
     return rt::msg_i64(constraint, rt::sel(#str_ptr("isActive\0"))) as i8;
 }
 
 // ---- Priority (NSLayoutPriority, a `float`) ----
 //
 // Set before activation. The well-known levels:
-pub fn priority_required() -> f32 { return 1000.0 as f32; }
-pub fn priority_high() -> f32 { return 750.0 as f32; }
-pub fn priority_low() -> f32 { return 250.0 as f32; }
+fn priority_required() -> f32 { return 1000.0 as f32; }
+fn priority_high() -> f32 { return 750.0 as f32; }
+fn priority_low() -> f32 { return 250.0 as f32; }
 
-pub fn set_priority(constraint: *u8, priority: f32) -> *u8 {
+fn set_priority(constraint: *u8, priority: f32) -> *u8 {
     rt::msg_void_f32(constraint, rt::sel(#str_ptr("setPriority:\0")), priority);
     return constraint;
 }
 
-pub fn priority(constraint: *u8) -> f32 {
+fn priority(constraint: *u8) -> f32 {
     return rt::msg_f32(constraint, rt::sel(#str_ptr("priority\0")));
 }
 
@@ -149,7 +149,7 @@ pub fn priority(constraint: *u8) -> f32 {
 
 // Create an `NSLayoutGuide`, add it to `view` (which owns it), and return it.
 // Use the same anchor getters (`leading`/`top`/`width`/…) on the returned guide.
-pub fn add_guide(view: *u8) -> *u8 {
+fn add_guide(view: *u8) -> *u8 {
     let guide: *u8 = rt::alloc_init(#str_ptr("NSLayoutGuide\0"));
     rt::msg_void_id(view, rt::sel(#str_ptr("addLayoutGuide:\0")), guide);
     return guide;

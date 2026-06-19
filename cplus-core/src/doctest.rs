@@ -119,7 +119,7 @@ fn find_next_item_name(lines: &[&str], from: usize) -> Option<String> {
             continue;
         }
         let mut rest = t;
-        for prefix in ["pub fn ", "fn ", "pub struct ", "struct ", "pub enum ", "enum ", "impl "] {
+        for prefix in ["fn ", "fn ", "struct ", "struct ", "enum ", "enum ", "impl "] {
             if let Some(after) = rest.strip_prefix(prefix) {
                 rest = after;
                 let name: String = rest.chars()
@@ -266,7 +266,7 @@ fn f() {}
 /// ```
 /// assert true;
 /// ```
-pub fn pub_target() {}
+fn pub_target() {}
 ";
         let out = extract(src);
         assert!(out.contains("fn __doctest_pub_target_0()"),

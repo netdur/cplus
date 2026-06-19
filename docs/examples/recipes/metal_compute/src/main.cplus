@@ -143,7 +143,7 @@ fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
 // main — dispatch the `double_each` kernel over a [f32; N] buffer.
 // ===========================================================================
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     let n: usize = 64 as usize;
     let bytes: usize = n *% (4 as usize);   // f32 = 4 bytes
 

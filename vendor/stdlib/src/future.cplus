@@ -16,17 +16,17 @@
 // shouldn't depend on the layout — it may shift when sret-aware
 // return rewriting lands.
 
-pub struct Future[T] {
+struct Future[T] {
     // The LLVM coroutine frame, managed by the executor/coro runtime — not
     // freed by this struct (same as `Iterator.handle`). Hence `opaque`.
-    pub opaque handle: *u8,
+    opaque handle: *u8,
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop
 // checks each `poll(this)` return value: `Ready(t)` extracts the
 // final value; `Pending` means resume later (after the reactor has
 // signalled the wait was satisfied).
-pub enum Poll[T] {
+enum Poll[T] {
     Ready(T),
     Pending,
 }

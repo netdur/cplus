@@ -12,7 +12,7 @@ import "stdlib/result" as result;
 
 extern fn printf(fmt: *u8, ...) -> i32;
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     if !coreai::runtime_available() {
         unsafe { printf(#str_ptr("CoreAI bridge/runtime unavailable\n\0")); }
         return 1;

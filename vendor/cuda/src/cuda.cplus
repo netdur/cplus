@@ -16,7 +16,7 @@ import "./runtime" as runtime;
 import "./buffer" as buffer;
 import "./cublas" as cublas;
 
-pub type CudaError = runtime::CudaError;
-pub type DeviceBuffer = buffer::DeviceBuffer;
-pub type Handle = cublas::Handle;
-pub type Op = cublas::Op;
+type CudaError = runtime::CudaError;
+type DeviceBuffer = buffer::DeviceBuffer;
+type Handle = cublas::Handle;
+type Op = cublas::Op;

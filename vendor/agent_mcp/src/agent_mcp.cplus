@@ -163,7 +163,7 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
 // request's `params` object; `id` is the request id (echoed back). Every call is
 // gated on the External consent channel first — a rejected gate yields a
 // consent-denied error and never touches the surface.
-pub fn dispatch(
+fn dispatch(
     ref surf: ui::Surface,
     ref sub: events::Subscriber,
     gate: auth::AuthGate,
@@ -215,7 +215,7 @@ pub fn dispatch(
 // string. Parses `{ "method": ..., "params": ..., "id": ... }`; a parse failure
 // or missing method yields a JSON-RPC error envelope. This is the unit the
 // transport reads/writes per line.
-pub fn handle_request(
+fn handle_request(
     ref surf: ui::Surface,
     ref sub: events::Subscriber,
     gate: auth::AuthGate,
@@ -258,7 +258,7 @@ extern fn getpid() -> i32;
 
 // The PID of this process — for an agent socket path like
 // `/tmp/cplus-agent-<pid>.sock` (the path convention is the app's choice).
-pub fn current_pid() -> i32 {
+fn current_pid() -> i32 {
     return unsafe { getpid() };
 }
 
@@ -303,7 +303,7 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
 // Serve one connected stream socket: read requests line by line, dispatch each
 // (re-arming a fresh gate from `policy` per request), and write the response
 // line, until the peer closes (EOF). The connection fd is the caller's to close.
-pub fn serve_fd(
+fn serve_fd(
     ref surf: ui::Surface,
     ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,
@@ -329,7 +329,7 @@ pub fn serve_fd(
 // (one at a time) via `serve_fd`. Blocks until `accept` fails. Returns a
 // negative code on a setup error (socket/bind/listen). `path` must be ≤ 100
 // bytes (sun_path limit). Removes the socket file on entry (stale) and exit.
-pub fn serve_uds(
+fn serve_uds(
     ref surf: ui::Surface,
     ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,

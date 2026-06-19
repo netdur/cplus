@@ -3,8 +3,8 @@
 import "jni/jni" as jni;
 import "./runtime" as rt;
 
-pub fn orientation_horizontal() -> i32 { return 0 as i32; }
-pub fn orientation_vertical() -> i32 { return 1 as i32; }
+fn orientation_horizontal() -> i32 { return 0 as i32; }
+fn orientation_vertical() -> i32 { return 1 as i32; }
 
 // Wire a click handler through a JVM-side adapter class. Java interfaces
 // cannot be implemented from native code, so the host app ships a tiny
@@ -12,7 +12,7 @@ pub fn orientation_vertical() -> i32 { return 1 as i32; }
 // its onClick forwards to a `native` method the C+ app exports. The
 // adapter class name is caller-provided because it lives in the app's own
 // package (e.g. `com/example/app/NativeClickListener`).
-pub fn set_on_click_raw(env: rt::Env, view: jni::jobject, adapter_class: *u8, token: i64) {
+fn set_on_click_raw(env: rt::Env, view: jni::jobject, adapter_class: *u8, token: i64) {
     let listener: jni::jobject = env.new_object_1(
         adapter_class,
         #str_ptr("(J)V\0"),
@@ -29,9 +29,9 @@ pub fn set_on_click_raw(env: rt::Env, view: jni::jobject, adapter_class: *u8, to
     return;
 }
 
-pub struct View {
-    pub env: rt::Env,
-    pub obj: jni::jobject,
+struct View {
+    env: rt::Env,
+    obj: jni::jobject,
 }
 
 impl View {
@@ -44,25 +44,25 @@ impl View {
         return;
     }
 
-    pub fn from_global(env: rt::Env, obj: jni::jobject) -> View {
+    fn from_global(env: rt::Env, obj: jni::jobject) -> View {
         return View { env: env, obj: obj };
     }
 
-    pub fn from_local(env: rt::Env, obj: jni::jobject) -> View {
+    fn from_local(env: rt::Env, obj: jni::jobject) -> View {
         return View { env: env, obj: env.retain_local_as_global(obj) };
     }
 
-    pub fn as_obj(this) -> jni::jobject {
+    fn as_obj(this) -> jni::jobject {
         return this.obj;
     }
 
-    pub fn into_raw(ref this) -> jni::jobject {
+    fn into_raw(ref this) -> jni::jobject {
         let p: jni::jobject = this.obj;
         this.obj = unsafe { 0 as jni::jobject };
         return p;
     }
 
-    pub fn set_visibility(this, visibility: i32) {
+    fn set_visibility(this, visibility: i32) {
         this.env.call_void_1(
             this.obj,
             #str_ptr("android/view/View\0"),
@@ -72,7 +72,7 @@ impl View {
         );
     }
 
-    pub fn set_enabled(this, flag: i8) {
+    fn set_enabled(this, flag: i8) {
         this.env.call_void_1(
             this.obj,
             #str_ptr("android/view/View\0"),
@@ -82,15 +82,15 @@ impl View {
         );
     }
 
-    pub fn set_on_click(this, adapter_class: *u8, token: i64) {
+    fn set_on_click(this, adapter_class: *u8, token: i64) {
         set_on_click_raw(this.env, this.obj, adapter_class, token);
         return;
     }
 }
 
-pub struct LinearLayout {
-    pub env: rt::Env,
-    pub obj: jni::jobject,
+struct LinearLayout {
+    env: rt::Env,
+    obj: jni::jobject,
 }
 
 impl LinearLayout {
@@ -103,7 +103,7 @@ impl LinearLayout {
         return;
     }
 
-    pub fn new(env: rt::Env, ctx: rt::Context) -> LinearLayout {
+    fn new(env: rt::Env, ctx: rt::Context) -> LinearLayout {
         let local: jni::jobject = env.new_object_1(
             #str_ptr("android/widget/LinearLayout\0"),
             #str_ptr("(Landroid/content/Context;)V\0"),
@@ -112,17 +112,17 @@ impl LinearLayout {
         return LinearLayout { env: env, obj: env.retain_local_as_global(local) };
     }
 
-    pub fn as_view_obj(this) -> jni::jobject {
+    fn as_view_obj(this) -> jni::jobject {
         return this.obj;
     }
 
-    pub fn into_raw(ref this) -> jni::jobject {
+    fn into_raw(ref this) -> jni::jobject {
         let p: jni::jobject = this.obj;
         this.obj = unsafe { 0 as jni::jobject };
         return p;
     }
 
-    pub fn set_orientation(this, orientation: i32) {
+    fn set_orientation(this, orientation: i32) {
         this.env.call_void_1(
             this.obj,
             #str_ptr("android/widget/LinearLayout\0"),
@@ -132,7 +132,7 @@ impl LinearLayout {
         );
     }
 
-    pub fn add_view(this, child: jni::jobject) {
+    fn add_view(this, child: jni::jobject) {
         this.env.call_void_1(
             this.obj,
             #str_ptr("android/view/ViewGroup\0"),

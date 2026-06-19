@@ -6,7 +6,7 @@
 // outside this file and would produce E0403 if `main.cplus` tried to call
 // it through `math::`.
 
-pub fn square(n: i32) -> i32 {
+fn square(n: i32) -> i32 {
     return n * n;
 }
 

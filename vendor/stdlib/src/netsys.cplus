@@ -9,24 +9,24 @@
 extern fn __error() -> *i32;
 
 // Current thread's errno value.
-pub fn errno() -> i32 {
+fn errno() -> i32 {
     let p: *i32 = unsafe { __error() };
     return unsafe { *p };
 }
 
 // O_NONBLOCK for fcntl(F_SETFL). macOS: 0x0004.
-pub fn o_nonblock() -> i32 { return 0x0004 as i32; }
+fn o_nonblock() -> i32 { return 0x0004 as i32; }
 
 // EAGAIN (== EWOULDBLOCK on macOS): 35.
-pub fn eagain() -> i32 { return 35 as i32; }
+fn eagain() -> i32 { return 35 as i32; }
 
 // setsockopt level / optname for SO_REUSEADDR. macOS: SOL_SOCKET=0xffff,
 // SO_REUSEADDR=0x4.
-pub fn sol_socket() -> i32 { return 0xffff as i32; }
-pub fn so_reuseaddr() -> i32 { return 0x4 as i32; }
+fn sol_socket() -> i32 { return 0xffff as i32; }
+fn so_reuseaddr() -> i32 { return 0x4 as i32; }
 
 // First two bytes of `sockaddr_in`. macOS lays it out as
 // `{ uint8_t sin_len; sa_family_t sin_family; ... }`, so byte0 = sin_len
 // (16 for sockaddr_in) and byte1 = AF_INET (2).
-pub fn sa_family_byte0() -> u8 { return 16 as u8; }
-pub fn sa_family_byte1() -> u8 { return 2 as u8; }
+fn sa_family_byte0() -> u8 { return 16 as u8; }
+fn sa_family_byte1() -> u8 { return 2 as u8; }

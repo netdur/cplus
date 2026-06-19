@@ -7,6 +7,6 @@
 extern fn esp_timer_get_time() -> i64;
 
 #[no_alloc]
-pub fn now_us() -> i64 {
+fn now_us() -> i64 {
     return unsafe { esp_timer_get_time() };
 }

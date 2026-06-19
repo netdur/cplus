@@ -31,7 +31,7 @@ import "stdlib/hash_map" as hash_map;
 import "./identity" as identity;
 
 // The result of an authorization check.
-pub enum Outcome {
+enum Outcome {
     Allowed,
     NotFound,       // no node with that id / invalid handle
     NotExposed,     // node exists but is not in the agent-visible tree (layer 1)
@@ -49,13 +49,13 @@ fn outcome_index(o: Outcome) -> i32 {
     };
 }
 
-pub fn outcome_eq(a: Outcome, b: Outcome) -> bool {
+fn outcome_eq(a: Outcome, b: Outcome) -> bool {
     return outcome_index(a) == outcome_index(b);
 }
 
 // Authorize a mutating/activating action (click, input). Requires the node to
 // exist, be exposed, and be within the affordance ceiling.
-pub fn authorize_action(reg: identity::Registry, node: usize) -> Outcome {
+fn authorize_action(reg: identity::Registry, node: usize) -> Outcome {
     if !reg.is_valid(node) {
         return Outcome::NotFound;
     }
@@ -71,7 +71,7 @@ pub fn authorize_action(reg: identity::Registry, node: usize) -> Outcome {
 // Authorize a read / navigation (get_text, scroll_to). Requires the node to
 // exist and be exposed; the ceiling does not apply (reading/scrolling-to an
 // observe-only node is fine — you just cannot act on it).
-pub fn authorize_read(reg: identity::Registry, node: usize) -> Outcome {
+fn authorize_read(reg: identity::Registry, node: usize) -> Outcome {
     if !reg.is_valid(node) {
         return Outcome::NotFound;
     }
@@ -85,17 +85,17 @@ pub fn authorize_read(reg: identity::Registry, node: usize) -> Outcome {
 // by the backend: `get_text` returns the current version, and `replace_range`
 // supplies the version it read so a racing edit is rejected (optimistic
 // concurrency) rather than silently clobbering.
-pub struct TextVersions {
+struct TextVersions {
     v: hash_map::HashMap[usize, u64],
 }
 
-pub fn new_text_versions() -> TextVersions {
+fn new_text_versions() -> TextVersions {
     return TextVersions { v: hash_map::new::[usize, u64]() };
 }
 
 impl TextVersions {
     // A node's current text version (0 until its first edit).
-    pub fn version_of(this, node: usize) -> u64 {
+    fn version_of(this, node: usize) -> u64 {
         return match this.v.get(node) {
             result::Result[u64, result::IoError]::Ok(x) => x,
             result::Result[u64, result::IoError]::Err(_) => 0 as u64,
@@ -104,7 +104,7 @@ impl TextVersions {
 
     // Bump after a committed write. The consumer calls this once the backend has
     // actually applied the edit.
-    pub fn bump(ref this, node: usize) {
+    fn bump(ref this, node: usize) {
         let cur: u64 = this.version_of(node);
         this.v.insert(node, cur +% (1 as u64));
         return;
@@ -115,7 +115,7 @@ impl TextVersions {
 // `base_version` must match the current version (else a concurrent change won
 // the race). On `Allowed` the consumer applies the edit, then calls
 // `versions.bump(node)`.
-pub fn authorize_text_write(reg: identity::Registry, versions: TextVersions, node: usize, base_version: u64) -> Outcome {
+fn authorize_text_write(reg: identity::Registry, versions: TextVersions, node: usize, base_version: u64) -> Outcome {
     let act: Outcome = authorize_action(reg, node);
     if !outcome_eq(act, Outcome::Allowed) {
         return act;

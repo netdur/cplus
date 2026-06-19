@@ -19,7 +19,7 @@ fn clock_monotonic() -> i32 { return 6 as i32; }
 
 // Current monotonic time in nanoseconds. Monotonic and cheap — safe to call
 // on a real-time hot path (it is a vDSO-style read, not a blocking syscall).
-pub fn now_monotonic_ns() -> u64 {
+fn now_monotonic_ns() -> u64 {
     var ts: [i64; 2] = [0i64; 2];
     let _r: i32 = unsafe { clock_gettime(clock_monotonic(), #addr_of(ts[0])) };
     let sec: u64 = ts[0] as u64;
@@ -30,7 +30,7 @@ pub fn now_monotonic_ns() -> u64 {
 // Nanoseconds between an earlier `start` and a later `end` (both from
 // `now_monotonic_ns`). Wrapping subtraction; the caller is responsible for
 // ordering (monotonic guarantees end >= start in practice).
-pub fn elapsed_ns(start: u64, end: u64) -> u64 {
+fn elapsed_ns(start: u64, end: u64) -> u64 {
     return end -% start;
 }
 

@@ -34,11 +34,11 @@ extern fn malloc(n: usize) -> *u8;
 extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
 extern fn free(p: *u8);
 
-pub struct TcpStream {
+struct TcpStream {
     fd: i32,
 }
 
-pub struct TcpListener {
+struct TcpListener {
     fd: i32,
 }
 
@@ -66,7 +66,7 @@ fn build_sockaddr(ip_dotted: str, port: u16) -> *u8 {
 
 // Connect to `ip:port` over TCP. `ip` is a dotted-quad string ("127.0.0.1");
 // DNS resolution is out of scope for v0.0.3.
-pub fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError] {
+fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError] {
     // AF_INET=2, SOCK_STREAM=1.
     let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
@@ -84,7 +84,7 @@ pub fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoEr
 
 // Bind a listener to 127.0.0.1:port and start listening. Sets SO_REUSEADDR
 // so quick test restarts don't hit EADDRINUSE.
-pub fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
+fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
     let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return result::io_err::[TcpListener](result::IoError::Other);
@@ -115,7 +115,7 @@ pub fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
 
 impl TcpStream {
     // Drain all remaining bytes from the peer (until EOF or error).
-    pub fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
+    fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
         var buf: vec::Vec[u8] = vec::new::[u8]();
         if this.fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
@@ -144,7 +144,7 @@ impl TcpStream {
     }
 
     // Write `data` to the peer. Loops on short writes.
-    pub fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+    fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[usize](result::IoError::InvalidInput);
         }
@@ -166,14 +166,14 @@ impl TcpStream {
 
     // Half-close the write side so the peer sees EOF. Pairs with a remote
     // `read_to_end` that would otherwise block forever waiting for more.
-    pub fn shutdown_write(this) {
+    fn shutdown_write(this) {
         if this.fd >= (0 as i32) {
             unsafe { shutdown(this.fd, 1 as i32); }
         }
         return;
     }
 
-    pub fn close(ref this) {
+    fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -203,29 +203,29 @@ impl TcpStream {
 
     // Mark the stream's fd O_NONBLOCK. Idempotent; safe to call
     // repeatedly. Returns 0 on success, -1 on fcntl error.
-    pub fn make_nonblocking(ref this) -> i32 {
+    fn make_nonblocking(ref this) -> i32 {
         return set_nonblocking(this.fd);
     }
 
     // Async read: same semantics as `read_fd_async(this.fd, buf, count)`.
-    pub async fn read_async(ref this, buf: *u8, count: usize) -> isize {
+    async fn read_async(ref this, buf: *u8, count: usize) -> isize {
         return await read_fd_async(this.fd, buf, count);
     }
 
     // Async best-effort write (may return < count).
-    pub async fn write_async(ref this, buf: *u8, count: usize) -> isize {
+    async fn write_async(ref this, buf: *u8, count: usize) -> isize {
         return await write_fd_async(this.fd, buf, count);
     }
 
     // Async full-buffer write — loops on short writes / EAGAIN.
-    pub async fn write_all_async(ref this, buf: *u8, count: usize) -> isize {
+    async fn write_all_async(ref this, buf: *u8, count: usize) -> isize {
         return await write_all_fd_async(this.fd, buf, count);
     }
 }
 
 impl TcpListener {
     // Block until a client connects, return the accepted stream.
-    pub fn accept(ref this) -> result::Result[TcpStream, result::IoError] {
+    fn accept(ref this) -> result::Result[TcpStream, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[TcpStream](result::IoError::InvalidInput);
         }
@@ -240,7 +240,7 @@ impl TcpListener {
         return result::io_ok::[TcpStream](TcpStream { fd: cfd });
     }
 
-    pub fn close(ref this) {
+    fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -257,13 +257,13 @@ impl TcpListener {
 
     // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
     // awaiter-notification fix made real `async fn` shapes safe here.
-    pub fn make_nonblocking(ref this) -> i32 {
+    fn make_nonblocking(ref this) -> i32 {
         return set_nonblocking(this.fd);
     }
 
     // Async accept: returns the accepted client fd on success (>= 0),
     // -1 on error.
-    pub async fn accept_async(ref this) -> i32 {
+    async fn accept_async(ref this) -> i32 {
         return await accept_fd_async(this.fd);
     }
 }
@@ -300,7 +300,7 @@ fn f_setfl() -> i32 { return 4 as i32; }
 
 // Set fd to non-blocking mode. Idempotent — safe to call repeatedly on the
 // same fd. Returns 0 on success, -1 on fcntl error.
-pub fn set_nonblocking(fd: i32) -> i32 {
+fn set_nonblocking(fd: i32) -> i32 {
     let flags: i32 = unsafe { fcntl(fd, f_getfl(), 0 as i32) };
     if flags < (0 as i32) {
         return 0 -% 1 as i32;
@@ -323,7 +323,7 @@ pub fn set_nonblocking(fd: i32) -> i32 {
 //
 // Suspends the calling coroutine via the reactor until data is available;
 // under `block_on`, other queued tasks make progress meanwhile.
-pub async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
+async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
         let n: isize = unsafe { read(fd, buf, count) };
         if n >= (0 as isize) {
@@ -342,7 +342,7 @@ pub async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
 //   > 0  — bytes written this call (may be < count; caller loops or uses
 //          `write_all_fd_async` for a full-write wrapper).
 //   < 0  — error (-1 generic).
-pub async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
+async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
         let n: isize = unsafe { write(fd, buf, count) };
         if n >= (0 as isize) {
@@ -359,7 +359,7 @@ pub async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
 
 // Write every byte in [buf, buf+count). Loops on short writes, awaiting
 // the reactor on EAGAIN. Returns 0 on full success, -1 on any error.
-pub async fn write_all_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
+async fn write_all_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     var written: usize = 0 as usize;
     while written < count {
         let remaining: usize = count -% written;
@@ -376,7 +376,7 @@ pub async fn write_all_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
 // Async accept on a listening socket. Returns:
 //   >= 0  — accepted client fd.
 //   <  0  — error.
-pub async fn accept_fd_async(listener_fd: i32) -> i32 {
+async fn accept_fd_async(listener_fd: i32) -> i32 {
     let null_ptr: *u8 = unsafe { 0 as *u8 };
     let null_len: *u32 = unsafe { 0 as *u32 };
     loop {

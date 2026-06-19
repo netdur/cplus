@@ -12,7 +12,7 @@ import "./runtime" as rt;
 //
 // Callbacks are closure-free — reach app state through a `static mut`, an
 // associated object, or a global.
-pub fn create_window_delegate(
+fn create_window_delegate(
     should_close_imp: fn(*u8, *u8, *u8) -> i8,
     will_close_imp: fn(*u8, *u8, *u8),
 ) -> *u8 {
@@ -38,12 +38,12 @@ pub fn create_window_delegate(
     return rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
 }
 
-pub struct Window {
-    pub opaque obj: *u8,
+struct Window {
+    opaque obj: *u8,
 }
 
 impl Window {
-    pub fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Window {
+    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Window {
         let nswindow_cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
         let window_alloc: *u8 = rt::msg_id(nswindow_cls, rt::sel(#str_ptr("alloc\0")));
         let window: *u8 = rt::msg_init_window(
@@ -57,7 +57,7 @@ impl Window {
         return Window { obj: window };
     }
 
-    pub fn set_title(this, title: *u8) {
+    fn set_title(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
@@ -66,66 +66,66 @@ impl Window {
     // `bridge::cplus_string_to_nsstring` on dynamic content); the
     // `set_title` variant above wraps a C-string literal via
     // `rt::ns_string` and is the right choice for `"Hi\0"`-shape args.
-    pub fn set_title_ns(this, title_ns: *u8) {
+    fn set_title_ns(this, title_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), title_ns);
     }
 
-    pub fn center(this) {
+    fn center(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("center\0")));
     }
 
-    pub fn content_view(this) -> *u8 {
+    fn content_view(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("contentView\0")));
     }
 
-    pub fn set_content_view(this, view: *u8) {
+    fn set_content_view(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContentView:\0")), view);
     }
 
-    pub fn make_key_and_order_front(this, sender: *u8) {
+    fn make_key_and_order_front(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
     }
 
-    pub fn order_front(this, sender: *u8) {
+    fn order_front(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("orderFront:\0")), sender);
     }
 
-    pub fn close(this) {
+    fn close(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("close\0")));
     }
 
-    pub fn set_background_color(this, color: *u8) {
+    fn set_background_color(this, color: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn set_toolbar(this, toolbar: *u8) {
+    fn set_toolbar(this, toolbar: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar);
     }
 
     // GAP 4 (v0.0.19): control how the toolbar integrates with the titlebar
     // (`setToolbarStyle:`, macOS 11+). `style` is an `NSWindowToolbarStyle`:
     // 0 automatic, 1 expanded, 2 preference, 3 unified, 4 unifiedCompact.
-    pub fn set_toolbar_style(this, style: i64) {
+    fn set_toolbar_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setToolbarStyle:\0")), style);
     }
 
-    pub fn set_min_size(this, size: rt::Size) {
+    fn set_min_size(this, size: rt::Size) {
         rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
     }
 
-    pub fn set_max_size(this, size: rt::Size) {
+    fn set_max_size(this, size: rt::Size) {
         rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
     }
 
-    pub fn set_titlebar_appears_transparent(this, flag: i8) {
+    fn set_titlebar_appears_transparent(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setTitlebarAppearsTransparent:\0")), flag);
     }
 
-    pub fn set_title_visibility(this, visibility: i64) {
+    fn set_title_visibility(this, visibility: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTitleVisibility:\0")), visibility);
     }
 }

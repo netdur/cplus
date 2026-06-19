@@ -33,7 +33,7 @@ import "stdlib/option" as option;
 import "stdlib/result" as result;
 
 // The developer's standing setting (a global preference, not per agent).
-pub enum Mode {
+enum Mode {
     AllowAll,
     DenyAll,
     Ask,
@@ -50,7 +50,7 @@ fn rule_path(rules_dir: str, agent_id: str) -> text::Text {
 // The remembered decision for `agent_id`, or None if the user has not chosen
 // one yet (no rule file). A rule file beginning with 'a' is Allow, anything
 // else is Reject.
-pub fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
+fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
     let path: text::Text = rule_path(rules_dir, agent_id);
     guard let result::Result[fs::File, result::IoError]::Ok(f) =
         fs::open_read(unsafe { path.as_str() }) else {
@@ -74,7 +74,7 @@ pub fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
 // Persist the user's choice for `agent_id` so it is honored without a prompt on
 // the next request (and the next run). Best-effort: a write failure leaves the
 // agent un-remembered (it will be asked again), which is the safe direction.
-pub fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
+fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
     let path: text::Text = rule_path(rules_dir, agent_id);
     let word: str = match d {
         auth::Decision::Allow => "allow",
@@ -100,7 +100,7 @@ pub fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
 //   1. a remembered rule wins (no prompt);
 //   2. else the standing Mode decides (AllowAll / DenyAll, no prompt);
 //   3. else (Ask) prompt the user, remember the answer, and honor it.
-pub fn decide(
+fn decide(
     rules_dir: str,
     mode: Mode,
     agent_id: str,

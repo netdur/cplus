@@ -14,15 +14,15 @@ import "./mtmd_raw" as mtmd_raw;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
-pub type ModelParams = raw::llama_model_params;
-pub type ContextParams = raw::llama_context_params;
-pub type Batch = raw::llama_batch;
-pub type MtmdContextParams = mtmd_raw::mtmd_context_params;
-pub type MtmdCaps = mtmd_raw::mtmd_caps;
-pub type MtmdInputText = mtmd_raw::mtmd_input_text;
-pub type MtmdDecoderPos = mtmd_raw::mtmd_decoder_pos;
+type ModelParams = raw::llama_model_params;
+type ContextParams = raw::llama_context_params;
+type Batch = raw::llama_batch;
+type MtmdContextParams = mtmd_raw::mtmd_context_params;
+type MtmdCaps = mtmd_raw::mtmd_caps;
+type MtmdInputText = mtmd_raw::mtmd_input_text;
+type MtmdDecoderPos = mtmd_raw::mtmd_decoder_pos;
 
-pub enum LlamaError {
+enum LlamaError {
     LoadFailed,
     ContextFailed,
     NullHandle,
@@ -33,28 +33,28 @@ pub enum LlamaError {
     OutputTooSmall,
 }
 
-pub struct LoadOptions {
-    pub n_ctx: u32,
-    pub n_gpu_layers: i32,
-    pub n_threads: i32,
+struct LoadOptions {
+    n_ctx: u32,
+    n_gpu_layers: i32,
+    n_threads: i32,
 }
 
-pub struct Session {
+struct Session {
     opaque model: *(),
     opaque ctx: *(),
     opaque vocab: *(),
     opaque sampler: *(),
 }
 
-pub struct MtmdContext {
+struct MtmdContext {
     opaque raw: *(),
 }
 
-pub struct Bitmap {
+struct Bitmap {
     opaque raw: *(),
 }
 
-pub struct InputChunks {
+struct InputChunks {
     opaque raw: *(),
 }
 
@@ -70,7 +70,7 @@ fn bool_i8(v: bool) -> i8 {
     return if v { 1 as i8 } else { 0 as i8 };
 }
 
-pub fn default_options() -> LoadOptions {
+fn default_options() -> LoadOptions {
     return LoadOptions {
         n_ctx: 4096 as u32,
         n_gpu_layers: -1,
@@ -78,25 +78,25 @@ pub fn default_options() -> LoadOptions {
     };
 }
 
-pub fn backend_init() {
+fn backend_init() {
     raw::llama_backend_init();
     return;
 }
 
-pub fn backend_free() {
+fn backend_free() {
     raw::llama_backend_free();
     return;
 }
 
-pub fn default_model_params() -> raw::llama_model_params {
+fn default_model_params() -> raw::llama_model_params {
     return raw::llama_model_default_params();
 }
 
-pub fn default_context_params() -> raw::llama_context_params {
+fn default_context_params() -> raw::llama_context_params {
     return raw::llama_context_default_params();
 }
 
-pub fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError] {
+fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError] {
     var mp: raw::llama_model_params = raw::llama_model_default_params();
     mp.n_gpu_layers = opts.n_gpu_layers;
 
@@ -135,14 +135,14 @@ pub fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError]
 }
 
 impl Session {
-    pub fn n_ctx(this) -> u32 {
+    fn n_ctx(this) -> u32 {
         if is_null(this.ctx) {
             return 0 as u32;
         }
         return raw::llama_n_ctx(this.ctx);
     }
 
-    pub fn model_size(this) -> u64 {
+    fn model_size(this) -> u64 {
         if is_null(this.model) {
             return 0 as u64;
         }
@@ -167,7 +167,7 @@ impl Session {
     }
 }
 
-pub fn tokenize_to(
+fn tokenize_to(
     session: Session,
     text: str,
     tokens: i32[],
@@ -196,7 +196,7 @@ pub fn tokenize_to(
     return result::Result[usize, LlamaError]::Ok(n as usize);
 }
 
-pub fn decode_tokens(session: Session, tokens: i32[]) -> result::Result[usize, LlamaError] {
+fn decode_tokens(session: Session, tokens: i32[]) -> result::Result[usize, LlamaError] {
     if is_null(session.ctx) {
         return result::Result[usize, LlamaError]::Err(LlamaError::NullHandle);
     }
@@ -212,7 +212,7 @@ pub fn decode_tokens(session: Session, tokens: i32[]) -> result::Result[usize, L
     return result::Result[usize, LlamaError]::Ok(n);
 }
 
-pub fn sample_greedy(session: Session) -> result::Result[i32, LlamaError] {
+fn sample_greedy(session: Session) -> result::Result[i32, LlamaError] {
     if is_null(session.ctx) || is_null(session.sampler) {
         return result::Result[i32, LlamaError]::Err(LlamaError::NullHandle);
     }
@@ -224,14 +224,14 @@ pub fn sample_greedy(session: Session) -> result::Result[i32, LlamaError] {
     return result::Result[i32, LlamaError]::Ok(token);
 }
 
-pub fn is_eog(session: Session, token: i32) -> bool {
+fn is_eog(session: Session, token: i32) -> bool {
     if is_null(session.vocab) {
         return true;
     }
     return raw::llama_vocab_is_eog(session.vocab, token);
 }
 
-pub fn token_to_piece_into(
+fn token_to_piece_into(
     session: Session,
     token: i32,
     buf: u8[],
@@ -273,7 +273,7 @@ fn copy_piece_to_out(
     return token_to_piece_into(session, token, slice, false);
 }
 
-pub fn generate_greedy_into(
+fn generate_greedy_into(
     session: Session,
     prompt: str,
     max_new_tokens: i32,
@@ -356,15 +356,15 @@ pub fn generate_greedy_into(
 
 // ---------------- Multimodal (mtmd C API) ---------------------------------
 
-pub fn mtmd_default_params() -> mtmd_raw::mtmd_context_params {
+fn mtmd_default_params() -> mtmd_raw::mtmd_context_params {
     return mtmd_raw::mtmd_context_params_default();
 }
 
-pub fn mtmd_caps_from_file(path: str) -> mtmd_raw::mtmd_caps {
+fn mtmd_caps_from_file(path: str) -> mtmd_raw::mtmd_caps {
     return mtmd_raw::mtmd_get_cap_from_file(unsafe { #str_ptr(path) as *i8 });
 }
 
-pub fn mtmd_init(
+fn mtmd_init(
     session: Session,
     mmproj_path: str,
     params: mtmd_raw::mtmd_context_params,
@@ -384,14 +384,14 @@ pub fn mtmd_init(
 }
 
 impl MtmdContext {
-    pub fn supports_vision(this) -> bool {
+    fn supports_vision(this) -> bool {
         if is_null(this.raw) {
             return false;
         }
         return mtmd_raw::mtmd_support_vision(this.raw);
     }
 
-    pub fn supports_audio(this) -> bool {
+    fn supports_audio(this) -> bool {
         if is_null(this.raw) {
             return false;
         }
@@ -407,7 +407,7 @@ impl MtmdContext {
     }
 }
 
-pub fn bitmap_rgb(width: u32, height: u32, rgb: u8[]) -> result::Result[Bitmap, LlamaError] {
+fn bitmap_rgb(width: u32, height: u32, rgb: u8[]) -> result::Result[Bitmap, LlamaError] {
     let raw_bitmap: *() = mtmd_raw::mtmd_bitmap_init(width, height, unsafe { #slice_ptr(rgb) });
     if is_null(raw_bitmap) {
         return result::Result[Bitmap, LlamaError]::Err(LlamaError::InvalidArgument);

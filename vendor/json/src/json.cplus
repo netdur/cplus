@@ -33,7 +33,7 @@ extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
 extern fn strtod(s: *u8, endp: **u8) -> f64;
 extern fn snprintf(s: *u8, n: usize, fmt: *u8, ...) -> i32;
 
-pub enum Value {
+enum Value {
     Null,
     Bool(bool),
     Number(f64),
@@ -42,60 +42,60 @@ pub enum Value {
     Object(vec::Vec[Member]),
 }
 
-pub struct Member {
-    pub key: text::Text,
-    pub value: Value,
+struct Member {
+    key: text::Text,
+    value: Value,
 }
 
-pub struct ParseError {
-    pub pos: usize,
+struct ParseError {
+    pos: usize,
 }
 
 // ---------------- Constructors / builders ---------------------------------
 
 impl Value {
-    pub fn null() -> Value { return Value::Null; }
-    pub fn bool_(b: bool) -> Value { return Value::Bool(b); }
-    pub fn number(n: f64) -> Value { return Value::Number(n); }
-    pub fn str_(s: str) -> Value { return Value::Str(s.to_text()); }
+    fn null() -> Value { return Value::Null; }
+    fn bool_(b: bool) -> Value { return Value::Bool(b); }
+    fn number(n: f64) -> Value { return Value::Number(n); }
+    fn str_(s: str) -> Value { return Value::Str(s.to_text()); }
 
     // Predicates.
-    pub fn is_null(this) -> bool {
+    fn is_null(this) -> bool {
         let yes: bool = match this {
             Value::Null => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_bool(this) -> bool {
+    fn is_bool(this) -> bool {
         let yes: bool = match this {
             Value::Bool(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_number(this) -> bool {
+    fn is_number(this) -> bool {
         let yes: bool = match this {
             Value::Number(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_string(this) -> bool {
+    fn is_string(this) -> bool {
         let yes: bool = match this {
             Value::Str(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_array(this) -> bool {
+    fn is_array(this) -> bool {
         let yes: bool = match this {
             Value::Array(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_object(this) -> bool {
+    fn is_object(this) -> bool {
         let yes: bool = match this {
             Value::Object(_) => true,
             _ => false,
@@ -104,11 +104,11 @@ impl Value {
     }
 }
 
-pub fn array_new() -> Value {
+fn array_new() -> Value {
     return Value::Array(vec::new::[Value]());
 }
 
-pub fn object_new() -> Value {
+fn object_new() -> Value {
     return Value::Object(vec::new::[Member]());
 }
 
@@ -514,7 +514,7 @@ fn parse_object(ref p: Parser) -> ValParse {
     return fail(p);
 }
 
-pub fn parse(s: str) -> result::Result[Value, ParseError] {
+fn parse(s: str) -> result::Result[Value, ParseError] {
     let p0: Parser = parser_new(s);
     let r: ValParse = parse_value(p0);
     let res: result::Result[Value, ParseError] = match r {
@@ -542,7 +542,7 @@ pub fn parse(s: str) -> result::Result[Value, ParseError] {
 // pointer, then pass `unsafe { *p }` / `unsafe { (*p).value }` to the `borrow`
 // params, which borrow without consuming — never copy a non-Copy element out of
 // storage.
-pub fn clone_value(v: Value) -> Value {
+fn clone_value(v: Value) -> Value {
     return match v {
         Value::Null => Value::Null,
         Value::Bool(b) => Value::Bool(b),
@@ -582,35 +582,35 @@ pub fn clone_value(v: Value) -> Value {
     };
 }
 
-pub fn as_bool(v: Value) -> bool {
+fn as_bool(v: Value) -> bool {
     return match v {
         Value::Bool(x) => x,
         _ => false,
     };
 }
 
-pub fn as_number(v: Value) -> f64 {
+fn as_number(v: Value) -> f64 {
     return match v {
         Value::Number(x) => x,
         _ => 0.0f64,
     };
 }
 
-pub fn as_str(v: Value) -> text::Text {
+fn as_str(v: Value) -> text::Text {
     return match v {
         Value::Str(x) => x.clone(),
         _ => "".to_text(),
     };
 }
 
-pub fn array_len(v: Value) -> usize {
+fn array_len(v: Value) -> usize {
     return match v {
         Value::Array(arr) => arr.len(),
         _ => 0 as usize,
     };
 }
 
-pub fn array_at(v: Value, i: usize) -> Value {
+fn array_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Array(arr) => match arr.at(i) {
             option::Option[*Value]::Some(p) => clone_value(unsafe { *p }),
@@ -620,14 +620,14 @@ pub fn array_at(v: Value, i: usize) -> Value {
     };
 }
 
-pub fn object_len(v: Value) -> usize {
+fn object_len(v: Value) -> usize {
     return match v {
         Value::Object(arr) => arr.len(),
         _ => 0 as usize,
     };
 }
 
-pub fn object_key_at(v: Value, i: usize) -> text::Text {
+fn object_key_at(v: Value, i: usize) -> text::Text {
     return match v {
         Value::Object(arr) => match arr.at(i) {
             option::Option[*Member]::Some(p) => unsafe { (*p).key.clone() },
@@ -637,7 +637,7 @@ pub fn object_key_at(v: Value, i: usize) -> text::Text {
     };
 }
 
-pub fn object_value_at(v: Value, i: usize) -> Value {
+fn object_value_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Object(arr) => match arr.at(i) {
             option::Option[*Member]::Some(p) => clone_value(unsafe { (*p).value }),
@@ -647,7 +647,7 @@ pub fn object_value_at(v: Value, i: usize) -> Value {
     };
 }
 
-pub fn object_get(v: Value, key: str) -> Value {
+fn object_get(v: Value, key: str) -> Value {
     return match v {
         Value::Object(arr) => {
             let n: usize = arr.len();
@@ -863,7 +863,7 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
 }
 
 impl Value {
-    pub fn to_text(this) -> text::Text {
+    fn to_text(this) -> text::Text {
         let b: Buf = buf_new();
         let final_buf: Buf = encode_value(b, this);
         return buf_to_string(final_buf);

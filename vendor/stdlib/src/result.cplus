@@ -1,11 +1,11 @@
 // stdlib/result.cplus
 
-pub enum Result[T, E] {
+enum Result[T, E] {
     Ok(T),
     Err(E),
 }
 
-pub enum IoError {
+enum IoError {
     NotFound,
     PermissionDenied,
     AlreadyExists,
@@ -25,19 +25,19 @@ pub enum IoError {
 // Generic constructors. T and E must be supplied via turbofish at the call
 // site (sema can't infer E from the arg alone when E doesn't appear in the
 // arg position).
-pub fn ok[T, E](take v: T) -> Result[T, E] {
+fn ok[T, E](take v: T) -> Result[T, E] {
     return Result[T, E]::Ok(v);
 }
 
-pub fn err[T, E](take e: E) -> Result[T, E] {
+fn err[T, E](take e: E) -> Result[T, E] {
     return Result[T, E]::Err(e);
 }
 
 // Convenience constructors for the common `Result[T, IoError]` shape.
-pub fn io_ok[T](take v: T) -> Result[T, IoError] {
+fn io_ok[T](take v: T) -> Result[T, IoError] {
     return Result[T, IoError]::Ok(v);
 }
 
-pub fn io_err[T](e: IoError) -> Result[T, IoError] {
+fn io_err[T](e: IoError) -> Result[T, IoError] {
     return Result[T, IoError]::Err(e);
 }

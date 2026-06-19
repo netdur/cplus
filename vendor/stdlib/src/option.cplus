@@ -9,7 +9,7 @@
 // Result's `Err` implies a fault path. Both shapes coexist — pick the
 // one that matches caller intent.
 
-pub enum Option[T] {
+enum Option[T] {
     Some(T),
     None,
 }
@@ -17,6 +17,6 @@ pub enum Option[T] {
 // Generic constructor for `Some` — symmetric with `Result::ok`. The
 // `None` variant is constructed directly as `Option[T]::None` with the
 // turbofish (sema can't infer T from a payload-less variant).
-pub fn some[T](take v: T) -> Option[T] {
+fn some[T](take v: T) -> Option[T] {
     return Option[T]::Some(v);
 }

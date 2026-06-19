@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
-pub struct SplitView {
-    pub obj: *u8,
+struct SplitView {
+    obj: *u8,
 }
 
 impl SplitView {
@@ -9,29 +9,29 @@ impl SplitView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> SplitView {
+    fn new(frame: rt::Rect) -> SplitView {
         return SplitView { obj: rt::alloc_init_with_frame(#str_ptr("NSSplitView\0"), frame) };
     }
 
-    pub fn add_arranged_subview(this, view: *u8) {
+    fn add_arranged_subview(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
-    pub fn set_vertical(this, flag: i8) {
+    fn set_vertical(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setVertical:\0")), flag);
     }
 
-    pub fn set_divider_style(this, style: i64) {
+    fn set_divider_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setDividerStyle:\0")), style);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
-pub struct TabView {
-    pub obj: *u8,
+struct TabView {
+    obj: *u8,
 }
 
 impl TabView {
@@ -39,25 +39,25 @@ impl TabView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> TabView {
+    fn new(frame: rt::Rect) -> TabView {
         return TabView { obj: rt::alloc_init_with_frame(#str_ptr("NSTabView\0"), frame) };
     }
 
-    pub fn add_tab_view_item(this, item: *u8) {
+    fn add_tab_view_item(this, item: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addTabViewItem:\0")), item);
     }
 
-    pub fn select_tab_view_item_at_index(this, index: i64) {
+    fn select_tab_view_item_at_index(this, index: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("selectTabViewItemAtIndex:\0")), index);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
-pub struct TabViewItem {
-    pub obj: *u8,
+struct TabViewItem {
+    obj: *u8,
 }
 
 impl TabViewItem {
@@ -65,15 +65,15 @@ impl TabViewItem {
         rt::release(this.obj);
     }
 
-    pub fn new(identifier: *u8) -> TabViewItem {
+    fn new(identifier: *u8) -> TabViewItem {
         return TabViewItem { obj: rt::alloc_init_with_identifier(#str_ptr("NSTabViewItem\0"), identifier) };
     }
 
-    pub fn set_label(this, label: *u8) {
+    fn set_label(this, label: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setLabel:\0")), rt::ns_string(label));
     }
 
-    pub fn set_view(this, view: *u8) {
+    fn set_view(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setView:\0")), view);
     }
 
@@ -82,13 +82,13 @@ impl TabViewItem {
     // just a view (or nothing); the controller variant insists on the
     // typed parent. See `appkit_vendor_package_smoke` for the failure
     // mode when this is skipped.
-    pub fn set_view_controller(this, view_controller: *u8) {
+    fn set_view_controller(this, view_controller: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setViewController:\0")), view_controller);
     }
 }
 
-pub struct VisualEffectView {
-    pub obj: *u8,
+struct VisualEffectView {
+    obj: *u8,
 }
 
 impl VisualEffectView {
@@ -96,25 +96,25 @@ impl VisualEffectView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> VisualEffectView {
+    fn new(frame: rt::Rect) -> VisualEffectView {
         return VisualEffectView { obj: rt::alloc_init_with_frame(#str_ptr("NSVisualEffectView\0"), frame) };
     }
 
-    pub fn set_material(this, material: i64) {
+    fn set_material(this, material: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setMaterial:\0")), material);
     }
 
-    pub fn set_blending_mode(this, mode: i64) {
+    fn set_blending_mode(this, mode: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBlendingMode:\0")), mode);
     }
 
-    pub fn set_state(this, state: i64) {
+    fn set_state(this, state: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setState:\0")), state);
     }
 }
 
-pub struct GridView {
-    pub obj: *u8,
+struct GridView {
+    obj: *u8,
 }
 
 impl GridView {
@@ -122,25 +122,25 @@ impl GridView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> GridView {
+    fn new(frame: rt::Rect) -> GridView {
         return GridView { obj: rt::alloc_init_with_frame(#str_ptr("NSGridView\0"), frame) };
     }
 
-    pub fn add_row_with_views(this, views: *u8) -> *u8 {
+    fn add_row_with_views(this, views: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addRowWithViews:\0")), views);
     }
 
-    pub fn set_row_spacing(this, spacing: f64) {
+    fn set_row_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setRowSpacing:\0")), spacing);
     }
 
-    pub fn set_column_spacing(this, spacing: f64) {
+    fn set_column_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setColumnSpacing:\0")), spacing);
     }
 }
 
-pub struct Browser {
-    pub obj: *u8,
+struct Browser {
+    obj: *u8,
 }
 
 impl Browser {
@@ -148,25 +148,25 @@ impl Browser {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Browser {
+    fn new(frame: rt::Rect) -> Browser {
         return Browser { obj: rt::alloc_init_with_frame(#str_ptr("NSBrowser\0"), frame) };
     }
 
-    pub fn reload_column(this, column: i64) {
+    fn reload_column(this, column: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("reloadColumn:\0")), column);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn set_target(this, target: *u8) {
+    fn set_target(this, target: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 }
 
-pub struct Matrix {
-    pub obj: *u8,
+struct Matrix {
+    obj: *u8,
 }
 
 impl Matrix {
@@ -174,21 +174,21 @@ impl Matrix {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Matrix {
+    fn new(frame: rt::Rect) -> Matrix {
         return Matrix { obj: rt::alloc_init_with_frame(#str_ptr("NSMatrix\0"), frame) };
     }
 
-    pub fn set_mode(this, mode: i64) {
+    fn set_mode(this, mode: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setMode:\0")), mode);
     }
 
-    pub fn select_cell_at_row_column(this, row: i64, column: i64) {
+    fn select_cell_at_row_column(this, row: i64, column: i64) {
         rt::msg_void_i64_i64(this.obj, rt::sel(#str_ptr("selectCellAtRow:column:\0")), row, column);
     }
 }
 
-pub struct ClipView {
-    pub obj: *u8,
+struct ClipView {
+    obj: *u8,
 }
 
 impl ClipView {
@@ -196,17 +196,17 @@ impl ClipView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> ClipView {
+    fn new(frame: rt::Rect) -> ClipView {
         return ClipView { obj: rt::alloc_init_with_frame(#str_ptr("NSClipView\0"), frame) };
     }
 
-    pub fn set_document_view(this, view: *u8) {
+    fn set_document_view(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDocumentView:\0")), view);
     }
 }
 
-pub struct RulerView {
-    pub obj: *u8,
+struct RulerView {
+    obj: *u8,
 }
 
 impl RulerView {
@@ -214,17 +214,17 @@ impl RulerView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> RulerView {
+    fn new(frame: rt::Rect) -> RulerView {
         return RulerView { obj: rt::alloc_init_with_frame(#str_ptr("NSRulerView\0"), frame) };
     }
 
-    pub fn set_orientation(this, orientation: i64) {
+    fn set_orientation(this, orientation: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setOrientation:\0")), orientation);
     }
 }
 
-pub struct Popover {
-    pub obj: *u8,
+struct Popover {
+    obj: *u8,
 }
 
 impl Popover {
@@ -232,19 +232,19 @@ impl Popover {
         rt::release(this.obj);
     }
 
-    pub fn new() -> Popover {
+    fn new() -> Popover {
         return Popover { obj: rt::alloc_init(#str_ptr("NSPopover\0")) };
     }
 
-    pub fn set_content_view_controller(this, controller: *u8) {
+    fn set_content_view_controller(this, controller: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContentViewController:\0")), controller);
     }
 
-    pub fn set_behavior(this, behavior: i64) {
+    fn set_behavior(this, behavior: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBehavior:\0")), behavior);
     }
 
-    pub fn close(this) {
+    fn close(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("close\0")));
     }
 }

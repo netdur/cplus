@@ -43,7 +43,7 @@ async fn step_three() -> i64 {
     return y +% (300 as i64);
 }
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     let f: future::Future[i64] = step_three();
     let total: i64 = executor::block_on::[i64](f);
     // 100 + 200 + 300 = 600

@@ -26,7 +26,7 @@ import "./reactor" as reactor;
 // Drive a `Future[T]` to completion and return its produced value.
 // Blocks the calling thread (no other tasks run on it) until the
 // future resolves. Drops the coroutine frame after extracting T.
-pub fn block_on[T](f: future::Future[T]) -> T {
+fn block_on[T](f: future::Future[T]) -> T {
     return unsafe { #block_on::[T](f) };
 }
 
@@ -35,7 +35,7 @@ pub fn block_on[T](f: future::Future[T]) -> T {
 // reactor's pending queue and suspends. On the next block_on
 // iteration, the drain step resumes us; cooperative-multitasking
 // primitive for "give other tasks a turn."
-pub async fn yield_now() {
+async fn yield_now() {
     unsafe { #reactor_yield_now(); }
     return;
 }
@@ -47,7 +47,7 @@ pub async fn yield_now() {
 //
 // `T` must be Send for forward compatibility, even though v0.0.4's
 // Send is permissive (every type satisfies it).
-pub fn spawn_local[T: Send](take f: future::Future[T]) {
+fn spawn_local[T: Send](take f: future::Future[T]) {
     unsafe { #reactor_spawn_local(f); }
     return;
 }

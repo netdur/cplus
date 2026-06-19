@@ -4,12 +4,12 @@ import "./runtime" as rt;
 import "./view" as view;
 import "./convert" as convert;
 
-pub struct ViewController {
-    pub opaque obj: *u8,
+struct ViewController {
+    opaque obj: *u8,
 }
 
 impl ViewController {
-    pub fn new() -> ViewController {
+    fn new() -> ViewController {
         let cls: *u8 = rt::get_class(#str_ptr("UIViewController\0"));
         let vc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
         return ViewController { obj: vc };
@@ -19,39 +19,39 @@ impl ViewController {
         rt::release(this.obj);
     }
 
-    pub fn into_raw(ref this) -> *u8 {
+    fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
     }
 
-    pub fn from_raw(obj: *u8) -> ViewController {
+    fn from_raw(obj: *u8) -> ViewController {
         return ViewController { obj: obj };
     }
 
-    pub fn view(this) -> view::View {
+    fn view(this) -> view::View {
         let v: *u8 = rt::msg_id(this.obj, rt::sel(#str_ptr("view\0")));
         return view::View { obj: v };
     }
 
-    pub fn set_view(this, v: *u8) {
+    fn set_view(this, v: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setView:\0")), v);
     }
 
-    pub fn set_title(this, title: str) {
+    fn set_title(this, title: str) {
         let ns: *u8 = convert::cplus_str_to_nsstring(title);
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), ns);
     }
 
-    pub fn add_child(this, child: *u8) {
+    fn add_child(this, child: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addChildViewController:\0")), child);
     }
 
-    pub fn did_move_to_parent(this, parent: *u8) {
+    fn did_move_to_parent(this, parent: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("didMoveToParentViewController:\0")), parent);
     }
 
-    pub fn present(this, child: *u8, animated: i8) {
+    fn present(this, child: *u8, animated: i8) {
         rt::msg_void_id_i8_id(
             this.obj,
             rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
@@ -61,7 +61,7 @@ impl ViewController {
         );
     }
 
-    pub fn dismiss(this, animated: i8) {
+    fn dismiss(this, animated: i8) {
         rt::msg_void_i8_id(
             this.obj,
             rt::sel(#str_ptr("dismissViewControllerAnimated:completion:\0")),
@@ -71,12 +71,12 @@ impl ViewController {
     }
 }
 
-pub struct NavigationController {
-    pub obj: *u8,
+struct NavigationController {
+    obj: *u8,
 }
 
 impl NavigationController {
-    pub fn new(root: *u8) -> NavigationController {
+    fn new(root: *u8) -> NavigationController {
         let cls: *u8 = rt::get_class(#str_ptr("UINavigationController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let nav: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithRootViewController:\0")), root);
@@ -87,25 +87,25 @@ impl NavigationController {
         rt::release(this.obj);
     }
 
-    pub fn push(this, vc: *u8, animated: i8) {
+    fn push(this, vc: *u8, animated: i8) {
         rt::msg_void_id_i8(this.obj, rt::sel(#str_ptr("pushViewController:animated:\0")), vc, animated);
     }
 
-    pub fn pop(this, animated: i8) -> *u8 {
+    fn pop(this, animated: i8) -> *u8 {
         return rt::msg_id_i8(this.obj, rt::sel(#str_ptr("popViewControllerAnimated:\0")), animated);
     }
 
-    pub fn navigation_bar(this) -> *u8 {
+    fn navigation_bar(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("navigationBar\0")));
     }
 }
 
-pub struct TabBarController {
-    pub obj: *u8,
+struct TabBarController {
+    obj: *u8,
 }
 
 impl TabBarController {
-    pub fn new() -> TabBarController {
+    fn new() -> TabBarController {
         return TabBarController { obj: rt::new_object(#str_ptr("UITabBarController\0")) };
     }
 
@@ -113,21 +113,21 @@ impl TabBarController {
         rt::release(this.obj);
     }
 
-    pub fn set_view_controllers(this, controllers: *u8) {
+    fn set_view_controllers(this, controllers: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setViewControllers:\0")), controllers);
     }
 
-    pub fn tab_bar(this) -> *u8 {
+    fn tab_bar(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("tabBar\0")));
     }
 }
 
-pub struct SplitViewController {
-    pub obj: *u8,
+struct SplitViewController {
+    obj: *u8,
 }
 
 impl SplitViewController {
-    pub fn new() -> SplitViewController {
+    fn new() -> SplitViewController {
         return SplitViewController { obj: rt::new_object(#str_ptr("UISplitViewController\0")) };
     }
 
@@ -135,17 +135,17 @@ impl SplitViewController {
         rt::release(this.obj);
     }
 
-    pub fn set_view_controllers(this, controllers: *u8) {
+    fn set_view_controllers(this, controllers: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setViewControllers:\0")), controllers);
     }
 }
 
-pub struct PageViewController {
-    pub obj: *u8,
+struct PageViewController {
+    obj: *u8,
 }
 
 impl PageViewController {
-    pub fn new() -> PageViewController {
+    fn new() -> PageViewController {
         return PageViewController { obj: rt::new_object(#str_ptr("UIPageViewController\0")) };
     }
 

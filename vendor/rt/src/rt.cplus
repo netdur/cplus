@@ -30,44 +30,44 @@ import "stdlib/option" as option;
 // build/test graph includes it (and its `#[test]` functions).
 import "./pool" as pool;
 
-pub struct SpscRingU64 {
-    pub buf: [u64; 1024],
+struct SpscRingU64 {
+    buf: [u64; 1024],
     // Consumer index — only `pop` advances it. Read by `push` to detect full.
-    pub head: u64,
+    head: u64,
     // Producer index — only `push` advances it. Read by `pop` to detect empty.
-    pub tail: u64,
+    tail: u64,
 }
 
 impl SpscRingU64 {
     // Construct an empty ring. The `[0u64; 1024]` fill is a stack/static
     // memset — no heap allocation — so this is itself `#[no_alloc]`.
     #[no_alloc] #[no_block]
-    pub fn new() -> SpscRingU64 {
+    fn new() -> SpscRingU64 {
         return SpscRingU64 { buf: [0u64; 1024], head: 0 as u64, tail: 0 as u64 };
     }
 
-    pub fn capacity(this) -> usize { return 1024 as usize; }
+    fn capacity(this) -> usize { return 1024 as usize; }
 
     // Approximate occupancy. Exact when observed by one of the two
     // participants; a snapshot otherwise. Acquire loads so a caller that
     // also reads published slots sees a consistent view.
     #[no_alloc] #[no_block]
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         let head: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
         let tail: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
         return (tail -% head) as usize;
     }
 
     #[no_alloc] #[no_block]
-    pub fn is_empty(this) -> bool { return this.len() == (0 as usize); }
+    fn is_empty(this) -> bool { return this.len() == (0 as usize); }
 
     #[no_alloc] #[no_block]
-    pub fn is_full(this) -> bool { return this.len() >= (1024 as usize); }
+    fn is_full(this) -> bool { return this.len() >= (1024 as usize); }
 
     // Producer side. Returns `false` (without blocking) when the ring is
     // full; the caller decides whether to drop, overwrite, or retry later.
     #[no_alloc] #[no_block]
-    pub fn push(ref this, v: u64) -> bool {
+    fn push(ref this, v: u64) -> bool {
         // Acquire on `head` so a slot freed by the consumer is visible.
         let head: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
         // Relaxed on `tail` — this thread is its sole writer.
@@ -85,7 +85,7 @@ impl SpscRingU64 {
     // Consumer side. Returns `None` (without blocking) when the ring is
     // empty.
     #[no_alloc] #[no_block]
-    pub fn pop(ref this) -> option::Option[u64] {
+    fn pop(ref this) -> option::Option[u64] {
         // Acquire on `tail` so the producer's slot write is visible.
         let tail: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
         // Relaxed on `head` — this thread is its sole writer.

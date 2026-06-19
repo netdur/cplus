@@ -3,7 +3,7 @@
 import "./runtime" as rt;
 import "./convert" as convert;
 
-pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
+fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
     let existing: *u8 = rt::get_class(#str_ptr("CUIKitCustomView\0"));
     var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
@@ -22,211 +22,211 @@ pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> 
     return View { obj: v };
 }
 
-pub struct View {
-    pub opaque obj: *u8,
+struct View {
+    opaque obj: *u8,
 }
 
 impl View {
-    pub fn new(frame: rt::Rect) -> View {
+    fn new(frame: rt::Rect) -> View {
         return View { obj: rt::alloc_init_with_frame(#str_ptr("UIView\0"), frame) };
     }
 
-    pub fn from_raw(obj: *u8) -> View {
+    fn from_raw(obj: *u8) -> View {
         return View { obj: obj };
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 
-    pub fn add_subview(this, child: *u8) {
+    fn add_subview(this, child: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addSubview:\0")), child);
     }
 
-    pub fn remove_from_superview(this) {
+    fn remove_from_superview(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("removeFromSuperview\0")));
     }
 
-    pub fn set_background_color(this, color: Color) {
+    fn set_background_color(this, color: Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
     }
 
-    pub fn frame(this) -> rt::Rect {
+    fn frame(this) -> rt::Rect {
         return rt::msg_rect(this.obj, rt::sel(#str_ptr("frame\0")));
     }
 
-    pub fn set_frame(this, frame: rt::Rect) {
+    fn set_frame(this, frame: rt::Rect) {
         rt::msg_void_rect(this.obj, rt::sel(#str_ptr("setFrame:\0")), frame);
     }
 
-    pub fn bounds(this) -> rt::Rect {
+    fn bounds(this) -> rt::Rect {
         return rt::msg_rect(this.obj, rt::sel(#str_ptr("bounds\0")));
     }
 
-    pub fn set_bounds(this, bounds: rt::Rect) {
+    fn set_bounds(this, bounds: rt::Rect) {
         rt::msg_void_rect(this.obj, rt::sel(#str_ptr("setBounds:\0")), bounds);
     }
 
-    pub fn set_hidden(this, flag: i8) {
+    fn set_hidden(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setHidden:\0")), flag);
     }
 
-    pub fn is_hidden(this) -> i8 {
+    fn is_hidden(this) -> i8 {
         return rt::msg_i8(this.obj, rt::sel(#str_ptr("isHidden\0")));
     }
 
-    pub fn set_alpha(this, alpha: f64) {
+    fn set_alpha(this, alpha: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setAlpha:\0")), alpha);
     }
 
-    pub fn set_user_interaction_enabled(this, flag: i8) {
+    fn set_user_interaction_enabled(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setUserInteractionEnabled:\0")), flag);
     }
 
-    pub fn set_content_mode(this, mode: i64) {
+    fn set_content_mode(this, mode: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
     }
 
-    pub fn set_needs_display(this) {
+    fn set_needs_display(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("setNeedsDisplay\0")));
     }
 
-    pub fn layout_if_needed(this) {
+    fn layout_if_needed(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("layoutIfNeeded\0")));
     }
 
-    pub fn layer(this) -> *u8 {
+    fn layer(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("layer\0")));
     }
 
-    pub fn safe_area_layout_guide(this) -> *u8 {
+    fn safe_area_layout_guide(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("safeAreaLayoutGuide\0")));
     }
 }
 
-pub struct Label {
-    pub opaque obj: *u8,
+struct Label {
+    opaque obj: *u8,
 }
 
 // NSTextAlignment values (UIKit's NSTextAlignmentCenter is 1 on iOS).
-pub fn text_alignment_left() -> i64 { return 0; }
-pub fn text_alignment_center() -> i64 { return 1; }
-pub fn text_alignment_right() -> i64 { return 2; }
+fn text_alignment_left() -> i64 { return 0; }
+fn text_alignment_center() -> i64 { return 1; }
+fn text_alignment_right() -> i64 { return 2; }
 
 impl Label {
-    pub fn new(frame: rt::Rect) -> Label {
+    fn new(frame: rt::Rect) -> Label {
         let cls: *u8 = rt::get_class(#str_ptr("UILabel\0"));
         let alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let label: *u8 = rt::msg_id_rect(alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return Label { obj: label };
     }
 
-    pub fn set_text(this, s: str) {
+    fn set_text(this, s: str) {
         let ns: *u8 = convert::cplus_str_to_nsstring(s);
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), ns);
     }
 
-    pub fn set_text_alignment(this, alignment: i64) {
+    fn set_text_alignment(this, alignment: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
     }
 
-    pub fn set_text_color(this, color: Color) {
+    fn set_text_color(this, color: Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
-    pub fn set_font(this, font: *u8) {
+    fn set_font(this, font: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_number_of_lines(this, lines: i64) {
+    fn set_number_of_lines(this, lines: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setNumberOfLines:\0")), lines);
     }
 
-    pub fn set_line_break_mode(this, mode: i64) {
+    fn set_line_break_mode(this, mode: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setLineBreakMode:\0")), mode);
     }
 
-    pub fn set_background_color(this, color: Color) {
+    fn set_background_color(this, color: Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct Color {
-    pub opaque obj: *u8,
+struct Color {
+    opaque obj: *u8,
 }
 
 impl Color {
-    pub fn white() -> Color {
+    fn white() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("whiteColor\0"))) };
     }
 
-    pub fn black() -> Color {
+    fn black() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("blackColor\0"))) };
     }
 
-    pub fn clear() -> Color {
+    fn clear() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("clearColor\0"))) };
     }
 
-    pub fn red() -> Color {
+    fn red() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("redColor\0"))) };
     }
 
-    pub fn green() -> Color {
+    fn green() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("greenColor\0"))) };
     }
 
-    pub fn blue() -> Color {
+    fn blue() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("blueColor\0"))) };
     }
 
-    pub fn system_blue() -> Color {
+    fn system_blue() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("systemBlueColor\0"))) };
     }
 
-    pub fn label() -> Color {
+    fn label() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("labelColor\0"))) };
     }
 
-    pub fn secondary_label() -> Color {
+    fn secondary_label() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("secondaryLabelColor\0"))) };
     }
 
-    pub fn system_background() -> Color {
+    fn system_background() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("systemBackgroundColor\0"))) };
     }
 
-    pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
+    fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         let selector: *u8 = rt::sel(#str_ptr("colorWithRed:green:blue:alpha:\0"));
         return Color { obj: rt::msg_id_rgba(cls, selector, r, g, b, a) };
     }
 
-    pub fn cg_color(this) -> *u8 {
+    fn cg_color(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("CGColor\0")));
     }
 }
 
-pub struct StackView {
-    pub obj: *u8,
+struct StackView {
+    obj: *u8,
 }
 
 impl StackView {
-    pub fn new(frame: rt::Rect) -> StackView {
+    fn new(frame: rt::Rect) -> StackView {
         return StackView { obj: rt::alloc_init_with_frame(#str_ptr("UIStackView\0"), frame) };
     }
 
@@ -234,41 +234,41 @@ impl StackView {
         rt::release(this.obj);
     }
 
-    pub fn add_view(this, view: *u8) {
+    fn add_view(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
-    pub fn remove_view(this, view: *u8) {
+    fn remove_view(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
     }
 
-    pub fn set_axis(this, axis: i64) {
+    fn set_axis(this, axis: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setAxis:\0")), axis);
     }
 
-    pub fn set_spacing(this, spacing: f64) {
+    fn set_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setSpacing:\0")), spacing);
     }
 
-    pub fn set_alignment(this, alignment: i64) {
+    fn set_alignment(this, alignment: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setAlignment:\0")), alignment);
     }
 
-    pub fn set_distribution(this, distribution: i64) {
+    fn set_distribution(this, distribution: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setDistribution:\0")), distribution);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct ScrollView {
-    pub obj: *u8,
+struct ScrollView {
+    obj: *u8,
 }
 
 impl ScrollView {
-    pub fn new(frame: rt::Rect) -> ScrollView {
+    fn new(frame: rt::Rect) -> ScrollView {
         return ScrollView { obj: rt::alloc_init_with_frame(#str_ptr("UIScrollView\0"), frame) };
     }
 
@@ -276,36 +276,36 @@ impl ScrollView {
         rt::release(this.obj);
     }
 
-    pub fn add_subview(this, view: *u8) {
+    fn add_subview(this, view: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addSubview:\0")), view);
     }
 
-    pub fn set_content_size(this, size: rt::Size) {
+    fn set_content_size(this, size: rt::Size) {
         rt::msg_void_size(this.obj, rt::sel(#str_ptr("setContentSize:\0")), size);
     }
 
-    pub fn set_content_offset(this, point: rt::Point) {
+    fn set_content_offset(this, point: rt::Point) {
         rt::msg_void_point(this.obj, rt::sel(#str_ptr("setContentOffset:\0")), point);
     }
 
-    pub fn set_content_inset(this, top: f64, left: f64, bottom: f64, right: f64) {
+    fn set_content_inset(this, top: f64, left: f64, bottom: f64, right: f64) {
         let insets: rt::EdgeInsets = rt::EdgeInsets { top: top, left: left, bottom: bottom, right: right };
         rt::msg_void_edge_insets(this.obj, rt::sel(#str_ptr("setContentInset:\0")), insets);
     }
 
-    pub fn set_scroll_enabled(this, flag: i8) {
+    fn set_scroll_enabled(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setScrollEnabled:\0")), flag);
     }
 
-    pub fn set_shows_vertical_scroll_indicator(this, flag: i8) {
+    fn set_shows_vertical_scroll_indicator(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setShowsVerticalScrollIndicator:\0")), flag);
     }
 
-    pub fn set_shows_horizontal_scroll_indicator(this, flag: i8) {
+    fn set_shows_horizontal_scroll_indicator(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setShowsHorizontalScrollIndicator:\0")), flag);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }

@@ -14,7 +14,7 @@ extern fn munlock(addr: *u8, len: usize) -> i32;
 
 // Wire `[addr, addr+len)` into RAM. `Ok(0)` on success; `Err(-1)` on failure
 // (libc sets `errno`; a richer error is a future refinement).
-pub fn lock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
+fn lock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
     let rc: i32 = unsafe { mlock(addr, len) };
     if rc == (0 as i32) {
         return result::Result[i32, i32]::Ok(0 as i32);
@@ -23,7 +23,7 @@ pub fn lock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
 }
 
 // Release a previously locked range.
-pub fn unlock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
+fn unlock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
     let rc: i32 = unsafe { munlock(addr, len) };
     if rc == (0 as i32) {
         return result::Result[i32, i32]::Ok(0 as i32);

@@ -9,8 +9,8 @@ import "./runtime" as rt;
 // `controls::TextField::new_wrapping_label` + `View::add_subview` give you the
 // overlay; the delegate wiring is app-specific. (Provided as guidance rather
 // than a binding because there is no underlying AppKit API to wrap.)
-pub struct TextView {
-    pub obj: *u8,
+struct TextView {
+    obj: *u8,
 }
 
 impl TextView {
@@ -18,55 +18,55 @@ impl TextView {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> TextView {
+    fn new(frame: rt::Rect) -> TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("NSTextView\0"), frame) };
     }
 
-    pub fn set_string(this, val: *u8) {
+    fn set_string(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setString:\0")), rt::ns_string(val));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant. See window.cplus
     // for the rationale.
-    pub fn set_string_ns(this, val_ns: *u8) {
+    fn set_string_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setString:\0")), val_ns);
     }
 
-    pub fn string(this) -> *u8 {
+    fn string(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("string\0")));
     }
 
-    pub fn set_editable(this, flag: i8) {
+    fn set_editable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEditable:\0")), flag);
     }
 
-    pub fn set_selectable(this, flag: i8) {
+    fn set_selectable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSelectable:\0")), flag);
     }
 
-    pub fn set_rich_text(this, flag: i8) {
+    fn set_rich_text(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setRichText:\0")), flag);
     }
 
-    pub fn set_font(this, font: *u8) {
+    fn set_font(this, font: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_text_color(this, color: *u8) {
+    fn set_text_color(this, color: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn set_draws_background(this, flag: i8) {
+    fn set_draws_background(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setDrawsBackground:\0")), flag);
     }
 }
 
-pub struct SecureTextField {
-    pub obj: *u8,
+struct SecureTextField {
+    obj: *u8,
 }
 
 impl SecureTextField {
@@ -74,34 +74,34 @@ impl SecureTextField {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> SecureTextField {
+    fn new(frame: rt::Rect) -> SecureTextField {
         return SecureTextField { obj: rt::alloc_init_with_frame(#str_ptr("NSSecureTextField\0"), frame) };
     }
 
-    pub fn set_string_value(this, val: *u8) {
+    fn set_string_value(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(val));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_string_value_ns(this, val_ns: *u8) {
+    fn set_string_value_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), val_ns);
     }
 
-    pub fn string_value(this) -> *u8 {
+    fn string_value(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("stringValue\0")));
     }
 
-    pub fn set_placeholder_string(this, val: *u8) {
+    fn set_placeholder_string(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), rt::ns_string(val));
     }
 
-    pub fn set_placeholder_string_ns(this, val_ns: *u8) {
+    fn set_placeholder_string_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), val_ns);
     }
 }
 
-pub struct SearchField {
-    pub obj: *u8,
+struct SearchField {
+    obj: *u8,
 }
 
 impl SearchField {
@@ -109,42 +109,42 @@ impl SearchField {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> SearchField {
+    fn new(frame: rt::Rect) -> SearchField {
         return SearchField { obj: rt::alloc_init_with_frame(#str_ptr("NSSearchField\0"), frame) };
     }
 
-    pub fn set_string_value(this, val: *u8) {
+    fn set_string_value(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(val));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_string_value_ns(this, val_ns: *u8) {
+    fn set_string_value_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), val_ns);
     }
 
-    pub fn string_value(this) -> *u8 {
+    fn string_value(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("stringValue\0")));
     }
 
-    pub fn set_placeholder_string(this, val: *u8) {
+    fn set_placeholder_string(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), rt::ns_string(val));
     }
 
-    pub fn set_placeholder_string_ns(this, val_ns: *u8) {
+    fn set_placeholder_string_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), val_ns);
     }
 
-    pub fn set_recent_searches(this, searches: *u8) {
+    fn set_recent_searches(this, searches: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setRecentSearches:\0")), searches);
     }
 
-    pub fn set_on_search(this, cb: fn(*u8)) {
+    fn set_on_search(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct TokenField {
-    pub obj: *u8,
+struct TokenField {
+    obj: *u8,
 }
 
 impl TokenField {
@@ -152,30 +152,30 @@ impl TokenField {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> TokenField {
+    fn new(frame: rt::Rect) -> TokenField {
         return TokenField { obj: rt::alloc_init_with_frame(#str_ptr("NSTokenField\0"), frame) };
     }
 
-    pub fn set_string_value(this, val: *u8) {
+    fn set_string_value(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(val));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_string_value_ns(this, val_ns: *u8) {
+    fn set_string_value_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), val_ns);
     }
 
-    pub fn string_value(this) -> *u8 {
+    fn string_value(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("stringValue\0")));
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
-pub struct ComboBox {
-    pub obj: *u8,
+struct ComboBox {
+    obj: *u8,
 }
 
 impl ComboBox {
@@ -183,38 +183,38 @@ impl ComboBox {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> ComboBox {
+    fn new(frame: rt::Rect) -> ComboBox {
         return ComboBox { obj: rt::alloc_init_with_frame(#str_ptr("NSComboBox\0"), frame) };
     }
 
-    pub fn add_item(this, item: *u8) {
+    fn add_item(this, item: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addItemWithObjectValue:\0")), rt::ns_string(item));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn add_item_ns(this, item_ns: *u8) {
+    fn add_item_ns(this, item_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addItemWithObjectValue:\0")), item_ns);
     }
 
-    pub fn remove_all_items(this) {
+    fn remove_all_items(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    pub fn select_item_at_index(this, index: i64) {
+    fn select_item_at_index(this, index: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("selectItemAtIndex:\0")), index);
     }
 
-    pub fn index_of_selected_item(this) -> i64 {
+    fn index_of_selected_item(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("indexOfSelectedItem\0")));
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
-pub struct Form {
-    pub obj: *u8,
+struct Form {
+    obj: *u8,
 }
 
 impl Form {
@@ -222,20 +222,20 @@ impl Form {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Form {
+    fn new(frame: rt::Rect) -> Form {
         return Form { obj: rt::alloc_init_with_frame(#str_ptr("NSForm\0"), frame) };
     }
 
-    pub fn add_entry(this, title: *u8) -> *u8 {
+    fn add_entry(this, title: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addEntry:\0")), rt::ns_string(title));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn add_entry_ns(this, title_ns: *u8) -> *u8 {
+    fn add_entry_ns(this, title_ns: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addEntry:\0")), title_ns);
     }
 
-    pub fn set_interline_spacing(this, spacing: f64) {
+    fn set_interline_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setInterlineSpacing:\0")), spacing);
     }
 }

@@ -21,7 +21,7 @@ import "./reactor" as reactor;
 // raw access to the enclosing coroutine handle (`%.coro.hdl`). The
 // stdlib's job here is just to give it a friendly `async fn` face.
 
-pub async fn sleep(ms: u64) {
+async fn sleep(ms: u64) {
     unsafe { #reactor_wait_timer(ms); }
     return;
 }

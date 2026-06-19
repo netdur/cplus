@@ -8,17 +8,17 @@ import "./buffer" as buffer;
 import "./runtime" as runtime;
 import "./mps" as mps;
 
-pub type Device = device::Device;
-pub type CommandQueue = queue::CommandQueue;
-pub type CommandBuffer = queue::CommandBuffer;
-pub type ComputeCommandEncoder = queue::ComputeCommandEncoder;
-pub type Library = pipeline::Library;
-pub type Function = pipeline::Function;
-pub type ComputePipelineState = pipeline::ComputePipelineState;
-pub type Buffer = buffer::Buffer;
-pub type MTLSize = runtime::MTLSize;
-pub type MetalError = runtime::MetalError;
+type Device = device::Device;
+type CommandQueue = queue::CommandQueue;
+type CommandBuffer = queue::CommandBuffer;
+type ComputeCommandEncoder = queue::ComputeCommandEncoder;
+type Library = pipeline::Library;
+type Function = pipeline::Function;
+type ComputePipelineState = pipeline::ComputePipelineState;
+type Buffer = buffer::Buffer;
+type MTLSize = runtime::MTLSize;
+type MetalError = runtime::MetalError;
 
-pub fn default_device() -> result::Result[device::Device, runtime::MetalError] {
+fn default_device() -> result::Result[device::Device, runtime::MetalError] {
     return device::default();
 }

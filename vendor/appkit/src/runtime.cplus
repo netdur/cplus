@@ -222,70 +222,70 @@ extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;
 extern fn objc_msg_id_rgba(recv: *u8, sel: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8;
 
 #[repr(C)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
+struct Point {
+    x: f64,
+    y: f64,
 }
 
 #[repr(C)]
-pub struct Size {
-    pub width: f64,
-    pub height: f64,
+struct Size {
+    width: f64,
+    height: f64,
 }
 
 #[repr(C)]
-pub struct Rect {
-    pub origin: Point,
-    pub size: Size,
+struct Rect {
+    origin: Point,
+    size: Size,
 }
 
 #[repr(C)]
-pub struct EdgeInsets {
-    pub top: f64,
-    pub left: f64,
-    pub bottom: f64,
-    pub right: f64,
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
 }
 
-pub fn get_class(name: *u8) -> *u8 {
+fn get_class(name: *u8) -> *u8 {
     return unsafe { objc_getClass(name) };
 }
 
-pub fn sel(name: *u8) -> *u8 {
+fn sel(name: *u8) -> *u8 {
     return unsafe { sel_registerName(name) };
 }
 
-pub fn allocate_class_pair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8 {
+fn allocate_class_pair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8 {
     return unsafe { objc_allocateClassPair(superclass, name, extra_bytes) };
 }
 
-pub fn register_class_pair(cls: *u8) {
+fn register_class_pair(cls: *u8) {
     unsafe { objc_registerClassPair(cls); };
 }
 
-pub fn add_terminate_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8 {
+fn add_terminate_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8 {
     return unsafe { class_addMethod_terminate(cls, selector, imp, types) };
 }
 
-pub fn add_action_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
+fn add_action_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
     return unsafe { class_addMethod_action(cls, selector, imp, types) };
 }
 
 // Add a `(self, _cmd, sender) -> void` method (the target-action / single-id
 // shape, e.g. a synthesized `cplusScrollSelfVisible:`). `types` e.g. `"v@:@"`.
-pub fn add_method_action(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
+fn add_method_action(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
     return unsafe { class_addMethod_action(cls, selector, imp, types) };
 }
 
 // Add an `(self, _cmd, arg) -> NSInteger` method (e.g. a data source's row
 // count). `types` is the ObjC type encoding, e.g. `"q@:@"`.
-pub fn add_method_i64_id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8 {
+fn add_method_i64_id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8 {
     return unsafe { class_addMethod_i64_id(cls, selector, imp, types) };
 }
 
 // Add an `(self, _cmd, table, column, row) -> id` method (e.g. a table data
 // source's cell-value provider). `types` e.g. `"@@:@@q"`.
-pub fn add_method_id_table_value(
+fn add_method_id_table_value(
     cls: *u8,
     selector: *u8,
     imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
@@ -296,237 +296,237 @@ pub fn add_method_id_table_value(
 
 // Add a `(self, _cmd, dirtyRect) -> void` method whose rect is passed by value
 // (e.g. `-drawRect:`). `types` e.g. `"v@:{CGRect={CGPoint=dd}{CGSize=dd}}"`.
-pub fn add_method_draw_rect(cls: *u8, selector: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8 {
+fn add_method_draw_rect(cls: *u8, selector: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8 {
     return unsafe { class_addMethod_draw_rect(cls, selector, imp, types) };
 }
 
 // Add a `(self, _cmd, obj, n) -> NSInteger` method (e.g. a drag source's
 // operation-mask-for-context). `types` e.g. `"Q@:@q"`.
-pub fn add_method_i64_id_i64(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8 {
+fn add_method_i64_id_i64(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8 {
     return unsafe { class_addMethod_i64_id_i64(cls, selector, imp, types) };
 }
 
-pub fn add_method_id_toolbar_array(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+fn add_method_id_toolbar_array(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
     return unsafe { class_addMethod_id_toolbar_array(cls, selector, imp, types) };
 }
 
-pub fn add_method_id_toolbar_item(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> *u8, types: *u8) -> i8 {
+fn add_method_id_toolbar_item(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> *u8, types: *u8) -> i8 {
     return unsafe { class_addMethod_id_toolbar_item(cls, selector, imp, types) };
 }
 
-pub fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
+fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
     unsafe { objc_setAssociatedObject(object, key, value, policy); };
 }
 
-pub fn get_associated_object(object: *u8, key: *u8) -> *u8 {
+fn get_associated_object(object: *u8, key: *u8) -> *u8 {
     return unsafe { objc_getAssociatedObject(object, key) };
 }
 
-pub fn set_associated_callback(object: *u8, key: *u8, value: fn(*u8), policy: usize) {
+fn set_associated_callback(object: *u8, key: *u8, value: fn(*u8), policy: usize) {
     unsafe { objc_setAssociatedObject_cb(object, key, value, policy); };
 }
 
-pub fn get_associated_callback(object: *u8, key: *u8) -> fn(*u8) {
+fn get_associated_callback(object: *u8, key: *u8) -> fn(*u8) {
     return unsafe { objc_getAssociatedObject_cb(object, key) };
 }
 
-pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
+fn msg_id(recv: *u8, selector: *u8) -> *u8 {
     return unsafe { objc_msg_id(recv, selector) };
 }
 
-pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
+fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
     return unsafe { objc_msg_id_id(recv, selector, arg) };
 }
 
 // objc_msgSend returning id with two id args — e.g. `+[NSImage
 // imageWithSystemSymbolName:accessibilityDescription:]` or `+[NSSet
 // setWithObject:]`-style two-argument constructors.
-pub fn msg_id_2id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> *u8 {
+fn msg_id_2id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> *u8 {
     return unsafe { objc_msg_id_2id(recv, selector, a, b) };
 }
 
-pub fn msg_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8) -> *u8 {
+fn msg_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8) -> *u8 {
     return unsafe { objc_msg_id_id_id_id(recv, selector, a, b, c) };
 }
 
-pub fn msg_id_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) -> *u8 {
+fn msg_id_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) -> *u8 {
     return unsafe { objc_msg_id_f64_f64(recv, selector, a, b) };
 }
 
-pub fn msg_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) -> *u8 {
+fn msg_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) -> *u8 {
     return unsafe { objc_msg_id_id_f64(recv, selector, a, b) };
 }
 
-pub fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
+fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
     unsafe { objc_msg_void_id(recv, selector, arg); };
 }
 
-pub fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
+fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
     unsafe { objc_msg_void_id_id(recv, selector, a, b); };
 }
 
 // `[recv selector:a withObject:b waitUntilDone:c]`-shaped send. Used for
 // `performSelectorOnMainThread:withObject:waitUntilDone:` (`a` is a SEL).
-pub fn msg_void_id_id_i8(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i8) {
+fn msg_void_id_id_i8(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i8) {
     unsafe { objc_msg_void_id_id_i8(recv, selector, a, b, c); };
 }
 
-pub fn msg_i8_id(recv: *u8, selector: *u8, a: *u8) -> i8 {
+fn msg_i8_id(recv: *u8, selector: *u8, a: *u8) -> i8 {
     return unsafe { objc_msg_i8_id(recv, selector, a) };
 }
 
-pub fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
+fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
     return unsafe { objc_msg_i8_id_id(recv, selector, a, b) };
 }
 
-pub fn msg_void_id_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8) {
+fn msg_void_id_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8) {
     unsafe { objc_msg_void_id_id_id_id(recv, selector, a, b, c, d); };
 }
 
-pub fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
+fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
     unsafe { objc_msg_void_id_i64(recv, selector, a, b); };
 }
 
-pub fn msg_void_i64_id(recv: *u8, selector: *u8, a: i64, b: *u8) {
+fn msg_void_i64_id(recv: *u8, selector: *u8, a: i64, b: *u8) {
     unsafe { objc_msg_void_i64_id(recv, selector, a, b); };
 }
 
-pub fn msg_void_i64_i8(recv: *u8, selector: *u8, a: i64, b: i8) {
+fn msg_void_i64_i8(recv: *u8, selector: *u8, a: i64, b: i8) {
     unsafe { objc_msg_void_i64_i8(recv, selector, a, b); };
 }
 
-pub fn msg_void_i8_i64(recv: *u8, selector: *u8, a: i8, b: i64) {
+fn msg_void_i8_i64(recv: *u8, selector: *u8, a: i8, b: i64) {
     unsafe { objc_msg_void_i8_i64(recv, selector, a, b); };
 }
 
-pub fn msg_void_i64_i64(recv: *u8, selector: *u8, a: i64, b: i64) {
+fn msg_void_i64_i64(recv: *u8, selector: *u8, a: i64, b: i64) {
     unsafe { objc_msg_void_i64_i64(recv, selector, a, b); };
 }
 
-pub fn msg_void_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) {
+fn msg_void_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) {
     unsafe { objc_msg_void_f64_f64(recv, selector, a, b); };
 }
 
-pub fn msg_void(recv: *u8, selector: *u8) {
+fn msg_void(recv: *u8, selector: *u8) {
     unsafe { objc_msg_void(recv, selector); };
 }
 
-pub fn msg_id_f64(recv: *u8, selector: *u8, arg: f64) -> *u8 {
+fn msg_id_f64(recv: *u8, selector: *u8, arg: f64) -> *u8 {
     return unsafe { objc_msg_id_f64(recv, selector, arg) };
 }
 
-pub fn msg_void_i64(recv: *u8, selector: *u8, arg: i64) {
+fn msg_void_i64(recv: *u8, selector: *u8, arg: i64) {
     unsafe { objc_msg_void_i64(recv, selector, arg); };
 }
 
-pub fn msg_void_i8(recv: *u8, selector: *u8, arg: i8) {
+fn msg_void_i8(recv: *u8, selector: *u8, arg: i8) {
     unsafe { objc_msg_void_i8(recv, selector, arg); };
 }
 
-pub fn msg_void_u64(recv: *u8, selector: *u8, arg: u64) {
+fn msg_void_u64(recv: *u8, selector: *u8, arg: u64) {
     unsafe { objc_msg_void_u64(recv, selector, arg); };
 }
 
-pub fn msg_void_f64(recv: *u8, selector: *u8, arg: f64) {
+fn msg_void_f64(recv: *u8, selector: *u8, arg: f64) {
     unsafe { objc_msg_void_f64(recv, selector, arg); };
 }
 
-pub fn msg_void_f32(recv: *u8, selector: *u8, arg: f32) {
+fn msg_void_f32(recv: *u8, selector: *u8, arg: f32) {
     unsafe { objc_msg_void_f32(recv, selector, arg); };
 }
 
-pub fn msg_f32(recv: *u8, selector: *u8) -> f32 {
+fn msg_f32(recv: *u8, selector: *u8) -> f32 {
     return unsafe { objc_msg_f32(recv, selector) };
 }
 
-pub fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {
+fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {
     unsafe { objc_msg_void_rect(recv, selector, frame); };
 }
 
-pub fn msg_void_rect_id(recv: *u8, selector: *u8, frame: Rect, arg: *u8) {
+fn msg_void_rect_id(recv: *u8, selector: *u8, frame: Rect, arg: *u8) {
     unsafe { objc_msg_void_rect_id(recv, selector, frame, arg); };
 }
 
-pub fn msg_void_size(recv: *u8, selector: *u8, size: Size) {
+fn msg_void_size(recv: *u8, selector: *u8, size: Size) {
     unsafe { objc_msg_void_size(recv, selector, size); };
 }
 
-pub fn msg_void_point(recv: *u8, selector: *u8, point: Point) {
+fn msg_void_point(recv: *u8, selector: *u8, point: Point) {
     unsafe { objc_msg_void_point(recv, selector, point); };
 }
 
-pub fn msg_init_window(recv: *u8, selector: *u8, frame: Rect, style_mask: u64, backing: u64, defer_flag: i8) -> *u8 {
+fn msg_init_window(recv: *u8, selector: *u8, frame: Rect, style_mask: u64, backing: u64, defer_flag: i8) -> *u8 {
     return unsafe { objc_msg_init_window(recv, selector, frame, style_mask, backing, defer_flag) };
 }
 
-pub fn msg_init_with_frame(recv: *u8, selector: *u8, frame: Rect) -> *u8 {
+fn msg_init_with_frame(recv: *u8, selector: *u8, frame: Rect) -> *u8 {
     return unsafe { objc_msg_init_with_frame(recv, selector, frame) };
 }
 
-pub fn msg_init_popup(recv: *u8, selector: *u8, frame: Rect, pulls_down: i8) -> *u8 {
+fn msg_init_popup(recv: *u8, selector: *u8, frame: Rect, pulls_down: i8) -> *u8 {
     return unsafe { objc_msg_init_popup(recv, selector, frame, pulls_down) };
 }
 
-pub fn msg_init_menu_item(recv: *u8, selector: *u8, title: *u8, action: *u8, key_equiv: *u8) -> *u8 {
+fn msg_init_menu_item(recv: *u8, selector: *u8, title: *u8, action: *u8, key_equiv: *u8) -> *u8 {
     return unsafe { objc_msg_init_menu_item(recv, selector, title, action, key_equiv) };
 }
 
-pub fn msg_void_edge_insets(recv: *u8, selector: *u8, insets: EdgeInsets) {
+fn msg_void_edge_insets(recv: *u8, selector: *u8, insets: EdgeInsets) {
     unsafe { objc_msg_void_edge_insets(recv, selector, insets); };
 }
 
-pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
+fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return unsafe { objc_msg_i64(recv, selector) };
 }
 
 // No-arg `NSRect` getter — `-[NSView frame]` / `bounds`.
-pub fn msg_rect(recv: *u8, selector: *u8) -> Rect {
+fn msg_rect(recv: *u8, selector: *u8) -> Rect {
     return unsafe { objc_msg_rect(recv, selector) };
 }
 
 // id-returning message with one unsigned-integer arg — `-[NSArray objectAtIndex:]`.
-pub fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
+fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
     return unsafe { objc_msg_id_u64(recv, selector, a) };
 }
 
 // The object's runtime class name as a C string (`const char *`).
-pub fn class_name(obj: *u8) -> *u8 {
+fn class_name(obj: *u8) -> *u8 {
     return unsafe { object_getClassName(obj) };
 }
 
-pub fn msg_i8(recv: *u8, selector: *u8) -> i8 {
+fn msg_i8(recv: *u8, selector: *u8) -> i8 {
     return unsafe { objc_msg_i8(recv, selector) };
 }
 
-pub fn msg_i64_id(recv: *u8, selector: *u8, a: *u8) -> i64 {
+fn msg_i64_id(recv: *u8, selector: *u8, a: *u8) -> i64 {
     return unsafe { objc_msg_i64_id(recv, selector, a) };
 }
 
-pub fn msg_id_id_id_i64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i64) -> *u8 {
+fn msg_id_id_id_i64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i64) -> *u8 {
     return unsafe { objc_msg_id_id_id_i64(recv, selector, a, b, c) };
 }
 
-pub fn msg_i64_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) -> i64 {
+fn msg_i64_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) -> i64 {
     return unsafe { objc_msg_i64_id_i64(recv, selector, a, b) };
 }
 
-pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+fn msg_u64(recv: *u8, selector: *u8) -> u64 {
     return unsafe { objc_msg_u64(recv, selector) };
 }
 
-pub fn msg_point(recv: *u8, selector: *u8) -> Point {
+fn msg_point(recv: *u8, selector: *u8) -> Point {
     return unsafe { objc_msg_point(recv, selector) };
 }
 
-pub fn msg_f64(recv: *u8, selector: *u8) -> f64 {
+fn msg_f64(recv: *u8, selector: *u8) -> f64 {
     return unsafe { objc_msg_f64(recv, selector) };
 }
 
-pub fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8 {
+fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8 {
     return unsafe { objc_msg_id_rgba(recv, selector, r, g, b, a) };
 }
 
-pub fn ns_string(utf8: *u8) -> *u8 {
+fn ns_string(utf8: *u8) -> *u8 {
     let cls: *u8 = get_class(#str_ptr("NSString\0"));
     let selector: *u8 = sel(#str_ptr("stringWithUTF8String:\0"));
     return msg_id_id(cls, selector, utf8);
@@ -534,11 +534,11 @@ pub fn ns_string(utf8: *u8) -> *u8 {
 
 // Generic NSMutableArray helpers (used by delegate methods that return
 // identifier arrays, e.g. the toolbar delegate).
-pub fn new_mutable_array() -> *u8 {
+fn new_mutable_array() -> *u8 {
     return msg_id(get_class(#str_ptr("NSMutableArray\0")), sel(#str_ptr("array\0")));
 }
 
-pub fn array_add_string(arr: *u8, s: *u8) {
+fn array_add_string(arr: *u8, s: *u8) {
     msg_void_id(arr, sel(#str_ptr("addObject:\0")), ns_string(s));
 }
 
@@ -568,52 +568,52 @@ pub fn array_add_string(arr: *u8, s: *u8) {
 // `retain` returns its argument so call sites can write `this.obj =
 // rt::retain(x)` in one line.
 
-pub fn retain(obj: *u8) -> *u8 {
+fn retain(obj: *u8) -> *u8 {
     return unsafe { objc_retain(obj) };
 }
 
-pub fn release(obj: *u8) {
+fn release(obj: *u8) {
     unsafe { objc_release(obj); };
 }
 
-pub fn autorelease(obj: *u8) -> *u8 {
+fn autorelease(obj: *u8) -> *u8 {
     return unsafe { objc_autorelease(obj) };
 }
 
 // The object's current strong reference count. Mainly a test/debug aid —
 // production ownership should follow the +1 rule above, not inspect counts.
-pub fn retain_count(obj: *u8) -> i64 {
+fn retain_count(obj: *u8) -> i64 {
     return msg_i64(obj, sel(#str_ptr("retainCount\0")));
 }
 
-pub fn alloc_init(class_name: *u8) -> *u8 {
+fn alloc_init(class_name: *u8) -> *u8 {
     let cls: *u8 = get_class(class_name);
     let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
     return msg_id(alloced, sel(#str_ptr("init\0")));
 }
 
-pub fn new_object(class_name: *u8) -> *u8 {
+fn new_object(class_name: *u8) -> *u8 {
     return msg_id(get_class(class_name), sel(#str_ptr("new\0")));
 }
 
-pub fn alloc_init_with_frame(class_name: *u8, frame: Rect) -> *u8 {
+fn alloc_init_with_frame(class_name: *u8, frame: Rect) -> *u8 {
     let cls: *u8 = get_class(class_name);
     let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
     return msg_init_with_frame(alloced, sel(#str_ptr("initWithFrame:\0")), frame);
 }
 
-pub fn alloc_init_with_identifier(class_name: *u8, identifier: *u8) -> *u8 {
+fn alloc_init_with_identifier(class_name: *u8, identifier: *u8) -> *u8 {
     let cls: *u8 = get_class(class_name);
     let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
     return msg_id_id(alloced, sel(#str_ptr("initWithIdentifier:\0")), ns_string(identifier));
 }
 
-pub fn set_target_action(obj: *u8, target: *u8, action: *u8) {
+fn set_target_action(obj: *u8, target: *u8, action: *u8) {
     msg_void_id(obj, sel(#str_ptr("setTarget:\0")), target);
     msg_void_id(obj, sel(#str_ptr("setAction:\0")), action);
 }
 
-pub fn attach_callback(obj: *u8, cb: fn(*u8)) {
+fn attach_callback(obj: *u8, cb: fn(*u8)) {
     let target = get_action_target();
     set_target_action(obj, target, sel(#str_ptr("handleAction:\0")));
     set_associated_callback(obj, #str_ptr("cb_key\0"), cb, 0 as usize);
@@ -624,7 +624,7 @@ fn handle_action_callback(self_obj: *u8, _cmd: *u8, sender: *u8) {
     cb(sender);
 }
 
-pub fn get_action_target() -> *u8 {
+fn get_action_target() -> *u8 {
     let target_cls: *u8 = get_class(#str_ptr("CActionTarget\0"));
     if target_cls != unsafe { 0 as *u8 } {
         let app: *u8 = msg_id(get_class(#str_ptr("NSApplication\0")), sel(#str_ptr("sharedApplication\0")));

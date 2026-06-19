@@ -18,7 +18,7 @@ extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 
-pub struct Vec[T] {
+struct Vec[T] {
     ptr: *T,
     len: usize,
     cap: usize,
@@ -59,7 +59,7 @@ fn next_capacity(current: usize, required: usize) -> usize {
     return out;
 }
 
-pub fn new[T]() -> Vec[T] {
+fn new[T]() -> Vec[T] {
     return Vec[T] {
         ptr: unsafe { 0 as *T },
         len: 0 as usize,
@@ -67,7 +67,7 @@ pub fn new[T]() -> Vec[T] {
     };
 }
 
-pub fn with_capacity[T](n: usize) -> Vec[T] {
+fn with_capacity[T](n: usize) -> Vec[T] {
     if n == (0 as usize) {
         return new::[T]();
     }
@@ -92,19 +92,19 @@ impl Vec[T] {
         return;
     }
 
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         return this.len;
     }
 
-    pub fn capacity(this) -> usize {
+    fn capacity(this) -> usize {
         return this.cap;
     }
 
-    pub fn is_empty(this) -> bool {
+    fn is_empty(this) -> bool {
         return this.len == (0 as usize);
     }
 
-    pub fn reserve(ref this, additional: usize) {
+    fn reserve(ref this, additional: usize) {
         let required: usize = required_len(this.len, additional);
         if required <= this.cap {
             return;
@@ -113,7 +113,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn push(ref this, take value: T) {
+    fn push(ref this, take value: T) {
         let required: usize = required_len(this.len, 1 as usize);
         if required > this.cap {
             this.grow_to(next_capacity(this.cap, required));
@@ -124,7 +124,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn pop(ref this) -> option::Option[T] {
+    fn pop(ref this) -> option::Option[T] {
         if this.len == (0 as usize) {
             return option::Option[T]::None;
         }
@@ -135,7 +135,7 @@ impl Vec[T] {
         return option::Option[T]::Some(value);
     }
 
-    pub fn swap_remove(ref this, i: usize) -> option::Option[T] {
+    fn swap_remove(ref this, i: usize) -> option::Option[T] {
         if i >= this.len {
             return option::Option[T]::None;
         }
@@ -150,7 +150,7 @@ impl Vec[T] {
         return option::Option[T]::Some(value);
     }
 
-    pub fn clear(ref this) {
+    fn clear(ref this) {
         var i: usize = 0 as usize;
         while i < this.len {
             let elem: *T = unsafe { this.ptr + i };
@@ -161,7 +161,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn truncate(ref this, new_len: usize) {
+    fn truncate(ref this, new_len: usize) {
         if new_len >= this.len {
             return;
         }
@@ -175,7 +175,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn shrink_to_fit(ref this) {
+    fn shrink_to_fit(ref this) {
         if this.len == this.cap {
             return;
         }
@@ -195,7 +195,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn as_slice(this) -> T[] {
+    fn as_slice(this) -> T[] {
         return unsafe { #slice_from_raw_parts(this.ptr, this.len) };
     }
 
@@ -212,7 +212,7 @@ impl Vec[T] {
     //         option::Option[*T]::Some(p) => { let n = unsafe { (*p).field }; ... }
     //         option::Option[*T]::None    => { ... }
     //     }
-    pub fn at(this, i: usize) -> option::Option[*T] {
+    fn at(this, i: usize) -> option::Option[*T] {
         if i >= this.len {
             return option::Option[*T]::None;
         }
@@ -223,7 +223,7 @@ impl Vec[T] {
     // Asserts the index is in bounds. Works for any `T`: the old element's Drop
     // runs (freeing e.g. a `string`'s buffer) before the new value is moved in,
     // so there is no leak and no double free.
-    pub fn set(ref this, i: usize, take value: T) {
+    fn set(ref this, i: usize, take value: T) {
         assert i < this.len;
         let slot: *T = unsafe { this.ptr + i };
         unsafe { #drop_in_place::[T](slot); }
@@ -237,7 +237,7 @@ impl Vec[T] {
     // read those by index through `at` instead. This is a gen *method* (receiver
     // by value), not a `[T: Copy]` free fn, because the coroutine must own the
     // receiver across yields; a borrowed param does not survive suspension.
-    pub gen fn iter(this) -> T {
+    gen fn iter(this) -> T {
         var i: usize = 0 as usize;
         while i < this.len {
             match this.at(i) {
@@ -253,7 +253,7 @@ impl Vec[T] {
     // responsible for `T` being bit-copyable, or for the source relinquishing
     // ownership; this runs no element clone or drop. Mirrors the old vec.cplus
     // method so byte-stream consumers (fs, appkit/convert) port unchanged.
-    pub fn extend_from_raw(ref this, src: *T, count: usize) {
+    fn extend_from_raw(ref this, src: *T, count: usize) {
         if count == (0 as usize) {
             return;
         }
@@ -282,7 +282,7 @@ impl Vec[T] {
     }
 }
 
-pub fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
+fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
     if i >= v.len {
         return option::Option[T]::None;
     }
@@ -294,13 +294,13 @@ pub fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
 // directly (no Option) — the safe, ergonomic "I know this index is valid" read,
 // analogous to indexing. Copy-only (so the returned value is an independent copy,
 // never an alias into storage) and bounds-checked (aborts on out-of-bounds).
-pub fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
+fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
     assert i < v.len;
     let slot: *T = unsafe { v.ptr + i };
     return unsafe { *slot };
 }
 
-pub fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
+fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
     let count: usize = #slice_len(s);
     if count == (0 as usize) {
         return;
@@ -317,7 +317,7 @@ pub fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
     return;
 }
 
-pub fn collect[T](take source: iterator::Iterator[T]) -> Vec[T] {
+fn collect[T](take source: iterator::Iterator[T]) -> Vec[T] {
     var out: Vec[T] = new::[T]();
     loop {
         match source.next() {

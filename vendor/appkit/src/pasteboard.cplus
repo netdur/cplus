@@ -11,8 +11,8 @@
 
 import "./runtime" as rt;
 
-pub struct Pasteboard {
-    pub opaque obj: *u8,
+struct Pasteboard {
+    opaque obj: *u8,
 }
 
 // NSPasteboardTypeString, as an NSString. Built per call (autoreleased, +0);
@@ -23,7 +23,7 @@ fn type_string() -> *u8 {
 
 impl Pasteboard {
     // The shared system clipboard.
-    pub fn general() -> Pasteboard {
+    fn general() -> Pasteboard {
         let cls: *u8 = rt::get_class(#str_ptr("NSPasteboard\0"));
         let pb: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0")));
         return Pasteboard { obj: pb };
@@ -31,13 +31,13 @@ impl Pasteboard {
 
     // Remove the current contents and declare ownership; returns the new
     // change count. Call before any `set_*`.
-    pub fn clear(this) -> i64 {
+    fn clear(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("clearContents\0")));
     }
 
     // Write a UTF-8 C string as plain text. Returns 1 on success, 0 on
     // failure. The caller is responsible for a preceding `clear`.
-    pub fn set_string(this, text: *u8) -> i8 {
+    fn set_string(this, text: *u8) -> i8 {
         return rt::msg_i8_id_id(
             this.obj,
             rt::sel(#str_ptr("setString:forType:\0")),
@@ -47,7 +47,7 @@ impl Pasteboard {
     }
 
     // Write a pre-built `NSString*` (e.g. from `convert::cplus_string_to_nsstring`).
-    pub fn set_string_ns(this, text_ns: *u8) -> i8 {
+    fn set_string_ns(this, text_ns: *u8) -> i8 {
         return rt::msg_i8_id_id(
             this.obj,
             rt::sel(#str_ptr("setString:forType:\0")),
@@ -59,14 +59,14 @@ impl Pasteboard {
     // Read the plain-text contents as an `NSString*`, or null if the
     // clipboard holds no string of that type. Pair with
     // `convert::nsstring_to_cplus_string` to get an owned C+ `Text`.
-    pub fn string_ns(this) -> *u8 {
+    fn string_ns(this) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("stringForType:\0")), type_string());
     }
 
     // Convenience: read the contents as a NUL-terminated UTF-8 C string
     // (`-[NSString UTF8String]`), or null if absent. The returned buffer is
     // owned by the autorelease pool — copy it before the pool drains.
-    pub fn string_utf8(this) -> *u8 {
+    fn string_utf8(this) -> *u8 {
         let ns: *u8 = this.string_ns();
         if ns == unsafe { 0 as *u8 } {
             return unsafe { 0 as *u8 };

@@ -302,7 +302,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, f.name.span),
                         signature: Some(fn_signature(f)),
-                        is_pub: f.is_pub,
+                        is_pub: !f.name.name.starts_with('_'),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -343,7 +343,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, s.name.span),
                         signature: None,
-                        is_pub: s.is_pub,
+                        is_pub: !s.name.name.starts_with('_'),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -358,7 +358,7 @@ impl CodeGraph {
                             name: field.name.name.clone(),
                             location: resolve(&fid, field.name.span),
                             signature: Some(type_to_string(&field.ty)),
-                            is_pub: field.is_pub,
+                            is_pub: !field.name.name.starts_with('_'),
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -386,7 +386,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, e.name.span),
                         signature: None,
-                        is_pub: e.is_pub,
+                        is_pub: !e.name.name.starts_with('_'),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -408,7 +408,7 @@ impl CodeGraph {
                             name: v.name.name.clone(),
                             location: resolve(&fid, v.name.span),
                             signature: sig,
-                            is_pub: e.is_pub,
+                            is_pub: !e.name.name.starts_with('_'),
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -432,7 +432,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, it.name.span),
                         signature: None,
-                        is_pub: it.is_pub,
+                        is_pub: !it.name.name.starts_with('_'),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -449,7 +449,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, a.name.span),
                         signature: Some(type_to_string(&a.target)),
-                        is_pub: a.is_pub,
+                        is_pub: !a.name.name.starts_with('_'),
                     });
                     push_type_refs(&a.target, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -467,7 +467,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, c.name.span),
                         signature: Some(type_to_string(&c.ty)),
-                        is_pub: c.is_pub,
+                        is_pub: !c.name.name.starts_with('_'),
                     });
                     push_type_refs(&c.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -485,7 +485,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, s.name.span),
                         signature: Some(type_to_string(&s.ty)),
-                        is_pub: s.is_pub,
+                        is_pub: !s.name.name.starts_with('_'),
                     });
                     push_type_refs(&s.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -1154,7 +1154,7 @@ fn add_impl_methods<'a>(
             name: mname.to_string(),
             location: resolve(fid, m.name.span),
             signature: Some(method_signature(m)),
-            is_pub: m.is_pub,
+            is_pub: !m.name.name.starts_with('_'),
         });
         g.edges.push(Edge {
             from: type_id.clone(),
@@ -2254,8 +2254,10 @@ mod tests {
 
     #[test]
     fn struct_fields_become_nodes_with_has_field_edges() {
+        // v0.0.24 #10: field visibility is name-based — `x` is public, `_y` is
+        // module-private.
         let g = CodeGraph::build(&project(
-            "struct Point { pub x: i32, y: i32 }",
+            "struct Point { x: i32, _y: i32 }",
         ));
         let s = node(&g, "src::Point");
         assert_eq!(s.kind, NodeKind::Struct);
@@ -2263,7 +2265,7 @@ mod tests {
         assert_eq!(fx.kind, NodeKind::Field);
         assert_eq!(fx.signature.as_deref(), Some("i32"));
         assert!(fx.is_pub);
-        assert!(!node(&g, "src::Point::y").is_pub);
+        assert!(!node(&g, "src::Point::_y").is_pub);
         let members = g.members("Point");
         assert_eq!(members.len(), 2, "Point has two fields");
     }

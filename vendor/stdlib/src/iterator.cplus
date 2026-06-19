@@ -21,8 +21,8 @@
 
 import "./option" as option;
 
-pub struct Iterator[T] {
-    pub opaque handle: *u8,
+struct Iterator[T] {
+    opaque handle: *u8,
 }
 
 // v0.0.5 Phase 3 Slice 3C: iterator adapters. Each adapter is a
@@ -40,7 +40,7 @@ pub struct Iterator[T] {
 
 impl Iterator[T] {
     // Keep only elements where `pred` returns true.
-    pub gen fn filter(this, pred: fn(T) -> bool) -> T {
+    gen fn filter(this, pred: fn(T) -> bool) -> T {
         loop {
             match this.next() {
                 option::Option[T]::Some(v) => {
@@ -52,7 +52,7 @@ impl Iterator[T] {
     }
 
     // Yield at most `n` elements, then stop.
-    pub gen fn take(this, n: usize) -> T {
+    gen fn take(this, n: usize) -> T {
         var k: usize = 0 as usize;
         while k < n {
             match this.next() {
@@ -67,7 +67,7 @@ impl Iterator[T] {
 
 // Transform each element via `f`. Free function because methods can't
 // declare an extra type parameter on top of the impl's `T` today.
-pub gen fn map[T, U](source: Iterator[T], f: fn(T) -> U) -> U {
+gen fn map[T, U](source: Iterator[T], f: fn(T) -> U) -> U {
     loop {
         match source.next() {
             option::Option[T]::Some(v) => { yield f(v); }

@@ -32,7 +32,7 @@ extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
 // is lowered to a heap copy constructed as this `{ ptr, len, cap }` layout.
 // The field order/shape below is load-bearing for that lowering.
 #[lang("string")]
-pub struct Text {
+struct Text {
     ptr: *u8,
     len: usize,
     cap: usize,
@@ -73,7 +73,7 @@ fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
     return unsafe { memcmp(a, needle, n) } == (0 as i32);
 }
 
-pub fn new() -> Text {
+fn new() -> Text {
     return Text {
         ptr: unsafe { 0 as *u8 },
         len: 0 as usize,
@@ -81,7 +81,7 @@ pub fn new() -> Text {
     };
 }
 
-pub fn with_capacity(n: usize) -> Text {
+fn with_capacity(n: usize) -> Text {
     if n == (0 as usize) {
         return new();
     }
@@ -94,7 +94,7 @@ pub fn with_capacity(n: usize) -> Text {
     };
 }
 
-pub fn from_str(s: str) -> Text {
+fn from_str(s: str) -> Text {
     let n: usize = #str_len(s);
     var t: Text = with_capacity(n);
     t.push_str(s);
@@ -111,19 +111,19 @@ impl Text {
         return;
     }
 
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         return this.len;
     }
 
-    pub fn capacity(this) -> usize {
+    fn capacity(this) -> usize {
         return this.cap;
     }
 
-    pub fn is_empty(this) -> bool {
+    fn is_empty(this) -> bool {
         return this.len == (0 as usize);
     }
 
-    pub fn reserve(ref this, additional: usize) {
+    fn reserve(ref this, additional: usize) {
         assert additional <= (max_usize() -% this.len);
         let required: usize = this.len +% additional;
         if required <= this.cap {
@@ -133,7 +133,7 @@ impl Text {
         return;
     }
 
-    pub fn push_str(ref this, s: str) {
+    fn push_str(ref this, s: str) {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return;
@@ -146,19 +146,19 @@ impl Text {
         return;
     }
 
-    pub fn clear(ref this) {
+    fn clear(ref this) {
         this.len = 0 as usize;
         return;
     }
 
-    pub fn truncate(ref this, new_len: usize) {
+    fn truncate(ref this, new_len: usize) {
         if new_len < this.len {
             this.len = new_len;
         }
         return;
     }
 
-    pub fn clone(this) -> Text {
+    fn clone(this) -> Text {
         var t: Text = with_capacity(this.len);
         if this.len != (0 as usize) {
             unsafe { memcpy(t.ptr, this.ptr, this.len); }
@@ -170,11 +170,11 @@ impl Text {
     // Borrow escape hatch — `unsafe fn` (TEXT.1). The returned view's lifetime
     // is not tracked: the caller promises this Text outlives the view and is
     // not mutated while the view is held.
-    pub unsafe fn as_str(this) -> str {
+    unsafe fn as_str(this) -> str {
         return unsafe { #str_from_raw_parts(this.ptr, this.len) };
     }
 
-    pub fn starts_with(this, prefix: str) -> bool {
+    fn starts_with(this, prefix: str) -> bool {
         let n: usize = #str_len(prefix);
         if n > this.len {
             return false;
@@ -182,7 +182,7 @@ impl Text {
         return region_matches(this.ptr, 0 as usize, #str_ptr(prefix), n);
     }
 
-    pub fn ends_with(this, suffix: str) -> bool {
+    fn ends_with(this, suffix: str) -> bool {
         let n: usize = #str_len(suffix);
         if n > this.len {
             return false;
@@ -192,7 +192,7 @@ impl Text {
 
     // Byte offset of the first occurrence of `needle`, or None. An empty
     // needle matches at 0.
-    pub fn find(this, needle: str) -> option::Option[usize] {
+    fn find(this, needle: str) -> option::Option[usize] {
         let n: usize = #str_len(needle);
         if n == (0 as usize) {
             return option::Option[usize]::Some(0 as usize);
@@ -212,7 +212,7 @@ impl Text {
         return option::Option[usize]::None;
     }
 
-    pub fn contains(this, needle: str) -> bool {
+    fn contains(this, needle: str) -> bool {
         var found: bool = false;
         match this.find(needle) {
             option::Option[usize]::Some(_idx) => { found = true; }
@@ -223,7 +223,7 @@ impl Text {
 
     // Byte offset of the *last* occurrence of `needle`, or None. An empty needle
     // matches at `len`.
-    pub fn rfind(this, needle: str) -> option::Option[usize] {
+    fn rfind(this, needle: str) -> option::Option[usize] {
         let n: usize = #str_len(needle);
         if n == (0 as usize) {
             return option::Option[usize]::Some(this.len);
@@ -266,7 +266,7 @@ impl Text {
 
     // Owned copy of the byte range `[start, end)`, or None if out of bounds /
     // inverted. (Copies — the result owns its bytes.)
-    pub fn slice(this, start: usize, end: usize) -> option::Option[Text] {
+    fn slice(this, start: usize, end: usize) -> option::Option[Text] {
         if start > end {
             return option::Option[Text]::None;
         }
@@ -277,7 +277,7 @@ impl Text {
     }
 
     // Owned copy with leading ASCII whitespace removed.
-    pub fn trim_start(this) -> Text {
+    fn trim_start(this) -> Text {
         var start: usize = 0 as usize;
         while start < this.len {
             if is_ascii_ws(this.byte_at_raw(start)) == false {
@@ -289,7 +289,7 @@ impl Text {
     }
 
     // Owned copy with trailing ASCII whitespace removed.
-    pub fn trim_end(this) -> Text {
+    fn trim_end(this) -> Text {
         var end: usize = this.len;
         while end > (0 as usize) {
             if is_ascii_ws(this.byte_at_raw(end -% (1 as usize))) == false {
@@ -301,7 +301,7 @@ impl Text {
     }
 
     // Owned copy with leading and trailing ASCII whitespace removed.
-    pub fn trim(this) -> Text {
+    fn trim(this) -> Text {
         var start: usize = 0 as usize;
         while start < this.len {
             if is_ascii_ws(this.byte_at_raw(start)) == false {
@@ -322,7 +322,7 @@ impl Text {
     // Split on every (non-overlapping) occurrence of `sep`, returning the pieces
     // as owned `Text` values. An empty `sep` yields the whole string as one
     // piece. `"a,b,c".split(",")` → `["a", "b", "c"]`.
-    pub fn split(this, sep: str) -> vec::Vec[Text] {
+    fn split(this, sep: str) -> vec::Vec[Text] {
         var out: vec::Vec[Text] = vec::new::[Text]();
         let n: usize = #str_len(sep);
         if n == (0 as usize) {
@@ -350,7 +350,7 @@ impl Text {
     // represent one). The returned `CString` owns its buffer and frees it on
     // drop; pass `cs.as_ptr()` to the `extern fn` and keep `cs` alive across the
     // call. Length-based C APIs don't need this — pass `as_str`'s ptr+len.
-    pub fn c_str(this) -> option::Option[CString] {
+    fn c_str(this) -> option::Option[CString] {
         var i: usize = 0 as usize;
         while i < this.len {
             if this.byte_at_raw(i) == (0 as u8) {
@@ -387,19 +387,19 @@ unsafe impl Text: Sync {}
 // An owned, NUL-terminated C string — the bridge to `extern fn`s that take a
 // `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
 // in `len`). Owns its buffer; frees it on drop. Build one with `Text::c_str`.
-pub struct CString {
+struct CString {
     ptr: *u8,
     len: usize,
 }
 
 impl CString {
     // The raw `*u8` the C ABI wants. Valid only while this `CString` is alive.
-    pub fn as_ptr(this) -> *u8 {
+    fn as_ptr(this) -> *u8 {
         return this.ptr;
     }
 
     // Length in bytes, NOT counting the trailing NUL.
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         return this.len;
     }
 

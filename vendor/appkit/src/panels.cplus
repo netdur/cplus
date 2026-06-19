@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
-pub struct Panel {
-    pub obj: *u8,
+struct Panel {
+    obj: *u8,
 }
 
 impl Panel {
@@ -9,7 +9,7 @@ impl Panel {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Panel {
+    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Panel {
         let cls: *u8 = rt::get_class(#str_ptr("NSPanel\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let panel: *u8 = rt::msg_init_window(
@@ -23,111 +23,111 @@ impl Panel {
         return Panel { obj: panel };
     }
 
-    pub fn set_title(this, title: *u8) {
+    fn set_title(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
-    pub fn make_key_and_order_front(this, sender: *u8) {
+    fn make_key_and_order_front(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
     }
 
-    pub fn close(this) {
+    fn close(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("close\0")));
     }
 }
 
-pub struct SavePanel {
-    pub opaque obj: *u8,
+struct SavePanel {
+    opaque obj: *u8,
 }
 
 impl SavePanel {
-    pub fn shared() -> SavePanel {
+    fn shared() -> SavePanel {
         return SavePanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSSavePanel\0")), rt::sel(#str_ptr("savePanel\0"))) };
     }
 
-    pub fn set_title(this, title: *u8) {
+    fn set_title(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
-    pub fn set_prompt(this, prompt: *u8) {
+    fn set_prompt(this, prompt: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPrompt:\0")), rt::ns_string(prompt));
     }
 
-    pub fn set_message(this, message: *u8) {
+    fn set_message(this, message: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessage:\0")), rt::ns_string(message));
     }
 
-    pub fn set_name_field_string_value(this, value: *u8) {
+    fn set_name_field_string_value(this, value: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setNameFieldStringValue:\0")), rt::ns_string(value));
     }
 
-    pub fn run_modal(this) -> i64 {
+    fn run_modal(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    pub fn url(this) -> *u8 {
+    fn url(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("URL\0")));
     }
 }
 
-pub struct OpenPanel {
-    pub opaque obj: *u8,
+struct OpenPanel {
+    opaque obj: *u8,
 }
 
 impl OpenPanel {
-    pub fn shared() -> OpenPanel {
+    fn shared() -> OpenPanel {
         return OpenPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSOpenPanel\0")), rt::sel(#str_ptr("openPanel\0"))) };
     }
 
-    pub fn set_can_choose_files(this, flag: i8) {
+    fn set_can_choose_files(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setCanChooseFiles:\0")), flag);
     }
 
-    pub fn set_can_choose_directories(this, flag: i8) {
+    fn set_can_choose_directories(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setCanChooseDirectories:\0")), flag);
     }
 
-    pub fn set_allows_multiple_selection(this, flag: i8) {
+    fn set_allows_multiple_selection(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), flag);
     }
 
-    pub fn run_modal(this) -> i64 {
+    fn run_modal(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    pub fn url(this) -> *u8 {
+    fn url(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("URL\0")));
     }
 
-    pub fn urls(this) -> *u8 {
+    fn urls(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("URLs\0")));
     }
 }
 
-pub struct PageLayout {
-    pub opaque obj: *u8,
+struct PageLayout {
+    opaque obj: *u8,
 }
 
 impl PageLayout {
-    pub fn shared() -> PageLayout {
+    fn shared() -> PageLayout {
         return PageLayout { obj: rt::msg_id(rt::get_class(#str_ptr("NSPageLayout\0")), rt::sel(#str_ptr("pageLayout\0"))) };
     }
 
-    pub fn run_modal(this) -> i64 {
+    fn run_modal(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 }
 
-pub struct PrintPanel {
-    pub opaque obj: *u8,
+struct PrintPanel {
+    opaque obj: *u8,
 }
 
 impl PrintPanel {
-    pub fn shared() -> PrintPanel {
+    fn shared() -> PrintPanel {
         return PrintPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
     }
 
-    pub fn run_modal(this) -> i64 {
+    fn run_modal(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 }

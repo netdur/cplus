@@ -25,12 +25,12 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
-pub struct File {
+struct File {
     fd: i32,
 }
 
 // Open `path` for reading. macOS + Linux: O_RDONLY = 0.
-pub fn open_read(path: str) -> result::Result[File, result::IoError] {
+fn open_read(path: str) -> result::Result[File, result::IoError] {
     let fd: i32 = unsafe { open(#str_ptr(path), 0 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return result::io_err::[File](result::IoError::NotFound);
@@ -43,7 +43,7 @@ pub fn open_read(path: str) -> result::Result[File, result::IoError] {
 // macOS flags: O_WRONLY = 0x001, O_CREAT = 0x200, O_TRUNC = 0x400.
 // Combined: 0x601 = 1537. (Linux numbers differ — Linux build is a Phase 1
 // stretch; see plan.md non-goals.)
-pub fn create(path: str) -> result::Result[File, result::IoError] {
+fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = 1537 as i32;
     let mode: i32 = 420 as i32;
     let fd: i32 = unsafe { open(#str_ptr(path), flags, mode) };
@@ -56,7 +56,7 @@ pub fn create(path: str) -> result::Result[File, result::IoError] {
 impl File {
     // Drain remaining bytes into a fresh heap-allocated buffer. Returns
     // the Vec inside Result::Ok on success, or an IoError on failure.
-    pub fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
+    fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
         var buf: vec::Vec[u8] = vec::new::[u8]();
         if this.fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
@@ -81,7 +81,7 @@ impl File {
 
     // Write `data`. Loops on short writes. On success returns bytes written
     // (always == data.len()); errors return Err.
-    pub fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+    fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[usize](result::IoError::InvalidInput);
         }
@@ -102,7 +102,7 @@ impl File {
     }
 
     // Explicit close. Disarms Drop by setting fd to -1.
-    pub fn close(ref this) {
+    fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -114,7 +114,7 @@ impl File {
     // `read_async` can return EAGAIN-loops instead of blocking the
     // executor thread. Idempotent; safe to call repeatedly. Returns 0
     // on success, -1 on fcntl error.
-    pub fn make_nonblocking(ref this) -> i32 {
+    fn make_nonblocking(ref this) -> i32 {
         return net::set_nonblocking(this.fd);
     }
 
@@ -122,7 +122,7 @@ impl File {
     // `net::read_fd_async(this.fd, buf, count)` — reactor handles
     // EAGAIN suspension via kqueue EVFILT_READ. Prerequisite: call
     // `make_nonblocking()` once before first use.
-    pub async fn read_async(ref this, buf: *u8, count: usize) -> isize {
+    async fn read_async(ref this, buf: *u8, count: usize) -> isize {
         return await net::read_fd_async(this.fd, buf, count);
     }
 
@@ -132,7 +132,7 @@ impl File {
     // partial line that spans a chunk boundary, copied into the next
     // chunk's scan. A final fragment without a trailing newline at EOF
     // is yielded as the last line.
-    pub gen fn lines(this) -> text::Text {
+    gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = unsafe { malloc(chunk_size) };

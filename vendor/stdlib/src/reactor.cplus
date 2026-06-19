@@ -133,7 +133,7 @@ fn evfilt_timer() -> i16 { return (0 as i16) -% (7 as i16); }
 
 // Lazily allocate + init the reactor on first use. Idempotent: returns
 // the same state pointer on every call within a process.
-pub fn ensure() -> *u8 {
+fn ensure() -> *u8 {
     let cur: *u8 = unsafe { #reactor_get_state() };
     let null_p: *u8 = unsafe { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
@@ -247,13 +247,13 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 }
 
 // Register fd for read-readiness; record the coroutine handle to wake.
-pub fn register_read(fd: i32, hdl: *u8) {
+fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
     return;
 }
 
 // Register fd for write-readiness (kqueue EVFILT_WRITE).
-pub fn register_write(fd: i32, hdl: *u8) {
+fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
     return;
 }
@@ -263,7 +263,7 @@ pub fn register_write(fd: i32, hdl: *u8) {
 // `poll_one_event` recognizes the timer filter and resumes via ident
 // directly, so we just bump the `n_timers` counter so `block_on`'s
 // "anything pending?" check sees us.
-pub fn register_timer(ms: u64, hdl: *u8) {
+fn register_timer(ms: u64, hdl: *u8) {
     let state: *u8 = ensure();
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     let n: i32 = unsafe { *nt_slot };
@@ -354,7 +354,7 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
 
 // Wait for one fd to become ready, then resume its waiter. Blocks the
 // calling thread on kevent. Returns true if a coroutine was resumed.
-pub fn poll_one_event() -> bool {
+fn poll_one_event() -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
@@ -421,7 +421,7 @@ pub fn poll_one_event() -> bool {
 
 // Drain the spawn_local task queue: resume each handle once. Returns
 // the number of tasks resumed.
-pub fn drain_pending() -> i32 {
+fn drain_pending() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let n: i32 = unsafe { *np_slot };
@@ -442,7 +442,7 @@ pub fn drain_pending() -> i32 {
 }
 
 // Push a coroutine handle to the spawn_local queue.
-pub fn enqueue_pending(hdl: *u8) {
+fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
@@ -470,14 +470,14 @@ pub fn enqueue_pending(hdl: *u8) {
 // resumes are triggered by `notify_completed`, which routes through
 // `enqueue_pending`), so it doesn't participate here. The drain step
 // in `block_on` picks up notified awaiters via the pending queue.
-pub fn waiter_count() -> i32 {
+fn waiter_count() -> i32 {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     return unsafe { *nw_slot } +% unsafe { *nt_slot };
 }
 
-pub fn pending_count() -> i32 {
+fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     return unsafe { *np_slot };
@@ -487,7 +487,7 @@ pub fn pending_count() -> i32 {
 // emits a call here from inside each `await` site's resume_bb, just
 // before the awaiter suspends itself. The table grows by doubling.
 // Append-only; entries are removed by `notify_completed` (swap-remove).
-pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
+fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
@@ -527,7 +527,7 @@ pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
 // behind in the table — leak, not crash. (Realistic? Same Future
 // shouldn't be awaited twice anyway; the gen_await_expr destroy path
 // already breaks that pattern.)
-pub fn notify_completed(awaitee: *u8) {
+fn notify_completed(awaitee: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };

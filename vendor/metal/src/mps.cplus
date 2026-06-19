@@ -44,7 +44,7 @@ extern fn objc_getClass(name: *u8) -> *u8;
 // We expose only the dtypes used by the matmul/matvec surface. Add
 // more as workloads require.
 
-pub enum DataType {
+enum DataType {
     F32,
     F16,
     I32,
@@ -72,12 +72,12 @@ fn dtype_to_raw(d: DataType) -> u32 {
 // just metadata. Apple's API: `+matrixDescriptorWithRows:columns:
 // rowBytes:dataType:` returns an autoreleased descriptor.
 
-pub struct MatrixDescriptor {
-    pub raw: *u8,
+struct MatrixDescriptor {
+    raw: *u8,
 }
 
 impl MatrixDescriptor {
-    pub fn new(rows: usize, columns: usize, row_bytes: usize, dtype: DataType) -> MatrixDescriptor {
+    fn new(rows: usize, columns: usize, row_bytes: usize, dtype: DataType) -> MatrixDescriptor {
         let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixDescriptor\0")) };
         let dt: u32 = dtype_to_raw(dtype);
         let raw: *u8 = unsafe {
@@ -114,8 +114,8 @@ impl MatrixDescriptor {
 // We hold `raw` for the MPSMatrix object only; the underlying buffer
 // is the consumer's lifetime concern.
 
-pub struct Matrix {
-    pub raw: *u8,
+struct Matrix {
+    raw: *u8,
 }
 
 impl Matrix {
@@ -124,7 +124,7 @@ impl Matrix {
     // Caller keeps owning their original handles; both refcounts are
     // released independently at scope exit (callers' Drops + MPSMatrix's
     // Drop when this wrapper goes out of scope).
-    pub fn new(buf: buffer::Buffer, desc: MatrixDescriptor) -> Matrix {
+    fn new(buf: buffer::Buffer, desc: MatrixDescriptor) -> Matrix {
         let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrix\0")) };
         let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
         let initialized: *u8 = unsafe {
@@ -149,12 +149,12 @@ impl Matrix {
 // Operates on f32 / f16 matrices (other dtypes need MPSMatrixDecomposition
 // or different MPS classes — out of scope for the matmul primitive).
 
-pub struct MatrixMultiplication {
-    pub raw: *u8,
+struct MatrixMultiplication {
+    raw: *u8,
 }
 
 impl MatrixMultiplication {
-    pub fn new(
+    fn new(
         dev: device::Device,
         transpose_left: bool,
         transpose_right: bool,
@@ -198,7 +198,7 @@ impl MatrixMultiplication {
     // buffer; encoding doesn't release any of these objects. Caller
     // keeps using them (commit / wait_until_completed on cmd_buf,
     // read-back on `out`).
-    pub fn encode_to(
+    fn encode_to(
         this,
         cmd_buf: queue::CommandBuffer,
         lhs: Matrix,
@@ -232,12 +232,12 @@ impl MatrixMultiplication {
 // the dispatch geometry is different (one threadgroup per row vs the
 // tile-based matmul layout).
 
-pub struct MatrixVectorMultiplication {
-    pub raw: *u8,
+struct MatrixVectorMultiplication {
+    raw: *u8,
 }
 
 impl MatrixVectorMultiplication {
-    pub fn new(
+    fn new(
         dev: device::Device,
         transpose: bool,
         rows: usize,

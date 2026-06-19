@@ -4,12 +4,12 @@ import "./runtime" as rt;
 // is the canonical transient — built, shown with `run_modal`, then dropped. It
 // is not added to a view hierarchy, so nothing else retains it; without a
 // `drop` it leaks (one per dialog). `drop` releases the +1.
-pub struct Alert {
-    pub obj: *u8,
+struct Alert {
+    obj: *u8,
 }
 
 impl Alert {
-    pub fn new() -> Alert {
+    fn new() -> Alert {
         let cls = rt::get_class(#str_ptr("NSAlert\0"));
         let alert = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
         return Alert { obj: alert };
@@ -19,7 +19,7 @@ impl Alert {
         rt::release(this.obj);
     }
 
-    pub fn set_message_text(this, text: *u8) {
+    fn set_message_text(this, text: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessageText:\0")), rt::ns_string(text));
     }
 
@@ -27,27 +27,27 @@ impl Alert {
     // for the rationale — `_ns` setters skip the `rt::ns_string` wrap
     // so callers with a dynamic `NSString*` (e.g. from
     // `bridge::cplus_string_to_nsstring`) can pass it through typed.
-    pub fn set_message_text_ns(this, text_ns: *u8) {
+    fn set_message_text_ns(this, text_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessageText:\0")), text_ns);
     }
 
-    pub fn set_informative_text(this, text: *u8) {
+    fn set_informative_text(this, text: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setInformativeText:\0")), rt::ns_string(text));
     }
 
-    pub fn set_informative_text_ns(this, text_ns: *u8) {
+    fn set_informative_text_ns(this, text_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setInformativeText:\0")), text_ns);
     }
 
-    pub fn add_button(this, title: *u8) -> *u8 {
+    fn add_button(this, title: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), rt::ns_string(title));
     }
 
-    pub fn add_button_ns(this, title_ns: *u8) -> *u8 {
+    fn add_button_ns(this, title_ns: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), title_ns);
     }
 
-    pub fn run_modal(this) -> i64 {
+    fn run_modal(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 }

@@ -2,14 +2,14 @@ import "./runtime" as rt;
 import "./convert" as convert;
 import "./view" as view;
 
-pub type Color = view::Color;
+type Color = view::Color;
 
-pub struct ImageView {
-    pub obj: *u8,
+struct ImageView {
+    obj: *u8,
 }
 
 impl ImageView {
-    pub fn new(frame: rt::Rect) -> ImageView {
+    fn new(frame: rt::Rect) -> ImageView {
         return ImageView { obj: rt::alloc_init_with_frame(#str_ptr("UIImageView\0"), frame) };
     }
 
@@ -17,99 +17,99 @@ impl ImageView {
         rt::release(this.obj);
     }
 
-    pub fn set_image(this, image: *u8) {
+    fn set_image(this, image: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    pub fn set_highlighted_image(this, image: *u8) {
+    fn set_highlighted_image(this, image: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setHighlightedImage:\0")), image);
     }
 
-    pub fn set_content_mode(this, mode: i64) {
+    fn set_content_mode(this, mode: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
     }
 
-    pub fn set_tint_color(this, color: view::Color) {
+    fn set_tint_color(this, color: view::Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTintColor:\0")), color.obj);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct Image {
-    pub opaque obj: *u8,
+struct Image {
+    opaque obj: *u8,
 }
 
 impl Image {
-    pub fn by_name(name: str) -> *u8 {
+    fn by_name(name: str) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
         return rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), convert::cplus_str_to_nsstring(name));
     }
 
-    pub fn system_symbol(name: str) -> *u8 {
+    fn system_symbol(name: str) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
         return rt::msg_id_id(cls, rt::sel(#str_ptr("systemImageNamed:\0")), convert::cplus_str_to_nsstring(name));
     }
 
-    pub fn init_with_file(path: str) -> *u8 {
+    fn init_with_file(path: str) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfFile:\0")), convert::cplus_str_to_nsstring(path));
     }
 
-    pub fn with_rendering_mode(image: *u8, mode: i64) -> *u8 {
+    fn with_rendering_mode(image: *u8, mode: i64) -> *u8 {
         return rt::msg_id_u64(image, rt::sel(#str_ptr("imageWithRenderingMode:\0")), mode as u64);
     }
 
-    pub fn with_symbol_configuration(image: *u8, config: *u8) -> *u8 {
+    fn with_symbol_configuration(image: *u8, config: *u8) -> *u8 {
         return rt::msg_id_id(image, rt::sel(#str_ptr("imageByApplyingSymbolConfiguration:\0")), config);
     }
 }
 
-pub struct Font {
-    pub opaque obj: *u8,
+struct Font {
+    opaque obj: *u8,
 }
 
 impl Font {
-    pub fn system_font_of_size(size: f64) -> *u8 {
+    fn system_font_of_size(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
     }
 
-    pub fn bold_system_font_of_size(size: f64) -> *u8 {
+    fn bold_system_font_of_size(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("boldSystemFontOfSize:\0")), size);
     }
 
-    pub fn italic_system_font_of_size(size: f64) -> *u8 {
+    fn italic_system_font_of_size(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("italicSystemFontOfSize:\0")), size);
     }
 
-    pub fn preferred_font_for_text_style(style: str) -> *u8 {
+    fn preferred_font_for_text_style(style: str) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
         return rt::msg_id_id(cls, rt::sel(#str_ptr("preferredFontForTextStyle:\0")), convert::cplus_str_to_nsstring(style));
     }
 }
 
-pub struct BezierPath {
-    pub obj: *u8,
+struct BezierPath {
+    obj: *u8,
 }
 
 impl BezierPath {
-    pub fn new() -> BezierPath {
+    fn new() -> BezierPath {
         return BezierPath { obj: rt::alloc_init(#str_ptr("UIBezierPath\0")) };
     }
 
-    pub fn with_rect(rect: rt::Rect) -> BezierPath {
+    fn with_rect(rect: rt::Rect) -> BezierPath {
         let cls: *u8 = rt::get_class(#str_ptr("UIBezierPath\0"));
         let path: *u8 = rt::msg_id_rect(cls, rt::sel(#str_ptr("bezierPathWithRect:\0")), rect);
         return BezierPath { obj: rt::retain(path) };
     }
 
-    pub fn with_oval_in_rect(rect: rt::Rect) -> BezierPath {
+    fn with_oval_in_rect(rect: rt::Rect) -> BezierPath {
         let cls: *u8 = rt::get_class(#str_ptr("UIBezierPath\0"));
         let path: *u8 = rt::msg_id_rect(cls, rt::sel(#str_ptr("bezierPathWithOvalInRect:\0")), rect);
         return BezierPath { obj: rt::retain(path) };
@@ -119,29 +119,29 @@ impl BezierPath {
         rt::release(this.obj);
     }
 
-    pub fn move_to(this, x: f64, y: f64) {
+    fn move_to(this, x: f64, y: f64) {
         let p: rt::Point = rt::Point { x: x, y: y };
         rt::msg_void_point(this.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
     }
 
-    pub fn line_to(this, x: f64, y: f64) {
+    fn line_to(this, x: f64, y: f64) {
         let p: rt::Point = rt::Point { x: x, y: y };
         rt::msg_void_point(this.obj, rt::sel(#str_ptr("addLineToPoint:\0")), p);
     }
 
-    pub fn close(this) {
+    fn close(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("closePath\0")));
     }
 
-    pub fn set_line_width(this, width: f64) {
+    fn set_line_width(this, width: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
     }
 
-    pub fn stroke(this) {
+    fn stroke(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("stroke\0")));
     }
 
-    pub fn fill(this) {
+    fn fill(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("fill\0")));
     }
 }

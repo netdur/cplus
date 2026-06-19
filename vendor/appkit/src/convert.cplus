@@ -71,17 +71,17 @@ fn ns_utf8() -> u64 { return 4 as u64; }
 //                       variant unless you can prove the pool stays.
 // ===========================================================================
 
-pub fn cplus_str_to_nsstring(s: str) -> *u8 {
+fn cplus_str_to_nsstring(s: str) -> *u8 {
     let cls: *u8 = rt::get_class(#str_ptr("NSString\0"));
     let selector: *u8 = rt::sel(#str_ptr("stringWithBytes:length:encoding:\0"));
     return unsafe { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
 }
 
-pub fn cplus_string_to_nsstring(s: text::Text) -> *u8 {
+fn cplus_string_to_nsstring(s: text::Text) -> *u8 {
     return cplus_str_to_nsstring(unsafe { s.as_str() });
 }
 
-pub fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
+fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
     let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
     let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
@@ -92,7 +92,7 @@ pub fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
 // `str` view into the NSString's autoreleased UTF8 buffer. Unsafe —
 // the view's lifetime is the autorelease pool's, NOT the caller's
 // scope. Use the owned `nsstring_to_cplus_string` when in doubt.
-pub fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
+fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
     let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
     let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
@@ -105,18 +105,18 @@ pub fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
 // (Phase 3 territory). For now, ship the four primitive monomorphs.
 // ===========================================================================
 
-pub fn nsarray_count(arr: *u8) -> usize {
+fn nsarray_count(arr: *u8) -> usize {
     let n: u64 = unsafe { objc_msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
     return n as usize;
 }
 
-pub fn nsarray_obj_at(arr: *u8, idx: usize) -> *u8 {
+fn nsarray_obj_at(arr: *u8, idx: usize) -> *u8 {
     return unsafe {
         objc_msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), idx as u64)
     };
 }
 
-pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
+fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
     let n: usize = nsarray_count(arr);
     var out: vec::Vec[i32] = vec::Vec[i32]::with_capacity(n);
     var i: usize = 0 as usize;
@@ -130,7 +130,7 @@ pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
     return out;
 }
 
-pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
+fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
     let n: usize = nsarray_count(arr);
     var out: vec::Vec[i64] = vec::Vec[i64]::with_capacity(n);
     var i: usize = 0 as usize;
@@ -147,7 +147,7 @@ pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
     return out;
 }
 
-pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
+fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
     let n: usize = nsarray_count(arr);
     var out: vec::Vec[f32] = vec::Vec[f32]::with_capacity(n);
     var i: usize = 0 as usize;
@@ -164,7 +164,7 @@ pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
     return out;
 }
 
-pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
+fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
     let n: usize = nsarray_count(arr);
     var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n);
     var i: usize = 0 as usize;
@@ -193,7 +193,7 @@ pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
 // pairing themselves — that's the rare path and explicit is right.
 // ===========================================================================
 
-pub fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
+fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
     let len: u64 = unsafe { objc_msg_u64(d, rt::sel(#str_ptr("length\0"))) };
     let ptr: *u8 = rt::msg_id(d, rt::sel(#str_ptr("bytes\0")));
     var out: vec::Vec[u8] = vec::Vec[u8]::with_capacity(len as usize);
@@ -201,7 +201,7 @@ pub fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
     return out;
 }
 
-pub fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
+fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
     let cls: *u8 = rt::get_class(#str_ptr("NSData\0"));
     let selector: *u8 = rt::sel(#str_ptr("dataWithBytes:length:\0"));
     let slice: u8[] = v.as_slice();
@@ -214,7 +214,7 @@ pub fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
 // returned NSData must NOT outlive the caller's `v` (`freeWhenDone:NO`).
 // Marked `unsafe`-shape via the `_view` suffix; sema can't yet express
 // the lifetime obligation as a typing constraint.
-pub fn vec_u8_to_nsdata_view(v: vec::Vec[u8]) -> *u8 {
+fn vec_u8_to_nsdata_view(v: vec::Vec[u8]) -> *u8 {
     let cls: *u8 = rt::get_class(#str_ptr("NSData\0"));
     let selector: *u8 = rt::sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
     let slice: u8[] = v.as_slice();

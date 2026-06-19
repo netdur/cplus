@@ -3,20 +3,20 @@
 import "./runtime" as runtime;
 import "stdlib/result" as result;
 
-pub struct Library {
-    pub raw: *u8,
+struct Library {
+    raw: *u8,
 }
 
-pub struct Function {
-    pub raw: *u8,
+struct Function {
+    raw: *u8,
 }
 
-pub struct ComputePipelineState {
-    pub raw: *u8,
+struct ComputePipelineState {
+    raw: *u8,
 }
 
 impl Library {
-    pub fn new_function(this, name: str) -> result::Result[Function, runtime::MetalError] {
+    fn new_function(this, name: str) -> result::Result[Function, runtime::MetalError] {
         if this.raw == unsafe { 0 as *u8 } {
             return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
@@ -51,7 +51,7 @@ impl Function {
 }
 
 impl ComputePipelineState {
-    pub fn new(device_raw: *u8, function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
+    fn new(device_raw: *u8, function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
         // v0.0.12 — `borrow function`: `newComputePipelineStateWithFunction:`
         // retains the function internally if it keeps it. The caller may
         // want to create multiple pipelines from the same function (the

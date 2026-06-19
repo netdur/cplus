@@ -12,11 +12,11 @@ import "./runtime" as rt;
 
 // NSDragOperation bitmask values (return from `entered_imp` to say what drop
 // you'll accept; return `drag_op_none` to reject).
-pub fn drag_op_none() -> i64 { return 0 as i64; }
-pub fn drag_op_copy() -> i64 { return 1 as i64; }
-pub fn drag_op_link() -> i64 { return 2 as i64; }
-pub fn drag_op_generic() -> i64 { return 4 as i64; }
-pub fn drag_op_move() -> i64 { return 16 as i64; }
+fn drag_op_none() -> i64 { return 0 as i64; }
+fn drag_op_copy() -> i64 { return 1 as i64; }
+fn drag_op_link() -> i64 { return 2 as i64; }
+fn drag_op_generic() -> i64 { return 4 as i64; }
+fn drag_op_move() -> i64 { return 16 as i64; }
 
 // Synthesize an `NSView` subclass that is a drag destination, and return a
 // `+1`-owned handle (alloc/initWithFrame:). Add it to a parent and call
@@ -26,7 +26,7 @@ pub fn drag_op_move() -> i64 { return 16 as i64; }
 //                `-draggingEntered:` (return e.g. `drag_op_copy()`).
 //   perform_imp: `(self, _cmd, draggingInfo) -> BOOL` implements
 //                `-performDragOperation:` (read the drop, return 1 on success).
-pub fn create_drag_destination_view(
+fn create_drag_destination_view(
     frame: rt::Rect,
     entered_imp: fn(*u8, *u8, *u8) -> i64,
     perform_imp: fn(*u8, *u8, *u8) -> i8,
@@ -55,7 +55,7 @@ pub fn create_drag_destination_view(
 }
 
 // Register a view to accept plain-text (`public.utf8-plain-text`) drops.
-pub fn register_for_string_drops(view: *u8) {
+fn register_for_string_drops(view: *u8) {
     let type_str: *u8 = rt::ns_string(#str_ptr("public.utf8-plain-text\0"));
     let types: *u8 = rt::msg_id_id(
         rt::get_class(#str_ptr("NSArray\0")),
@@ -67,7 +67,7 @@ pub fn register_for_string_drops(view: *u8) {
 
 // Read the dragged plain text from a dragging-info object, as an `NSString*`
 // (null if absent). Call inside `perform_imp` with its `draggingInfo` argument.
-pub fn dragged_string_ns(dragging_info: *u8) -> *u8 {
+fn dragged_string_ns(dragging_info: *u8) -> *u8 {
     let pb: *u8 = rt::msg_id(dragging_info, rt::sel(#str_ptr("draggingPasteboard\0")));
     if pb == unsafe { 0 as *u8 } {
         return unsafe { 0 as *u8 };
@@ -88,7 +88,7 @@ pub fn dragged_string_ns(dragging_info: *u8) -> *u8 {
 //   passes the live `NSEvent*` as the third arg — hand it straight to
 //   `begin_string_drag` / `begin_dragging_session` to start the drag from here.
 //   Closure-free — reach the payload through a `static mut` / associated object.
-pub fn create_drag_source_view(
+fn create_drag_source_view(
     frame: rt::Rect,
     op_mask_imp: fn(*u8, *u8, *u8, i64) -> i64,
     dragged_imp: fn(*u8, *u8, *u8),
@@ -123,19 +123,19 @@ pub fn create_drag_source_view(
 // payload. Owned (+1 via alloc/init); `drop` releases it. Give it a dragging
 // frame + a contents image (so the drag has a visual), then pass an `NSArray` of
 // these to `begin_dragging_session`.
-pub struct DraggingItem {
-    pub obj: *u8,
+struct DraggingItem {
+    obj: *u8,
 }
 
 impl DraggingItem {
-    pub fn from_pasteboard_writer(writer: *u8) -> DraggingItem {
+    fn from_pasteboard_writer(writer: *u8) -> DraggingItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSDraggingItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let item: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithPasteboardWriter:\0")), writer);
         return DraggingItem { obj: item };
     }
 
-    pub fn from_string(text: *u8) -> DraggingItem {
+    fn from_string(text: *u8) -> DraggingItem {
         return DraggingItem::from_pasteboard_writer(rt::ns_string(text));
     }
 
@@ -145,7 +145,7 @@ impl DraggingItem {
 
     // `frame` is the on-screen rect the drag image animates from (in the source
     // view's coordinates); `image` is the `NSImage*` drawn during the drag.
-    pub fn set_dragging_frame_contents(this, frame: rt::Rect, image: *u8) {
+    fn set_dragging_frame_contents(this, frame: rt::Rect, image: *u8) {
         rt::msg_void_rect_id(this.obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, image);
     }
 }
@@ -155,7 +155,7 @@ impl DraggingItem {
 // `NSEvent` delivered to the view's `mouseDragged:` handler. Returns the
 // `NSDraggingSession*` (+0 autoreleased; do not release). The source-side
 // counterpart to the drag-destination API above.
-pub fn begin_dragging_session(source_view: *u8, items: *u8, event: *u8) -> *u8 {
+fn begin_dragging_session(source_view: *u8, items: *u8, event: *u8) -> *u8 {
     return rt::msg_id_id_id(
         source_view,
         rt::sel(#str_ptr("beginDraggingSessionWithItems:event:source:\0")),
@@ -169,7 +169,7 @@ pub fn begin_dragging_session(source_view: *u8, items: *u8, event: *u8) -> *u8 {
 // `event`, with the drag image animating from `frame` showing `image` (pass an
 // `NSImage*`, or `0 as *u8` for none). Call this from the `dragged_imp`
 // (`mouseDragged:`) handler.
-pub fn begin_string_drag(source_view: *u8, event: *u8, text: *u8, frame: rt::Rect, image: *u8) {
+fn begin_string_drag(source_view: *u8, event: *u8, text: *u8, frame: rt::Rect, image: *u8) {
     let item = DraggingItem::from_string(text);
     item.set_dragging_frame_contents(frame, image);
     let items: *u8 = rt::msg_id_id(

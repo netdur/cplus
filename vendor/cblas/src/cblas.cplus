@@ -19,12 +19,12 @@
 
 // ---- typed enum wrappers around the i32 cblas constants ----
 
-pub enum Order {
+enum Order {
     RowMajor, // = 101
     ColMajor, // = 102
 }
 
-pub enum Transpose {
+enum Transpose {
     NoTrans,   // = 111
     Trans,     // = 112
     ConjTrans, // = 113
@@ -139,51 +139,51 @@ extern fn cblas_dgemm(
 // i32 matching cblas's C int). Pointer args stay as `*f32` / `*f64`
 // — the caller produces these via `unsafe { #addr_of(arr) as *f32 }` etc.
 
-pub fn sdot(n: i32, x: *f32, inc_x: i32, y: *f32, inc_y: i32) -> f32 {
+fn sdot(n: i32, x: *f32, inc_x: i32, y: *f32, inc_y: i32) -> f32 {
     return unsafe { cblas_sdot(n, x, inc_x, y, inc_y) };
 }
 
-pub fn ddot(n: i32, x: *f64, inc_x: i32, y: *f64, inc_y: i32) -> f64 {
+fn ddot(n: i32, x: *f64, inc_x: i32, y: *f64, inc_y: i32) -> f64 {
     return unsafe { cblas_ddot(n, x, inc_x, y, inc_y) };
 }
 
-pub fn saxpy(n: i32, alpha: f32, x: *f32, inc_x: i32, y: *f32, inc_y: i32) {
+fn saxpy(n: i32, alpha: f32, x: *f32, inc_x: i32, y: *f32, inc_y: i32) {
     unsafe { cblas_saxpy(n, alpha, x, inc_x, y, inc_y); }
     return;
 }
 
-pub fn daxpy(n: i32, alpha: f64, x: *f64, inc_x: i32, y: *f64, inc_y: i32) {
+fn daxpy(n: i32, alpha: f64, x: *f64, inc_x: i32, y: *f64, inc_y: i32) {
     unsafe { cblas_daxpy(n, alpha, x, inc_x, y, inc_y); }
     return;
 }
 
-pub fn sscal(n: i32, alpha: f32, x: *f32, inc_x: i32) {
+fn sscal(n: i32, alpha: f32, x: *f32, inc_x: i32) {
     unsafe { cblas_sscal(n, alpha, x, inc_x); }
     return;
 }
 
-pub fn dscal(n: i32, alpha: f64, x: *f64, inc_x: i32) {
+fn dscal(n: i32, alpha: f64, x: *f64, inc_x: i32) {
     unsafe { cblas_dscal(n, alpha, x, inc_x); }
     return;
 }
 
-pub fn snrm2(n: i32, x: *f32, inc_x: i32) -> f32 {
+fn snrm2(n: i32, x: *f32, inc_x: i32) -> f32 {
     return unsafe { cblas_snrm2(n, x, inc_x) };
 }
 
-pub fn dnrm2(n: i32, x: *f64, inc_x: i32) -> f64 {
+fn dnrm2(n: i32, x: *f64, inc_x: i32) -> f64 {
     return unsafe { cblas_dnrm2(n, x, inc_x) };
 }
 
-pub fn sasum(n: i32, x: *f32, inc_x: i32) -> f32 {
+fn sasum(n: i32, x: *f32, inc_x: i32) -> f32 {
     return unsafe { cblas_sasum(n, x, inc_x) };
 }
 
-pub fn dasum(n: i32, x: *f64, inc_x: i32) -> f64 {
+fn dasum(n: i32, x: *f64, inc_x: i32) -> f64 {
     return unsafe { cblas_dasum(n, x, inc_x) };
 }
 
-pub fn sgemv(
+fn sgemv(
     order: Order,
     trans_a: Transpose,
     m: i32,
@@ -203,7 +203,7 @@ pub fn sgemv(
     return;
 }
 
-pub fn dgemv(
+fn dgemv(
     order: Order,
     trans_a: Transpose,
     m: i32,
@@ -223,7 +223,7 @@ pub fn dgemv(
     return;
 }
 
-pub fn sgemm(
+fn sgemm(
     order: Order,
     trans_a: Transpose,
     trans_b: Transpose,
@@ -246,7 +246,7 @@ pub fn sgemm(
     return;
 }
 
-pub fn dgemm(
+fn dgemm(
     order: Order,
     trans_a: Transpose,
     trans_b: Transpose,

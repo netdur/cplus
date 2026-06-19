@@ -14,14 +14,14 @@
 // consumer-side helper that calls the gate and returns Allow/Reject; the core
 // gate stays a pure predicate that never blocks and never prompts.
 
-pub enum Channel {
+enum Channel {
     // The in-app assistant: the user clicked the help icon and is present.
     InApp,
     // An external agent attached over the MCP bridge (by PID).
     External,
 }
 
-pub enum Decision {
+enum Decision {
     Allow,
     Reject,
 }
@@ -29,18 +29,18 @@ pub enum Decision {
 // What the policy decides over. Deliberately coarse (the grant is per agent /
 // channel, not per node or per op); a field can be added without changing the
 // gate's shape.
-pub struct Request {
-    pub channel: Channel,
+struct Request {
+    channel: Channel,
 }
 
-pub fn request(channel: Channel) -> Request {
+fn request(channel: Channel) -> Request {
     return Request { channel: channel };
 }
 
 // The gate holds the developer's policy. A function pointer, not a closure
 // (C+ has no closures, and the grant needs no captured state — per-channel
 // behaviour comes from the `Request`).
-pub struct AuthGate {
+struct AuthGate {
     policy: fn(Request) -> Decision,
 }
 
@@ -51,25 +51,25 @@ fn reject_always(req: Request) -> Decision {
 }
 
 // A closed gate: nothing is admitted until `serve` supplies a real policy.
-pub fn deny_all() -> AuthGate {
+fn deny_all() -> AuthGate {
     let p: fn(Request) -> Decision = reject_always;
     return AuthGate { policy: p };
 }
 
 // Arm the gate with a policy. This is how the surface is enabled (§8): you
 // cannot turn it on without supplying the decision function.
-pub fn serve(policy: fn(Request) -> Decision) -> AuthGate {
+fn serve(policy: fn(Request) -> Decision) -> AuthGate {
     return AuthGate { policy: policy };
 }
 
 impl AuthGate {
     // The single grant check. Pure: no I/O, no prompt, never blocks.
-    pub fn check(this, req: Request) -> Decision {
+    fn check(this, req: Request) -> Decision {
         return (this.policy)(req);
     }
 }
 
-pub fn decision_eq(a: Decision, b: Decision) -> bool {
+fn decision_eq(a: Decision, b: Decision) -> bool {
     return match a {
         Decision::Allow => match b {
             Decision::Allow => true,
@@ -82,7 +82,7 @@ pub fn decision_eq(a: Decision, b: Decision) -> bool {
     };
 }
 
-pub fn channel_eq(a: Channel, b: Channel) -> bool {
+fn channel_eq(a: Channel, b: Channel) -> bool {
     return match a {
         Channel::InApp => match b {
             Channel::InApp => true,

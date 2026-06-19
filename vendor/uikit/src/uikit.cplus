@@ -18,77 +18,77 @@ import "./toolbar" as toolbar;
 import "./pasteboard" as pasteboard;
 import "./notifications" as notifications;
 
-pub type Point = runtime::Point;
-pub type Size = runtime::Size;
-pub type Rect = runtime::Rect;
-pub type EdgeInsets = runtime::EdgeInsets;
+type Point = runtime::Point;
+type Size = runtime::Size;
+type Rect = runtime::Rect;
+type EdgeInsets = runtime::EdgeInsets;
 
-pub type Screen = screen::Screen;
-pub type Window = window::Window;
-pub type ViewController = controllers::ViewController;
-pub type NavigationController = controllers::NavigationController;
-pub type TabBarController = controllers::TabBarController;
-pub type SplitViewController = controllers::SplitViewController;
-pub type PageViewController = controllers::PageViewController;
+type Screen = screen::Screen;
+type Window = window::Window;
+type ViewController = controllers::ViewController;
+type NavigationController = controllers::NavigationController;
+type TabBarController = controllers::TabBarController;
+type SplitViewController = controllers::SplitViewController;
+type PageViewController = controllers::PageViewController;
 
-pub type View = view::View;
-pub type Label = view::Label;
-pub type StackView = view::StackView;
-pub type ScrollView = view::ScrollView;
-pub type Color = view::Color;
+type View = view::View;
+type Label = view::Label;
+type StackView = view::StackView;
+type ScrollView = view::ScrollView;
+type Color = view::Color;
 
-pub type Button = controls::Button;
-pub type Slider = controls::Slider;
-pub type Switch = controls::Switch;
-pub type SegmentedControl = controls::SegmentedControl;
-pub type ProgressView = controls::ProgressView;
-pub type ProgressIndicator = controls::ActivityIndicator;
-pub type ActivityIndicator = controls::ActivityIndicator;
-pub type PageControl = controls::PageControl;
-pub type DatePicker = controls::DatePicker;
+type Button = controls::Button;
+type Slider = controls::Slider;
+type Switch = controls::Switch;
+type SegmentedControl = controls::SegmentedControl;
+type ProgressView = controls::ProgressView;
+type ProgressIndicator = controls::ActivityIndicator;
+type ActivityIndicator = controls::ActivityIndicator;
+type PageControl = controls::PageControl;
+type DatePicker = controls::DatePicker;
 
-pub type TextField = text::TextField;
-pub type TextView = text::TextView;
-pub type SearchBar = text::SearchBar;
-pub type SecureTextField = text::SecureTextField;
+type TextField = text::TextField;
+type TextView = text::TextView;
+type SearchBar = text::SearchBar;
+type SecureTextField = text::SecureTextField;
 
-pub type VisualEffectView = containers::VisualEffectView;
-pub type BlurEffect = containers::BlurEffect;
-pub type TableViewCell = containers::TableViewCell;
+type VisualEffectView = containers::VisualEffectView;
+type BlurEffect = containers::BlurEffect;
+type TableViewCell = containers::TableViewCell;
 
-pub type TableView = data::TableView;
-pub type CollectionView = data::CollectionView;
-pub type CollectionViewCell = data::CollectionViewCell;
-pub type CollectionViewFlowLayout = data::CollectionViewFlowLayout;
-pub type PickerView = data::PickerView;
+type TableView = data::TableView;
+type CollectionView = data::CollectionView;
+type CollectionViewCell = data::CollectionViewCell;
+type CollectionViewFlowLayout = data::CollectionViewFlowLayout;
+type PickerView = data::PickerView;
 
-pub type ImageView = graphics::ImageView;
-pub type Image = graphics::Image;
-pub type Font = graphics::Font;
-pub type BezierPath = graphics::BezierPath;
+type ImageView = graphics::ImageView;
+type Image = graphics::Image;
+type Font = graphics::Font;
+type BezierPath = graphics::BezierPath;
 
-pub type AlertController = dialogs::AlertController;
-pub type AlertAction = dialogs::AlertAction;
-pub type Alert = dialogs::Alert;
+type AlertController = dialogs::AlertController;
+type AlertAction = dialogs::AlertAction;
+type Alert = dialogs::Alert;
 
-pub type Toolbar = toolbar::Toolbar;
-pub type NavigationBar = toolbar::NavigationBar;
-pub type BarButtonItem = toolbar::BarButtonItem;
-pub type TabBar = toolbar::TabBar;
-pub type TabBarItem = toolbar::TabBarItem;
+type Toolbar = toolbar::Toolbar;
+type NavigationBar = toolbar::NavigationBar;
+type BarButtonItem = toolbar::BarButtonItem;
+type TabBar = toolbar::TabBar;
+type TabBarItem = toolbar::TabBarItem;
 
-pub type Pasteboard = pasteboard::Pasteboard;
-pub type NotificationCenter = notifications::NotificationCenter;
-pub type Observer = notifications::Observer;
+type Pasteboard = pasteboard::Pasteboard;
+type NotificationCenter = notifications::NotificationCenter;
+type Observer = notifications::Observer;
 
-pub fn ns_string(utf8: *u8) -> *u8 {
+fn ns_string(utf8: *u8) -> *u8 {
     return runtime::ns_string(utf8);
 }
 
-pub fn make_rect(x: f64, y: f64, w: f64, h: f64) -> runtime::Rect {
+fn make_rect(x: f64, y: f64, w: f64, h: f64) -> runtime::Rect {
     return runtime::make_rect(x, y, w, h);
 }
 
-pub fn run(argc: i32, argv: *u8, did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> i32 {
+fn run(argc: i32, argv: *u8, did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> i32 {
     return application::run(argc, argv, did_finish_imp);
 }

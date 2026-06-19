@@ -4,13 +4,13 @@ import "./runtime" as runtime;
 
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 
-pub struct Buffer {
-    pub raw: *u8,
-    pub size: usize,
+struct Buffer {
+    raw: *u8,
+    size: usize,
 }
 
 impl Buffer {
-    pub fn contents(this) -> *u8 {
+    fn contents(this) -> *u8 {
         if this.raw == unsafe { 0 as *u8 } {
             return unsafe { 0 as *u8 };
         }
@@ -23,7 +23,7 @@ impl Buffer {
     // silently truncating. The caller can compare against
     // `#slice_len(slice)` to detect a too-small buffer; pre-fix
     // they got no signal at all.
-    pub fn copy_to_slice(this, slice: u8[]) -> usize {
+    fn copy_to_slice(this, slice: u8[]) -> usize {
         let n: usize = #slice_len(slice);
         let src: *u8 = this.contents();
         if src == unsafe { 0 as *u8 } {
@@ -37,7 +37,7 @@ impl Buffer {
         return bytes_to_copy;
     }
 
-    pub fn copy_from_slice(this, slice: u8[]) -> usize {
+    fn copy_from_slice(this, slice: u8[]) -> usize {
         let n: usize = #slice_len(slice);
         let dest: *u8 = this.contents();
         if dest == unsafe { 0 as *u8 } {

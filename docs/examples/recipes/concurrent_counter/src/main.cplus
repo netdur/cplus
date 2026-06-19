@@ -38,7 +38,7 @@ fn bump(counter: *u64) -> i32 {
     return 0 as i32;
 }
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     // Allocate the shared counter on the heap so its lifetime exceeds
     // the worker threads. (Stack-allocated locals can't be safely
     // shared with workers — the parent's stack frame might unwind

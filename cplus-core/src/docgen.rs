@@ -197,12 +197,12 @@ fn parse_item_header(
     // un-`pub` form when inside an impl that is itself pub-targeted
     // (the surrounding impl's pub-ness governs the inner methods).
     let kinds: &[(&str, ItemKind)] = &[
-        ("pub fn ",        ItemKind::Fn),
-        ("pub extern fn ", ItemKind::Fn),
-        ("pub struct ",    ItemKind::Struct),
-        ("pub enum ",      ItemKind::Enum),
-        ("pub interface ", ItemKind::Interface),
-        ("pub type ",      ItemKind::TypeAlias),
+        ("fn ",        ItemKind::Fn),
+        ("export extern fn ", ItemKind::Fn),
+        ("struct ",    ItemKind::Struct),
+        ("enum ",      ItemKind::Enum),
+        ("interface ", ItemKind::Interface),
+        ("type ",      ItemKind::TypeAlias),
         ("pub impl ",      ItemKind::Impl),
     ];
     let mut matched: Option<(&str, ItemKind, bool /* pub */)> = None;
@@ -218,7 +218,7 @@ fn parse_item_header(
             matched = Some(("impl", ItemKind::Impl, true));
         } else if is_inside_impl {
             // Inside a pub-targeted impl: accept `pub fn name` only.
-            for (prefix, kind) in &[("pub fn ", ItemKind::Fn)] {
+            for (prefix, kind) in &[("fn ", ItemKind::Fn)] {
                 if head.starts_with(prefix) {
                     matched = Some((prefix.trim_start_matches("pub ").trim(), *kind, true));
                     break;
@@ -239,6 +239,9 @@ fn parse_item_header(
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
     if raw_name.is_empty() { return None; }
+    // v0.0.24 #10: visibility is name-based — `_`-prefixed items are
+    // module-private and not part of the documented public API.
+    if raw_name.starts_with('_') { return None; }
     let display_name = if let (ItemKind::Fn, Some(target)) = (kind, current_impl_target) {
         format!("{target}::{raw_name}")
     } else {
@@ -327,13 +330,15 @@ mod tests {
     }
 
     #[test]
-    fn ignores_non_pub_items() {
+    fn ignores_private_items() {
+        // v0.0.24 #10: docs cover the public API — `_`-prefixed items are
+        // module-private and skipped.
         let src = "\
 /// Internal helper.
-fn private_helper() -> i32 { return 0; }
+fn _private_helper() -> i32 { return 0; }
 
-/// Exported.
-pub fn public_thing() -> i32 { return 1; }
+/// Public.
+fn public_thing() -> i32 { return 1; }
 ";
         let items = extract(src);
         assert_eq!(items.len(), 1);
@@ -350,7 +355,7 @@ pub fn public_thing() -> i32 { return 1; }
 /// ```
 /// assert add(1, 2) == 3;
 /// ```
-pub fn add(a: i32, b: i32) -> i32 {
+fn add(a: i32, b: i32) -> i32 {
     return a +% b;
 }
 ";
@@ -359,7 +364,7 @@ pub fn add(a: i32, b: i32) -> i32 {
         let it = &items[0];
         assert_eq!(it.kind, ItemKind::Fn);
         assert_eq!(it.name, "add");
-        assert!(it.signature.contains("pub fn add(a: i32, b: i32) -> i32"));
+        assert!(it.signature.contains("fn add(a: i32, b: i32) -> i32"));
         assert!(it.doc.contains("Returns the sum."));
         assert!(it.doc.contains("```"));
     }
@@ -368,13 +373,13 @@ pub fn add(a: i32, b: i32) -> i32 {
     fn extracts_pub_struct_and_enum_and_type() {
         let src = "\
 /// A point in 2D space.
-pub struct Point { pub x: i32, pub y: i32 }
+struct Point { x: i32, y: i32 }
 
 /// RGB color.
-pub enum Color { Red, Green, Blue }
+enum Color { Red, Green, Blue }
 
 /// Byte count alias.
-pub type Bytes = usize;
+type Bytes = usize;
 ";
         let items = extract(src);
         let kinds: Vec<ItemKind> = items.iter().map(|i| i.kind).collect();
@@ -384,14 +389,14 @@ pub type Bytes = usize;
     #[test]
     fn impl_block_methods_get_qualified_names() {
         let src = "\
-pub struct Point { x: i32 }
+struct Point { x: i32 }
 
 impl Point {
     /// Construct a new point.
-    pub fn new(x: i32) -> Point { return Point { x: x }; }
+    fn new(x: i32) -> Point { return Point { x: x }; }
 
     /// Read the x coordinate.
-    pub fn x(this) -> i32 { return this.x; }
+    fn x(this) -> i32 { return this.x; }
 }
 ";
         let items = extract(src);
@@ -403,11 +408,11 @@ impl Point {
     #[test]
     fn impl_interface_for_target_uses_implementing_type_name() {
         let src = "\
-pub interface Display { fn show(this) -> i32 }
+interface Display { fn show(this) -> i32 }
 
 impl Counter: Display {
     /// Show the counter's value.
-    pub fn show(this) -> i32 { return this.value; }
+    fn show(this) -> i32 { return this.value; }
 }
 ";
         let items = extract(src);
@@ -419,10 +424,10 @@ impl Counter: Display {
     fn markdown_render_includes_toc_and_sections() {
         let src = "\
 /// The first.
-pub fn alpha() -> i32 { return 1; }
+fn alpha() -> i32 { return 1; }
 
 /// The second.
-pub fn beta() -> i32 { return 2; }
+fn beta() -> i32 { return 2; }
 ";
         let items = extract(src);
         let md = render_markdown("util.cplus", &items);
@@ -451,7 +456,7 @@ pub fn beta() -> i32 { return 2; }
         let src = "\
 /// Tagged with an attribute.
 #[inline]
-pub fn tagged() -> i32 { return 0; }
+fn tagged() -> i32 { return 0; }
 ";
         let items = extract(src);
         assert_eq!(items.len(), 1);

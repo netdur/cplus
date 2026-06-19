@@ -1,12 +1,12 @@
 import "./runtime" as rt;
 import "./convert" as convert;
 
-pub struct Toolbar {
-    pub obj: *u8,
+struct Toolbar {
+    obj: *u8,
 }
 
 impl Toolbar {
-    pub fn new(frame: rt::Rect) -> Toolbar {
+    fn new(frame: rt::Rect) -> Toolbar {
         return Toolbar { obj: rt::alloc_init_with_frame(#str_ptr("UIToolbar\0"), frame) };
     }
 
@@ -14,25 +14,25 @@ impl Toolbar {
         rt::release(this.obj);
     }
 
-    pub fn set_items(this, items: *u8) {
+    fn set_items(this, items: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn set_bar_style(this, style: i64) {
+    fn set_bar_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct NavigationBar {
-    pub obj: *u8,
+struct NavigationBar {
+    obj: *u8,
 }
 
 impl NavigationBar {
-    pub fn new(frame: rt::Rect) -> NavigationBar {
+    fn new(frame: rt::Rect) -> NavigationBar {
         return NavigationBar { obj: rt::alloc_init_with_frame(#str_ptr("UINavigationBar\0"), frame) };
     }
 
@@ -40,21 +40,21 @@ impl NavigationBar {
         rt::release(this.obj);
     }
 
-    pub fn set_items(this, items: *u8) {
+    fn set_items(this, items: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct BarButtonItem {
-    pub obj: *u8,
+struct BarButtonItem {
+    obj: *u8,
 }
 
 impl BarButtonItem {
-    pub fn new(title: str, style: i64, target: *u8, action: *u8) -> BarButtonItem {
+    fn new(title: str, style: i64, target: *u8, action: *u8) -> BarButtonItem {
         let cls: *u8 = rt::get_class(#str_ptr("UIBarButtonItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let item: *u8 = rt::msg_id_id_i64_id_id(
@@ -72,17 +72,17 @@ impl BarButtonItem {
         rt::release(this.obj);
     }
 
-    pub fn set_enabled(this, flag: i8) {
+    fn set_enabled(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
     }
 }
 
-pub struct TabBar {
-    pub obj: *u8,
+struct TabBar {
+    obj: *u8,
 }
 
 impl TabBar {
-    pub fn new(frame: rt::Rect) -> TabBar {
+    fn new(frame: rt::Rect) -> TabBar {
         return TabBar { obj: rt::alloc_init_with_frame(#str_ptr("UITabBar\0"), frame) };
     }
 
@@ -90,21 +90,21 @@ impl TabBar {
         rt::release(this.obj);
     }
 
-    pub fn set_items(this, items: *u8) {
+    fn set_items(this, items: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct TabBarItem {
-    pub obj: *u8,
+struct TabBarItem {
+    obj: *u8,
 }
 
 impl TabBarItem {
-    pub fn new(title: str, image: *u8, tag: i64) -> TabBarItem {
+    fn new(title: str, image: *u8, tag: i64) -> TabBarItem {
         let cls: *u8 = rt::get_class(#str_ptr("UITabBarItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let item: *u8 = rt::msg_id_id_id_i64(

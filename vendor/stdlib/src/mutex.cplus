@@ -41,7 +41,7 @@ extern fn pthread_mutex_destroy(mutex: *u8) -> i32;
 extern fn pthread_mutex_lock(mutex: *u8) -> i32;
 extern fn pthread_mutex_unlock(mutex: *u8) -> i32;
 
-pub struct Mutex[T] {
+struct Mutex[T] {
     // Pointer to heap block: { u64 refcount, [64 bytes pthread mutex], T value }.
     ctrl: *u8,
 }
@@ -55,7 +55,7 @@ pub struct Mutex[T] {
 unsafe impl Mutex[T: Send]: Send {}
 unsafe impl Mutex[T: Send]: Sync {}
 
-pub struct MutexGuard[T] {
+struct MutexGuard[T] {
     // Same heap block the originating Mutex carries. #5: the guard co-owns a
     // reference — `lock` bumped the refcount — so it can safely outlive the
     // `Mutex` handle that produced it (return it, store it) without dangling.
@@ -71,7 +71,7 @@ pub struct MutexGuard[T] {
 //   mutex:    ctrl + 8    (64 bytes — pthread_mutex_t)
 //   value:    ctrl + 72   (T)
 
-pub fn new[T](take v: T) -> Mutex[T] {
+fn new[T](take v: T) -> Mutex[T] {
     let refct_bytes: usize = 8 as usize;
     let mutex_bytes: usize = 64 as usize;
     let value_size: usize = #size_of::[T]();
@@ -92,7 +92,7 @@ impl Mutex[T] {
     // ordering rationale as `Arc::clone` — relaxed is sufficient
     // because the new Mutex carries a ctrl already visible to this
     // thread.
-    pub fn clone(this) -> Mutex[T] {
+    fn clone(this) -> Mutex[T] {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
@@ -110,7 +110,7 @@ impl Mutex[T] {
     // (the guard-escape use-after-free is thus impossible). Bump the refcount
     // before handing the ctrl pointer over — Relaxed mirrors `clone` (the
     // block is already visible to this thread).
-    pub fn lock(this) -> MutexGuard[T] {
+    fn lock(this) -> MutexGuard[T] {
         let refct_bytes: usize = 8 as usize;
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
@@ -122,7 +122,7 @@ impl Mutex[T] {
     }
 
     // Strong-count snapshot (racy except in single-threaded contexts).
-    pub fn strong_count(this) -> u64 {
+    fn strong_count(this) -> u64 {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
@@ -160,7 +160,7 @@ impl Mutex[T] {
 impl MutexGuard[T: Copy] {
     // Read inner T (bitwise copy). The lock guarantees no other
     // thread is reading or writing concurrently.
-    pub fn get(this) -> T {
+    fn get(this) -> T {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         return unsafe { *value_ptr };
@@ -173,7 +173,7 @@ impl MutexGuard[T] {
     // inner T is always initialized (`new` moved it in), so the drop-then-store
     // is sound for any T — a no-op `#drop_in_place` for Copy T, and a proper
     // teardown of the old value for a Drop T (no leak, no double-free).
-    pub fn set(ref this, take v: T) {
+    fn set(ref this, take v: T) {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         unsafe { #drop_in_place::[T](value_ptr); }

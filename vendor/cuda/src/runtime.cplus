@@ -18,15 +18,15 @@ extern fn cudaFree(dev_ptr: *u8) -> i32;
 extern fn cudaMemcpy(dst: *u8, src: *u8, count: usize, kind: i32) -> i32;
 
 // cudaMemcpyKind constants.
-pub fn memcpy_host_to_host() -> i32 { return 0 as i32; }
-pub fn memcpy_host_to_device() -> i32 { return 1 as i32; }
-pub fn memcpy_device_to_host() -> i32 { return 2 as i32; }
-pub fn memcpy_device_to_device() -> i32 { return 3 as i32; }
+fn memcpy_host_to_host() -> i32 { return 0 as i32; }
+fn memcpy_host_to_device() -> i32 { return 1 as i32; }
+fn memcpy_device_to_host() -> i32 { return 2 as i32; }
+fn memcpy_device_to_device() -> i32 { return 3 as i32; }
 
 // A failed CUDA call. `Runtime` carries a `cudaError_t`, `Blas` a
 // `cublasStatus_t` — both are ints where 0 means success. `error_string`
 // turns a runtime code into libcudart's human-readable message.
-pub enum CudaError {
+enum CudaError {
     Runtime(i32),
     Blas(i32),
     NoDevice,
@@ -34,12 +34,12 @@ pub enum CudaError {
 
 // Pointer to libcudart's static message string for a runtime error code.
 // Returns a NUL-terminated C string suitable for `printf("%s", ...)`.
-pub fn error_string(code: i32) -> *u8 {
+fn error_string(code: i32) -> *u8 {
     return unsafe { cudaGetErrorString(code) };
 }
 
 // Number of CUDA-capable devices visible to the process.
-pub fn device_count() -> result::Result[i32, CudaError] {
+fn device_count() -> result::Result[i32, CudaError] {
     let slot: *u8 = unsafe { malloc(4 as usize) };
     let p: *i32 = unsafe { slot as *i32 };
     let rc: i32 = unsafe { cudaGetDeviceCount(p) };
@@ -53,12 +53,12 @@ pub fn device_count() -> result::Result[i32, CudaError] {
 
 // Select the active device for subsequent allocations / launches.
 // Returns the raw cudaError_t (0 = success).
-pub fn set_device(dev: i32) -> i32 {
+fn set_device(dev: i32) -> i32 {
     return unsafe { cudaSetDevice(dev) };
 }
 
 // Block the host until all previously issued device work completes.
 // Returns the raw cudaError_t (0 = success).
-pub fn synchronize() -> i32 {
+fn synchronize() -> i32 {
     return unsafe { cudaDeviceSynchronize() };
 }

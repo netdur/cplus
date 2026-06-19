@@ -5066,7 +5066,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0410",
                     format!(
-                        "type `{}` in `pub extern fn` parameter is not C-ABI compatible: {reason}",
+                        "type `{}` in `export extern fn` parameter is not C-ABI compatible: {reason}",
                         ty_display(&pty),
                     ),
                     p.span,
@@ -5079,7 +5079,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0410",
                     format!(
-                        "type `{}` in `pub extern fn` return position is not C-ABI compatible: {reason}",
+                        "type `{}` in `export extern fn` return position is not C-ABI compatible: {reason}",
                         ty_display(&ret_ty),
                     ),
                     rt.span,
@@ -5175,7 +5175,7 @@ impl SemaCx<'_> {
                 None
             }
             Ty::Param(name) => Some(format!(
-                "generic type parameter `{name}` cannot appear in a `pub extern fn` signature; monomorphize manually by exposing one concrete overload per type",
+                "generic type parameter `{name}` cannot appear in a `export extern fn` signature; monomorphize manually by exposing one concrete overload per type",
             )),
             // v0.0.6 Slice 1B: SIMD types are not C-ABI compatible by
             // default (no portable C representation; cf. NEON's `float32x4_t`
@@ -17051,7 +17051,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn zero_in_static_init_clean_g033() {
         assert_clean(
             "#[repr(C)] struct S { a: i32, b: i64 }\n\
-             pub static T: S = #zero::[S]();\n\
+             static T: S = #zero::[S]();\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -17059,7 +17059,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn zero_in_static_mut_init_clean_g033() {
         assert_clean(
-            "pub static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+            "static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -17069,7 +17069,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // const FOO also accepts #zero (papercut they hit in
         // threadpool.cplus). Same shape as static.
         assert_clean(
-            "pub const ZEROS: [u8; 64] = #zero::[[u8; 64]]();\n\
+            "const ZEROS: [u8; 64] = #zero::[[u8; 64]]();\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19336,19 +19336,21 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     #[test]
-    fn test_fn_pub_rejected_e0359() {
+    fn test_fn_export_rejected_e0359() {
+        // v0.0.24 #10: a `#[test]` fn cannot be `export`ed (E0359 fires on the
+        // exported flag, which `export` now sets — was `pub`).
         let codes = errors(
-            "#[test] pub fn t() { return; }\n\
+            "#[test] export fn t() { return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0359"), "expected E0359, got: {codes:?}");
     }
 
     #[test]
-    fn test_fn_pub_and_wrong_signature_emits_both() {
+    fn test_fn_export_and_wrong_signature_emits_both() {
         // Independent rules — both fire on the same fn.
         let codes = errors(
-            "#[test] pub fn t(n: i32) -> bool { return true; }\n\
+            "#[test] export fn t(n: i32) -> bool { return true; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0358"), "expected E0358, got: {codes:?}");
@@ -19360,7 +19362,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Sanity guard: `pub` rejection is gated on the `#[test]` attribute.
         // A regular `pub fn` is fine.
         assert_clean(
-            "pub fn helper() { return; }\n\
+            "fn helper() { return; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -21749,12 +21751,12 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn pub_extern_fn_with_scalar_args_clean() {
-        assert_clean("pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }");
+        assert_clean("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }");
     }
 
     #[test]
     fn pub_extern_fn_with_raw_pointer_clean() {
-        assert_clean("pub extern fn load(p: *i32) -> i32 { return unsafe { *p }; }");
+        assert_clean("export extern fn load(p: *i32) -> i32 { return unsafe { *p }; }");
     }
 
     #[test]
@@ -21762,27 +21764,27 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "#[repr(C)]\n\
              struct Point { x: i32, y: i32 }\n\
-             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
+             export extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
         );
     }
 
     #[test]
     fn pub_extern_fn_with_str_rejected_e0410() {
-        let codes = errors("pub extern fn echo(s: str) -> i32 { return 0; }");
+        let codes = errors("export extern fn echo(s: str) -> i32 { return 0; }");
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
     #[test]
     fn pub_extern_fn_with_string_return_rejected_e0410() {
         let codes = errors(&format!(
-            "{DROP_STRUCT}pub extern fn make() -> Owned {{ return Owned {{ x: 0 }}; }}"
+            "{DROP_STRUCT}export extern fn make() -> Owned {{ return Owned {{ x: 0 }}; }}"
         ));
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
     #[test]
     fn pub_extern_fn_with_slice_rejected_e0410() {
-        let codes = errors("pub extern fn len(s: i32[]) -> i32 { return 0; }");
+        let codes = errors("export extern fn len(s: i32[]) -> i32 { return 0; }");
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
@@ -21790,7 +21792,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pub_extern_fn_with_tagged_enum_rejected_e0410() {
         let codes = errors(
             "enum Opt { Some(i32), None }\n\
-             pub extern fn take(o: Opt) -> i32 { return 0; }",
+             export extern fn take(o: Opt) -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -21800,7 +21802,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Plain (untagged) enum lowers to i32 — fine across the C ABI.
         assert_clean(
             "enum Color { Red, Green, Blue }\n\
-             pub extern fn pick(c: Color) -> i32 { return 0; }",
+             export extern fn pick(c: Color) -> i32 { return 0; }",
         );
     }
 
@@ -21808,7 +21810,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pub_extern_fn_with_non_repr_c_struct_rejected_e0410() {
         let codes = errors(
             "struct Point { x: i32, y: i32 }\n\
-             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
+             export extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -21819,7 +21821,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "#[repr(C)]\n\
              struct R { fd: i32 }\n\
              impl R { fn drop(ref this) { return; } }\n\
-             pub extern fn use_it(r: R) -> i32 { return r.fd; }",
+             export extern fn use_it(r: R) -> i32 { return r.fd; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -21827,27 +21829,27 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn pub_extern_fn_with_unit_return_clean() {
         // Unit return is fine — maps to C `void`.
-        assert_clean("pub extern fn noop() { return; }");
+        assert_clean("export extern fn noop() { return; }");
     }
 
     #[test]
     fn pub_extern_fn_with_array_clean() {
         // Fixed-size array of C-compatible element is layout-compatible
         // with C `T[N]`.
-        assert_clean("pub extern fn first(xs: [i32; 4]) -> i32 { return xs[0 as usize]; }");
+        assert_clean("export extern fn first(xs: [i32; 4]) -> i32 { return xs[0 as usize]; }");
     }
 
     #[test]
     fn pub_extern_fn_with_fn_ptr_clean() {
         // Function-pointer params/returns work when their own signatures
         // are C-exportable.
-        assert_clean("pub extern fn invoke(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); }");
+        assert_clean("export extern fn invoke(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); }");
     }
 
     #[test]
     fn pub_extern_fn_with_fn_ptr_of_slice_rejected_e0410() {
         // A fn-ptr whose param uses a non-C type propagates the rejection.
-        let codes = errors("pub extern fn bad(f: fn(i32[]) -> i32) -> i32 { return 0; }");
+        let codes = errors("export extern fn bad(f: fn(i32[]) -> i32) -> i32 { return 0; }");
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
@@ -21857,14 +21859,14 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "#[repr(C)]\n\
              struct Outer { inner: str }\n\
-             pub extern fn use_it(o: Outer) -> i32 { return 0; }",
+             export extern fn use_it(o: Outer) -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
     // ---- v0.0.3 Phase 5 Slice 5E.2: async fn + await sema ----
 
-    const FUTURE_PRELUDE: &str = "pub struct Future[T] { pub opaque handle: *u8 } ";
+    const FUTURE_PRELUDE: &str = "struct Future[T] { opaque handle: *u8 } ";
 
     // R4: a minimal user-defined owned (non-Copy, Drop) struct. Replaces the
     // blessed `string` in tests that just need "some owned heap-ish type" now
@@ -22892,7 +22894,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn simd_in_pub_extern_fn_rejected_e0410() {
-        let codes = errors("pub extern fn f(v: f32x4) -> f32x4 { return v; }");
+        let codes = errors("export extern fn f(v: f32x4) -> f32x4 { return v; }");
         assert!(codes.contains(&"E0410"), "expected E0410, got {:?}", codes);
     }
 
@@ -23280,13 +23282,13 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // an LLVM constant aggregate; see `render_static_literal`.
     #[test]
     fn array_literal_in_static_accepted_g043() {
-        let codes = lowered_errors("pub static T: [i32; 4] = [1, 2, 3, 4];");
+        let codes = lowered_errors("static T: [i32; 4] = [1, 2, 3, 4];");
         assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
     }
 
     #[test]
     fn fill_array_in_static_accepted_g043() {
-        let codes = lowered_errors("pub static T: [u8; 256] = [0u8; 256];");
+        let codes = lowered_errors("static T: [u8; 256] = [0u8; 256];");
         assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
     }
 
@@ -23294,7 +23296,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // E0X30 (consts inline at use sites; arrays belong in `static`).
     #[test]
     fn array_literal_in_const_still_rejected_e0x30_g043() {
-        let codes = lowered_errors("pub const C: [i32; 4] = [1, 2, 3, 4];");
+        let codes = lowered_errors("const C: [i32; 4] = [1, 2, 3, 4];");
         assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
 
@@ -23304,7 +23306,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn struct_literal_in_static_accepted_g043b() {
         let codes = lowered_errors(
             "struct P { x: i32, y: f32, ok: bool } \
-             pub static S: P = P { x: 1, y: 2.0f32, ok: true };",
+             static S: P = P { x: 1, y: 2.0f32, ok: true };",
         );
         assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
     }
@@ -23315,8 +23317,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = lowered_errors(
             "struct Inner { a: i32 } \
              struct Outer { i: Inner, n: i32 } \
-             pub static O: Outer = Outer { i: Inner { a: 5 }, n: 6 }; \
-             pub static A: [Outer; 2] = [ \
+             static O: Outer = Outer { i: Inner { a: 5 }, n: 6 }; \
+             static A: [Outer; 2] = [ \
                  Outer { i: Inner { a: 1 }, n: 2 }, \
                  Outer { i: Inner { a: 3 }, n: 4 } \
              ];",
@@ -23330,7 +23332,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = lowered_errors(
             "struct P { x: i32 } \
              fn f() -> i32 { return 3; } \
-             pub static S: P = P { x: f() };",
+             static S: P = P { x: f() };",
         );
         assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
@@ -23341,7 +23343,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn generic_struct_literal_in_static_rejected_e0x30_g043b() {
         let codes = lowered_errors(
             "struct Pair[A, B] { first: A, second: B } \
-             pub static G: Pair[i32, bool] = Pair[i32, bool] { first: 1, second: true };",
+             static G: Pair[i32, bool] = Pair[i32, bool] { first: 1, second: true };",
         );
         assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
@@ -23350,7 +23352,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn struct_literal_in_const_still_rejected_e0x30_g043b() {
         let codes = lowered_errors(
-            "struct P { x: i32 } pub const C: P = P { x: 1 };",
+            "struct P { x: i32 } const C: P = P { x: 1 };",
         );
         assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
@@ -23360,7 +23362,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // The complementary positive — lower accepts #zero::[T]() as
         // a const-init shape; sema then type-checks the RHS against
         // the declared type.
-        let codes = lowered_errors("pub static T: [u8; 256] = #zero::[[u8; 256]]();");
+        let codes = lowered_errors("static T: [u8; 256] = #zero::[[u8; 256]]();");
         assert!(
             !codes.iter().any(|c| c == "E0X30"),
             "expected no E0X30, got {:?}",

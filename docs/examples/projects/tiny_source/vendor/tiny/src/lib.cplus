@@ -1,6 +1,6 @@
 // tiny — the smallest legal C+ package: one `pub fn`, no `[link]`, no
 // binaries. Consumers `import "tiny/lib" as tiny;` to use it.
 
-pub fn echo(n: i32) -> i32 {
+fn echo(n: i32) -> i32 {
     return n;
 }

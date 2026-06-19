@@ -1,42 +1,42 @@
 // jni-min: Core JNI interop types for C+
 // Maps the JVM's jni.h to C+ types using #[repr(C)] and TypeKind::FnPtr.
 
-pub type jint = i32;
-pub type jlong = i64;
-pub type jbyte = i8;
-pub type jboolean = u8;
-pub type jchar = u16;
-pub type jshort = i16;
-pub type jfloat = f32;
-pub type jdouble = f64;
-pub type jsize = i32;
+type jint = i32;
+type jlong = i64;
+type jbyte = i8;
+type jboolean = u8;
+type jchar = u16;
+type jshort = i16;
+type jfloat = f32;
+type jdouble = f64;
+type jsize = i32;
 
 // Opaque pointers to Java objects/classes
-pub type jobject = *u8;
-pub type jclass = *u8;
-pub type jstring = *u8;
-pub type jarray = *u8;
-pub type jobjectArray = *u8;
-pub type jbooleanArray = *u8;
-pub type jbyteArray = *u8;
-pub type jcharArray = *u8;
-pub type jshortArray = *u8;
-pub type jintArray = *u8;
-pub type jlongArray = *u8;
-pub type jfloatArray = *u8;
-pub type jdoubleArray = *u8;
-pub type jthrowable = *u8;
-pub type jweak = *u8;
+type jobject = *u8;
+type jclass = *u8;
+type jstring = *u8;
+type jarray = *u8;
+type jobjectArray = *u8;
+type jbooleanArray = *u8;
+type jbyteArray = *u8;
+type jcharArray = *u8;
+type jshortArray = *u8;
+type jintArray = *u8;
+type jlongArray = *u8;
+type jfloatArray = *u8;
+type jdoubleArray = *u8;
+type jthrowable = *u8;
+type jweak = *u8;
 
-pub type jfieldID = *u8;
-pub type jmethodID = *u8;
+type jfieldID = *u8;
+type jmethodID = *u8;
 
 // In C, `JNIEnv` is `const JNINativeInterface*` and native methods receive
 // `JNIEnv *env` — a pointer to the thread-local table pointer. JNI functions
 // must be called with that double pointer (ART derives the thread state from
 // it); passing the bare table pointer trips an ART CHECK and aborts.
-pub type JNIEnv = *JNINativeInterface;
-pub type JavaVM = *JNIInvokeInterface;
+type JNIEnv = *JNINativeInterface;
+type JavaVM = *JNIInvokeInterface;
 
 // JNI's `jvalue` is a C union. C+ does not expose C unions yet, so this
 // binding models each argument slot as the union's ABI size: one 8-byte word.
@@ -44,23 +44,23 @@ pub type JavaVM = *JNIInvokeInterface;
 // View wrapper slice. Float/double helpers should be added with real bit casts
 // when the package needs them.
 #[repr(C)]
-pub struct JValue {
-    pub bits: jlong,
+struct JValue {
+    bits: jlong,
 }
 
-pub fn arg_object(obj: jobject) -> JValue {
+fn arg_object(obj: jobject) -> JValue {
     return JValue { bits: unsafe { obj as usize as jlong } };
 }
 
-pub fn arg_int(v: jint) -> JValue {
+fn arg_int(v: jint) -> JValue {
     return JValue { bits: v as jlong };
 }
 
-pub fn arg_bool(v: jboolean) -> JValue {
+fn arg_bool(v: jboolean) -> JValue {
     return JValue { bits: v as jlong };
 }
 
-pub fn arg_long(v: jlong) -> JValue {
+fn arg_long(v: jlong) -> JValue {
     return JValue { bits: v };
 }
 
@@ -69,59 +69,59 @@ pub fn arg_long(v: jlong) -> JValue {
 // Since we only *read* from the JVM-provided pointer, we only need to define 
 // the fields up to the methods we actually intend to call.
 #[repr(C)]
-pub struct JNINativeInterface {
+struct JNINativeInterface {
     opaque reserved0: *u8,
     opaque reserved1: *u8,
     opaque reserved2: *u8,
     opaque reserved3: *u8,
-    pub GetVersion: fn(*JNIEnv) -> jint,
-    pub DefineClass: fn(*JNIEnv, *u8, jobject, *u8, jsize) -> jclass,
-    pub FindClass: fn(*JNIEnv, *u8) -> jclass,
-    pub FromReflectedMethod: fn(*JNIEnv, jobject) -> jmethodID,
-    pub FromReflectedField: fn(*JNIEnv, jobject) -> jfieldID,
-    pub ToReflectedMethod: fn(*JNIEnv, jclass, jmethodID, jboolean) -> jobject,
-    pub GetSuperclass: fn(*JNIEnv, jclass) -> jclass,
-    pub IsAssignableFrom: fn(*JNIEnv, jclass, jclass) -> jboolean,
-    pub ToReflectedField: fn(*JNIEnv, jclass, jfieldID, jboolean) -> jobject,
-    pub Throw: fn(*JNIEnv, jthrowable) -> jint,
-    pub ThrowNew: fn(*JNIEnv, jclass, *u8) -> jint,
-    pub ExceptionOccurred: fn(*JNIEnv) -> jthrowable,
-    pub ExceptionDescribe: fn(*JNIEnv),
-    pub ExceptionClear: fn(*JNIEnv),
-    pub FatalError: fn(*JNIEnv, *u8),
-    pub PushLocalFrame: fn(*JNIEnv, jint) -> jint,
-    pub PopLocalFrame: fn(*JNIEnv, jobject) -> jobject,
-    pub NewGlobalRef: fn(*JNIEnv, jobject) -> jobject,
-    pub DeleteGlobalRef: fn(*JNIEnv, jobject),
-    pub DeleteLocalRef: fn(*JNIEnv, jobject),
-    pub IsSameObject: fn(*JNIEnv, jobject, jobject) -> jboolean,
-    pub NewLocalRef: fn(*JNIEnv, jobject) -> jobject,
-    pub EnsureLocalCapacity: fn(*JNIEnv, jint) -> jint,
-    pub AllocObject: fn(*JNIEnv, jclass) -> jobject,
-    pub NewObject: fn(*JNIEnv, jclass, jmethodID) -> jobject, // varargs conceptually
-    pub NewObjectV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jobject,
-    pub NewObjectA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jobject,
-    pub GetObjectClass: fn(*JNIEnv, jobject) -> jclass,
-    pub IsInstanceOf: fn(*JNIEnv, jobject, jclass) -> jboolean,
-    pub GetMethodID: fn(*JNIEnv, jclass, *u8, *u8) -> jmethodID,
-    pub CallObjectMethod: fn(*JNIEnv, jobject, jmethodID) -> jobject,
-    pub CallObjectMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
-    pub CallObjectMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
-    pub CallBooleanMethod: fn(*JNIEnv, jobject, jmethodID) -> jboolean,
-    pub CallBooleanMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
-    pub CallBooleanMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
-    pub CallByteMethod: fn(*JNIEnv, jobject, jmethodID) -> jbyte,
-    pub CallByteMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
-    pub CallByteMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    GetVersion: fn(*JNIEnv) -> jint,
+    DefineClass: fn(*JNIEnv, *u8, jobject, *u8, jsize) -> jclass,
+    FindClass: fn(*JNIEnv, *u8) -> jclass,
+    FromReflectedMethod: fn(*JNIEnv, jobject) -> jmethodID,
+    FromReflectedField: fn(*JNIEnv, jobject) -> jfieldID,
+    ToReflectedMethod: fn(*JNIEnv, jclass, jmethodID, jboolean) -> jobject,
+    GetSuperclass: fn(*JNIEnv, jclass) -> jclass,
+    IsAssignableFrom: fn(*JNIEnv, jclass, jclass) -> jboolean,
+    ToReflectedField: fn(*JNIEnv, jclass, jfieldID, jboolean) -> jobject,
+    Throw: fn(*JNIEnv, jthrowable) -> jint,
+    ThrowNew: fn(*JNIEnv, jclass, *u8) -> jint,
+    ExceptionOccurred: fn(*JNIEnv) -> jthrowable,
+    ExceptionDescribe: fn(*JNIEnv),
+    ExceptionClear: fn(*JNIEnv),
+    FatalError: fn(*JNIEnv, *u8),
+    PushLocalFrame: fn(*JNIEnv, jint) -> jint,
+    PopLocalFrame: fn(*JNIEnv, jobject) -> jobject,
+    NewGlobalRef: fn(*JNIEnv, jobject) -> jobject,
+    DeleteGlobalRef: fn(*JNIEnv, jobject),
+    DeleteLocalRef: fn(*JNIEnv, jobject),
+    IsSameObject: fn(*JNIEnv, jobject, jobject) -> jboolean,
+    NewLocalRef: fn(*JNIEnv, jobject) -> jobject,
+    EnsureLocalCapacity: fn(*JNIEnv, jint) -> jint,
+    AllocObject: fn(*JNIEnv, jclass) -> jobject,
+    NewObject: fn(*JNIEnv, jclass, jmethodID) -> jobject, // varargs conceptually
+    NewObjectV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jobject,
+    NewObjectA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jobject,
+    GetObjectClass: fn(*JNIEnv, jobject) -> jclass,
+    IsInstanceOf: fn(*JNIEnv, jobject, jclass) -> jboolean,
+    GetMethodID: fn(*JNIEnv, jclass, *u8, *u8) -> jmethodID,
+    CallObjectMethod: fn(*JNIEnv, jobject, jmethodID) -> jobject,
+    CallObjectMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    CallObjectMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    CallBooleanMethod: fn(*JNIEnv, jobject, jmethodID) -> jboolean,
+    CallBooleanMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    CallBooleanMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    CallByteMethod: fn(*JNIEnv, jobject, jmethodID) -> jbyte,
+    CallByteMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    CallByteMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
     opaque reserved_call_char_method: *u8,
     opaque reserved_call_char_method_v: *u8,
     opaque reserved_call_char_method_a: *u8,
     opaque reserved_call_short_method: *u8,
     opaque reserved_call_short_method_v: *u8,
     opaque reserved_call_short_method_a: *u8,
-    pub CallIntMethod: fn(*JNIEnv, jobject, jmethodID) -> jint,
-    pub CallIntMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jint,
-    pub CallIntMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jint,
+    CallIntMethod: fn(*JNIEnv, jobject, jmethodID) -> jint,
+    CallIntMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jint,
+    CallIntMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jint,
     opaque reserved_call_long_method: *u8,
     opaque reserved_call_long_method_v: *u8,
     opaque reserved_call_long_method_a: *u8,
@@ -131,9 +131,9 @@ pub struct JNINativeInterface {
     opaque reserved_call_double_method: *u8,
     opaque reserved_call_double_method_v: *u8,
     opaque reserved_call_double_method_a: *u8,
-    pub CallVoidMethod: fn(*JNIEnv, jobject, jmethodID),
-    pub CallVoidMethodV: fn(*JNIEnv, jobject, jmethodID, *u8),
-    pub CallVoidMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue),
+    CallVoidMethod: fn(*JNIEnv, jobject, jmethodID),
+    CallVoidMethodV: fn(*JNIEnv, jobject, jmethodID, *u8),
+    CallVoidMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue),
     opaque reserved_call_nonvirtual_object_method: *u8,
     opaque reserved_call_nonvirtual_object_method_v: *u8,
     opaque reserved_call_nonvirtual_object_method_a: *u8,
@@ -237,15 +237,15 @@ pub struct JNINativeInterface {
     opaque reserved_get_string_length: *u8,
     opaque reserved_get_string_chars: *u8,
     opaque reserved_release_string_chars: *u8,
-    pub NewStringUTF: fn(*JNIEnv, *u8) -> jstring,
-    pub GetStringUTFLength: fn(*JNIEnv, jstring) -> jsize,
-    pub GetStringUTFChars: fn(*JNIEnv, jstring, *jboolean) -> *u8,
-    pub ReleaseStringUTFChars: fn(*JNIEnv, jstring, *u8),
+    NewStringUTF: fn(*JNIEnv, *u8) -> jstring,
+    GetStringUTFLength: fn(*JNIEnv, jstring) -> jsize,
+    GetStringUTFChars: fn(*JNIEnv, jstring, *jboolean) -> *u8,
+    ReleaseStringUTFChars: fn(*JNIEnv, jstring, *u8),
     // Object arrays (slots 171-174 in jni.h).
-    pub GetArrayLength: fn(*JNIEnv, jarray) -> jsize,
-    pub NewObjectArray: fn(*JNIEnv, jsize, jclass, jobject) -> jobjectArray,
-    pub GetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize) -> jobject,
-    pub SetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize, jobject),
+    GetArrayLength: fn(*JNIEnv, jarray) -> jsize,
+    NewObjectArray: fn(*JNIEnv, jsize, jclass, jobject) -> jobjectArray,
+    GetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize) -> jobject,
+    SetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize, jobject),
     // Primitive arrays (175-214): 8 New<P>Array, 8 Get<P>ArrayElements,
     // 8 Release<P>ArrayElements, 8 Get<P>ArrayRegion, 8 Set<P>ArrayRegion.
     opaque reserved_new_prim_array_0: *u8,
@@ -295,7 +295,7 @@ pub struct JNINativeInterface {
     // InMemoryDexClassLoader: ART resolves `native` methods by symbol
     // only through a classloader's own native-lib namespace, which an
     // in-memory loader does not have.
-    pub RegisterNatives: fn(*JNIEnv, jclass, *u8, jint) -> jint,
+    RegisterNatives: fn(*JNIEnv, jclass, *u8, jint) -> jint,
     opaque reserved_unregister_natives: *u8,
     opaque reserved_monitor_enter: *u8,
     opaque reserved_monitor_exit: *u8,
@@ -310,25 +310,25 @@ pub struct JNINativeInterface {
     opaque reserved_delete_weak_global_ref: *u8,
     // 228: pending-exception predicate (cheaper than ExceptionOccurred —
     // no local ref).
-    pub ExceptionCheck: fn(*JNIEnv) -> jboolean,
+    ExceptionCheck: fn(*JNIEnv) -> jboolean,
     // 229: wrap native memory as a java.nio.ByteBuffer. The memory must
     // outlive the buffer; `#include_bytes` blobs (static lifetime) qualify.
-    pub NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
+    NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
     opaque reserved_get_direct_buffer_address: *u8,
     opaque reserved_get_direct_buffer_capacity: *u8,
     opaque reserved_get_object_ref_type: *u8,
 }
 
 #[repr(C)]
-pub struct JNIInvokeInterface {
+struct JNIInvokeInterface {
     opaque reserved0: *u8,
     opaque reserved1: *u8,
     opaque reserved2: *u8,
-    pub DestroyJavaVM: fn(*JavaVM) -> jint,
-    pub AttachCurrentThread: fn(*JavaVM, *u8, *u8) -> jint,
-    pub DetachCurrentThread: fn(*JavaVM) -> jint,
-    pub GetEnv: fn(*JavaVM, *u8, jint) -> jint,
-    pub AttachCurrentThreadAsDaemon: fn(*JavaVM, *u8, *u8) -> jint,
+    DestroyJavaVM: fn(*JavaVM) -> jint,
+    AttachCurrentThread: fn(*JavaVM, *u8, *u8) -> jint,
+    DetachCurrentThread: fn(*JavaVM) -> jint,
+    GetEnv: fn(*JavaVM, *u8, jint) -> jint,
+    AttachCurrentThreadAsDaemon: fn(*JavaVM, *u8, *u8) -> jint,
 }
 
 // Layout sanity: the binding's correctness rests entirely on every function

@@ -52,7 +52,7 @@ extern fn snprintf(s: *u8, size: usize, format: *u8, ...) -> i32;
 
 // The curated role vocabulary (plan.agent-core.md §9). Tiny and fixed; grows
 // deliberately as real widgets land.
-pub enum Role {
+enum Role {
     Button,
     Text,
     Input,
@@ -62,7 +62,7 @@ pub enum Role {
 }
 
 // The stable tag a role contributes to an auto-id path segment.
-pub fn role_tag(r: Role) -> str {
+fn role_tag(r: Role) -> str {
     return match r {
         Role::Button => "button",
         Role::Text => "text",
@@ -84,7 +84,7 @@ fn role_index(r: Role) -> i32 {
     };
 }
 
-pub fn role_eq(a: Role, b: Role) -> bool {
+fn role_eq(a: Role, b: Role) -> bool {
     return role_index(a) == role_index(b);
 }
 
@@ -92,13 +92,13 @@ pub fn role_eq(a: Role, b: Role) -> bool {
 // the agent consumes. `parent` is the NodeId of the parent (None for the root),
 // so the flat list reconstructs the tree. `actionable` is the resolved affordance
 // ceiling (enabled AND not observe-only), i.e. whether the agent may act on it.
-pub struct NodeView {
-    pub id: text::Text,
-    pub role: Role,
-    pub name: text::Text,
-    pub parent: option::Option[usize],
-    pub enabled: bool,
-    pub actionable: bool,
+struct NodeView {
+    id: text::Text,
+    role: Role,
+    name: text::Text,
+    parent: option::Option[usize],
+    enabled: bool,
+    actionable: bool,
 }
 
 // `parent/tag#index` as an owned string. snprintf truncates rather than
@@ -134,7 +134,7 @@ fn make_key_id(parent: str, key: u64) -> text::Text {
 // own enabled/disabled; `actionable` is the affordance ceiling — false means the
 // agent may see the node but never act on it (observe-only). Both default true
 // and are narrowed via setters. Defaults: name "" (no label yet).
-pub struct Registry {
+struct Registry {
     ids: vec::Vec[text::Text],
     roles: vec::Vec[Role],
     parents: vec::Vec[option::Option[usize]],
@@ -148,7 +148,7 @@ pub struct Registry {
 
 // A fresh registry already contains the application root: NodeId 0, id "app",
 // role Group. Windows and dialogs attach to it via `add_child`.
-pub fn new() -> Registry {
+fn new() -> Registry {
     var r: Registry = Registry {
         ids: vec::new::[text::Text](),
         roles: vec::new::[Role](),
@@ -167,22 +167,22 @@ pub fn new() -> Registry {
 
 impl Registry {
     // The application root (always NodeId 0).
-    pub fn root(this) -> usize {
+    fn root(this) -> usize {
         return 0 as usize;
     }
 
-    pub fn len(this) -> usize {
+    fn len(this) -> usize {
         return this.ids.len();
     }
 
-    pub fn is_valid(this, node: usize) -> bool {
+    fn is_valid(this, node: usize) -> bool {
         return node < this.ids.len();
     }
 
     // Add a child under `parent`. With a dev-set id, that id is used verbatim;
     // without one, the auto-id is `parent/role#index` at the parent's next
     // sibling slot.
-    pub fn add_child(ref this, parent: usize, dev_id: option::Option[str], role: Role) -> usize {
+    fn add_child(ref this, parent: usize, dev_id: option::Option[str], role: Role) -> usize {
         assert this.is_valid(parent);
         let idx: usize = this.next_sibling_index(parent);
         // A dev-set id is the developer tagging this node into the agent view
@@ -209,7 +209,7 @@ impl Registry {
     // Add a list item under `parent`, keyed by its data identity. Without a
     // dev-set id the auto-id is `parent/key`, stable across reorder/insert
     // because `key` is the data id, not the position.
-    pub fn add_item(ref this, parent: usize, dev_id: option::Option[str], role: Role, key: u64) -> usize {
+    fn add_item(ref this, parent: usize, dev_id: option::Option[str], role: Role, key: u64) -> usize {
         assert this.is_valid(parent);
         // Consume a sibling slot so a later non-keyed sibling does not collide
         // with an item's implicit position.
@@ -231,12 +231,12 @@ impl Registry {
     }
 
     // The resolved agent-id of a node, as a view into registry-owned storage.
-    pub fn resolved_id(this, node: usize) -> str {
+    fn resolved_id(this, node: usize) -> str {
         assert this.is_valid(node);
         return this.id_view(node);
     }
 
-    pub fn role_of(this, node: usize) -> Role {
+    fn role_of(this, node: usize) -> Role {
         assert this.is_valid(node);
         return match this.roles.at(node) {
             option::Option[*Role]::Some(p) => unsafe { *p },
@@ -244,7 +244,7 @@ impl Registry {
         };
     }
 
-    pub fn parent_of(this, node: usize) -> option::Option[usize] {
+    fn parent_of(this, node: usize) -> option::Option[usize] {
         assert this.is_valid(node);
         return match this.parents.at(node) {
             option::Option[*option::Option[usize]]::Some(p) => unsafe { *p },
@@ -255,14 +255,14 @@ impl Registry {
     // --- node state (plan.agent-core.md §4) -----------------------------
 
     // Set the accessible name (label) the agent reads for this node.
-    pub fn set_name(ref this, node: usize, name: str) {
+    fn set_name(ref this, node: usize, name: str) {
         assert this.is_valid(node);
         this.names.set(node, name.to_text());
         return;
     }
 
     // The accessible name, as a view into registry-owned storage ("" if unset).
-    pub fn name_of(this, node: usize) -> str {
+    fn name_of(this, node: usize) -> str {
         assert this.is_valid(node);
         return match this.names.at(node) {
             option::Option[*text::Text]::Some(p) => unsafe { (*p).as_str() },
@@ -270,13 +270,13 @@ impl Registry {
         };
     }
 
-    pub fn set_enabled(ref this, node: usize, on: bool) {
+    fn set_enabled(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.enabled.set(node, on);
         return;
     }
 
-    pub fn is_enabled(this, node: usize) -> bool {
+    fn is_enabled(this, node: usize) -> bool {
         assert this.is_valid(node);
         return match this.enabled.at(node) {
             option::Option[*bool]::Some(p) => unsafe { *p },
@@ -286,7 +286,7 @@ impl Registry {
 
     // Narrow the affordance ceiling: the agent may see this node but never act
     // on it. The widget stays interactive for the user; only the agent is barred.
-    pub fn set_observe_only(ref this, node: usize) {
+    fn set_observe_only(ref this, node: usize) {
         assert this.is_valid(node);
         this.actionable.set(node, false);
         return;
@@ -294,7 +294,7 @@ impl Registry {
 
     // Whether the agent may act on this node (the affordance ceiling). A node is
     // agent-actionable only if it is both enabled and not observe-only.
-    pub fn is_agent_actionable(this, node: usize) -> bool {
+    fn is_agent_actionable(this, node: usize) -> bool {
         assert this.is_valid(node);
         let ceiling: bool = match this.actionable.at(node) {
             option::Option[*bool]::Some(p) => unsafe { *p },
@@ -307,7 +307,7 @@ impl Registry {
 
     // Whether this node is in the agent-visible tree. Default: dev-tagged nodes
     // are exposed, auto-id'd nodes are not (the root is always exposed).
-    pub fn is_exposed(this, node: usize) -> bool {
+    fn is_exposed(this, node: usize) -> bool {
         assert this.is_valid(node);
         return match this.exposed.at(node) {
             option::Option[*bool]::Some(p) => unsafe { *p },
@@ -317,7 +317,7 @@ impl Registry {
 
     // Override exposure: opt an auto-id'd node in (e.g. list rows), or hide a
     // tagged one. Omission is still the strongest sensitivity control.
-    pub fn set_exposed(ref this, node: usize, on: bool) {
+    fn set_exposed(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.exposed.set(node, on);
         return;
@@ -327,7 +327,7 @@ impl Registry {
     // tree. Only exposed nodes appear; each node's `parent` is its nearest
     // exposed ancestor, so unexposed intermediates collapse and the tree stays
     // connected. NodeId order means parents precede children.
-    pub fn describe(this) -> vec::Vec[NodeView] {
+    fn describe(this) -> vec::Vec[NodeView] {
         var out: vec::Vec[NodeView] = vec::new::[NodeView]();
         let n: usize = this.ids.len();
         var i: usize = 0 as usize;
@@ -348,14 +348,14 @@ impl Registry {
     }
 
     // Resolve an agent-id to its NodeId, or None if no node carries it.
-    pub fn lookup(this, id: str) -> option::Option[usize] {
+    fn lookup(this, id: str) -> option::Option[usize] {
         return match this.index.get(id) {
             result::Result[usize, result::IoError]::Ok(n) => option::Option[usize]::Some(n),
             result::Result[usize, result::IoError]::Err(_) => option::Option[usize]::None,
         };
     }
 
-    pub fn contains(this, id: str) -> bool {
+    fn contains(this, id: str) -> bool {
         return this.index.contains_key(id);
     }
 

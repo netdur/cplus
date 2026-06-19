@@ -22,7 +22,7 @@ extern fn UIApplicationMain(argc: i32, argv: *u8, principal: *u8, delegate_name:
 // `application:didFinishLaunchingWithOptions:` implementation. The class
 // subclasses UIResponder, the canonical app-delegate superclass. Returns
 // the class object; `run` takes the matching class *name*.
-pub fn register_app_delegate(did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> *u8 {
+fn register_app_delegate(did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CPlusAppDelegate\0"));
     if existing != unsafe { 0 as *u8 } {
         return existing;
@@ -42,7 +42,7 @@ pub fn register_app_delegate(did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> *u
 
 // Hand control to UIKit. Registers the delegate and enters the run loop;
 // does not return until the app terminates.
-pub fn run(argc: i32, argv: *u8, did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> i32 {
+fn run(argc: i32, argv: *u8, did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> i32 {
     let _cls: *u8 = register_app_delegate(did_finish_imp);
     let name: *u8 = convert::cplus_str_to_nsstring("CPlusAppDelegate");
     return unsafe { UIApplicationMain(argc, argv, 0 as *u8, name) };

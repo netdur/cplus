@@ -255,8 +255,14 @@ impl Parser {
         // v0.0.24 #10: `export` marks the C-ABI / linker / header surface
         // (external linkage + header emission + C-ABI check). Visibility is
         // name-based now, so `is_pub` no longer gates privacy — it means
-        // "exported". `pub` still sets it transitionally (retired in stage 3).
-        let is_pub = self.eat(&TokenKind::Pub) || self.eat(&TokenKind::Export);
+        // "exported". v0.0.24 #10: `pub` is retired — reject it with a hint
+        // (kept a reserved token, #1-style).
+        if self.at(&TokenKind::Pub) {
+            return Err(self.err_at_peek(
+                "`pub` is retired; visibility is name-based (a leading `_` is module-private, everything else is public). Use `export` to mark the C-ABI / header surface.",
+            ));
+        }
+        let is_pub = self.eat(&TokenKind::Export);
         match self.peek_kind() {
             TokenKind::Fn => self.parse_function(is_pub, attributes),
             // v0.0.3 Phase 5 Slice 5E.1: `async fn` item — `parse_function`
@@ -743,11 +749,16 @@ impl Parser {
     }
 
     fn parse_method(&mut self) -> Result<Method, ParseError> {
-        // Per-method attributes (slice 5ATTR.1). v0.0.24 #10: `export` marks a
-        // method for the C-ABI/linker surface; `pub` still sets it (retired in
-        // stage 3). Method privacy is name-based (`_method`).
+        // Per-method attributes (slice 5ATTR.1). v0.0.24 #10: method privacy is
+        // name-based (`_method`); `export` marks the C-ABI/linker surface;
+        // `pub` is retired.
         let attributes = self.parse_attributes()?;
-        let is_pub = self.eat(&TokenKind::Pub) || self.eat(&TokenKind::Export);
+        if self.at(&TokenKind::Pub) {
+            return Err(self.err_at_peek(
+                "`pub` is retired; a method is module-private when its name starts with `_`, public otherwise. Use `export` for the C-ABI surface.",
+            ));
+        }
+        let is_pub = self.eat(&TokenKind::Export);
         // TEXT.1: `unsafe fn` method — call site requires `unsafe { ... }`.
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
@@ -1103,10 +1114,16 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         while !self.at(&TokenKind::RBrace) {
-            // Per-field attributes (slice 5ATTR.1), per-field `pub` (slice 4B),
-            // then the `opaque` marker (v0.0.13, plan.opaque.md).
+            // Per-field attributes (slice 5ATTR.1), then the `opaque` marker
+            // (v0.0.13, plan.opaque.md). v0.0.24 #10: field visibility is
+            // name-based (`_field` is private); `pub` is retired.
             let field_attrs = self.parse_attributes()?;
-            let field_pub = self.eat(&TokenKind::Pub);
+            if self.at(&TokenKind::Pub) {
+                return Err(self.err_at_peek(
+                    "`pub` is retired; a field is module-private when its name starts with `_`, public otherwise.",
+                ));
+            }
+            let field_pub = false;
             let field_opaque = self.eat(&TokenKind::Opaque);
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
@@ -1264,7 +1281,7 @@ impl Parser {
         let (body, end_span, is_extern_def) = if self.at(&TokenKind::LBrace) {
             if !is_pub {
                 return Err(self.err_at_peek(
-                    "extern fn — only `pub extern fn` may have a body (exports a C-callable definition); plain `extern fn` is a declaration ending in `;`",
+                    "extern fn — only `export extern fn` may have a body (exports a C-callable definition); plain `extern fn` is a declaration ending in `;`",
                 ));
             }
             if is_variadic {
@@ -4260,13 +4277,6 @@ mod tests {
     }
 
     #[test]
-    fn pub_unsafe_free_fn_sets_both_flags() {
-        let f = first_function("pub unsafe fn f() -> i32 { return 0; }");
-        assert!(f.is_unsafe);
-        assert!(f.is_pub);
-    }
-
-    #[test]
     fn extern_fn_is_not_unsafe_flagged() {
         // extern fns are gated by `is_extern`, not the `unsafe fn` marker.
         let f = first_function("extern fn malloc(n: usize) -> *u8;");
@@ -4284,13 +4294,6 @@ mod tests {
     fn plain_method_is_not_unsafe() {
         let m = first_method("struct S { n: i32 } impl S { fn g(this) -> i32 { return this.n; } }");
         assert!(!m.is_unsafe);
-    }
-
-    #[test]
-    fn pub_unsafe_method_sets_both_flags() {
-        let m = first_method("struct S { n: i32 } impl S { pub unsafe fn g(this) -> i32 { return this.n; } }");
-        assert!(m.is_unsafe);
-        assert!(m.is_pub);
     }
 
     #[test]
@@ -4533,51 +4536,12 @@ mod tests {
     }
 
     #[test]
-    fn pub_fn_parses_with_flag() {
-        let p = parse_src("pub fn f() -> i32 { return 0; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!();
-        };
-        assert!(f.is_pub);
-    }
-
-    #[test]
     fn private_fn_default_no_flag() {
         let p = parse_src("fn f() -> i32 { return 0; }").unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!();
         };
         assert!(!f.is_pub);
-    }
-
-    #[test]
-    fn pub_struct_with_mixed_field_visibility() {
-        let p = parse_src("pub struct S { pub x: i32, y: i32 }").unwrap();
-        let ItemKind::Struct(s) = &p.items[0].kind else {
-            panic!();
-        };
-        assert!(s.is_pub);
-        assert!(s.fields[0].is_pub);
-        assert!(!s.fields[1].is_pub);
-    }
-
-    #[test]
-    fn pub_enum_flag() {
-        let p = parse_src("pub enum C { A, B }").unwrap();
-        let ItemKind::Enum(e) = &p.items[0].kind else {
-            panic!();
-        };
-        assert!(e.is_pub);
-    }
-
-    #[test]
-    fn pub_method_flag() {
-        let p = parse_src("struct S { x: i32 } impl S { pub fn f(this) -> i32 { return 0; } fn g(this) -> i32 { return 0; } }").unwrap();
-        let ItemKind::Impl(b) = &p.items[1].kind else {
-            panic!();
-        };
-        assert!(b.methods[0].is_pub);
-        assert!(!b.methods[1].is_pub);
     }
 
     #[test]
@@ -4684,18 +4648,6 @@ mod tests {
     }
 
     #[test]
-    fn generic_fn_with_pub_and_attributes() {
-        let p = parse_src("#[test]\npub fn id[T](x: T) -> T { return x; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(f.is_pub);
-        assert_eq!(f.attributes.len(), 1);
-        assert_eq!(f.generic_params.len(), 1);
-        assert_eq!(f.generic_params[0].name.name, "T");
-    }
-
-    #[test]
     fn empty_generic_params_rejected() {
         // `fn f[]() ...` is a parse error — empty brackets are
         // syntactically ambiguous noise.
@@ -4795,16 +4747,6 @@ mod tests {
         assert!(e.generic_params.is_empty());
     }
 
-    #[test]
-    fn generic_struct_pub_combo() {
-        let p = parse_src("pub struct Vec[T] { data: T }").unwrap();
-        let ItemKind::Struct(s) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(s.is_pub);
-        assert_eq!(s.generic_params.len(), 1);
-    }
-
     // ---- 7GEN.3 — interface declarations + impl Type: Interface ----
 
     #[test]
@@ -4851,15 +4793,6 @@ mod tests {
         // they must end with `;`, not `{ ... }`.
         let err = parse_src("interface X { fn f(this) -> i32 { return 0; } }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
-    }
-
-    #[test]
-    fn interface_pub_combo() {
-        let p = parse_src("pub interface Ord { fn compare(this, other: i32) -> i32; }").unwrap();
-        let ItemKind::Interface(i) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(i.is_pub);
     }
 
     #[test]
@@ -5189,20 +5122,6 @@ mod tests {
     }
 
     #[test]
-    fn attribute_before_pub_on_fn_parses() {
-        // Per the design note, attributes appear before `pub`. The parser
-        // accepts that ordering; the reverse (`pub #[test]`) is a parse
-        // error since `pub` consumes and then expects a keyword like
-        // `fn`/`struct`/`enum`, not `#`.
-        let p = parse_src("#[test] pub fn f() { return; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!();
-        };
-        assert!(f.is_pub);
-        assert_eq!(f.attributes.len(), 1);
-    }
-
-    #[test]
     fn attribute_on_impl_block_itself_rejected() {
         // The design note (§6 open question 6) defers impl-level attributes;
         // we reject them at the parser to keep the option open.
@@ -5247,16 +5166,6 @@ mod tests {
         };
         assert!(f.is_async, "async fn must set is_async=true");
         assert_eq!(f.name.name, "fetch");
-    }
-
-    #[test]
-    fn pub_async_fn_parses() {
-        let p = parse_src("pub async fn fetch() -> i32 { return 0; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(f.is_async);
-        assert!(f.is_pub);
     }
 
     #[test]
@@ -5358,14 +5267,14 @@ mod tests {
         // Phase 5 Slice 5.C: `pub` on a declaration (no body) is rejected
         // — the user likely forgot the body block. The diagnostic
         // suggests the export form.
-        let err = parse_src("pub extern fn abs(x: i32) -> i32;").unwrap_err();
+        let err = parse_src("export extern fn abs(x: i32) -> i32;").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
     #[test]
     fn pub_extern_fn_with_body_parses() {
         // Phase 5 Slice 5.C: the C-callable export form.
-        let p = parse_src("pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
+        let p = parse_src("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!()
         };
@@ -5395,13 +5304,42 @@ mod tests {
 
         // A bodyless `export extern fn ...;` is rejected (declarations aren't exports).
         assert!(parse_src("export extern fn abs(x: i32) -> i32;").is_err());
+
+        // `export` sets the exported flag across item kinds and combines with
+        // other modifiers (covers the retired pub-combo parser tests).
+        assert!(matches!(&parse_src("export enum E { A, B }").unwrap().items[0].kind, ItemKind::Enum(e) if e.is_pub));
+        assert!(matches!(&parse_src("export const K: i32 = 1;").unwrap().items[0].kind, ItemKind::Const(c) if c.is_pub));
+        assert!(matches!(&parse_src("export static S: i32 = 0;").unwrap().items[0].kind, ItemKind::Static(s) if s.is_pub));
+        assert!(matches!(&parse_src("export interface I { fn f(this) -> i32; }").unwrap().items[0].kind, ItemKind::Interface(i) if i.is_pub));
+        // export + unsafe on a free fn sets both flags.
+        let u = first_function("export unsafe fn raw() -> i32 { return 0; }");
+        assert!(u.is_pub && u.is_unsafe, "export unsafe fn must set both flags");
+        // export + generics + async.
+        assert!(matches!(&parse_src("export fn pick[T](x: T) -> T { return x; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && !f.generic_params.is_empty()));
+        assert!(matches!(&parse_src("export async fn job() -> i32 { return 0; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && f.is_async));
+        // export method inside an impl.
+        let m = parse_src("struct P {} impl P { export fn make() -> i32 { return 0; } }").unwrap();
+        assert!(matches!(&m.items[1].kind, ItemKind::Impl(b) if b.methods[0].is_pub));
+    }
+
+    #[test]
+    fn pub_keyword_rejected_with_hint() {
+        // v0.0.24 #10: `pub` is retired — visibility is name-based, `export`
+        // marks the C-ABI surface. Rejected on items, methods, and fields.
+        assert!(parse_src("pub fn f() -> i32 { return 0; }").is_err());
+        assert!(parse_src("pub struct S { x: i32 }").is_err());
+        assert!(parse_src("struct S { pub x: i32 }").is_err());
+        assert!(parse_src("struct P {} impl P { pub fn m(this) -> i32 { return 0; } }").is_err());
+        // The bare forms parse cleanly (public by default).
+        assert!(parse_src("fn f() -> i32 { return 0; }").is_ok());
+        assert!(parse_src("struct S { x: i32 }").is_ok());
     }
 
     #[test]
     fn pub_extern_fn_variadic_with_body_rejected() {
         // No `va_list` API in C+, so variadic exports can't be defined
         // (only imported). Variadic + body is a parser-level reject.
-        let err = parse_src("pub extern fn p(x: i32, ...) { return; }").unwrap_err();
+        let err = parse_src("export extern fn p(x: i32, ...) { return; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
@@ -5772,20 +5710,6 @@ mod tests {
     }
 
     #[test]
-    fn pub_const_string_decl_parses() {
-        let p = parse_src("pub const VERSION: str = \"0.0.9\";").unwrap();
-        let ItemKind::Const(c) = &p.items[0].kind else {
-            panic!("expected ItemKind::Const");
-        };
-        assert_eq!(c.name.name, "VERSION");
-        assert!(c.is_pub);
-        match &c.value.kind {
-            ExprKind::StrLit(s) => assert_eq!(s, "0.0.9"),
-            other => panic!("expected StrLit, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn const_without_type_annotation_rejected() {
         let err = parse_src("const FOO = 5;").unwrap_err();
         assert!(
@@ -5825,17 +5749,6 @@ mod tests {
         assert_eq!(s.name.name, "COUNTER");
         assert!(s.is_mut);
         assert!(!s.is_pub);
-    }
-
-    #[test]
-    fn pub_static_mut_decl_parses() {
-        let p = parse_src("pub static GLOBAL_TICK: u64 = 0;").unwrap();
-        let ItemKind::Static(s) = &p.items[0].kind else {
-            panic!("expected ItemKind::Static");
-        };
-        assert_eq!(s.name.name, "GLOBAL_TICK");
-        assert!(s.is_mut);
-        assert!(s.is_pub);
     }
 
     // v0.0.15: module-scope `#asm("...");` global asm item.

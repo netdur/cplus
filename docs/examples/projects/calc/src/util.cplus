@@ -4,14 +4,14 @@
 
 import "./expr" as expr;
 
-pub fn add_lit(a: i32, b: i32) -> expr::Expr {
+fn add_lit(a: i32, b: i32) -> expr::Expr {
     return expr::Expr::Add(a, b);
 }
 
-pub fn mul_lit(a: i32, b: i32) -> expr::Expr {
+fn mul_lit(a: i32, b: i32) -> expr::Expr {
     return expr::Expr::Mul(a, b);
 }
 
-pub fn neg_lit(v: i32) -> expr::Expr {
+fn neg_lit(v: i32) -> expr::Expr {
     return expr::Expr::Neg(v);
 }

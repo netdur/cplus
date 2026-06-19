@@ -1,11 +1,11 @@
 import "./runtime" as rt;
 
-pub struct TableView {
-    pub obj: *u8,
+struct TableView {
+    obj: *u8,
 }
 
 impl TableView {
-    pub fn new(frame: rt::Rect) -> TableView {
+    fn new(frame: rt::Rect) -> TableView {
         return TableView { obj: rt::alloc_init_with_frame(#str_ptr("UITableView\0"), frame) };
     }
 
@@ -13,23 +13,23 @@ impl TableView {
         rt::release(this.obj);
     }
 
-    pub fn set_data_source(this, data_source: *u8) {
+    fn set_data_source(this, data_source: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn reload_data(this) {
+    fn reload_data(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("reloadData\0")));
     }
 
-    pub fn dequeue_cell(this, identifier: *u8) -> *u8 {
+    fn dequeue_cell(this, identifier: *u8) -> *u8 {
         return rt::msg_id_id(this.obj, rt::sel(#str_ptr("dequeueReusableCellWithIdentifier:\0")), identifier);
     }
 
-    pub fn register_cell_class(this, cls: *u8, identifier: *u8) {
+    fn register_cell_class(this, cls: *u8, identifier: *u8) {
         rt::msg_void_id_id(
             this.obj,
             rt::sel(#str_ptr("registerClass:forCellReuseIdentifier:\0")),
@@ -38,21 +38,21 @@ impl TableView {
         );
     }
 
-    pub fn set_row_height(this, height: f64) {
+    fn set_row_height(this, height: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setRowHeight:\0")), height);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct CollectionView {
-    pub obj: *u8,
+struct CollectionView {
+    obj: *u8,
 }
 
 impl CollectionView {
-    pub fn new(frame: rt::Rect, layout: *u8) -> CollectionView {
+    fn new(frame: rt::Rect, layout: *u8) -> CollectionView {
         let cls: *u8 = rt::get_class(#str_ptr("UICollectionView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let cv: *u8 = rt::msg_id_rect_id(
@@ -68,19 +68,19 @@ impl CollectionView {
         rt::release(this.obj);
     }
 
-    pub fn set_data_source(this, data_source: *u8) {
+    fn set_data_source(this, data_source: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn reload_data(this) {
+    fn reload_data(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("reloadData\0")));
     }
 
-    pub fn register_cell_class(this, cls: *u8, identifier: *u8) {
+    fn register_cell_class(this, cls: *u8, identifier: *u8) {
         rt::msg_void_id_id(
             this.obj,
             rt::sel(#str_ptr("registerClass:forCellWithReuseIdentifier:\0")),
@@ -89,7 +89,7 @@ impl CollectionView {
         );
     }
 
-    pub fn dequeue_cell(this, identifier: *u8, index_path: *u8) -> *u8 {
+    fn dequeue_cell(this, identifier: *u8, index_path: *u8) -> *u8 {
         return rt::msg_id_2id(
             this.obj,
             rt::sel(#str_ptr("dequeueReusableCellWithReuseIdentifier:forIndexPath:\0")),
@@ -98,17 +98,17 @@ impl CollectionView {
         );
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct CollectionViewFlowLayout {
-    pub obj: *u8,
+struct CollectionViewFlowLayout {
+    obj: *u8,
 }
 
 impl CollectionViewFlowLayout {
-    pub fn new() -> CollectionViewFlowLayout {
+    fn new() -> CollectionViewFlowLayout {
         return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("UICollectionViewFlowLayout\0")) };
     }
 
@@ -116,25 +116,25 @@ impl CollectionViewFlowLayout {
         rt::release(this.obj);
     }
 
-    pub fn set_minimum_line_spacing(this, spacing: f64) {
+    fn set_minimum_line_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMinimumLineSpacing:\0")), spacing);
     }
 
-    pub fn set_minimum_interitem_spacing(this, spacing: f64) {
+    fn set_minimum_interitem_spacing(this, spacing: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMinimumInteritemSpacing:\0")), spacing);
     }
 
-    pub fn set_item_size(this, size: rt::Size) {
+    fn set_item_size(this, size: rt::Size) {
         rt::msg_void_size(this.obj, rt::sel(#str_ptr("setItemSize:\0")), size);
     }
 }
 
-pub struct CollectionViewCell {
-    pub obj: *u8,
+struct CollectionViewCell {
+    obj: *u8,
 }
 
 impl CollectionViewCell {
-    pub fn new(frame: rt::Rect) -> CollectionViewCell {
+    fn new(frame: rt::Rect) -> CollectionViewCell {
         return CollectionViewCell { obj: rt::alloc_init_with_frame(#str_ptr("UICollectionViewCell\0"), frame) };
     }
 
@@ -142,17 +142,17 @@ impl CollectionViewCell {
         rt::release(this.obj);
     }
 
-    pub fn content_view(this) -> *u8 {
+    fn content_view(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("contentView\0")));
     }
 }
 
-pub struct PickerView {
-    pub obj: *u8,
+struct PickerView {
+    obj: *u8,
 }
 
 impl PickerView {
-    pub fn new(frame: rt::Rect) -> PickerView {
+    fn new(frame: rt::Rect) -> PickerView {
         return PickerView { obj: rt::alloc_init_with_frame(#str_ptr("UIPickerView\0"), frame) };
     }
 
@@ -160,23 +160,23 @@ impl PickerView {
         rt::release(this.obj);
     }
 
-    pub fn set_data_source(this, data_source: *u8) {
+    fn set_data_source(this, data_source: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 
-    pub fn set_delegate(this, delegate: *u8) {
+    fn set_delegate(this, delegate: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn reload_all_components(this) {
+    fn reload_all_components(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("reloadAllComponents\0")));
     }
 
-    pub fn selected_row(this, component: i64) -> i64 {
+    fn selected_row(this, component: i64) -> i64 {
         return rt::msg_i64_i64(this.obj, rt::sel(#str_ptr("selectedRowInComponent:\0")), component);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }

@@ -37,7 +37,7 @@ extern fn cplus_coreai_function_run1_f32(
 
 extern fn cplus_coreai_ndarray_copy_f32(array: *u8, dest: *f32, count: u64) -> i64;
 
-pub enum CoreAIError {
+enum CoreAIError {
     RuntimeUnavailable,
     BridgeFailure,
     NullHandle,
@@ -45,15 +45,15 @@ pub enum CoreAIError {
     InvalidArgument,
 }
 
-pub struct Model {
+struct Model {
     opaque raw: *u8,
 }
 
-pub struct Function {
+struct Function {
     opaque raw: *u8,
 }
 
-pub struct NDArray {
+struct NDArray {
     opaque raw: *u8,
 }
 
@@ -95,12 +95,12 @@ impl NDArray {
     }
 }
 
-pub fn runtime_available() -> bool {
+fn runtime_available() -> bool {
     let ok: i32 = unsafe { cplus_coreai_runtime_available() };
     return ok != 0;
 }
 
-pub fn last_error_into(buf: u8[]) -> usize {
+fn last_error_into(buf: u8[]) -> usize {
     let n: usize = #slice_len(buf);
     if n == (0 as usize) {
         return 0 as usize;
@@ -112,7 +112,7 @@ pub fn last_error_into(buf: u8[]) -> usize {
     return wrote as usize;
 }
 
-pub fn load_model(path: str) -> result::Result[Model, CoreAIError] {
+fn load_model(path: str) -> result::Result[Model, CoreAIError] {
     if !runtime_available() {
         return result::Result[Model, CoreAIError]::Err(CoreAIError::RuntimeUnavailable);
     }
@@ -125,7 +125,7 @@ pub fn load_model(path: str) -> result::Result[Model, CoreAIError] {
     return result::Result[Model, CoreAIError]::Ok(Model { raw: raw });
 }
 
-pub fn load_function(model: Model, name: str) -> result::Result[Function, CoreAIError] {
+fn load_function(model: Model, name: str) -> result::Result[Function, CoreAIError] {
     if is_null(model.raw) {
         return result::Result[Function, CoreAIError]::Err(CoreAIError::NullHandle);
     }
@@ -138,7 +138,7 @@ pub fn load_function(model: Model, name: str) -> result::Result[Function, CoreAI
     return result::Result[Function, CoreAIError]::Ok(Function { raw: raw });
 }
 
-pub fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, CoreAIError] {
+fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, CoreAIError] {
     let rank: usize = #slice_len(shape);
     let count: usize = #slice_len(values);
     if rank == (0 as usize) {
@@ -158,7 +158,7 @@ pub fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, Cor
     return result::Result[NDArray, CoreAIError]::Ok(NDArray { raw: raw });
 }
 
-pub fn run1_f32(
+fn run1_f32(
     function: Function,
     input_name: str,
     input: NDArray,
@@ -183,7 +183,7 @@ pub fn run1_f32(
     return result::Result[NDArray, CoreAIError]::Ok(NDArray { raw: raw });
 }
 
-pub fn copy_f32(array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
+fn copy_f32(array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
     if is_null(array.raw) {
         return result::Result[usize, CoreAIError]::Err(CoreAIError::NullHandle);
     }

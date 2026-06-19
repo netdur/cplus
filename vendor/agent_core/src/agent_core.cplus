@@ -10,22 +10,22 @@ import "./events" as events;
 import "./surface" as surface;
 
 // Convenience constructor re-export; also keeps `identity` in the module graph.
-pub fn new_registry() -> identity::Registry {
+fn new_registry() -> identity::Registry {
     return identity::new();
 }
 
 // A closed (default-deny) auth gate; also keeps `auth` in the module graph.
-pub fn closed_gate() -> auth::AuthGate {
+fn closed_gate() -> auth::AuthGate {
     return auth::deny_all();
 }
 
 // A subscriber to everything; also keeps `events` in the module graph.
-pub fn subscribe_all() -> events::Subscriber {
+fn subscribe_all() -> events::Subscriber {
     return events::subscriber(events::everything(), 64 as usize);
 }
 
 // A fresh text-version table; also keeps `surface` in the module graph.
-pub fn new_versions() -> surface::TextVersions {
+fn new_versions() -> surface::TextVersions {
     return surface::new_text_versions();
 }
 

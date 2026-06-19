@@ -16,26 +16,26 @@
 // (no cross-language Drop). Sema enforces both via E0410.
 
 #[repr(C)]
-pub struct Point {
-    pub x: i32,
-    pub y: i32,
+export struct Point {
+    x: i32,
+    y: i32,
 }
 
 #[repr(C)]
-pub struct Pair {
-    pub a: i64,
-    pub b: i64,
+export struct Pair {
+    a: i64,
+    b: i64,
 }
 
 #[repr(C)]
-pub struct Triple {
-    pub a: i64,
-    pub b: i64,
-    pub c: i64,
+export struct Triple {
+    a: i64,
+    b: i64,
+    c: i64,
 }
 
 // Plain (untagged) enum — lowers to `i32`, exported as a C enum.
-pub enum Color {
+export enum Color {
     Red,
     Green,
     Blue,

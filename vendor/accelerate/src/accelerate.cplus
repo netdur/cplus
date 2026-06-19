@@ -10,5 +10,5 @@
 import "./cblas" as cblas;
 import "./vdsp" as vdsp;
 
-pub type Order = cblas::Order;
-pub type Transpose = cblas::Transpose;
+type Order = cblas::Order;
+type Transpose = cblas::Transpose;

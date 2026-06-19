@@ -353,7 +353,14 @@ Tasks 1–6 are independent (any order among themselves).
   `pub`s removed); `export` keyword for the C-ABI/linker/header surface;
   header-gen walks `export` items; **error-level** privacy for raw-ptr /
   custom-`drop` types. Decision B resolved → drop `pub`, uniform `_`-private
-  including top-level items. STAGED (in progress 2026-06-19).
+  including top-level items. CORE DONE 2026-06-19 (stages 1–3); the visibility
+  model is live and `pub` retired. REMAINING (Stage 4, hardening): the
+  `_`-rename of invariant-protecting members + the **error-level privacy for
+  raw-ptr / custom-`drop` field types** sub-requirement (a struct that hides a
+  raw pointer or has a custom `drop` should not expose those fields). The
+  pub-drop made all formerly-private members public-by-name; this hardening
+  pass `_`-marks the ones that protect invariants. Distinct from the model flip;
+  not yet done.
   **Recon (2026-06-19):** `is_pub` flag on 9 AST nodes, set from
   `eat(TokenKind::Pub)`; today it does DOUBLE duty — (a) privacy: only FIELDS
   enforce it (E0403 cross-file read/construct via `field_with_pub`); item/method
@@ -398,9 +405,22 @@ Tasks 1–6 are independent (any order among themselves).
     (`export_keyword_marks_the_c_abi_surface`). The c_consumer example exercises
     `export extern fn` end-to-end (header + link + run). lib 1541 / e2e 618
     green. UNCOMMITTED.
-  - [ ] **Stage 3 — drop `pub`.** Migrate corpus (drop `pub` everywhere — it's
-    redundant once public-by-default + export land); `_`-rename the invariant
-    members; parser rejects `pub` with a hint (#1-style reserved token).
+  - [x] **Stage 3 — drop `pub`.** (DONE 2026-06-19.) Parser rejects `pub` on
+    items / methods / fields with a hint (kept a reserved token, #1-style).
+    Migrated the whole corpus: dropped ~2560 leading `pub ` + 12 attribute-then-
+    `pub` from .cplus, and ~182 `pub` occurrences from .rs test-string C+ source
+    (a Rust-lexer-aware string-contents-only migrator — Rust `pub` untouched;
+    hit the same `\n`-adjacency `\b` gap as the borrow migration, fixed the few
+    residues + `pub opaque`/`pub async`/`pub gen`). Re-`export`ed the C-header /
+    linker surface that the pub-drop would have de-exported (mathlib structs +
+    enum, the emit_header + lib_target + c_consumer tests). Flipped docgen +
+    the code-graph node visibility to name-based (`_`-prefix), and updated
+    cpc-bindgen to emit the new syntax (no `pub`; `_`-private opaque/packed
+    fields). Repurposed the pub-specific tests: deleted 13 pub-parsing parser
+    tests (replaced by one `export`-combos test + a `pub`-rejection test),
+    repurposed the E0359 test-fn rule to `export`, fixed the field/graph/docgen
+    visibility tests to `_`-private members. 146 files, ~2.9k/3.0k lines.
+    cplus-core 1529 / cpc e2e 618, green.
 
 - [ ] **11. `Text`→`str` coercion** — FIRST re-base the E0513 view-escape
   check off the `as_str` NAME onto coercion sites; THEN add the borrowed-

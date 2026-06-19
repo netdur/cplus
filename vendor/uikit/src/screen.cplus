@@ -2,22 +2,22 @@
 
 import "./runtime" as rt;
 
-pub struct Screen {
-    pub opaque obj: *u8,
+struct Screen {
+    opaque obj: *u8,
 }
 
 impl Screen {
-    pub fn main() -> Screen {
+    fn main() -> Screen {
         let cls: *u8 = rt::get_class(#str_ptr("UIScreen\0"));
         let screen: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("mainScreen\0")));
         return Screen { obj: screen };
     }
 
-    pub fn bounds(this) -> rt::Rect {
+    fn bounds(this) -> rt::Rect {
         return rt::msg_rect(this.obj, rt::sel(#str_ptr("bounds\0")));
     }
 
-    pub fn scale(this) -> f64 {
+    fn scale(this) -> f64 {
         return rt::msg_f64(this.obj, rt::sel(#str_ptr("scale\0")));
     }
 }

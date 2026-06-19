@@ -53,7 +53,7 @@ fn is_null(p: *u8) -> bool {
 // main thread, we send directly (the common in-app case, and what the headless
 // tests exercise).
 
-pub fn on_main_thread() -> bool {
+fn on_main_thread() -> bool {
     let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
     return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
 }
@@ -138,13 +138,13 @@ fn agent_id_key() -> *u8 {
 // across re-layouts and (b) marks the node *exposed* — i.e. part of the curated
 // surface the agent may act on. Stored as an associated, retained NSString
 // (OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1).
-pub fn set_agent_id(view: *u8, id: str) {
+fn set_agent_id(view: *u8, id: str) {
     let ns: *u8 = convert::cplus_str_to_nsstring(id);
     rt::set_associated_object(view, agent_id_key(), ns, 1 as usize);
 }
 
 // Read a view's pinned agent-id, or None if it was never tagged.
-pub fn get_agent_id(view: *u8) -> option::Option[text::Text] {
+fn get_agent_id(view: *u8) -> option::Option[text::Text] {
     let ns: *u8 = rt::get_associated_object(view, agent_id_key());
     if is_null(ns) {
         return option::Option[text::Text]::None;
@@ -160,15 +160,15 @@ pub fn get_agent_id(view: *u8) -> option::Option[text::Text] {
 // content; `actionable` is whether the agent may act on it (exposed + enabled +
 // not observe-only). `parent` indexes into the returned `Vec[UiNode]` (None for
 // the window root), so the flat list reconstructs the tree.
-pub struct UiNode {
-    pub id: text::Text,
-    pub role: identity::Role,
-    pub class_name: text::Text,
-    pub frame: rt::Rect,
-    pub is_hidden: bool,
-    pub text: text::Text,
-    pub actionable: bool,
-    pub parent: option::Option[usize],
+struct UiNode {
+    id: text::Text,
+    role: identity::Role,
+    class_name: text::Text,
+    frame: rt::Rect,
+    is_hidden: bool,
+    text: text::Text,
+    actionable: bool,
+    parent: option::Option[usize],
 }
 
 // Per-node Auto Layout health, surfaced by `Surface::layout_diagnostics`. Lets
@@ -177,11 +177,11 @@ pub struct UiNode {
 // opts into constraints (`translatesAutoresizingMaskIntoConstraints == NO`);
 // `has_ambiguous_layout` mirrors AppKit's `-[NSView hasAmbiguousLayout]` — true
 // when the constraint solver cannot pin the view's frame (under-constrained).
-pub struct LayoutDiagnostic {
-    pub id: text::Text,
-    pub class_name: text::Text,
-    pub uses_autolayout: bool,
-    pub has_ambiguous_layout: bool,
+struct LayoutDiagnostic {
+    id: text::Text,
+    class_name: text::Text,
+    uses_autolayout: bool,
+    has_ambiguous_layout: bool,
 }
 
 // ---- role classification ----------------------------------------------------
@@ -307,7 +307,7 @@ fn live_hidden(view: *u8) -> bool {
 // not the library's); this is the semantic translation those callbacks use, and
 // `Surface::emit` is how a translated event reaches a subscriber. Verbs come
 // from the W3C-a11y / AppKit-AX channels (plan.agent-core.md §7.2).
-pub fn verb_for_notification(name: str) -> option::Option[events::Verb] {
+fn verb_for_notification(name: str) -> option::Option[events::Verb] {
     if name == "NSControlTextDidChangeNotification" {
         return option::Option[events::Verb]::Some(events::Verb::Changed);
     }
@@ -358,7 +358,7 @@ struct ViewRef {
 // The live surface of one window: the identity tree, the NodeId->NSView map
 // (index 0 is the synthetic app root, mapped to null), and the text-version
 // state for optimistic-concurrency edits.
-pub struct Surface {
+struct Surface {
     reg: identity::Registry,
     versions: surface::TextVersions,
     views: vec::Vec[ViewRef],
@@ -395,7 +395,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
 
 // Walk a window's view hierarchy into a `Surface`. The window is the root node
 // (role Window) under the registry's app root; its contentView subtree follows.
-pub fn open(window: *u8) -> Surface {
+fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
@@ -425,7 +425,7 @@ pub fn open(window: *u8) -> Surface {
 }
 
 // Convenience: the read-only snapshot of a window in one call.
-pub fn describe(window: *u8) -> vec::Vec[UiNode] {
+fn describe(window: *u8) -> vec::Vec[UiNode] {
     let s: Surface = open(window);
     return s.describe();
 }
@@ -441,7 +441,7 @@ impl Surface {
     // Live describe_ui snapshot. Reads each node's current frame / hidden / text
     // from its view, so it reflects state *now* (e.g. after a `set_text`). The
     // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
-    pub fn describe(this) -> vec::Vec[UiNode] {
+    fn describe(this) -> vec::Vec[UiNode] {
         var out: vec::Vec[UiNode] = vec::new::[UiNode]();
         let total: usize = this.reg.len();
         var node: usize = 1 as usize;
@@ -479,7 +479,7 @@ impl Surface {
     // authorization gate beyond being in the tree. Same node ordering as
     // `describe` (snapshot index = NodeId - 1). Useful to an agent diagnosing a
     // UI it just built, or to a developer, without a screenshot.
-    pub fn layout_diagnostics(this) -> vec::Vec[LayoutDiagnostic] {
+    fn layout_diagnostics(this) -> vec::Vec[LayoutDiagnostic] {
         var out: vec::Vec[LayoutDiagnostic] = vec::new::[LayoutDiagnostic]();
         let total: usize = this.reg.len();
         var node: usize = 1 as usize;
@@ -520,7 +520,7 @@ impl Surface {
     // callback calls this with the verb from `verb_for_notification` (or a
     // direct one, e.g. `Clicked` for a target-action). Events bubble: a
     // subscriber on an ancestor sees descendant events.
-    pub fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+    fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
         match this.reg.lookup(source_id) {
             option::Option[usize]::Some(node) => {
                 sub.offer(this.reg, events::event(node, verb));
@@ -533,7 +533,7 @@ impl Surface {
 
     // The current text version of a node (for optimistic-concurrency edits).
     // 0 if the id is unknown or never edited.
-    pub fn text_version(this, id: str) -> u64 {
+    fn text_version(this, id: str) -> u64 {
         return match this.reg.lookup(id) {
             option::Option[usize]::Some(n) => this.versions.version_of(n),
             option::Option[usize]::None => 0 as u64,
@@ -542,7 +542,7 @@ impl Surface {
 
     // WRITE: click a control. Authorized via the core (exposed + actionable);
     // on `Allowed`, sends `performClick:` to the backing view.
-    pub fn click(this, id: str) -> surface::Outcome {
+    fn click(this, id: str) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome = surface::authorize_action(this.reg, node);
@@ -560,7 +560,7 @@ impl Surface {
     // WRITE: set a field's text with optimistic concurrency. `base_version` is
     // the version the agent last read (`text_version`); a racing edit yields
     // `VersionConflict`. On `Allowed`, sends `setStringValue:` then bumps.
-    pub fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
+    fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome =
@@ -580,7 +580,7 @@ impl Surface {
 
     // READ/NAV: scroll a node's bounds into view. Authorized via `authorize_read`
     // (exposure required; the affordance ceiling does not apply to navigation).
-    pub fn scroll_to(this, id: str) -> surface::Outcome {
+    fn scroll_to(this, id: str) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome = surface::authorize_read(this.reg, node);

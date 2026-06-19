@@ -17,23 +17,23 @@
 
 import "simd/vec4" as vec4;
 
-pub struct Mat4x4 {
+struct Mat4x4 {
     cols: [vec4::Vec4; 4],
 }
 
 impl Mat4x4 {
     // Construction --------------------------------------------------
 
-    pub fn new(c0: vec4::Vec4, c1: vec4::Vec4, c2: vec4::Vec4, c3: vec4::Vec4) -> Mat4x4 {
+    fn new(c0: vec4::Vec4, c1: vec4::Vec4, c2: vec4::Vec4, c3: vec4::Vec4) -> Mat4x4 {
         return Mat4x4 { cols: [c0, c1, c2, c3] };
     }
 
-    pub fn zero() -> Mat4x4 {
+    fn zero() -> Mat4x4 {
         let z: vec4::Vec4 = vec4::Vec4::zero();
         return Mat4x4 { cols: [z, z, z, z] };
     }
 
-    pub fn identity() -> Mat4x4 {
+    fn identity() -> Mat4x4 {
         return Mat4x4 {
             cols: [
                 vec4::Vec4::new(1.0f32, 0.0f32, 0.0f32, 0.0f32),
@@ -46,7 +46,7 @@ impl Mat4x4 {
 
     // Column access -------------------------------------------------
 
-    pub fn col(this, i: u32) -> vec4::Vec4 {
+    fn col(this, i: u32) -> vec4::Vec4 {
         // `i` must be 0..=3. We read through the array; out-of-range
         // would trap at the array bounds-check (cpc inserts those).
         return this.cols[i as usize];
@@ -54,7 +54,7 @@ impl Mat4x4 {
 
     // Matrix * vector (column-major) --------------------------------
 
-    pub fn mul_vec(this, v: vec4::Vec4) -> vec4::Vec4 {
+    fn mul_vec(this, v: vec4::Vec4) -> vec4::Vec4 {
         // result = col0 * splat(v.x) + col1 * splat(v.y) + ...
         // Built with FMA so each step is one `fma <4 x float>`.
         let c0: f32x4 = this.cols[0 as usize].raw();
@@ -70,7 +70,7 @@ impl Mat4x4 {
 
     // Matrix * matrix -----------------------------------------------
 
-    pub fn mul(this, o: Mat4x4) -> Mat4x4 {
+    fn mul(this, o: Mat4x4) -> Mat4x4 {
         // (M1 * M2).col_i  =  M1 * (M2.col_i).
         let r0: vec4::Vec4 = this.mul_vec(o.cols[0 as usize]);
         let r1: vec4::Vec4 = this.mul_vec(o.cols[1 as usize]);
@@ -81,7 +81,7 @@ impl Mat4x4 {
 
     // Element-wise add / sub (rarely useful but cheap) --------------
 
-    pub fn add(this, o: Mat4x4) -> Mat4x4 {
+    fn add(this, o: Mat4x4) -> Mat4x4 {
         return Mat4x4 {
             cols: [
                 this.cols[0 as usize].add(o.cols[0 as usize]),
@@ -92,7 +92,7 @@ impl Mat4x4 {
         };
     }
 
-    pub fn scale(this, s: f32) -> Mat4x4 {
+    fn scale(this, s: f32) -> Mat4x4 {
         return Mat4x4 {
             cols: [
                 this.cols[0 as usize].scale(s),

@@ -6,11 +6,11 @@ import "./queue" as queue;
 import "./pipeline" as pipeline;
 import "stdlib/result" as result;
 
-pub struct Device {
-    pub raw: *u8,
+struct Device {
+    raw: *u8,
 }
 
-pub fn default() -> result::Result[Device, runtime::MetalError] {
+fn default() -> result::Result[Device, runtime::MetalError] {
     let dev_raw: *u8 = runtime::mtl_create_system_default_device();
     if dev_raw == unsafe { 0 as *u8 } {
         return result::Result[Device, runtime::MetalError]::Err(runtime::MetalError::NoDefaultDevice);
@@ -19,7 +19,7 @@ pub fn default() -> result::Result[Device, runtime::MetalError] {
 }
 
 impl Device {
-    pub fn new_command_queue(this) -> queue::CommandQueue {
+    fn new_command_queue(this) -> queue::CommandQueue {
         if this.raw == unsafe { 0 as *u8 } {
             return queue::CommandQueue { raw: unsafe { 0 as *u8 } };
         }
@@ -28,7 +28,7 @@ impl Device {
         return queue::CommandQueue { raw: queue_raw };
     }
 
-    pub fn new_library_with_data(this, data: u8[]) -> result::Result[pipeline::Library, runtime::MetalError] {
+    fn new_library_with_data(this, data: u8[]) -> result::Result[pipeline::Library, runtime::MetalError] {
         if this.raw == unsafe { 0 as *u8 } {
             return result::Result[pipeline::Library, runtime::MetalError]::Err(runtime::MetalError::LibraryLoadFailed);
         }
@@ -53,7 +53,7 @@ impl Device {
         return result::Result[pipeline::Library, runtime::MetalError]::Ok(pipeline::Library { raw: lib_raw });
     }
 
-    pub fn new_buffer(this, len: usize) -> buffer::Buffer {
+    fn new_buffer(this, len: usize) -> buffer::Buffer {
         if this.raw == unsafe { 0 as *u8 } {
             return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
         }
@@ -62,7 +62,7 @@ impl Device {
         return buffer::Buffer { raw: buf_raw, size: len };
     }
 
-    pub fn new_buffer_from_slice(this, slice: u8[]) -> buffer::Buffer {
+    fn new_buffer_from_slice(this, slice: u8[]) -> buffer::Buffer {
         if this.raw == unsafe { 0 as *u8 } {
             return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
         }
@@ -73,7 +73,7 @@ impl Device {
         return buffer::Buffer { raw: buf_raw, size: len };
     }
 
-    pub fn new_compute_pipeline_state(
+    fn new_compute_pipeline_state(
         this,
         function: pipeline::Function,
     ) -> result::Result[pipeline::ComputePipelineState, runtime::MetalError] {

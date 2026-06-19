@@ -25,26 +25,26 @@ extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
 
 // ---- StaticArena16K (16 KiB) ----
 
-pub struct StaticArena16K {
-    pub buf: [u8; 16384],
-    pub used: usize,
+struct StaticArena16K {
+    buf: [u8; 16384],
+    used: usize,
 }
 
 impl StaticArena16K {
-    pub fn new() -> StaticArena16K {
+    fn new() -> StaticArena16K {
         return StaticArena16K { buf: [0u8; 16384], used: 0 as usize };
     }
 
-    pub fn capacity(this) -> usize { return 16384 as usize; }
-    pub fn used_bytes(this) -> usize { return this.used; }
-    pub fn remaining(this) -> usize { return (16384 as usize) -% this.used; }
-    pub fn reset(ref this) { this.used = 0 as usize; return; }
+    fn capacity(this) -> usize { return 16384 as usize; }
+    fn used_bytes(this) -> usize { return this.used; }
+    fn remaining(this) -> usize { return (16384 as usize) -% this.used; }
+    fn reset(ref this) { this.used = 0 as usize; return; }
 
-    pub fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
+    fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
         return this.alloc_bytes_aligned(n, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
+    fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
         var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
         let buf_base: usize = unsafe { #addr_of(this) as usize };
@@ -59,7 +59,7 @@ impl StaticArena16K {
         return option::Option[*u8]::Some(unsafe { aligned as *u8 });
     }
 
-    pub fn alloc_zeroed_bytes(ref this, n: usize) -> option::Option[*u8] {
+    fn alloc_zeroed_bytes(ref this, n: usize) -> option::Option[*u8] {
         let opt: option::Option[*u8] = this.alloc_bytes(n);
         guard let option::Option[*u8]::Some(p) = opt else {
             return option::Option[*u8]::None;
@@ -68,7 +68,7 @@ impl StaticArena16K {
         return option::Option[*u8]::Some(p);
     }
 
-    pub fn alloc_str(ref this, s: str) -> option::Option[str] {
+    fn alloc_str(ref this, s: str) -> option::Option[str] {
         let n: usize = #str_len(s);
         let opt: option::Option[*u8] = this.alloc_bytes(n);
         guard let option::Option[*u8]::Some(p) = opt else {
@@ -81,26 +81,26 @@ impl StaticArena16K {
 
 // ---- StaticArena64K (64 KiB) ----
 
-pub struct StaticArena64K {
-    pub buf: [u8; 65536],
-    pub used: usize,
+struct StaticArena64K {
+    buf: [u8; 65536],
+    used: usize,
 }
 
 impl StaticArena64K {
-    pub fn new() -> StaticArena64K {
+    fn new() -> StaticArena64K {
         return StaticArena64K { buf: [0u8; 65536], used: 0 as usize };
     }
 
-    pub fn capacity(this) -> usize { return 65536 as usize; }
-    pub fn used_bytes(this) -> usize { return this.used; }
-    pub fn remaining(this) -> usize { return (65536 as usize) -% this.used; }
-    pub fn reset(ref this) { this.used = 0 as usize; return; }
+    fn capacity(this) -> usize { return 65536 as usize; }
+    fn used_bytes(this) -> usize { return this.used; }
+    fn remaining(this) -> usize { return (65536 as usize) -% this.used; }
+    fn reset(ref this) { this.used = 0 as usize; return; }
 
-    pub fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
+    fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
         return this.alloc_bytes_aligned(n, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
+    fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
         var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
         let buf_base: usize = unsafe { #addr_of(this) as usize };

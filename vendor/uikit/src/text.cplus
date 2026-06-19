@@ -2,12 +2,12 @@ import "./runtime" as rt;
 import "./convert" as convert;
 import "./view" as view;
 
-pub struct TextField {
-    pub obj: *u8,
+struct TextField {
+    obj: *u8,
 }
 
 impl TextField {
-    pub fn new(frame: rt::Rect) -> TextField {
+    fn new(frame: rt::Rect) -> TextField {
         return TextField { obj: rt::alloc_init_with_frame(#str_ptr("UITextField\0"), frame) };
     }
 
@@ -15,69 +15,69 @@ impl TextField {
         rt::release(this.obj);
     }
 
-    pub fn set_text(this, text: str) {
+    fn set_text(this, text: str) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_text_ns(this, text_ns: *u8) {
+    fn set_text_ns(this, text_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
     }
 
-    pub fn text(this) -> *u8 {
+    fn text(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_placeholder(this, text: str) {
+    fn set_placeholder(this, text: str) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_placeholder_ns(this, text_ns: *u8) {
+    fn set_placeholder_ns(this, text_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), text_ns);
     }
 
-    pub fn set_text_color(this, color: view::Color) {
+    fn set_text_color(this, color: view::Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
-    pub fn set_font(this, font: *u8) {
+    fn set_font(this, font: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_text_alignment(this, alignment: i64) {
+    fn set_text_alignment(this, alignment: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
     }
 
-    pub fn set_border_style(this, style: i64) {
+    fn set_border_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBorderStyle:\0")), style);
     }
 
-    pub fn set_secure_text_entry(this, flag: i8) {
+    fn set_secure_text_entry(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSecureTextEntry:\0")), flag);
     }
 
-    pub fn set_keyboard_type(this, keyboard_type: i64) {
+    fn set_keyboard_type(this, keyboard_type: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setKeyboardType:\0")), keyboard_type);
     }
 
-    pub fn set_return_key_type(this, return_key_type: i64) {
+    fn set_return_key_type(this, return_key_type: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setReturnKeyType:\0")), return_key_type);
     }
 
-    pub fn set_on_editing_changed(this, cb: fn(*u8)) {
+    fn set_on_editing_changed(this, cb: fn(*u8)) {
         rt::attach_control_callback(this.obj, cb, rt::control_event_value_changed());
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct TextView {
-    pub obj: *u8,
+struct TextView {
+    obj: *u8,
 }
 
 impl TextView {
-    pub fn new(frame: rt::Rect) -> TextView {
+    fn new(frame: rt::Rect) -> TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("UITextView\0"), frame) };
     }
 
@@ -85,49 +85,49 @@ impl TextView {
         rt::release(this.obj);
     }
 
-    pub fn set_text(this, text: str) {
+    fn set_text(this, text: str) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_text_ns(this, text_ns: *u8) {
+    fn set_text_ns(this, text_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
     }
 
-    pub fn text(this) -> *u8 {
+    fn text(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_text_color(this, color: view::Color) {
+    fn set_text_color(this, color: view::Color) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
-    pub fn set_font(this, font: *u8) {
+    fn set_font(this, font: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_editable(this, flag: i8) {
+    fn set_editable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEditable:\0")), flag);
     }
 
-    pub fn set_selectable(this, flag: i8) {
+    fn set_selectable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSelectable:\0")), flag);
     }
 
-    pub fn set_text_alignment(this, alignment: i64) {
+    fn set_text_alignment(this, alignment: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct SearchBar {
-    pub obj: *u8,
+struct SearchBar {
+    obj: *u8,
 }
 
 impl SearchBar {
-    pub fn new(frame: rt::Rect) -> SearchBar {
+    fn new(frame: rt::Rect) -> SearchBar {
         return SearchBar { obj: rt::alloc_init_with_frame(#str_ptr("UISearchBar\0"), frame) };
     }
 
@@ -135,25 +135,25 @@ impl SearchBar {
         rt::release(this.obj);
     }
 
-    pub fn set_text(this, text: str) {
+    fn set_text(this, text: str) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn text(this) -> *u8 {
+    fn text(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_placeholder(this, text: str) {
+    fn set_placeholder(this, text: str) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_bar_style(this, style: i64) {
+    fn set_bar_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub type SecureTextField = TextField;
+type SecureTextField = TextField;

@@ -10,7 +10,7 @@ import "stdlib/result" as result;
 
 extern fn printf(fmt: *u8, ...) -> i32;
 
-pub fn main() -> i32 {
+fn main() -> i32 {
     llama::backend_init();
 
     let opts: llama::LoadOptions = llama::default_options();

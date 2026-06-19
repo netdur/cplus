@@ -3,12 +3,12 @@ import "./runtime" as rt;
 // Owned (+1 via alloc/initWithFrame:); a parent view retains it on add. `drop`
 // releases this wrapper's +1 (plan.appkit.md §2). Hold the wrapper until after
 // `addSubview:`.
-pub struct TextField {
-    pub obj: *u8,
+struct TextField {
+    obj: *u8,
 }
 
 impl TextField {
-    pub fn new_label(frame: rt::Rect) -> TextField {
+    fn new_label(frame: rt::Rect) -> TextField {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
         let label_alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let label: *u8 = rt::msg_init_with_frame(label_alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
@@ -33,81 +33,81 @@ impl TextField {
     // drop (left holding nil), so the object survives a boundary the wrapper
     // can't (e.g. `fn make() -> *u8`); `from_raw` re-adopts it. See the full
     // explanation + the use-after-free trap on `view::View::into_raw`.
-    pub fn into_raw(ref this) -> *u8 {
+    fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
     }
 
-    pub fn from_raw(obj: *u8) -> TextField {
+    fn from_raw(obj: *u8) -> TextField {
         return TextField { obj: obj };
     }
 
-    pub fn new_input_field(frame: rt::Rect) -> TextField {
+    fn new_input_field(frame: rt::Rect) -> TextField {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
         let field_alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let field: *u8 = rt::msg_init_with_frame(field_alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return TextField { obj: field };
     }
 
-    pub fn set_string_value(this, val: *u8) {
+    fn set_string_value(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(val));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant. See window.cplus
     // for the rationale.
-    pub fn set_string_value_ns(this, val_ns: *u8) {
+    fn set_string_value_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setStringValue:\0")), val_ns);
     }
 
-    pub fn string_value(this) -> *u8 {
+    fn string_value(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("stringValue\0")));
     }
 
-    pub fn set_placeholder_string(this, val: *u8) {
+    fn set_placeholder_string(this, val: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), rt::ns_string(val));
     }
 
-    pub fn set_placeholder_string_ns(this, val_ns: *u8) {
+    fn set_placeholder_string_ns(this, val_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholderString:\0")), val_ns);
     }
 
-    pub fn set_alignment(this, align: i64) {
+    fn set_alignment(this, align: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setAlignment:\0")), align);
     }
 
-    pub fn set_bezeled(this, flag: i8) {
+    fn set_bezeled(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setBezeled:\0")), flag);
     }
 
-    pub fn set_draws_background(this, flag: i8) {
+    fn set_draws_background(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setDrawsBackground:\0")), flag);
     }
 
-    pub fn set_editable(this, flag: i8) {
+    fn set_editable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEditable:\0")), flag);
     }
 
-    pub fn set_selectable(this, flag: i8) {
+    fn set_selectable(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSelectable:\0")), flag);
     }
 
-    pub fn set_font(this, font: *u8) {
+    fn set_font(this, font: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_text_color(this, color: *u8) {
+    fn set_text_color(this, color: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color);
     }
 
-    pub fn set_background_color(this, color: *u8) {
+    fn set_background_color(this, color: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color);
     }
 
     // GAP 4 (v0.0.19): the focus-ring style (`setFocusRingType:`, an NSView
     // property). `t` is an `NSFocusRingType`: 0 default, 1 none, 2 exterior.
     // Common use: `1` to suppress the focus ring on a custom-styled field.
-    pub fn set_focus_ring_type(this, t: i64) {
+    fn set_focus_ring_type(this, t: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setFocusRingType:\0")), t);
     }
 
@@ -115,7 +115,7 @@ impl TextField {
     // `new_label` is single-line and truncates). Same non-editable / no-bezel /
     // no-background config, plus wrapping enabled on the cell and an unbounded
     // line count. Give it a width and let height grow (or pin via constraints).
-    pub fn new_wrapping_label(frame: rt::Rect) -> TextField {
+    fn new_wrapping_label(frame: rt::Rect) -> TextField {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let label: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
@@ -139,12 +139,12 @@ impl TextField {
 // and is freed once the parent is (plan.appkit.md §2, "+1 normal form"). Hold
 // the wrapper until after `addSubview:` — don't pass `Button::new(...).obj`
 // inline.
-pub struct Button {
-    pub obj: *u8,
+struct Button {
+    obj: *u8,
 }
 
 impl Button {
-    pub fn new(frame: rt::Rect) -> Button {
+    fn new(frame: rt::Rect) -> Button {
         let cls: *u8 = rt::get_class(#str_ptr("NSButton\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let btn: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
@@ -158,52 +158,52 @@ impl Button {
     // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
     // see `view::View::into_raw` for the full explanation + the use-after-free
     // trap it prevents.
-    pub fn into_raw(ref this) -> *u8 {
+    fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
     }
 
-    pub fn from_raw(obj: *u8) -> Button {
+    fn from_raw(obj: *u8) -> Button {
         return Button { obj: obj };
     }
 
-    pub fn set_title(this, title: *u8) {
+    fn set_title(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_title_ns(this, title_ns: *u8) {
+    fn set_title_ns(this, title_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), title_ns);
     }
 
-    pub fn set_button_type(this, btn_type: u64) {
+    fn set_button_type(this, btn_type: u64) {
         rt::msg_void_u64(this.obj, rt::sel(#str_ptr("setButtonType:\0")), btn_type);
     }
 
-    pub fn set_bezel_style(this, style: u64) {
+    fn set_bezel_style(this, style: u64) {
         rt::msg_void_u64(this.obj, rt::sel(#str_ptr("setBezelStyle:\0")), style);
     }
 
-    pub fn set_enabled(this, flag: i8) {
+    fn set_enabled(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
     }
 
-    pub fn set_state(this, state: i64) {
+    fn set_state(this, state: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setState:\0")), state);
     }
 
-    pub fn state(this) -> i64 {
+    fn state(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("state\0")));
     }
 
-    pub fn set_on_click(this, cb: fn(*u8)) {
+    fn set_on_click(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct Slider {
-    pub obj: *u8,
+struct Slider {
+    obj: *u8,
 }
 
 impl Slider {
@@ -211,7 +211,7 @@ impl Slider {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Slider {
+    fn new(frame: rt::Rect) -> Slider {
         let cls: *u8 = rt::get_class(#str_ptr("NSSlider\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let slider: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
@@ -222,29 +222,29 @@ impl Slider {
     // double ABI to match `setMinValue:`/`setMaxValue:` below (and the other
     // value controls). The legacy `floatValue` returns a 32-bit `float` and must
     // NOT be read through the f64 msgSend — that's an ABI mismatch.
-    pub fn set_double_value(this, val: f64) {
+    fn set_double_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setDoubleValue:\0")), val);
     }
 
-    pub fn double_value(this) -> f64 {
+    fn double_value(this) -> f64 {
         return rt::msg_f64(this.obj, rt::sel(#str_ptr("doubleValue\0")));
     }
 
-    pub fn set_min_value(this, val: f64) {
+    fn set_min_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMinValue:\0")), val);
     }
 
-    pub fn set_max_value(this, val: f64) {
+    fn set_max_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMaxValue:\0")), val);
     }
 
-    pub fn set_on_change(this, cb: fn(*u8)) {
+    fn set_on_change(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct ProgressIndicator {
-    pub obj: *u8,
+struct ProgressIndicator {
+    obj: *u8,
 }
 
 impl ProgressIndicator {
@@ -252,36 +252,36 @@ impl ProgressIndicator {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> ProgressIndicator {
+    fn new(frame: rt::Rect) -> ProgressIndicator {
         let cls: *u8 = rt::get_class(#str_ptr("NSProgressIndicator\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let pi: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return ProgressIndicator { obj: pi };
     }
 
-    pub fn set_double_value(this, val: f64) {
+    fn set_double_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setDoubleValue:\0")), val);
     }
 
-    pub fn double_value(this) -> f64 {
+    fn double_value(this) -> f64 {
         return rt::msg_f64(this.obj, rt::sel(#str_ptr("doubleValue\0")));
     }
 
-    pub fn set_indeterminate(this, flag: i8) {
+    fn set_indeterminate(this, flag: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setIndeterminate:\0")), flag);
     }
 
-    pub fn start_animation(this, sender: *u8) {
+    fn start_animation(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("startAnimation:\0")), sender);
     }
 
-    pub fn stop_animation(this, sender: *u8) {
+    fn stop_animation(this, sender: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("stopAnimation:\0")), sender);
     }
 }
 
-pub struct PopUpButton {
-    pub obj: *u8,
+struct PopUpButton {
+    obj: *u8,
 }
 
 impl PopUpButton {
@@ -289,41 +289,41 @@ impl PopUpButton {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect, pulls_down: i8) -> PopUpButton {
+    fn new(frame: rt::Rect, pulls_down: i8) -> PopUpButton {
         let cls = rt::get_class(#str_ptr("NSPopUpButton\0"));
         let btn_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let btn = rt::msg_init_popup(btn_alloc, rt::sel(#str_ptr("initWithFrame:pullsDown:\0")), frame, pulls_down);
         return PopUpButton { obj: btn };
     }
 
-    pub fn add_item(this, title: *u8) {
+    fn add_item(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addItemWithTitle:\0")), rt::ns_string(title));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn add_item_ns(this, title_ns: *u8) {
+    fn add_item_ns(this, title_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("addItemWithTitle:\0")), title_ns);
     }
 
-    pub fn remove_all_items(this) {
+    fn remove_all_items(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    pub fn select_item_at_index(this, index: i64) {
+    fn select_item_at_index(this, index: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("selectItemAtIndex:\0")), index);
     }
 
-    pub fn index_of_selected_item(this) -> i64 {
+    fn index_of_selected_item(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("indexOfSelectedItem\0")));
     }
 
-    pub fn set_on_select(this, cb: fn(*u8)) {
+    fn set_on_select(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct Stepper {
-    pub obj: *u8,
+struct Stepper {
+    obj: *u8,
 }
 
 impl Stepper {
@@ -331,37 +331,37 @@ impl Stepper {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Stepper {
+    fn new(frame: rt::Rect) -> Stepper {
         return Stepper { obj: rt::alloc_init_with_frame(#str_ptr("NSStepper\0"), frame) };
     }
 
-    pub fn set_double_value(this, val: f64) {
+    fn set_double_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setDoubleValue:\0")), val);
     }
 
-    pub fn double_value(this) -> f64 {
+    fn double_value(this) -> f64 {
         return rt::msg_f64(this.obj, rt::sel(#str_ptr("doubleValue\0")));
     }
 
-    pub fn set_min_value(this, val: f64) {
+    fn set_min_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMinValue:\0")), val);
     }
 
-    pub fn set_max_value(this, val: f64) {
+    fn set_max_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMaxValue:\0")), val);
     }
 
-    pub fn set_increment(this, val: f64) {
+    fn set_increment(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setIncrement:\0")), val);
     }
 
-    pub fn set_on_change(this, cb: fn(*u8)) {
+    fn set_on_change(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct Switch {
-    pub obj: *u8,
+struct Switch {
+    obj: *u8,
 }
 
 impl Switch {
@@ -369,25 +369,25 @@ impl Switch {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> Switch {
+    fn new(frame: rt::Rect) -> Switch {
         return Switch { obj: rt::alloc_init_with_frame(#str_ptr("NSSwitch\0"), frame) };
     }
 
-    pub fn set_state(this, state: i64) {
+    fn set_state(this, state: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setState:\0")), state);
     }
 
-    pub fn state(this) -> i64 {
+    fn state(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("state\0")));
     }
 
-    pub fn set_on_change(this, cb: fn(*u8)) {
+    fn set_on_change(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct SegmentedControl {
-    pub obj: *u8,
+struct SegmentedControl {
+    obj: *u8,
 }
 
 impl SegmentedControl {
@@ -395,38 +395,38 @@ impl SegmentedControl {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> SegmentedControl {
+    fn new(frame: rt::Rect) -> SegmentedControl {
         return SegmentedControl { obj: rt::alloc_init_with_frame(#str_ptr("NSSegmentedControl\0"), frame) };
     }
 
-    pub fn set_segment_count(this, count: i64) {
+    fn set_segment_count(this, count: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setSegmentCount:\0")), count);
     }
 
-    pub fn set_label_for_segment(this, label: *u8, segment: i64) {
+    fn set_label_for_segment(this, label: *u8, segment: i64) {
         rt::msg_void_id_i64(this.obj, rt::sel(#str_ptr("setLabel:forSegment:\0")), rt::ns_string(label), segment);
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_label_for_segment_ns(this, label_ns: *u8, segment: i64) {
+    fn set_label_for_segment_ns(this, label_ns: *u8, segment: i64) {
         rt::msg_void_id_i64(this.obj, rt::sel(#str_ptr("setLabel:forSegment:\0")), label_ns, segment);
     }
 
-    pub fn set_selected_for_segment(this, selected: i8, segment: i64) {
+    fn set_selected_for_segment(this, selected: i8, segment: i64) {
         rt::msg_void_i8_i64(this.obj, rt::sel(#str_ptr("setSelected:forSegment:\0")), selected, segment);
     }
 
-    pub fn selected_segment(this) -> i64 {
+    fn selected_segment(this) -> i64 {
         return rt::msg_i64(this.obj, rt::sel(#str_ptr("selectedSegment\0")));
     }
 
-    pub fn set_on_change(this, cb: fn(*u8)) {
+    fn set_on_change(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct ComboButton {
-    pub obj: *u8,
+struct ComboButton {
+    obj: *u8,
 }
 
 impl ComboButton {
@@ -434,30 +434,30 @@ impl ComboButton {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> ComboButton {
+    fn new(frame: rt::Rect) -> ComboButton {
         return ComboButton { obj: rt::alloc_init_with_frame(#str_ptr("NSComboButton\0"), frame) };
     }
 
-    pub fn set_title(this, title: *u8) {
+    fn set_title(this, title: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant.
-    pub fn set_title_ns(this, title_ns: *u8) {
+    fn set_title_ns(this, title_ns: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), title_ns);
     }
 
-    pub fn set_menu(this, menu: *u8) {
+    fn set_menu(this, menu: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMenu:\0")), menu);
     }
 
-    pub fn set_on_click(this, cb: fn(*u8)) {
+    fn set_on_click(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct DatePicker {
-    pub obj: *u8,
+struct DatePicker {
+    obj: *u8,
 }
 
 impl DatePicker {
@@ -465,33 +465,33 @@ impl DatePicker {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> DatePicker {
+    fn new(frame: rt::Rect) -> DatePicker {
         return DatePicker { obj: rt::alloc_init_with_frame(#str_ptr("NSDatePicker\0"), frame) };
     }
 
-    pub fn set_date_picker_style(this, style: i64) {
+    fn set_date_picker_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setDatePickerStyle:\0")), style);
     }
 
-    pub fn set_date_picker_elements(this, elements: u64) {
+    fn set_date_picker_elements(this, elements: u64) {
         rt::msg_void_u64(this.obj, rt::sel(#str_ptr("setDatePickerElements:\0")), elements);
     }
 
-    pub fn date_value(this) -> *u8 {
+    fn date_value(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("dateValue\0")));
     }
 
-    pub fn set_date_value(this, date: *u8) {
+    fn set_date_value(this, date: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDateValue:\0")), date);
     }
 
-    pub fn set_on_change(this, cb: fn(*u8)) {
+    fn set_on_change(this, cb: fn(*u8)) {
         rt::attach_callback(this.obj, cb);
     }
 }
 
-pub struct ColorWell {
-    pub obj: *u8,
+struct ColorWell {
+    obj: *u8,
 }
 
 impl ColorWell {
@@ -499,29 +499,29 @@ impl ColorWell {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> ColorWell {
+    fn new(frame: rt::Rect) -> ColorWell {
         return ColorWell { obj: rt::alloc_init_with_frame(#str_ptr("NSColorWell\0"), frame) };
     }
 
-    pub fn color(this) -> *u8 {
+    fn color(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("color\0")));
     }
 
-    pub fn set_color(this, color: *u8) {
+    fn set_color(this, color: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setColor:\0")), color);
     }
 
-    pub fn activate(this, exclusive: i8) {
+    fn activate(this, exclusive: i8) {
         rt::msg_void_i8(this.obj, rt::sel(#str_ptr("activate:\0")), exclusive);
     }
 
-    pub fn deactivate(this) {
+    fn deactivate(this) {
         rt::msg_void(this.obj, rt::sel(#str_ptr("deactivate\0")));
     }
 }
 
-pub struct LevelIndicator {
-    pub obj: *u8,
+struct LevelIndicator {
+    obj: *u8,
 }
 
 impl LevelIndicator {
@@ -529,29 +529,29 @@ impl LevelIndicator {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> LevelIndicator {
+    fn new(frame: rt::Rect) -> LevelIndicator {
         return LevelIndicator { obj: rt::alloc_init_with_frame(#str_ptr("NSLevelIndicator\0"), frame) };
     }
 
-    pub fn set_double_value(this, val: f64) {
+    fn set_double_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setDoubleValue:\0")), val);
     }
 
-    pub fn double_value(this) -> f64 {
+    fn double_value(this) -> f64 {
         return rt::msg_f64(this.obj, rt::sel(#str_ptr("doubleValue\0")));
     }
 
-    pub fn set_min_value(this, val: f64) {
+    fn set_min_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMinValue:\0")), val);
     }
 
-    pub fn set_max_value(this, val: f64) {
+    fn set_max_value(this, val: f64) {
         rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setMaxValue:\0")), val);
     }
 }
 
-pub struct PathControl {
-    pub obj: *u8,
+struct PathControl {
+    obj: *u8,
 }
 
 impl PathControl {
@@ -559,19 +559,19 @@ impl PathControl {
         rt::release(this.obj);
     }
 
-    pub fn new(frame: rt::Rect) -> PathControl {
+    fn new(frame: rt::Rect) -> PathControl {
         return PathControl { obj: rt::alloc_init_with_frame(#str_ptr("NSPathControl\0"), frame) };
     }
 
-    pub fn set_url(this, url: *u8) {
+    fn set_url(this, url: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setURL:\0")), url);
     }
 
-    pub fn url(this) -> *u8 {
+    fn url(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("URL\0")));
     }
 
-    pub fn set_path_style(this, style: i64) {
+    fn set_path_style(this, style: i64) {
         rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setPathStyle:\0")), style);
     }
 }

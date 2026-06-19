@@ -98,7 +98,7 @@ fn evfilt_write() -> i16 { return (0 as i16) -% (2 as i16); }
 fn evfilt_timer() -> i16 { return (0 as i16) -% (7 as i16); }
 
 // Lazily allocate + init the reactor on first use. Idempotent.
-pub fn ensure() -> *u8 {
+fn ensure() -> *u8 {
     let cur: *u8 = unsafe { #reactor_get_state() };
     let null_p: *u8 = unsafe { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
@@ -190,13 +190,13 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 }
 
 // Register fd for read-readiness; record the coroutine handle to wake.
-pub fn register_read(fd: i32, hdl: *u8) {
+fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
     return;
 }
 
 // Register fd for write-readiness.
-pub fn register_write(fd: i32, hdl: *u8) {
+fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
     return;
 }
@@ -204,7 +204,7 @@ pub fn register_write(fd: i32, hdl: *u8) {
 // Register a one-shot timer that fires after `ms` milliseconds and
 // resumes `hdl`. Arms a fresh timerfd and parks it in the waiter table
 // under the timer sentinel; poll_one_event reaps + closes it on fire.
-pub fn register_timer(ms: u64, hdl: *u8) {
+fn register_timer(ms: u64, hdl: *u8) {
     let tfd: i32 = unsafe { timerfd_create(clock_monotonic(), 0 as i32) };
     // itimerspec is two timespec { i64 sec; i64 nsec } pairs (32 bytes):
     //   it_interval @0  (0 → one-shot), it_value @16 (sec @16, nsec @24).
@@ -278,7 +278,7 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
 
 // Wait for one fd to become ready, then resume its waiter. Blocks the
 // calling thread on epoll_wait. Returns true if a coroutine was resumed.
-pub fn poll_one_event() -> bool {
+fn poll_one_event() -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
@@ -334,7 +334,7 @@ pub fn poll_one_event() -> bool {
 }
 
 // Drain the spawn_local task queue: resume each handle once.
-pub fn drain_pending() -> i32 {
+fn drain_pending() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let n: i32 = unsafe { *np_slot };
@@ -355,7 +355,7 @@ pub fn drain_pending() -> i32 {
 }
 
 // Push a coroutine handle to the spawn_local queue.
-pub fn enqueue_pending(hdl: *u8) {
+fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
@@ -378,14 +378,14 @@ pub fn enqueue_pending(hdl: *u8) {
 // Snapshot of "pending event-side work" — fd waiters plus active timers.
 // On Linux, timers live in the waiter table (n_waiters), so n_timers stays
 // zero; the sum keeps the same meaning as the kqueue backend.
-pub fn waiter_count() -> i32 {
+fn waiter_count() -> i32 {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     return unsafe { *nw_slot } +% unsafe { *nt_slot };
 }
 
-pub fn pending_count() -> i32 {
+fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     return unsafe { *np_slot };
@@ -393,7 +393,7 @@ pub fn pending_count() -> i32 {
 
 // Register `awaiter` as waiting on `awaitee`. Append-only; entries are
 // removed by `notify_completed` (swap-remove).
-pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
+fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
@@ -421,7 +421,7 @@ pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
 
 // Linear scan for an awaiter registered on `awaitee`; if found,
 // swap-remove and enqueue the awaiter for resumption.
-pub fn notify_completed(awaitee: *u8) {
+fn notify_completed(awaitee: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
     let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };

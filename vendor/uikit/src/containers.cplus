@@ -2,19 +2,19 @@ import "./runtime" as rt;
 import "./view" as view;
 import "./controllers" as controllers;
 
-pub type StackView = view::StackView;
-pub type ScrollView = view::ScrollView;
-pub type NavigationController = controllers::NavigationController;
-pub type TabBarController = controllers::TabBarController;
-pub type SplitViewController = controllers::SplitViewController;
-pub type PageViewController = controllers::PageViewController;
+type StackView = view::StackView;
+type ScrollView = view::ScrollView;
+type NavigationController = controllers::NavigationController;
+type TabBarController = controllers::TabBarController;
+type SplitViewController = controllers::SplitViewController;
+type PageViewController = controllers::PageViewController;
 
-pub struct VisualEffectView {
-    pub obj: *u8,
+struct VisualEffectView {
+    obj: *u8,
 }
 
 impl VisualEffectView {
-    pub fn new(effect: *u8) -> VisualEffectView {
+    fn new(effect: *u8) -> VisualEffectView {
         let cls: *u8 = rt::get_class(#str_ptr("UIVisualEffectView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let obj: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithEffect:\0")), effect);
@@ -25,36 +25,36 @@ impl VisualEffectView {
         rt::release(this.obj);
     }
 
-    pub fn content_view(this) -> view::View {
+    fn content_view(this) -> view::View {
         return view::View { obj: rt::msg_id(this.obj, rt::sel(#str_ptr("contentView\0"))) };
     }
 
-    pub fn set_effect(this, effect: *u8) {
+    fn set_effect(this, effect: *u8) {
         rt::msg_void_id(this.obj, rt::sel(#str_ptr("setEffect:\0")), effect);
     }
 
-    pub fn as_view_obj(this) -> *u8 {
+    fn as_view_obj(this) -> *u8 {
         return this.obj;
     }
 }
 
-pub struct BlurEffect {
-    pub opaque obj: *u8,
+struct BlurEffect {
+    opaque obj: *u8,
 }
 
 impl BlurEffect {
-    pub fn style(style: i64) -> *u8 {
+    fn style(style: i64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIBlurEffect\0"));
         return rt::msg_id_u64(cls, rt::sel(#str_ptr("effectWithStyle:\0")), style as u64);
     }
 }
 
-pub struct TableViewCell {
-    pub obj: *u8,
+struct TableViewCell {
+    obj: *u8,
 }
 
 impl TableViewCell {
-    pub fn new(style: i64, reuse_identifier: *u8) -> TableViewCell {
+    fn new(style: i64, reuse_identifier: *u8) -> TableViewCell {
         let cls: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let cell: *u8 = rt::msg_id_i64_id(
@@ -70,11 +70,11 @@ impl TableViewCell {
         rt::release(this.obj);
     }
 
-    pub fn content_view(this) -> view::View {
+    fn content_view(this) -> view::View {
         return view::View { obj: rt::msg_id(this.obj, rt::sel(#str_ptr("contentView\0"))) };
     }
 
-    pub fn text_label(this) -> *u8 {
+    fn text_label(this) -> *u8 {
         return rt::msg_id(this.obj, rt::sel(#str_ptr("textLabel\0")));
     }
 }

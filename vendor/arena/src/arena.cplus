@@ -43,12 +43,12 @@ struct Chunk {
     opaque next: *u8,
 }
 
-pub struct Arena {
+struct Arena {
     opaque head: *u8,
     chunk_size: usize,
 }
 
-pub fn new(chunk_size: usize) -> Arena {
+fn new(chunk_size: usize) -> Arena {
     let header_size: usize = #size_of::[Chunk]();
     var chosen_size: usize = chunk_size;
     if chosen_size < header_size + 8 {
@@ -63,15 +63,15 @@ pub fn new(chunk_size: usize) -> Arena {
 impl Arena {
     // Shim for the stdlib `Type::new` convention. Equivalent to the
     // package-level `arena::new(chunk_size)`.
-    pub fn new(chunk_size: usize) -> Arena {
+    fn new(chunk_size: usize) -> Arena {
         return new(chunk_size);
     }
 
-    pub fn alloc_bytes(ref this, bytes: usize) -> *u8 {
+    fn alloc_bytes(ref this, bytes: usize) -> *u8 {
         return this.alloc_bytes_aligned(bytes, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(ref this, bytes: usize, align: usize) -> *u8 {
+    fn alloc_bytes_aligned(ref this, bytes: usize, align: usize) -> *u8 {
         // Normalize `align == 0` to 1-byte alignment — the `% align`
         // math below would trap on SIGFPE otherwise.
         var align: usize = align;
@@ -138,7 +138,7 @@ impl Arena {
         return unsafe { aligned_avail as *u8 };
     }
 
-    pub fn alloc[T](ref this, take val: T) -> *T {
+    fn alloc[T](ref this, take val: T) -> *T {
         let bytes: usize = #size_of::[T]();
         let align: usize = #align_of::[T]();
         let ptr: *u8 = this.alloc_bytes_aligned(bytes, align);
@@ -154,11 +154,11 @@ impl Arena {
 
     // OOM-explicit variants. Mirror the null-returning forms but
     // wrap in `Option` so the caller can `guard let Some(p) = ...`.
-    pub fn alloc_bytes_opt(ref this, bytes: usize) -> option::Option[*u8] {
+    fn alloc_bytes_opt(ref this, bytes: usize) -> option::Option[*u8] {
         return this.alloc_bytes_aligned_opt(bytes, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned_opt(ref this, bytes: usize, align: usize) -> option::Option[*u8] {
+    fn alloc_bytes_aligned_opt(ref this, bytes: usize, align: usize) -> option::Option[*u8] {
         let p: *u8 = this.alloc_bytes_aligned(bytes, align);
         if unsafe { p as usize } == (0 as usize) {
             return option::Option[*u8]::None;
@@ -168,7 +168,7 @@ impl Arena {
 
     // Allocate `n` bytes initialized to zero. Useful for arenas holding
     // POD structs the caller wants memset'd. Returns null on OOM.
-    pub fn alloc_zeroed_bytes(ref this, bytes: usize) -> *u8 {
+    fn alloc_zeroed_bytes(ref this, bytes: usize) -> *u8 {
         let p: *u8 = this.alloc_bytes(bytes);
         if unsafe { p as usize } != (0 as usize) {
             unsafe { memset(p, 0 as i32, bytes); }
@@ -179,7 +179,7 @@ impl Arena {
     // Copy a `str`'s bytes into the arena and return a `str` view of
     // the copied bytes. Returns `None` on OOM. The returned view
     // shares the arena's lifetime (same as every other arena alloc).
-    pub fn alloc_str(ref this, s: str) -> option::Option[str] {
+    fn alloc_str(ref this, s: str) -> option::Option[str] {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return option::Option[str]::Some("");
@@ -195,7 +195,7 @@ impl Arena {
     // Sum of every chunk's capacity. Useful for "how much memory am I
     // holding" diagnostics. NOT the high-water mark — it's the upper
     // bound on what could still fit if perfectly packed.
-    pub fn total_allocated(this) -> usize {
+    fn total_allocated(this) -> usize {
         var total: usize = 0 as usize;
         var curr: *u8 = this.head;
         while unsafe { curr as usize } != (0 as usize) {
@@ -210,7 +210,7 @@ impl Arena {
     // reusable — future `alloc_bytes` calls will allocate a fresh
     // chunk. Equivalent to dropping and re-creating with the same
     // chunk_size, but without changing the binding.
-    pub fn reset(ref this) {
+    fn reset(ref this) {
         var curr: *u8 = this.head;
         while unsafe { curr as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { curr as *Chunk };
