@@ -4854,8 +4854,8 @@ impl SemaCx<'_> {
     /// Phase 5 slice 5ATTR.2 — validate sema-level rules for `#[test]` fns:
     /// - **E0358**: test function must have signature `fn() -> i32` or `fn()`.
     ///   No parameters, return type must be unit or `i32` (other types reject).
-    /// - **E0359**: test functions cannot be `pub`. Tests are project-internal
-    ///   helpers discovered by the runner, never part of the exported API.
+    /// - **E0359**: test functions cannot be `export`. Tests are project-internal
+    ///   helpers discovered by the runner, never part of the exported C ABI.
     ///
     /// E0360 (`#[test]` inside `impl`) is already caught at the attrs-pass
     /// layer (E0356 on method placement) — fires before sema sees this; the
@@ -4868,11 +4868,11 @@ impl SemaCx<'_> {
         let Some(attr) = test_attr else {
             return;
         };
-        // E0359 — `pub` rejection.
+        // E0359 — `export` rejection.
         if f.is_pub {
             self.err(
                 "E0359",
-                "test functions cannot be `pub`; tests are project-internal".to_string(),
+                "test functions cannot be `export`; tests are project-internal".to_string(),
                 attr.span,
             );
         }

@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **143 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **111** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **141 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **109** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -550,7 +550,7 @@ A non-Copy binding is read after it was moved (into a call, a `take` parameter, 
 ```cplus
 struct P { x: i32 }
 impl P { fn drop(ref this) {} }
-fn echo(p: P) -> i32 { return p.x; }
+fn echo(take p: P) -> i32 { return p.x; }
 fn main() -> i32 {
     let p: P = P { x: 1 };
     let r: i32 = echo(p);
@@ -561,22 +561,6 @@ fn main() -> i32 {
 **Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
-
-### E0337 · Cannot move out of a non-binding place
-
-A move was attempted from something other than a whole binding (a struct field, an array slot, or a temporary); partial moves are deferred.
-
-```cplus
-struct Inner { x: i32 }
-impl Inner { fn drop(ref this) {} }
-struct Outer { i: Inner }
-fn take(take i: Inner) -> i32 { return i.x; }
-fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }
-```
-
-**Fix.** Move a whole binding, or clone/copy the field into a local first.
-
-<sub>repro: checked · cplus-core/src/sema.rs:11226 · test cplus-core/src/sema.rs:move_from_field_e0337</sub>
 
 ### E0338 · Destructor `drop` has the wrong signature
 
@@ -763,6 +747,21 @@ fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
 
 ## Ownership and borrowing
 
+### E0337 · A bare borrow escapes its call
+
+A bare (read-only borrow) parameter, a raw-pointer dereference, or a value matched out of a borrow is made to outlive the call — returned, stored in a field, or re-passed to a `take` parameter. The borrow has no owner to keep its storage alive past the call.
+
+```cplus
+struct B { x: i32 }
+impl B { fn drop(ref this) {} }
+fn keep(b: B) -> B { return b; }
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow.
+
+<sub>repro: checked · cplus-core/src/sema.rs:11226 · test cplus-core/src/sema.rs:return_borrow_marker_param_rejected_e0337</sub>
+
 ### E0370 · Move and shared-borrow of the same binding in one call
 
 A non-Copy binding is moved at one argument position while a sibling argument in the same call reads (shared-borrows) the same place.
@@ -773,7 +772,7 @@ impl B { fn drop(ref this) { return; } }
 fn drain(take b: B, n: i32) { return; }
 fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   drain(y, peek(y));
   return;
 }
@@ -795,7 +794,7 @@ impl B { fn drop(ref this) { return; } }
 fn sink(take b: B) { return; }
 fn use_it(b: B) -> i32 { return b.x; }
 fn caller(c: bool) {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   if c { sink(y); }
   let z: i32 = use_it(y);
   return;
@@ -867,7 +866,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   modify_both(y, y);
   return;
 }
@@ -887,7 +886,7 @@ impl B { fn drop(ref this) { return; } }
 fn write_thing(ref a: B, n: i32) { return; }
 fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   write_thing(y, peek(y));
   return;
 }
@@ -906,7 +905,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   write_and_take(y, y);
   return;
 }
@@ -915,44 +914,6 @@ fn caller() {
 **Fix.** Split into two statements so the exclusive borrow and the move do not overlap.
 
 <sub>repro: checked · cplus-core/src/borrowck.rs:1482 · test cplus-core/src/borrowck.rs:e0382_fires_on_mut_arg_with_sibling_move</sub>
-
-### E0383 · Read of an exclusively-borrowed place
-
-A place (or a sub-place of it) is read while it is held in an exclusive borrow by a live borrower, including method calls on an exclusively-borrowed receiver.
-
-```cplus
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn cursor(ref b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
-fn caller() {
-  let v: B = B { x: 1 };
-  let cur: B = cursor(v);
-  let n: i32 = peek(v);
-  return;
-}
-```
-
-**Fix.** Drop the exclusive borrower before reading the place, or restructure so the read happens before the borrow is established.
-
-<sub>repro: checked · cplus-core/src/borrowck.rs:2678 · test cplus-core/src/borrowck.rs:e0383_fires_on_read_of_exclusively_borrowed_place</sub>
-
-### E0384 · Cannot infer which parameter the return borrows from
-
-A function or method has at least one return rooted at a parameter, but the borrow checker cannot determine which parameter every return path derives from.
-
-```cplus
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: B, b: B) -> B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
-}
-```
-
-**Fix.** Annotate the signature explicitly with a borrow region, e.g. `fn merge(a: borrow A B, ...) -> borrow A B`.
-
-<sub>repro: checked · cplus-core/src/borrowck.rs:2016 · test cplus-core/src/borrowck.rs:e0384_fires_on_multi_param_with_mixed_rooting</sub>
 
 ### E0503 · Interface impl missing a required method
 

@@ -685,7 +685,7 @@ fix = "Do not read after a `take`; clone the value first, or restructure so the 
 example = '''
 struct P { x: i32 }
 impl P { fn drop(ref this) {} }
-fn echo(p: P) -> i32 { return p.x; }
+fn echo(take p: P) -> i32 { return p.x; }
 fn main() -> i32 {
     let p: P = P { x: 1 };
     let r: i32 = echo(p);
@@ -695,22 +695,21 @@ fn main() -> i32 {
 
 [[code]]
 id = "E0337"
-title = "Cannot move out of a non-binding place"
-category = "Control flow and matching"
+title = "A bare borrow escapes its call"
+category = "Ownership and borrowing"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:11226"
-test = "cplus-core/src/sema.rs:move_from_field_e0337"
-cause = "A move was attempted from something other than a whole binding (a struct field, an array slot, or a temporary); partial moves are deferred."
-fix = "Move a whole binding, or clone/copy the field into a local first."
+test = "cplus-core/src/sema.rs:return_borrow_marker_param_rejected_e0337"
+cause = "A bare (read-only borrow) parameter, a raw-pointer dereference, or a value matched out of a borrow is made to outlive the call — returned, stored in a field, or re-passed to a `take` parameter. The borrow has no owner to keep its storage alive past the call."
+fix = "Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow."
 example = '''
-struct Inner { x: i32 }
-impl Inner { fn drop(ref this) {} }
-struct Outer { i: Inner }
-fn take(take i: Inner) -> i32 { return i.x; }
-fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }
+struct B { x: i32 }
+impl B { fn drop(ref this) {} }
+fn keep(b: B) -> B { return b; }
+fn main() -> i32 { return 0; }
 '''
 
 [[code]]
@@ -1101,7 +1100,7 @@ impl B { fn drop(ref this) { return; } }
 fn drain(take b: B, n: i32) { return; }
 fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   drain(y, peek(y));
   return;
 }
@@ -1125,7 +1124,7 @@ impl B { fn drop(ref this) { return; } }
 fn sink(take b: B) { return; }
 fn use_it(b: B) -> i32 { return b.x; }
 fn caller(c: bool) {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   if c { sink(y); }
   let z: i32 = use_it(y);
   return;
@@ -1205,7 +1204,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   modify_both(y, y);
   return;
 }
@@ -1229,7 +1228,7 @@ impl B { fn drop(ref this) { return; } }
 fn write_thing(ref a: B, n: i32) { return; }
 fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   write_thing(y, peek(y));
   return;
 }
@@ -1252,55 +1251,9 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
-  let y: B = B { x: 1 };
+  var y: B = B { x: 1 };
   write_and_take(y, y);
   return;
-}
-'''
-
-[[code]]
-id = "E0383"
-title = "Read of an exclusively-borrowed place"
-category = "Ownership and borrowing"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/borrowck.rs:2678"
-test = "cplus-core/src/borrowck.rs:e0383_fires_on_read_of_exclusively_borrowed_place"
-cause = "A place (or a sub-place of it) is read while it is held in an exclusive borrow by a live borrower, including method calls on an exclusively-borrowed receiver."
-fix = "Drop the exclusive borrower before reading the place, or restructure so the read happens before the borrow is established."
-example = '''
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn cursor(ref b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
-fn caller() {
-  let v: B = B { x: 1 };
-  let cur: B = cursor(v);
-  let n: i32 = peek(v);
-  return;
-}
-'''
-
-[[code]]
-id = "E0384"
-title = "Cannot infer which parameter the return borrows from"
-category = "Ownership and borrowing"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/borrowck.rs:2016"
-test = "cplus-core/src/borrowck.rs:e0384_fires_on_multi_param_with_mixed_rooting"
-cause = "A function or method has at least one return rooted at a parameter, but the borrow checker cannot determine which parameter every return path derives from."
-fix = "Annotate the signature explicitly with a borrow region, e.g. `fn merge(a: borrow A B, ...) -> borrow A B`."
-example = '''
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: B, b: B) -> B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
 }
 '''
 
