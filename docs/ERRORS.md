@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **148 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **116** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **143 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **111** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -110,13 +110,13 @@ fn main() -> i32 { let r = 1 < 2 < 3; 0 }
 
 ### E0300 · Undefined name
 
-A referenced name (variable, function, or `self` outside a method) is not in scope.
+A referenced name (variable, function, or `this` outside a method) is not in scope.
 
 ```cplus
 fn main() -> i32 { return x; }
 ```
 
-**Fix.** Fix the typo, add the missing import, or remember a forgotten `pub`.
+**Fix.** Fix the typo, add the missing import, or check the name isn't `_`-private (module-private) in its declaring file.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13154 · test cplus-core/src/sema.rs:undefined_name_e0300</sub>
 
@@ -172,13 +172,13 @@ fn main() -> i32 { return if 1 { 1 } else { 2 }; }
 
 ### E0305 · Assignment to immutable binding
 
-An assignment targets a binding (or a place rooted at one) that was not declared `let mut`.
+An assignment targets a binding (or a place rooted at one) that was not declared `var`.
 
 ```cplus
 fn main() -> i32 { let x = 1; x = 2; return 0; }
 ```
 
-**Fix.** Declare the binding as `let mut`.
+**Fix.** Declare the binding as `var`.
 
 <sub>repro: checked · cplus-core/src/sema.rs:12042 · test cplus-core/src/sema.rs:assign_to_immutable_e0305</sub>
 
@@ -389,7 +389,7 @@ fn main() -> i32 { let p: P = P {}; return p.missing(); }
 An `impl` names a target that is not a declared struct or (non-generic) enum in scope.
 
 ```cplus
-impl Foo { fn f(self) {} }
+impl Foo { fn f(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
@@ -403,7 +403,7 @@ Two methods in the same `impl` block share a name.
 
 ```cplus
 struct P {}
-impl P { fn f(self) {} fn f(self) {} }
+impl P { fn f(this) {} fn f(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
@@ -427,15 +427,15 @@ fn main() -> i32 { let p: P = P { x: 0 }; let _q: P = p.make(); return 0; }
 
 ### E0328 · Mutable receiver required
 
-A method declared with `mut self` is called on an immutable receiver.
+A method declared with `ref this` is called on an immutable receiver.
 
 ```cplus
 struct P { x: i32 }
-impl P { fn bump(mut self) { self.x = self.x + 1; } }
+impl P { fn bump(ref this) { this.x = this.x + 1; } }
 fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }
 ```
 
-**Fix.** Bind the receiver as `let mut` (or via a `mut` place).
+**Fix.** Bind the receiver as `var`.
 
 <sub>repro: checked · cplus-core/src/sema.rs:9241 · test cplus-core/src/sema.rs:calling_mut_method_on_immutable_e0328</sub>
 
@@ -493,7 +493,7 @@ A fill-array literal `[expr; N]` has a non-`Copy` (owning / `drop`-carrying) ele
 
 ```cplus
 struct Owner { id: i32 }
-impl Owner { fn drop(mut self) {} }
+impl Owner { fn drop(ref this) {} }
 fn mk() -> Owner { return Owner { id: 1 }; }
 fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
 ```
@@ -532,24 +532,24 @@ fn main() -> i32 { return f(); }
 
 ### E0334 · Mutually-exclusive parameter ownership markers
 
-A parameter carries two ownership markers that cannot combine, such as `mut` + `move`, or `borrow` with `move`/`mut`.
+A parameter carries two ownership markers that cannot combine, such as `ref` + `take`.
 
 ```cplus
-fn f(mut move x: i32) -> i32 { return x; }
+fn f(ref take x: i32) -> i32 { return x; }
 fn main() -> i32 { return f(1); }
 ```
 
-**Fix.** Keep only one marker: `mut`, `move`, or `borrow` — they are mutually exclusive.
+**Fix.** Keep at most one marker: `ref` (exclusive borrow), `take` (consume), or bare (a read-only borrow).
 
 <sub>repro: checked · cplus-core/src/sema.rs:3191 · test cplus-core/src/sema.rs:mut_and_move_on_param_e0334</sub>
 
 ### E0335 · Use of a moved value
 
-A non-Copy binding is read after it was moved (into a call, a `move` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload.
+A non-Copy binding is read after it was moved (into a call, a `take` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload.
 
 ```cplus
 struct P { x: i32 }
-impl P { fn drop(mut self) {} }
+impl P { fn drop(ref this) {} }
 fn echo(p: P) -> i32 { return p.x; }
 fn main() -> i32 {
     let p: P = P { x: 1 };
@@ -558,7 +558,7 @@ fn main() -> i32 {
 }
 ```
 
-**Fix.** Do not read after a `move`; clone the value first, or restructure so the move and the use are on disjoint paths.
+**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
 
@@ -568,9 +568,9 @@ A move was attempted from something other than a whole binding (a struct field, 
 
 ```cplus
 struct Inner { x: i32 }
-impl Inner { fn drop(mut self) {} }
+impl Inner { fn drop(ref this) {} }
 struct Outer { i: Inner }
-fn take(move i: Inner) -> i32 { return i.x; }
+fn take(take i: Inner) -> i32 { return i.x; }
 fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }
 ```
 
@@ -580,15 +580,15 @@ fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i);
 
 ### E0338 · Destructor `drop` has the wrong signature
 
-A `drop` method has a signature other than `fn drop(mut self)` (extra parameters, a return type, or a non-`mut self` receiver), or a `drop` was written on an enum.
+A `drop` method has a signature other than `fn drop(ref this)` (extra parameters, a return type, or a non-`ref this` receiver), or a `drop` was written on an enum.
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(self) {} }
+impl B { fn drop(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Declare it exactly `fn drop(mut self)` — no extra parameters, no return type; enums get a compiler-synthesized destructor instead.
+**Fix.** Declare it exactly `fn drop(ref this)` — no extra parameters, no return type; enums get a compiler-synthesized destructor instead.
 
 <sub>repro: checked · cplus-core/src/sema.rs:2214 · test cplus-core/src/sema.rs:drop_wrong_receiver_e0338</sub>
 
@@ -751,7 +751,7 @@ fn main() -> i32 { break; return 0; }
 
 ### E0363 · Name already declared in this scope (no same-scope shadowing)
 
-Two bindings with the same name are declared in one block. C forbids redeclaring a name in a scope; Rust-style same-scope shadowing is a false friend that silently swaps a binding's type.
+Two bindings with the same name are declared in one block. C+ forbids redeclaring a name in a scope; same-scope shadowing would silently swap a binding's type, so it is rejected.
 
 ```cplus
 fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
@@ -769,9 +769,9 @@ A non-Copy binding is moved at one argument position while a sibling argument in
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn drain(move b: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -781,7 +781,7 @@ fn caller() {
 
 *In this minimal single-call form `cpc` reports the broader use-after-move error E0335; E0370 is the borrow checker's name for the move / shared-borrow conflict.*
 
-**Fix.** Split into two statements so the value is read before it is moved: `let tmp = peek(y); drain(move y, tmp);`
+**Fix.** Split into two statements so the value is read before it is moved: `let tmp = peek(y); drain(take y, tmp);`
 
 <sub>repro: scenario · cplus-core/src/borrowck.rs:2977 · test cplus-core/src/borrowck.rs:e0370_fires_on_move_and_read_of_same_non_copy_binding</sub>
 
@@ -791,9 +791,9 @@ A non-Copy binding is moved on some control-flow branches but not others, then r
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn sink(move b: B) { return; }
-fn use_it(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
+fn use_it(b: B) -> i32 { return b.x; }
 fn caller(c: bool) {
   let y: B = B { x: 1 };
   if c { sink(y); }
@@ -814,12 +814,12 @@ A binding is moved while a live borrower still holds a borrow of it (or one of i
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -841,10 +841,10 @@ A borrow of a place overlaps a sibling access to one of its sub-places (or vice 
 
 ```cplus
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
-fn write_pair(mut a: Pair, b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn write_pair(ref a: Pair, b: Inner) { return; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   write_pair(p, p.left);
@@ -860,12 +860,12 @@ fn caller() {
 
 ### E0380 · Two exclusive borrows of the same place in one call
 
-The same non-Copy binding is exclusively borrowed (`mut`) at two argument positions in a single call, but at most one exclusive borrow of a place can be live at a time.
+The same non-Copy binding is exclusively borrowed (`ref`) at two argument positions in a single call, but at most one exclusive borrow of a place can be live at a time.
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   modify_both(y, y);
@@ -873,19 +873,19 @@ fn caller() {
 }
 ```
 
-**Fix.** Split into two calls, or borrow distinct sub-places (e.g. `f(mut y.left, mut y.right)`).
+**Fix.** Split into two calls, or borrow distinct sub-places (e.g. `f(ref y.left, ref y.right)`).
 
 <sub>repro: checked · cplus-core/src/borrowck.rs:1446 · test cplus-core/src/borrowck.rs:e0380_fires_on_two_mut_borrows_of_same_non_copy_binding</sub>
 
 ### E0381 · Exclusive borrow with a concurrent shared read
 
-A place is exclusively borrowed (`mut`) while a sibling argument shared-reads it in the same call, or a method is called on a receiver that is currently shared-borrowed.
+A place is exclusively borrowed (`ref`) while a sibling argument shared-reads it in the same call, or a method is called on a receiver that is currently shared-borrowed.
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn write_thing(mut a: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn write_thing(ref a: B, n: i32) { return; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   write_thing(y, peek(y));
@@ -893,18 +893,18 @@ fn caller() {
 }
 ```
 
-**Fix.** Split into two statements: `let tmp = peek(y); write_thing(mut y, tmp);`
+**Fix.** Split into two statements: `let tmp = peek(y); write_thing(ref y, tmp);`
 
 <sub>repro: checked · cplus-core/src/borrowck.rs:2991 · test cplus-core/src/borrowck.rs:e0381_fires_on_mut_arg_with_sibling_read</sub>
 
 ### E0382 · Move and exclusive borrow of the same binding in one call
 
-The same non-Copy binding is exclusively borrowed (`mut`) at one argument position and moved at another in a single call; the exclusive borrow claims access for the whole call, which conflicts with the move's consumption.
+The same non-Copy binding is exclusively borrowed (`ref`) at one argument position and moved at another in a single call; the exclusive borrow claims access for the whole call, which conflicts with the move's consumption.
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn write_and_take(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   write_and_take(y, y);
@@ -922,9 +922,9 @@ A place (or a sub-place of it) is read while it is held in an exclusive borrow b
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -943,7 +943,7 @@ A function or method has at least one return rooted at a parameter, but the borr
 
 ```cplus
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: B, b: B) -> B {
   if a.x > 0 { return a; }
   return B { x: 0 };
@@ -956,12 +956,12 @@ fn merge(a: B, b: B) -> B {
 
 ### E0503 · Interface impl missing a required method
 
-An `impl Type for Interface` block omits a method that the interface declares.
+An `impl Type: Interface` block omits a method that the interface declares.
 
 ```cplus
-interface Two { fn first(self) -> i32; fn second(self) -> i32; }
+interface Two { fn first(this) -> i32; fn second(this) -> i32; }
 struct P { x: i32 }
-impl P: Two { fn first(self) -> i32 { return 0; } }
+impl P: Two { fn first(this) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -971,12 +971,12 @@ fn main() -> i32 { return 0; }
 
 ### E0504 · Interface impl declares a method the interface does not
 
-An `impl Type for Interface` block contains a method that the interface does not declare.
+An `impl Type: Interface` block contains a method that the interface does not declare.
 
 ```cplus
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P: One { fn a(this) -> i32 { return 0; } fn extra(this) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -986,12 +986,12 @@ fn main() -> i32 { return 0; }
 
 ### E0505 · Interface method signature mismatch
 
-An impl method's signature does not match the interface's declared signature after substituting `Self` with the target type.
+An impl method's signature does not match the interface's declared signature after substituting `This` with the target type.
 
 ```cplus
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> bool { return true; } }
+impl P: One { fn a(this) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1001,13 +1001,13 @@ fn main() -> i32 { return 0; }
 
 ### E0506 · Duplicate interface impl for the same type
 
-Two `impl Type for Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface.
+Two `impl Type: Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface.
 
 ```cplus
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> i32 { return 0; } }
-impl P: One { fn a(self) -> i32 { return 1; } }
+impl P: One { fn a(this) -> i32 { return 0; } }
+impl P: One { fn a(this) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1017,23 +1017,23 @@ fn main() -> i32 { return 0; }
 
 ### E0507 · Orphan-rule violation for an interface impl
 
-An `impl Type for Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them.
+An `impl Type: Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them.
 
 ```cplus
 // in a third file that imports both Iface and Ty:
-impl Ty: Iface { fn a(self) -> i32 { return 0; } }
+impl Ty: Iface { fn a(this) -> i32 { return 0; } }
 ```
 
 **Fix.** Declare the impl in the same file as either the interface or the type.
 
 <sub>repro: source · cplus-core/src/sema.rs:2857</sub>
 
-### E0508 · `Self` used outside an interface or impl body
+### E0508 · `This` used outside an interface or impl body
 
-The type `Self` is named where there is no surrounding `interface` or `impl` body to give it meaning.
+The type `This` is named where there is no surrounding `interface` or `impl` body to give it meaning.
 
 ```cplus
-fn loose(x: Self) -> i32 { return 0; }
+fn loose(x: This) -> i32 { return 0; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1050,12 +1050,12 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
-    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+    fn make() -> Owned { return Owned { ptr: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 impl Pair {
-    fn drop(mut self) { unsafe { free(self.a.ptr); } unsafe { free(self.b.ptr); } return; }
+    fn drop(ref this) { { free(this.a.ptr); } { free(this.b.ptr); } return; }
 }
 fn main() -> i32 {
     let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
@@ -1078,35 +1078,9 @@ struct Buf { ptr: *u8 }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Release it in `drop` (`free(self.f)`), or mark the field `opaque` if another owner frees it.
+**Fix.** Release it in `drop` (`free(this.f)`), or mark the field `opaque` if another owner frees it.
 
 <sub>repro: checked · cplus-core/src/sema.rs:4446 · test cpc/tests/e2e.rs:phase11_type_alias_cycle_rejected_e0510</sub>
-
-### E0511 · Return type names a borrow region no parameter declares
-
-A return type names a borrow region that no parameter declares, so the borrow it names has no provenance and the annotation is inert.
-
-```cplus
-fn f(a: borrow A str) -> borrow Z str { return a; }
-fn main() -> i32 { return 0; }
-```
-
-**Fix.** Add a same-region parameter, or drop the region.
-
-<sub>repro: checked · cplus-core/src/sema.rs:11373 · test cpc/tests/e2e.rs:return_region_undeclared_rejected_e0511</sub>
-
-### E0512 · Returned borrow's region differs from the declared return region
-
-A returned borrow is rooted at a parameter whose region differs from the region the signature declares for the return.
-
-```cplus
-fn weird(a: borrow A str, b: borrow B str) -> borrow A str { return b; }
-fn main() -> i32 { return 0; }
-```
-
-**Fix.** Return a borrow from a same-region parameter.
-
-<sub>repro: checked · cplus-core/src/sema.rs:11422 · test cpc/tests/e2e.rs:return_region_mismatch_rejected_e0512</sub>
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 
@@ -1160,6 +1134,37 @@ fn f() -> i32 { let n: i32 = 1; let s = n.to_text(); return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:9020 · test cplus-core/src/sema.rs:to_text_without_text_import_rejected_e0613_v0019</sub>
 
+### E0860 · `Send` / `Sync` marker impl has a non-empty body
+
+`Send` and `Sync` are marker interfaces with no methods; the assertion is the empty `impl Type: Send {}` itself. A non-empty body is rejected.
+
+```cplus
+struct Handle { opaque p: *u8 }
+impl Handle: Send { fn x(this) -> i32 { return 0; } }
+fn main() -> i32 { return 0; }
+// -> [E0860] `impl Handle: Send` must have an empty body
+```
+
+**Fix.** Make the body empty: `impl Type: Send {}`.
+
+<sub>repro: checked · cplus-core/src/sema.rs:2963 · test cplus-core/src/sema.rs:bare_impl_send_registers_marker_override</sub>
+
+### E0861 · Empty `impl` of an interface that is not `Send` / `Sync`
+
+An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided.
+
+```cplus
+interface Greet { fn hi(this) -> i32; }
+struct S { x: i32 }
+impl S: Greet {}
+fn main() -> i32 { return 0; }
+// -> [E0861] empty `impl` applies only to the `Send` / `Sync` markers
+```
+
+**Fix.** Implement the interface's methods, or remove the impl.
+
+<sub>repro: checked · cplus-core/src/sema.rs:2993 · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0861</sub>
+
 ## Modules, paths, and visibility
 
 ### E0401 · Imported file not found
@@ -1181,7 +1186,7 @@ A `prefix::Item` path uses an `as` prefix that was never bound by an `import` de
 
 ```cplus
 import "ghost/widget" as g;   // `ghost` is not a declared dependency
-pub fn use_it() -> i32 { return g::value(); }
+fn use_it() -> i32 { return g::value(); }
 ```
 
 *Needs a project: the import path's first segment names no dependency in `Cplus.toml`. A bare unknown name in code is reported as E0300/E0303 instead.*
@@ -1192,14 +1197,14 @@ pub fn use_it() -> i32 { return g::value(); }
 
 ### E0403 · Private item accessed across a file boundary
 
-A cross-file reference touched a function, type, field, method, const, static, type alias, or interface that is not marked `pub` in its declaring file.
+A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file.
 
 ```cplus
 import "./math" as math;
 fn main() -> i32 { return math::square(7); }
 ```
 
-**Fix.** Mark the item `pub` in its declaration to export it. (Requires an imported module; `math.cplus` declares `fn square` without `pub`.)
+**Fix.** Remove the leading `_` from the name to make it public (or `export` it for the C ABI). (Requires an imported module; `math.cplus` declares `fn _square` as private.)
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:624 · test cpc/tests/e2e.rs:cross_file_private_fn_emits_e0403</sub>
 
@@ -1277,7 +1282,7 @@ name = "exe"
 A manifest that declares `[lib]` also defines a `fn main`, but a library has no entry point.
 
 ```cplus
-pub fn add(a: i32, b: i32) -> i32 { return a + b; }
+fn add(a: i32, b: i32) -> i32 { return a + b; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1285,12 +1290,12 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cpc/src/main.rs:1810 · test cpc/tests/e2e.rs:lib_target_rejects_fn_main_with_e0409</sub>
 
-### E0410 · Type in `pub extern fn` is not C-ABI compatible
+### E0410 · Type in `export extern fn` is not C-ABI compatible
 
-A parameter or return type in a `pub extern fn` cannot cross the C function-call ABI (for example a `str`/slice fat pointer, a tagged enum, a non-`#[repr(C)]` struct, or a `Drop` type).
+A parameter or return type in an `export extern fn` cannot cross the C function-call ABI (for example a `str`/slice fat pointer, a tagged enum, a non-`#[repr(C)]` struct, or a `Drop` type).
 
 ```cplus
-pub extern fn echo(s: str) -> i32 { return 0; }
+export extern fn echo(s: str) -> i32 { return 0; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1365,7 +1370,7 @@ struct Point { x: i32 }
 fn main() -> i32 { let p: Point = Point { x: 0 }; let r: Point = max(p, p); return 0; }
 ```
 
-**Fix.** `T: Ord` requires `impl Point for Ord`; provide the impl, or for thread-crossing use `unsafe impl T for Send {}` when the marker holds.
+**Fix.** `T: Ord` requires `impl Point: Ord`; provide the impl, or for thread-crossing use `impl T: Send {}` when the marker holds.
 
 <sub>repro: checked · cplus-core/src/sema.rs:1838 · test cplus-core/src/sema.rs:bound_violation_at_generic_fn_call_e0502</sub>
 
@@ -1385,19 +1390,6 @@ fn main() -> i32 {
 **Fix.** Add a second element, or use `()`/`(x)` if you meant the unit value or a parenthesized expression.
 
 <sub>repro: checked · cplus-core/src/sema.rs:6894</sub>
-
-### E0801 · Operation (or `unsafe fn` call) requires `unsafe`
-
-A raw-pointer dereference, `extern`/`unsafe fn` call, atomic op, inline `#asm`, `static mut` access, or similar invariant-breaking operation appeared outside an enclosing `unsafe { ... }` block.
-
-```cplus
-unsafe fn danger() -> i32 { return 1; }
-fn main() -> i32 { let d: i32 = danger(); return d; }
-```
-
-**Fix.** Wrap it in `unsafe { ... }`.
-
-<sub>repro: checked · cplus-core/src/sema.rs:5682 · test cplus-core/src/sema.rs:unsafe_free_fn_call_outside_unsafe_e0801_text1</sub>
 
 ### E0821 · Cannot take the address of a generic function
 
@@ -1470,7 +1462,7 @@ A SIMD `.lane(...)` or shift method was given a non-literal `u32` index, but the
 ```cplus
 fn main() -> i32 {
     let v: f32x4 = f32x4::splat(1.0f32);
-    let mut i: u32 = 0 as u32;
+    var i: u32 = 0 as u32;
     let x: f32 = v.lane(i);
     return 0;
 }
@@ -1530,7 +1522,7 @@ A `gen fn` was used without `Iterator[T]` from `stdlib/iterator` in scope (or `I
 
 ```cplus
 gen fn count_up(n: i32) -> i32 {
-    let mut i: i32 = 1;
+    var i: i32 = 1;
     while i <= n { yield i; i = i +% (1 as i32); }
     return;
 }
@@ -1561,13 +1553,13 @@ fn main() -> i32 {
 
 ### E0900 · Borrow-shaped parameter in an `async fn`
 
-An `async fn` parameter is borrow-shaped (`str` / `T[]`) or a `mut`-bound non-Copy value (pointer-passed), which may dangle once a borrow lives across an `await`.
+An `async fn` parameter is borrow-shaped (`str` / `T[]`) or a `ref`-bound non-Copy value (pointer-passed), which may dangle once a borrow lives across an `await`.
 
 ```cplus
-pub struct Future[T] { pub opaque handle: *u8 } async fn fetch(url: str) -> i32 { return 0 as i32; }
+struct Future[T] { opaque handle: *u8 } async fn fetch(url: str) -> i32 { return 0 as i32; }
 ```
 
-**Fix.** Use `Text` / `Vec[T]` instead of `str` / `T[]`, or `move` ownership in / bind locally instead of `mut`.
+**Fix.** Use `Text` / `Vec[T]` instead of `str` / `T[]`, or `take` ownership in / bind locally instead of `ref`.
 
 <sub>repro: checked · cplus-core/src/sema.rs:4771 · test cplus-core/src/sema.rs:async_fn_with_str_param_emits_e0900</sub>
 
@@ -1590,7 +1582,7 @@ fn main() -> i32 { return 0; }
 An `await` is applied to an expression that does not evaluate to a `Future[T]`.
 
 ```cplus
-pub struct Future[T] { pub opaque handle: *u8 } async fn bad() -> i32 { let x: i32 = await (7 as i32); return x; }
+struct Future[T] { opaque handle: *u8 } async fn bad() -> i32 { let x: i32 = await (7 as i32); return x; }
 ```
 
 **Fix.** Await a `Future[T]` value (the result of calling an `async fn`).
@@ -1650,7 +1642,7 @@ A `#[no_block]` function or a callee calls a blocking primitive directly or tran
 
 ```cplus
 extern fn sleep(secs: u32) -> u32;
-#[no_block] fn f() { unsafe { sleep(1); } return; }
+#[no_block] fn f() { { sleep(1); } return; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1748,25 +1740,25 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:4628 · test cplus-core/src/sema.rs:test_fn_with_param_rejected_e0358</sub>
 
-### E0359 · `#[test]` function cannot be `pub`
+### E0359 · `#[test]` function cannot be `export`
 
-A `#[test]` function is marked `pub`; tests are project-internal helpers discovered by the runner, never part of the exported API.
+A `#[test]` function is marked `export`; tests are project-internal helpers discovered by the runner, never part of the exported C-ABI surface.
 
 ```cplus
-#[test] pub fn t() { return; }
+#[test] export fn t() { return; }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Remove `pub` from the test function.
+**Fix.** Remove `export` from the test function.
 
-<sub>repro: checked · cplus-core/src/sema.rs:4618 · test cplus-core/src/sema.rs:test_fn_pub_rejected_e0359</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:4874 · test cplus-core/src/sema.rs:test_fn_export_rejected_e0359</sub>
 
 ### E0890 · Duplicate `#asm` operand name
 
 Two operands of an inline `#asm(...)` share the same operand name.
 
 ```cplus
-fn f(a: i64) { unsafe { #asm("mov {a}, {a}", a = in(reg) a, a = in(reg) a); } return; }
+fn f(a: i64) { { #asm("mov {a}, {a}", a = in(reg) a, a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1779,7 +1771,7 @@ fn main() -> i32 { return 0; }
 An inline `#asm(...)` operand has a type that does not fit a register; only integer, pointer, and `bool` operands are allowed.
 
 ```cplus
-struct Owned { x: i32 } impl Owned { fn drop(mut self) { return; } } fn f(a: Owned) { unsafe { #asm("nop {a}", a = in(reg) a); } return; }
+struct Owned { x: i32 } impl Owned { fn drop(ref this) { return; } } fn f(a: Owned) { { #asm("nop {a}", a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1792,7 +1784,7 @@ fn main() -> i32 { return 0; }
 A compiler-chosen (`reg`) inline-asm operand has no matching `{name}` placeholder in the template, so the template cannot name the register the compiler picked.
 
 ```cplus
-fn f(a: i64) { unsafe { #asm("nop", a = in(reg) a); } return; }
+fn f(a: i64) { { #asm("nop", a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 ```
 
@@ -1806,14 +1798,14 @@ An `out` or `inout` inline-asm operand binds to a general place (a field or inde
 
 ```cplus
 struct P { x: i64 }
-fn f(mut p: P, a: i64) {
-    unsafe { #asm("mov {o}, {a}", o = out(reg) p.x, a = in(reg) a); }
+fn f(ref p: P, a: i64) {
+    { #asm("mov {o}, {a}", o = out(reg) p.x, a = in(reg) a); }
     return;
 }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Write the output into a `mut` variable, then copy it into the field/index afterward.
+**Fix.** Write the output into a `var` variable, then copy it into the field/index afterward.
 
 <sub>repro: checked · cplus-core/src/sema.rs:6617 · test cplus-core/src/sema.rs:asm_tier2_out_must_be_variable_e0895</sub>
 
@@ -1830,32 +1822,6 @@ const FOO: i32 = 1 + 2;
 **Fix.** Use a literal initializer (or an accepted `static` shape such as `#zero::[T]()` or an array/struct literal of literals).
 
 <sub>repro: checked · cplus-core/src/lower.rs:729 · test cplus-core/src/sema.rs:const_with_non_literal_initializer_e0x30</sub>
-
-### E0X33 · Read of `static mut` requires `unsafe`
-
-A `static mut` was read outside an enclosing `unsafe { ... }` block, where the borrow checker cannot prove absence of data races on module-scope mutable state.
-
-```cplus
-static mut COUNTER: i32 = 0;
-fn main() -> i32 { return COUNTER; }
-```
-
-**Fix.** Wrap the read in `unsafe { ... }`.
-
-<sub>repro: checked · cplus-core/src/sema.rs:13115 · test cplus-core/src/sema.rs:static_mut_read_outside_unsafe_e0x33</sub>
-
-### E0X34 · Write to `static mut` requires `unsafe`
-
-A `static mut` was written outside an enclosing `unsafe { ... }` block, where the borrow checker cannot prove absence of data races on module-scope mutable state.
-
-```cplus
-static mut COUNTER: i32 = 0;
-fn main() -> i32 { COUNTER = 5; return 0; }
-```
-
-**Fix.** Wrap the write in `unsafe { ... }`.
-
-<sub>repro: checked · cplus-core/src/sema.rs:11859 · test cplus-core/src/sema.rs:static_mut_write_outside_unsafe_e0x34</sub>
 
 ### E0X36 · Unknown `const` array length
 
@@ -1978,37 +1944,6 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:728 · test cpc/tests/e2e.rs:vendor_escape_emits_e0859</sub>
 
-### E0860 · A `Send` / `Sync` impl that omits `unsafe`
-
-A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe`), or with a non-empty body — both are rejected because the marker is an unverifiable thread-safety promise that must be a method-less `unsafe impl`.
-
-```cplus
-struct Handle { opaque p: *u8 }
-impl Handle: Send {}
-fn main() -> i32 { return 0; }
-// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
-```
-
-**Fix.** Write `unsafe impl T for Send {}` — the marker is a promise you make.
-
-<sub>repro: checked · cplus-core/src/sema.rs:2773 · test cplus-core/src/sema.rs:safe_impl_send_rejected_e0860</sub>
-
-### E0861 · `unsafe` on an impl that is not a `Send` / `Sync` marker
-
-An `impl` block carries `unsafe` but the interface being implemented is something other than the `Send` / `Sync` markers, where `unsafe` is meaningless.
-
-```cplus
-interface Greet { fn hi(self) -> i32; }
-struct S { x: i32 }
-unsafe impl S: Greet { fn hi(self) -> i32 { return self.x; } }
-fn main() -> i32 { return 0; }
-// -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
-```
-
-**Fix.** Remove `unsafe`; it applies only to those two markers.
-
-<sub>repro: checked · cplus-core/src/sema.rs:2812 · test cplus-core/src/sema.rs:unsafe_impl_on_regular_interface_rejected_e0861</sub>
-
 ### E0862 · Host vs target triple mismatch
 
 A dependency declares bundled binaries but its `[link].triples` does not include the triple actually being linked (the host triple for a native build, or the selected `--target`'s artifact triple for a cross build), so no matching prebuilt artifact exists.
@@ -2088,7 +2023,7 @@ An import names a stdlib module excluded from the selected target's package prof
 
 ```cplus
 import "stdlib/thread" as m;
-pub fn f() -> i32 { return 0; }
+fn f() -> i32 { return 0; }
 // compiled with `cpc check --target esp32-xtensa`
 // -> [E0866] import `stdlib/thread` is not available on target `esp32-xtensa`
 ```
@@ -2102,7 +2037,7 @@ pub fn f() -> i32 { return 0; }
 An `async fn` is checked against a target whose pointer width is under 64 bits; the async runtime (reactor plus coroutine frames) is 64-bit-only today.
 
 ```cplus
-pub fn helper() -> i32 { return 1; }
+fn helper() -> i32 { return 1; }
 async fn fetch() -> i32 { return helper(); }
 fn main() -> i32 { return 0; }
 // compiled with `cpc check --target esp32-xtensa`
@@ -2139,8 +2074,8 @@ A raw-pointer field in a `Drop` type is freed inside `drop` only under some cond
 ```cplus
 struct Cell { p: *u8 }
 impl Cell: Drop {
-    fn drop(self) {
-        if some_condition() { free(self.p); }  // freed only conditionally
+    fn drop(this) {
+        if some_condition() { free(this.p); }  // freed only conditionally
     }
 }
 // -> W0002 raw-pointer field `p` is freed only conditionally in `drop`

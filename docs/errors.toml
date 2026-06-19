@@ -147,8 +147,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:13154"
 test = "cplus-core/src/sema.rs:undefined_name_e0300"
-cause = "A referenced name (variable, function, or `self` outside a method) is not in scope."
-fix = "Fix the typo, add the missing import, or remember a forgotten `pub`."
+cause = "A referenced name (variable, function, or `this` outside a method) is not in scope."
+fix = "Fix the typo, add the missing import, or check the name isn't `_`-private (module-private) in its declaring file."
 example = '''
 fn main() -> i32 { return x; }
 '''
@@ -229,8 +229,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:12042"
 test = "cplus-core/src/sema.rs:assign_to_immutable_e0305"
-cause = "An assignment targets a binding (or a place rooted at one) that was not declared `let mut`."
-fix = "Declare the binding as `let mut`."
+cause = "An assignment targets a binding (or a place rooted at one) that was not declared `var`."
+fix = "Declare the binding as `var`."
 example = '''
 fn main() -> i32 { let x = 1; x = 2; return 0; }
 '''
@@ -514,7 +514,7 @@ test = "cplus-core/src/sema.rs:impl_on_unknown_type_e0325"
 cause = "An `impl` names a target that is not a declared struct or (non-generic) enum in scope."
 fix = "The target must be a declared struct or enum in scope."
 example = '''
-impl Foo { fn f(self) {} }
+impl Foo { fn f(this) {} }
 fn main() -> i32 { return 0; }
 '''
 
@@ -532,7 +532,7 @@ cause = "Two methods in the same `impl` block share a name."
 fix = "Rename one of the methods."
 example = '''
 struct P {}
-impl P { fn f(self) {} fn f(self) {} }
+impl P { fn f(this) {} fn f(this) {} }
 fn main() -> i32 { return 0; }
 '''
 
@@ -564,11 +564,11 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:9241"
 test = "cplus-core/src/sema.rs:calling_mut_method_on_immutable_e0328"
-cause = "A method declared with `mut self` is called on an immutable receiver."
-fix = "Bind the receiver as `let mut` (or via a `mut` place)."
+cause = "A method declared with `ref this` is called on an immutable receiver."
+fix = "Bind the receiver as `var`."
 example = '''
 struct P { x: i32 }
-impl P { fn bump(mut self) { self.x = self.x + 1; } }
+impl P { fn bump(ref this) { this.x = this.x + 1; } }
 fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }
 '''
 
@@ -663,10 +663,10 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:3191"
 test = "cplus-core/src/sema.rs:mut_and_move_on_param_e0334"
-cause = "A parameter carries two ownership markers that cannot combine, such as `mut` + `move`, or `borrow` with `move`/`mut`."
-fix = "Keep only one marker: `mut`, `move`, or `borrow` — they are mutually exclusive."
+cause = "A parameter carries two ownership markers that cannot combine, such as `ref` + `take`."
+fix = "Keep at most one marker: `ref` (exclusive borrow), `take` (consume), or bare (a read-only borrow)."
 example = '''
-fn f(mut move x: i32) -> i32 { return x; }
+fn f(ref take x: i32) -> i32 { return x; }
 fn main() -> i32 { return f(1); }
 '''
 
@@ -680,11 +680,11 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:13097"
 test = "cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335"
-cause = "A non-Copy binding is read after it was moved (into a call, a `move` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload."
-fix = "Do not read after a `move`; clone the value first, or restructure so the move and the use are on disjoint paths."
+cause = "A non-Copy binding is read after it was moved (into a call, a `take` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload."
+fix = "Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths."
 example = '''
 struct P { x: i32 }
-impl P { fn drop(mut self) {} }
+impl P { fn drop(ref this) {} }
 fn echo(p: P) -> i32 { return p.x; }
 fn main() -> i32 {
     let p: P = P { x: 1 };
@@ -707,9 +707,9 @@ cause = "A move was attempted from something other than a whole binding (a struc
 fix = "Move a whole binding, or clone/copy the field into a local first."
 example = '''
 struct Inner { x: i32 }
-impl Inner { fn drop(mut self) {} }
+impl Inner { fn drop(ref this) {} }
 struct Outer { i: Inner }
-fn take(move i: Inner) -> i32 { return i.x; }
+fn take(take i: Inner) -> i32 { return i.x; }
 fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }
 '''
 
@@ -723,11 +723,11 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2214"
 test = "cplus-core/src/sema.rs:drop_wrong_receiver_e0338"
-cause = "A `drop` method has a signature other than `fn drop(mut self)` (extra parameters, a return type, or a non-`mut self` receiver), or a `drop` was written on an enum."
-fix = "Declare it exactly `fn drop(mut self)` — no extra parameters, no return type; enums get a compiler-synthesized destructor instead."
+cause = "A `drop` method has a signature other than `fn drop(ref this)` (extra parameters, a return type, or a non-`ref this` receiver), or a `drop` was written on an enum."
+fix = "Declare it exactly `fn drop(ref this)` — no extra parameters, no return type; enums get a compiler-synthesized destructor instead."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(self) {} }
+impl B { fn drop(this) {} }
 fn main() -> i32 { return 0; }
 '''
 
@@ -745,7 +745,7 @@ cause = "A fill-array literal `[expr; N]` has a non-`Copy` (owning / `drop`-carr
 fix = "Use a `Copy` element type, or construct each element explicitly with `[expr0, expr1, ...]`."
 example = '''
 struct Owner { id: i32 }
-impl Owner { fn drop(mut self) {} }
+impl Owner { fn drop(ref this) {} }
 fn mk() -> Owner { return Owner { id: 1 }; }
 fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
 '''
@@ -1034,18 +1034,18 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0359"
-title = "`#[test]` function cannot be `pub`"
+title = "`#[test]` function cannot be `export`"
 category = "Attributes"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:4618"
-test = "cplus-core/src/sema.rs:test_fn_pub_rejected_e0359"
-cause = "A `#[test]` function is marked `pub`; tests are project-internal helpers discovered by the runner, never part of the exported API."
-fix = "Remove `pub` from the test function."
+emit_site = "cplus-core/src/sema.rs:4874"
+test = "cplus-core/src/sema.rs:test_fn_export_rejected_e0359"
+cause = "A `#[test]` function is marked `export`; tests are project-internal helpers discovered by the runner, never part of the exported C-ABI surface."
+fix = "Remove `export` from the test function."
 example = '''
-#[test] pub fn t() { return; }
+#[test] export fn t() { return; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1059,7 +1059,7 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:5294"
 test = "cplus-core/src/sema.rs:same_scope_shadow_e0363"
-cause = "Two bindings with the same name are declared in one block. C forbids redeclaring a name in a scope; Rust-style same-scope shadowing is a false friend that silently swaps a binding's type."
+cause = "Two bindings with the same name are declared in one block. C+ forbids redeclaring a name in a scope; same-scope shadowing would silently swap a binding's type, so it is rejected."
 fix = "Pick a new name, or assign to the existing binding. Shadowing in a nested block (or shadowing a parameter) is still allowed — only same-block re-declaration is rejected."
 example = '''
 fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
@@ -1093,13 +1093,13 @@ verified = true
 emit_site = "cplus-core/src/borrowck.rs:2977"
 test = "cplus-core/src/borrowck.rs:e0370_fires_on_move_and_read_of_same_non_copy_binding"
 cause = "A non-Copy binding is moved at one argument position while a sibling argument in the same call reads (shared-borrows) the same place."
-fix = "Split into two statements so the value is read before it is moved: `let tmp = peek(y); drain(move y, tmp);`"
+fix = "Split into two statements so the value is read before it is moved: `let tmp = peek(y); drain(take y, tmp);`"
 note = "In this minimal single-call form `cpc` reports the broader use-after-move error E0335; E0370 is the borrow checker's name for the move / shared-borrow conflict."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn drain(move b: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -1121,9 +1121,9 @@ fix = "Ensure every branch either moves or preserves the binding, or clone it be
 note = "Reported as E0335 in simple cases; E0371 specifically covers a use of a binding moved on only some control-flow paths."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn sink(move b: B) { return; }
-fn use_it(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
+fn use_it(b: B) -> i32 { return b.x; }
 fn caller(c: bool) {
   let y: B = B { x: 1 };
   if c { sink(y); }
@@ -1147,12 +1147,12 @@ fix = "Drop the borrower before moving the value, or clone it if both bindings m
 note = "In this minimal form `cpc` reports E0335; E0372 is the borrow checker's classification of moving a value while it is borrowed."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -1177,10 +1177,10 @@ fix = "Split into two calls if the operations are independent, or restructure to
 note = "A whole-place / sub-field overlap in one call is reported as E0337; E0374 is the borrow checker's partial-place conflict."
 example = '''
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
-fn write_pair(mut a: Pair, b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn write_pair(ref a: Pair, b: Inner) { return; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   write_pair(p, p.left);
@@ -1198,12 +1198,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/borrowck.rs:1446"
 test = "cplus-core/src/borrowck.rs:e0380_fires_on_two_mut_borrows_of_same_non_copy_binding"
-cause = "The same non-Copy binding is exclusively borrowed (`mut`) at two argument positions in a single call, but at most one exclusive borrow of a place can be live at a time."
-fix = "Split into two calls, or borrow distinct sub-places (e.g. `f(mut y.left, mut y.right)`)."
+cause = "The same non-Copy binding is exclusively borrowed (`ref`) at two argument positions in a single call, but at most one exclusive borrow of a place can be live at a time."
+fix = "Split into two calls, or borrow distinct sub-places (e.g. `f(ref y.left, ref y.right)`)."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   modify_both(y, y);
@@ -1221,13 +1221,13 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/borrowck.rs:2991"
 test = "cplus-core/src/borrowck.rs:e0381_fires_on_mut_arg_with_sibling_read"
-cause = "A place is exclusively borrowed (`mut`) while a sibling argument shared-reads it in the same call, or a method is called on a receiver that is currently shared-borrowed."
-fix = "Split into two statements: `let tmp = peek(y); write_thing(mut y, tmp);`"
+cause = "A place is exclusively borrowed (`ref`) while a sibling argument shared-reads it in the same call, or a method is called on a receiver that is currently shared-borrowed."
+fix = "Split into two statements: `let tmp = peek(y); write_thing(ref y, tmp);`"
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn write_thing(mut a: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn write_thing(ref a: B, n: i32) { return; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   write_thing(y, peek(y));
@@ -1245,12 +1245,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/borrowck.rs:1482"
 test = "cplus-core/src/borrowck.rs:e0382_fires_on_mut_arg_with_sibling_move"
-cause = "The same non-Copy binding is exclusively borrowed (`mut`) at one argument position and moved at another in a single call; the exclusive borrow claims access for the whole call, which conflicts with the move's consumption."
+cause = "The same non-Copy binding is exclusively borrowed (`ref`) at one argument position and moved at another in a single call; the exclusive borrow claims access for the whole call, which conflicts with the move's consumption."
 fix = "Split into two statements so the exclusive borrow and the move do not overlap."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn write_and_take(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   write_and_take(y, y);
@@ -1272,9 +1272,9 @@ cause = "A place (or a sub-place of it) is read while it is held in an exclusive
 fix = "Drop the exclusive borrower before reading the place, or restructure so the read happens before the borrow is established."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -1297,7 +1297,7 @@ cause = "A function or method has at least one return rooted at a parameter, but
 fix = "Annotate the signature explicitly with a borrow region, e.g. `fn merge(a: borrow A B, ...) -> borrow A B`."
 example = '''
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: B, b: B) -> B {
   if a.x > 0 { return a; }
   return B { x: 0 };
@@ -1335,7 +1335,7 @@ fix = "Add the matching `import \"./module\" as prefix;`, or fix the prefix to o
 note = "Needs a project: the import path's first segment names no dependency in `Cplus.toml`. A bare unknown name in code is reported as E0300/E0303 instead."
 example = '''
 import "ghost/widget" as g;   // `ghost` is not a declared dependency
-pub fn use_it() -> i32 { return g::value(); }
+fn use_it() -> i32 { return g::value(); }
 '''
 
 [[code]]
@@ -1348,8 +1348,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/resolver.rs:624"
 test = "cpc/tests/e2e.rs:cross_file_private_fn_emits_e0403"
-cause = "A cross-file reference touched a function, type, field, method, const, static, type alias, or interface that is not marked `pub` in its declaring file."
-fix = "Mark the item `pub` in its declaration to export it. (Requires an imported module; `math.cplus` declares `fn square` without `pub`.)"
+cause = "A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file."
+fix = "Remove the leading `_` from the name to make it public (or `export` it for the C ABI). (Requires an imported module; `math.cplus` declares `fn _square` as private.)"
 example = '''
 import "./math" as math;
 fn main() -> i32 { return math::square(7); }
@@ -1456,13 +1456,13 @@ test = "cpc/tests/e2e.rs:lib_target_rejects_fn_main_with_e0409"
 cause = "A manifest that declares `[lib]` also defines a `fn main`, but a library has no entry point."
 fix = "Remove `fn main`, or use `[[bin]]` instead of `[lib]` if you meant to build an executable. (Requires a `[lib]` manifest.)"
 example = '''
-pub fn add(a: i32, b: i32) -> i32 { return a + b; }
+fn add(a: i32, b: i32) -> i32 { return a + b; }
 fn main() -> i32 { return 0; }
 '''
 
 [[code]]
 id = "E0410"
-title = "Type in `pub extern fn` is not C-ABI compatible"
+title = "Type in `export extern fn` is not C-ABI compatible"
 category = "Modules, paths, and visibility"
 severity = "error"
 repro = "checked"
@@ -1470,10 +1470,10 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:4833"
 test = "cplus-core/src/sema.rs:pub_extern_fn_with_str_rejected_e0410"
-cause = "A parameter or return type in a `pub extern fn` cannot cross the C function-call ABI (for example a `str`/slice fat pointer, a tagged enum, a non-`#[repr(C)]` struct, or a `Drop` type)."
+cause = "A parameter or return type in an `export extern fn` cannot cross the C function-call ABI (for example a `str`/slice fat pointer, a tagged enum, a non-`#[repr(C)]` struct, or a `Drop` type)."
 fix = "Use C-representable types: pass a `*u8` plus a `usize` length instead of a fat pointer, or mark structs `#[repr(C)]`."
 example = '''
-pub extern fn echo(s: str) -> i32 { return 0; }
+export extern fn echo(s: str) -> i32 { return 0; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1557,7 +1557,7 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:1838"
 test = "cplus-core/src/sema.rs:bound_violation_at_generic_fn_call_e0502"
 cause = "A concrete type argument does not satisfy a declared bound on its type parameter (also fired for a `!Send` / `!Sync` type passed where `Send` / `Sync` is required across threads)."
-fix = "`T: Ord` requires `impl Point for Ord`; provide the impl, or for thread-crossing use `unsafe impl T for Send {}` when the marker holds."
+fix = "`T: Ord` requires `impl Point: Ord`; provide the impl, or for thread-crossing use `impl T: Send {}` when the marker holds."
 example = '''
 fn max[T: Ord](a: T, b: T) -> T { return a; }
 struct Point { x: i32 }
@@ -1574,12 +1574,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2895"
 test = "cplus-core/src/sema.rs:impl_interface_missing_method_e0503"
-cause = "An `impl Type for Interface` block omits a method that the interface declares."
+cause = "An `impl Type: Interface` block omits a method that the interface declares."
 fix = "Implement every method the interface declares."
 example = '''
-interface Two { fn first(self) -> i32; fn second(self) -> i32; }
+interface Two { fn first(this) -> i32; fn second(this) -> i32; }
 struct P { x: i32 }
-impl P: Two { fn first(self) -> i32 { return 0; } }
+impl P: Two { fn first(this) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1593,12 +1593,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2931"
 test = "cplus-core/src/sema.rs:impl_interface_extra_method_e0504"
-cause = "An `impl Type for Interface` block contains a method that the interface does not declare."
+cause = "An `impl Type: Interface` block contains a method that the interface does not declare."
 fix = "Move the extra method to an inherent `impl Type { ... }` block."
 example = '''
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P: One { fn a(this) -> i32 { return 0; } fn extra(this) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1612,12 +1612,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2914"
 test = "cplus-core/src/sema.rs:impl_interface_signature_mismatch_e0505"
-cause = "An impl method's signature does not match the interface's declared signature after substituting `Self` with the target type."
+cause = "An impl method's signature does not match the interface's declared signature after substituting `This` with the target type."
 fix = "Make the impl method's signature match the interface declaration exactly."
 example = '''
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> bool { return true; } }
+impl P: One { fn a(this) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1631,13 +1631,13 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2871"
 test = "cplus-core/src/sema.rs:impl_interface_duplicate_e0506"
-cause = "Two `impl Type for Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface."
+cause = "Two `impl Type: Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface."
 fix = "Remove the duplicate impl block."
 example = '''
-interface One { fn a(self) -> i32; }
+interface One { fn a(this) -> i32; }
 struct P { x: i32 }
-impl P: One { fn a(self) -> i32 { return 0; } }
-impl P: One { fn a(self) -> i32 { return 1; } }
+impl P: One { fn a(this) -> i32 { return 0; } }
+impl P: One { fn a(this) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1650,16 +1650,16 @@ repro = "source"
 lang = "cplus"
 verified = false
 emit_site = "cplus-core/src/sema.rs:2857"
-cause = "An `impl Type for Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them."
+cause = "An `impl Type: Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them."
 fix = "Declare the impl in the same file as either the interface or the type."
 example = '''
 // in a third file that imports both Iface and Ty:
-impl Ty: Iface { fn a(self) -> i32 { return 0; } }
+impl Ty: Iface { fn a(this) -> i32 { return 0; } }
 '''
 
 [[code]]
 id = "E0508"
-title = "`Self` used outside an interface or impl body"
+title = "`This` used outside an interface or impl body"
 category = "Ownership and borrowing"
 severity = "error"
 repro = "checked"
@@ -1667,10 +1667,10 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:12332"
 test = "cplus-core/src/sema.rs:self_outside_impl_or_interface_e0508"
-cause = "The type `Self` is named where there is no surrounding `interface` or `impl` body to give it meaning."
+cause = "The type `This` is named where there is no surrounding `interface` or `impl` body to give it meaning."
 fix = "Use a concrete type name, or move the code into an `interface` / `impl` body."
 example = '''
-fn loose(x: Self) -> i32 { return 0; }
+fn loose(x: This) -> i32 { return 0; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1691,12 +1691,12 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
-    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+    fn make() -> Owned { return Owned { ptr: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 impl Pair {
-    fn drop(mut self) { unsafe { free(self.a.ptr); } unsafe { free(self.b.ptr); } return; }
+    fn drop(ref this) { { free(this.a.ptr); } { free(this.b.ptr); } return; }
 }
 fn main() -> i32 {
     let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
@@ -1716,44 +1716,10 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:4446"
 test = "cpc/tests/e2e.rs:phase11_type_alias_cycle_rejected_e0510"
 cause = "A struct has a raw-pointer field that is neither released in a `drop` (no releasing `drop`, or only via a helper) nor marked `opaque`."
-fix = "Release it in `drop` (`free(self.f)`), or mark the field `opaque` if another owner frees it."
+fix = "Release it in `drop` (`free(this.f)`), or mark the field `opaque` if another owner frees it."
 example = '''
 extern fn malloc(n: usize) -> *u8;
 struct Buf { ptr: *u8 }
-fn main() -> i32 { return 0; }
-'''
-
-[[code]]
-id = "E0511"
-title = "Return type names a borrow region no parameter declares"
-category = "Ownership and borrowing"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:11373"
-test = "cpc/tests/e2e.rs:return_region_undeclared_rejected_e0511"
-cause = "A return type names a borrow region that no parameter declares, so the borrow it names has no provenance and the annotation is inert."
-fix = "Add a same-region parameter, or drop the region."
-example = '''
-fn f(a: borrow A str) -> borrow Z str { return a; }
-fn main() -> i32 { return 0; }
-'''
-
-[[code]]
-id = "E0512"
-title = "Returned borrow's region differs from the declared return region"
-category = "Ownership and borrowing"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:11422"
-test = "cpc/tests/e2e.rs:return_region_mismatch_rejected_e0512"
-cause = "A returned borrow is rooted at a parameter whose region differs from the region the signature declares for the return."
-fix = "Return a borrow from a same-region parameter."
-example = '''
-fn weird(a: borrow A str, b: borrow B str) -> borrow A str { return b; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1837,23 +1803,6 @@ fn main() -> i32 {
     let t = (1,);
     return 0;
 }
-'''
-
-[[code]]
-id = "E0801"
-title = "Operation (or `unsafe fn` call) requires `unsafe`"
-category = "Unsafe, FFI, and intrinsics"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:5682"
-test = "cplus-core/src/sema.rs:unsafe_free_fn_call_outside_unsafe_e0801_text1"
-cause = "A raw-pointer dereference, `extern`/`unsafe fn` call, atomic op, inline `#asm`, `static mut` access, or similar invariant-breaking operation appeared outside an enclosing `unsafe { ... }` block."
-fix = "Wrap it in `unsafe { ... }`."
-example = '''
-unsafe fn danger() -> i32 { return 1; }
-fn main() -> i32 { let d: i32 = danger(); return d; }
 '''
 
 [[code]]
@@ -2010,41 +1959,41 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0860"
-title = "A `Send` / `Sync` impl that omits `unsafe`"
-category = "Targets and packages"
+title = "`Send` / `Sync` marker impl has a non-empty body"
+category = "Ownership and borrowing"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:2773"
-test = "cplus-core/src/sema.rs:safe_impl_send_rejected_e0860"
-cause = "A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe`), or with a non-empty body — both are rejected because the marker is an unverifiable thread-safety promise that must be a method-less `unsafe impl`."
-fix = "Write `unsafe impl T for Send {}` — the marker is a promise you make."
+emit_site = "cplus-core/src/sema.rs:2963"
+test = "cplus-core/src/sema.rs:bare_impl_send_registers_marker_override"
+cause = "`Send` and `Sync` are marker interfaces with no methods; the assertion is the empty `impl Type: Send {}` itself. A non-empty body is rejected."
+fix = "Make the body empty: `impl Type: Send {}`."
 example = '''
 struct Handle { opaque p: *u8 }
-impl Handle: Send {}
+impl Handle: Send { fn x(this) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
-// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
+// -> [E0860] `impl Handle: Send` must have an empty body
 '''
 
 [[code]]
 id = "E0861"
-title = "`unsafe` on an impl that is not a `Send` / `Sync` marker"
-category = "Targets and packages"
+title = "Empty `impl` of an interface that is not `Send` / `Sync`"
+category = "Ownership and borrowing"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:2812"
-test = "cplus-core/src/sema.rs:unsafe_impl_on_regular_interface_rejected_e0861"
-cause = "An `impl` block carries `unsafe` but the interface being implemented is something other than the `Send` / `Sync` markers, where `unsafe` is meaningless."
-fix = "Remove `unsafe`; it applies only to those two markers."
+emit_site = "cplus-core/src/sema.rs:2993"
+test = "cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0861"
+cause = "An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided."
+fix = "Implement the interface's methods, or remove the impl."
 example = '''
-interface Greet { fn hi(self) -> i32; }
+interface Greet { fn hi(this) -> i32; }
 struct S { x: i32 }
-unsafe impl S: Greet { fn hi(self) -> i32 { return self.x; } }
+impl S: Greet {}
 fn main() -> i32 { return 0; }
-// -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
+// -> [E0861] empty `impl` applies only to the `Send` / `Sync` markers
 '''
 
 [[code]]
@@ -2150,7 +2099,7 @@ cause = "An import names a stdlib module excluded from the selected target's pac
 fix = "On an embedded target the POSIX modules are unavailable; use [`espidf`](/docs/packages/espidf) for the embedded equivalents."
 example = '''
 import "stdlib/thread" as m;
-pub fn f() -> i32 { return 0; }
+fn f() -> i32 { return 0; }
 // compiled with `cpc check --target esp32-xtensa`
 // -> [E0866] import `stdlib/thread` is not available on target `esp32-xtensa`
 '''
@@ -2168,7 +2117,7 @@ test = "cpc/tests/e2e.rs:target_esp32_async_fn_fires_e0867"
 cause = "An `async fn` is checked against a target whose pointer width is under 64 bits; the async runtime (reactor plus coroutine frames) is 64-bit-only today."
 fix = "The coroutine runtime is 64-bit only; restructure without `async` on that target."
 example = '''
-pub fn helper() -> i32 { return 1; }
+fn helper() -> i32 { return 1; }
 async fn fetch() -> i32 { return helper(); }
 fn main() -> i32 { return 0; }
 // compiled with `cpc check --target esp32-xtensa`
@@ -2237,7 +2186,7 @@ fix = "Pass a literal `u32` index, e.g. `v.lane(0 as u32)`."
 example = '''
 fn main() -> i32 {
     let v: f32x4 = f32x4::splat(1.0f32);
-    let mut i: u32 = 0 as u32;
+    var i: u32 = 0 as u32;
     let x: f32 = v.lane(i);
     return 0;
 }
@@ -2311,7 +2260,7 @@ emit_site = "cplus-core/src/sema.rs:6562"
 cause = "Two operands of an inline `#asm(...)` share the same operand name."
 fix = "Give each `#asm` operand a distinct name."
 example = '''
-fn f(a: i64) { unsafe { #asm("mov {a}, {a}", a = in(reg) a, a = in(reg) a); } return; }
+fn f(a: i64) { { #asm("mov {a}, {a}", a = in(reg) a, a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -2328,7 +2277,7 @@ test = "cplus-core/src/sema.rs:asm_tier2_non_scalar_operand_e0892"
 cause = "An inline `#asm(...)` operand has a type that does not fit a register; only integer, pointer, and `bool` operands are allowed."
 fix = "Pass a register-sized scalar (integer, pointer, or `bool`) instead of an aggregate."
 example = '''
-struct Owned { x: i32 } impl Owned { fn drop(mut self) { return; } } fn f(a: Owned) { unsafe { #asm("nop {a}", a = in(reg) a); } return; }
+struct Owned { x: i32 } impl Owned { fn drop(ref this) { return; } } fn f(a: Owned) { { #asm("nop {a}", a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -2345,7 +2294,7 @@ test = "cplus-core/src/sema.rs:asm_tier2_reg_missing_placeholder_e0893"
 cause = "A compiler-chosen (`reg`) inline-asm operand has no matching `{name}` placeholder in the template, so the template cannot name the register the compiler picked."
 fix = "Reference the operand by its `{name}` placeholder in the template, or use an explicit-register operand."
 example = '''
-fn f(a: i64) { unsafe { #asm("nop", a = in(reg) a); } return; }
+fn f(a: i64) { { #asm("nop", a = in(reg) a); } return; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -2360,11 +2309,11 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:6617"
 test = "cplus-core/src/sema.rs:asm_tier2_out_must_be_variable_e0895"
 cause = "An `out` or `inout` inline-asm operand binds to a general place (a field or index) rather than a plain variable; those are not yet supported."
-fix = "Write the output into a `mut` variable, then copy it into the field/index afterward."
+fix = "Write the output into a `var` variable, then copy it into the field/index afterward."
 example = '''
 struct P { x: i64 }
-fn f(mut p: P, a: i64) {
-    unsafe { #asm("mov {o}, {a}", o = out(reg) p.x, a = in(reg) a); }
+fn f(ref p: P, a: i64) {
+    { #asm("mov {o}, {a}", o = out(reg) p.x, a = in(reg) a); }
     return;
 }
 fn main() -> i32 { return 0; }
@@ -2380,10 +2329,10 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:4771"
 test = "cplus-core/src/sema.rs:async_fn_with_str_param_emits_e0900"
-cause = "An `async fn` parameter is borrow-shaped (`str` / `T[]`) or a `mut`-bound non-Copy value (pointer-passed), which may dangle once a borrow lives across an `await`."
-fix = "Use `Text` / `Vec[T]` instead of `str` / `T[]`, or `move` ownership in / bind locally instead of `mut`."
+cause = "An `async fn` parameter is borrow-shaped (`str` / `T[]`) or a `ref`-bound non-Copy value (pointer-passed), which may dangle once a borrow lives across an `await`."
+fix = "Use `Text` / `Vec[T]` instead of `str` / `T[]`, or `take` ownership in / bind locally instead of `ref`."
 example = '''
-pub struct Future[T] { pub opaque handle: *u8 } async fn fetch(url: str) -> i32 { return 0 as i32; }
+struct Future[T] { opaque handle: *u8 } async fn fetch(url: str) -> i32 { return 0 as i32; }
 '''
 
 [[code]]
@@ -2417,7 +2366,7 @@ test = "cplus-core/src/sema.rs:await_of_non_future_e0902"
 cause = "An `await` is applied to an expression that does not evaluate to a `Future[T]`."
 fix = "Await a `Future[T]` value (the result of calling an `async fn`)."
 example = '''
-pub struct Future[T] { pub opaque handle: *u8 } async fn bad() -> i32 { let x: i32 = await (7 as i32); return x; }
+struct Future[T] { opaque handle: *u8 } async fn bad() -> i32 { let x: i32 = await (7 as i32); return x; }
 '''
 
 [[code]]
@@ -2509,7 +2458,7 @@ cause = "A `#[no_block]` function or a callee calls a blocking primitive directl
 fix = "Use a non-blocking API, or mark the callee `#[no_block]` if it is known not to block."
 example = '''
 extern fn sleep(secs: u32) -> u32;
-#[no_block] fn f() { unsafe { sleep(1); } return; }
+#[no_block] fn f() { { sleep(1); } return; }
 fn main() -> i32 { return 0; }
 '''
 
@@ -2565,40 +2514,6 @@ const FOO: i32 = 1 + 2;
 '''
 
 [[code]]
-id = "E0X33"
-title = "Read of `static mut` requires `unsafe`"
-category = "const / static / char"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:13115"
-test = "cplus-core/src/sema.rs:static_mut_read_outside_unsafe_e0x33"
-cause = "A `static mut` was read outside an enclosing `unsafe { ... }` block, where the borrow checker cannot prove absence of data races on module-scope mutable state."
-fix = "Wrap the read in `unsafe { ... }`."
-example = '''
-static mut COUNTER: i32 = 0;
-fn main() -> i32 { return COUNTER; }
-'''
-
-[[code]]
-id = "E0X34"
-title = "Write to `static mut` requires `unsafe`"
-category = "const / static / char"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:11859"
-test = "cplus-core/src/sema.rs:static_mut_write_outside_unsafe_e0x34"
-cause = "A `static mut` was written outside an enclosing `unsafe { ... }` block, where the borrow checker cannot prove absence of data races on module-scope mutable state."
-fix = "Wrap the write in `unsafe { ... }`."
-example = '''
-static mut COUNTER: i32 = 0;
-fn main() -> i32 { COUNTER = 5; return 0; }
-'''
-
-[[code]]
 id = "E0X36"
 title = "Unknown `const` array length"
 category = "const / static / char"
@@ -2627,7 +2542,7 @@ cause = "A `gen fn` was used without `Iterator[T]` from `stdlib/iterator` in sco
 fix = "Add `import \"stdlib/iterator\"` (and `import \"stdlib/option\"`) so the required generic types are available."
 example = '''
 gen fn count_up(n: i32) -> i32 {
-    let mut i: i32 = 1;
+    var i: i32 = 1;
     while i <= n { yield i; i = i +% (1 as i32); }
     return;
 }
@@ -2688,8 +2603,8 @@ fix = "Confirm it frees on every owning path (expected for refcounted types)."
 example = '''
 struct Cell { p: *u8 }
 impl Cell: Drop {
-    fn drop(self) {
-        if some_condition() { free(self.p); }  // freed only conditionally
+    fn drop(this) {
+        if some_condition() { free(this.p); }  // freed only conditionally
     }
 }
 // -> W0002 raw-pointer field `p` is freed only conditionally in `drop`
