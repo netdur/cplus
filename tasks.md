@@ -318,10 +318,28 @@ Tasks 1–6 are independent (any order among themselves).
     v0.0.17 string class). e2e borrow-region tests (`borrow A T`) also fail —
     likely Stage-4 collateral, confirm during the pass. cplus-core 1563 / cpc
     e2e 629 at 3d.
-  - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
-    bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
-    thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a
-    separate follow-up).
+  - [x] **Stage 4 — `borrow` removal.** (DONE 2026-06-19.) The `borrow` keyword
+    is retired from the language: the parser rejects both the param prefix
+    `borrow x:` and the region type `borrow REGION T` with a hint (kept a
+    reserved token, #1-style, like `mut`/`move`). The `.cplus` corpus (45 sites)
+    and `.rs` test strings were migrated off `borrow x:` to bare (semantically
+    identical); all ~34 region-lifetime / E0384-diagnostic tests deleted.
+    **DECIDED with user — the fn-pointer convention (a `borrow`-flip
+    consequence, see the `feat(fn-ptr)` commit):** `fn(R)` borrows its arg,
+    `fn(take R)` consumes it; the marker is part of the fn-pointer type and must
+    match the pointed-to function (E0312). This is what made removing `borrow`
+    possible — read-only callbacks (auth policies) borrow, thread workers
+    consume.
+    **DEFERRED (follow-up, not blocking — the language surface is `borrow`-free):**
+    the internal region-lifetime machinery is now unreachable DEAD code, not yet
+    deleted — `TypeKind::Borrowed` + its ~18 transparent match arms across 9
+    files, sema `current_fn_param_regions`/`current_fn_return_region` +
+    E0511/E0512 + the `param_owns_value` Borrowed branches, and the borrowck
+    return-borrow/region/E0384 subsystem (`collect_e0384_diagnostics`,
+    `detect_fn_explicit_regions`). E0384 is preempted by sema's E0337 in the full
+    pipeline, so its now-stale `borrow REGION T` suggestion never surfaces. KEEP
+    E0513 (str/slice dangling-view escape — not region-specific).
+    cplus-core 1540 / cpc e2e 618, both green.
 
 - [ ] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
   `pub`s removed); `export` keyword for the C-ABI/linker/header surface;

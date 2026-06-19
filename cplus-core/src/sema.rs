@@ -16790,40 +16790,6 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     #[test]
-    fn borrow_plus_move_e0334() {
-        assert_only_code(
-            "fn bad(borrow take x: i32) -> i32 { return x; }\n\
-             fn main() -> i32 { return bad(0); }",
-            "E0334",
-        );
-    }
-
-    #[test]
-    fn borrow_plus_mut_e0334() {
-        assert_only_code(
-            "fn bad(borrow ref x: i32) -> i32 { return x; }\n\
-             fn main() -> i32 { return bad(0); }",
-            "E0334",
-        );
-    }
-
-    #[test]
-    fn borrow_does_not_collide_with_borrow_region_type() {
-        // `x: T` (param marker) and `borrow REGION T` (type
-        // position) coexist. The region-annotated type only appears
-        // after the colon — parse_type's `borrow REGION T` branch
-        // handles it. The param-marker loop only fires before the
-        // colon. This test pins both: a marker + a region-annotated
-        // type in the same parameter is valid syntax.
-        // (The semantic check for `move x: borrow A T` lives in the
-        // parser as a hard error — exercised in parser tests.)
-        assert_clean(
-            "fn f(x: borrow A i32) -> i32 { return x; }\n\
-             fn main() -> i32 { return f(0); }",
-        );
-    }
-
-    #[test]
     fn addr_of_local_in_unsafe_clean() {
         // The happy path: `unsafe { #addr_of(x) }` returns `*T` for a
         // local binding. No-unsafe / non-Ident / wrong-arity cases are
@@ -20955,32 +20921,6 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
-    }
-
-    #[test]
-    fn return_mut_region_borrow_rejected_e0337() {
-        // The EXCLUSIVE region form double-frees today (codegen drops the
-        // result) — rejected under feature freeze.
-        let codes = errors(
-            "struct B { x: i32 } \
-             impl B { fn drop(ref this) { return; } } \
-             fn cursor(ref b: borrow A B) -> borrow A B { return b; } \
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
-    }
-
-    #[test]
-    fn return_shared_region_borrow_clean() {
-        // SOUND form: a shared region-typed borrow (`b: borrow A B`, no `mut`)
-        // returned as `borrow A B` is a non-owning reference (codegen handles it;
-        // drops exactly once). Must NOT be rejected — it's the surviving cursor.
-        assert_clean(
-            "struct B { x: i32 } \
-             impl B { fn drop(ref this) { return; } } \
-             fn cursor(b: borrow A B) -> borrow A B { return b; } \
-             fn main() -> i32 { return 0; }",
-        );
     }
 
     // v0.0.23 sibling holes: array and tuple literal elements are moved into the

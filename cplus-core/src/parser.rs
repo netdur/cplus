@@ -1491,14 +1491,18 @@ impl Parser {
                     self.bump();
                     restrict = true;
                 }
-                TokenKind::Borrow if !borrow_ => {
-                    // In parameter-prefix position `borrow` is
-                    // unambiguously the param marker — the
-                    // region-annotated `borrow REGION T` form only
-                    // appears in TYPE position (after the colon),
-                    // which parse_type handles. No look-ahead needed.
-                    self.bump();
-                    borrow_ = true;
+                // v0.0.24 #9: `borrow` is retired. A bare parameter `x: T` is
+                // already a read-only borrow — drop the keyword. Reject it with
+                // a hint (kept a reserved token, #1-style, like `mut`/`move`).
+                TokenKind::Borrow => {
+                    let tok = self.peek().clone();
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "`borrow`".into(),
+                            expected: "a parameter name — `borrow` is retired; a bare parameter `x: T` is already a read-only borrow (use `ref` for write-back, `take` to consume)",
+                        },
+                        span: tok.span,
+                    });
                 }
                 _ => break,
             }
@@ -1507,21 +1511,6 @@ impl Parser {
         self.reject_reserved_binding_name(&name)?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type()?;
-        // Slice 6BC.5: `move x: borrow A T` is a parse error.
-        // Ownership transfer doesn't borrow — the region annotation
-        // is meaningless on a `move`-parameter. Reject here rather
-        // than at sema so the diagnostic points at the syntax site.
-        if move_ {
-            if matches!(&ty.kind, TypeKind::Borrowed { .. }) {
-                return Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        found: "borrow region annotation".into(),
-                        expected: "an unannotated type after `move` (borrow regions cannot apply to moved parameters)",
-                    },
-                    span: ty.span,
-                });
-            }
-        }
         let span = start.merge(ty.span);
         Ok(Param {
             name,
@@ -1537,25 +1526,16 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         let tok = self.peek().clone();
         match &tok.kind {
-            // Slice 6BC.5: `borrow REGION T` opens a region-annotated
-            // borrow type. The region is an identifier (no specific
-            // case rule — convention is short uppercase, e.g. `A`,
-            // `B`, or descriptive `BUF`). Inner type is recursively
-            // parsed so `borrow A [T; N]` and `borrow A prefix::T`
-            // both work. Composition with parameter markers
-            // (`mut`/`move`) happens at the param-parsing level, not
-            // here — this only handles the type itself.
+            // v0.0.24 #9: the region-annotated `borrow REGION T` type is retired
+            // along with the `borrow` keyword. A read-only borrow is a bare
+            // parameter `x: T`; ownership transfer is `take`. Reject with a hint.
             TokenKind::Borrow => {
-                let start = self.bump().span;
-                let region = self.expect_ident()?;
-                let inner = Box::new(self.parse_type()?);
-                let end = inner.span;
-                return Ok(Type {
-                    kind: TypeKind::Borrowed {
-                        region: region.name,
-                        inner,
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`borrow`".into(),
+                        expected: "a type — `borrow REGION T` is retired; a bare parameter `x: T` is a read-only borrow (use `take` to consume)",
                     },
-                    span: start.merge(end),
+                    span: tok.span,
                 });
             }
             // Slice 10.FFI.1: raw pointer `*T`. The `*` token is the
@@ -4458,6 +4438,17 @@ mod tests {
     #[test]
     fn let_mut_rejected_with_hint() {
         assert!(parse_src("fn main() -> i32 { let mut x: i32 = 0; return x; }").is_err());
+    }
+
+    #[test]
+    fn borrow_param_rejected_with_hint() {
+        // v0.0.24 #9: `borrow` is retired — a bare parameter `x: T` is already a
+        // read-only borrow. Both the param-prefix and the region-annotated type
+        // forms are rejected at the parser.
+        assert!(parse_src("fn f(borrow x: i32) -> i32 { return x; }").is_err());
+        assert!(parse_src("fn f(x: borrow A i32) -> i32 { return x; }").is_err());
+        // The bare form a `borrow` parameter used to mean now parses cleanly.
+        assert!(parse_src("fn f(x: i32) -> i32 { return x; }").is_ok());
     }
 
     #[test]
