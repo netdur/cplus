@@ -3,6 +3,56 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.24 — 2026-06-20
+
+> A vocabulary release: the keyword surface was revised for clarity and for
+> accuracy when LLMs generate C+ code. This is a breaking change to syntax (an
+> exception to the language feature freeze): most programs need mechanical
+> renames. Semantics are unchanged except for the fixes under "Soundness &
+> correctness" below.
+
+### Vocabulary
+- Receivers and the self-type are `this` / `This` (were `self` / `Self`).
+- Parameter ownership is spelled `ref` (an exclusive, written-back borrow),
+  `take` (consume / own), or a bare binding (a read-only borrow). The `mut`,
+  `move`, and `borrow` markers are retired, as is the region-annotated
+  `borrow REGION T` type.
+- Locals: `let` is an immutable local, `var` a mutable local. `mut` is gone
+  everywhere: no `let mut`, no `static mut` (every `static` is a mutable,
+  addressable global), and parameters bind immutably.
+- Interface impls connect with `:` (`impl Type: Interface`, was
+  `impl Type for Interface`).
+- Visibility is name-based: an item whose name starts with `_` is
+  module-private, everything else is public. `pub` is retired; `export` marks
+  the C-ABI / header / linker surface.
+- `unsafe` is removed; raw-pointer and other low-level operations are written
+  directly.
+- A function-pointer type can carry the `take` ownership marker (`fn(take T)`),
+  distinguishing a consuming callee from a borrowing one.
+- Struct literals can infer their type from context: `{ field: value }`.
+- `#addr(p)` returns a raw pointer's address as a `usize`.
+- `Text` coerces to `str` at argument, binding, and return sites; the explicit
+  `Text::as_str` is removed.
+
+### Soundness & correctness
+- Empty enums are rejected (E0361): a zero-variant enum is uninhabited yet was
+  lowered as a plain `i32` tag.
+- Integer literals are range-checked against their type (E0314): out-of-range
+  values such as `let x: i8 = 300` are rejected instead of silently wrapping.
+  Explicit `as` casts and signed minimums (`-128`, `-9223372036854775808`)
+  stay valid.
+- Same-scope shadowing is forbidden (E0363): redeclaring a name in one block
+  silently swapped its type.
+- Closed three arithmetic UB holes in codegen: oversized shift amounts,
+  out-of-range float-to-int casts, and `INT_MIN / -1`.
+- A Copy `ref` parameter writes back through a pointer, so `fn bump(ref n: i32)`
+  updates the caller's value (verified C-callable in both directions); every
+  `export fn` signature is checked for C-ABI representability (E0410).
+
+### Docs
+- SKILL, SPEC, MEMORY-MODEL, and the diagnostic catalog were rewritten to the
+  v0.0.24 vocabulary; source comments were de-staled; the tutorial was retired.
+
 ## v0.0.23 — 2026-06-17
 
 > First release under the **language feature freeze**: no new syntax or
