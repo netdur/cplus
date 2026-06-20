@@ -13,9 +13,13 @@ name: Linux CI
 # `preserve_nonecc` calling convention cpc emits.
 
 on:
-  push:
-    tags:
-      - "v*"
+  # DISABLED 2026-06-20: Linux CI is paused for now. The release-tag trigger
+  # is commented out so a `v*` tag won't run this workflow; re-enable by
+  # uncommenting the `push:` block below. `workflow_dispatch` is kept so it
+  # can still be run manually from the Actions tab.
+  # push:
+  #   tags:
+  #     - "v*"
   workflow_dispatch:
 
 permissions:
