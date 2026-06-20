@@ -3219,23 +3219,10 @@ impl SemaCx<'_> {
             );
         }
         for (param, psig) in m.params.iter().zip(sig.params.iter()) {
+            // E0334: `ref` and `take` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err("E0334",
-                    "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
-                    param.span);
-            }
-            // v0.0.9 follow-up: the (now-retired) `borrow` marker was mutually
-            // exclusive with both `take` (ownership-transfer vs shared) and
-            // `ref` (exclusive borrow vs shared). Reuses E0334 — same shape
-            // of category error.
-            if param.borrow_ && param.move_ {
-                self.err("E0334",
-                    "parameter cannot have both `borrow` and `move`; `borrow` is shared by-value, `move` transfers ownership".to_string(),
-                    param.span);
-            }
-            if param.borrow_ && param.mutable {
-                self.err("E0334",
-                    "parameter cannot have both `borrow` and `mut`; `borrow` is shared by-value, `mut` is an exclusive borrow".to_string(),
+                    "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
                     param.span);
             }
             // v0.0.8 post-bench-gap: `restrict` is only valid on raw
@@ -3401,7 +3388,7 @@ impl SemaCx<'_> {
             if param.mutable && param.move_ {
                 self.err(
                     "E0334",
-                    "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
                     param.span,
                 );
             }
@@ -4996,22 +4983,9 @@ impl SemaCx<'_> {
             if param.mutable && param.move_ {
                 self.err(
                     "E0334",
-                    "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
                     param.span,
                 );
-            }
-            // v0.0.9 follow-up: the (now-retired) `borrow` marker was mutually
-            // exclusive with both `take` and `ref`. See the matching check in
-            // `check_methods` for the rationale.
-            if param.borrow_ && param.move_ {
-                self.err("E0334",
-                    "parameter cannot have both `borrow` and `move`; `borrow` is shared by-value, `move` transfers ownership".to_string(),
-                    param.span);
-            }
-            if param.borrow_ && param.mutable {
-                self.err("E0334",
-                    "parameter cannot have both `borrow` and `mut`; `borrow` is shared by-value, `mut` is an exclusive borrow".to_string(),
-                    param.span);
             }
             // v0.0.8 post-bench-gap: E0411 — `restrict` requires a raw
             // pointer (`*T`) param. It's an opt-in `noalias` assertion
@@ -5055,7 +5029,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0900",
                         format!(
-                            "parameter `{}` has borrow-shaped type `{}` which is not allowed in `async fn` — borrows live across `await` may dangle once the reactor lands (Phase 3). Use an owned type instead (`string` for `str`, `Vec[T]` for `T[]`).",
+                            "parameter `{}` has borrow-shaped type `{}` which is not allowed in `async fn` — borrows live across `await` may dangle once the reactor lands (Phase 3). Use an owned type instead (`Text` for `str`, `Vec[T]` for `T[]`).",
                             param.name.name, ty_display(pty),
                         ),
                         param.span,
@@ -5065,7 +5039,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0900",
                         format!(
-                            "parameter `{}: {}` is `mut`-bound (pointer-passed) in an `async fn`; that storage may not outlive an `await`. Drop the `mut` and bind locally (`var x = x;`) or move ownership in with `move`.",
+                            "parameter `{}: {}` is `ref`-bound (pointer-passed) in an `async fn`; that storage may not outlive an `await`. Drop the `ref` and bind locally (`var x = x;`) or take ownership in with `take`.",
                             param.name.name, ty_display(pty),
                         ),
                         param.span,
@@ -5194,7 +5168,7 @@ impl SemaCx<'_> {
                 "`str` is a fat pointer with no C-ABI counterpart; pass a `*u8` and a `usize` length instead".to_string()
             ),
             Ty::String => Some(
-                "owned `string` has Drop and a 3-word layout that no C ABI describes; pass a `*u8` and a `usize` length (and document the ownership convention)".to_string()
+                "owned `Text` has Drop and a 3-word layout that no C ABI describes; pass a `*u8` and a `usize` length (and document the ownership convention)".to_string()
             ),
             Ty::Slice(_) => Some(
                 "slice `T[]` is a fat pointer with no C-ABI counterpart; pass a `*T` and a `usize` length instead".to_string()
@@ -9565,7 +9539,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
-                    "blessed `string` methods take no type arguments".to_string(),
+                    "blessed `Text` methods take no type arguments".to_string(),
                     call_span,
                 );
             }
@@ -11413,7 +11387,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             _ => {
                 self.err(
                     "E0324",
-                    format!("no method `{}` on type `string`", name.name),
+                    format!("no method `{}` on type `Text`", name.name),
                     name.span,
                 );
                 for a in args {
@@ -12278,7 +12252,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             self.err(
                                 "E0513",
                                 format!(
-                                    "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`string` / `Vec[T]`) instead, or borrow from a parameter"
+                                    "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow from a parameter"
                                 ),
                                 e.span,
                             );
@@ -12341,7 +12315,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                                 self.err(
                                     "E0513",
                                     format!(
-                                        "view of local `{root}` escapes inside the returned value: `{root}` is freed when the function returns, so the stored view would dangle. Store an owned `string` / `Vec[T]`, or borrow the view from a parameter"
+                                        "view of local `{root}` escapes inside the returned value: `{root}` is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]`, or borrow the view from a parameter"
                                     ),
                                     e.span,
                                 );

@@ -46,7 +46,7 @@ usage:
   cpc check [FILE]                  parse + sema + borrowck, no codegen (fast feedback loop).
                                     With no FILE: whole-project check via Cplus.toml,
                                     enforcing any [profile.realtime] gate.
-  cpc doc FILE                      extract `pub` items + `///` docs from FILE, emit
+  cpc doc FILE                      extract public items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
@@ -99,7 +99,7 @@ debug / introspection (single-file):
   cpc --emit-asm FILE               native assembly (cpc → clang -S at the build mode's -O level)
   cpc --emit-obj FILE -o OUT.o      relocatable object (cpc → clang -c). Used by the
                                     library-build pipeline; -o OUT.o is required.
-  cpc --emit-header FILE            C header for every C-ABI-representable `pub` item
+  cpc --emit-header FILE            C header for every C-ABI-representable `export` item
                                     in FILE. Prints to stdout; redirect with `> out.h`.
   cpc --emit-ll-project             multi-file: print the merged IR to stdout (uses ./Cplus.toml)
 
@@ -143,13 +143,13 @@ LSP / pre-commit-hook use case. Exits 0 if clean, 1 on any error.
             "\
 cpc doc FILE
 
-Extract every `pub` item with a preceding `///` doc block from FILE
+Extract every public item with a preceding `///` doc block from FILE
 and emit Markdown to `./target/doc/<basename>.md`. Each item gets a
 section with its signature, a `defined at line N` link, and the doc
 prose. Fenced code blocks inside `///` are preserved as Markdown code
 blocks — the same blocks `cpc test` runs as doctests.
 
-Private items (and `pub` items without docs) are skipped to keep the
+Private items (and public items without docs) are skipped to keep the
 reference focused on the project's stable surface.
 "
         }

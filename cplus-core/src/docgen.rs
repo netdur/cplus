@@ -117,7 +117,7 @@ pub fn render_markdown(file_label: &str, items: &[DocItem]) -> String {
     let mut out = String::new();
     out.push_str(&format!("# `{file_label}`\n\n"));
     if items.is_empty() {
-        out.push_str("_No documented `pub` items._\n");
+        out.push_str("_No documented public items._\n");
         return out;
     }
     // Table of contents.
@@ -479,7 +479,7 @@ fn beta() -> i32 { return 2; }
     #[test]
     fn empty_input_renders_with_no_items_note() {
         let md = render_markdown("empty.cplus", &[]);
-        assert!(md.contains("_No documented `pub` items._"));
+        assert!(md.contains("_No documented public items._"));
     }
 
     #[test]

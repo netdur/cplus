@@ -594,9 +594,9 @@ fn definition_project_mode_jumps_across_files() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let math = dir.join("src/math.cplus");
     let main_p = dir.join("src/main.cplus");
-    // math.cplus: `pub fn square(n: i32) -> i32 { return n * n; }`
-    //                     ^^^^^^ name at col 7..13
-    std::fs::write(&math, "pub fn square(n: i32) -> i32 { return n * n; }\n").unwrap();
+    // math.cplus: `fn square(n: i32) -> i32 { return n * n; }`
+    //                 ^^^^^^ name at col 3..9
+    std::fs::write(&math, "fn square(n: i32) -> i32 { return n * n; }\n").unwrap();
     let main_src = "import \"math.cplus\" as math;\nfn main() -> i32 { return math::square(7); }\n";
     std::fs::write(&main_p, main_src).unwrap();
     let main_uri = file_uri(&main_p);
@@ -641,8 +641,8 @@ fn definition_project_mode_jumps_across_files() {
     assert_eq!(r["start"]["line"].as_u64(), Some(0));
     assert_eq!(
         r["start"]["character"].as_u64(),
-        Some(7),
-        "expected col 7 for `square`"
+        Some(3),
+        "expected col 3 for `square`"
     );
 }
 

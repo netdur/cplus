@@ -293,7 +293,7 @@ impl Parser {
             TokenKind::Pound => {
                 if is_pub {
                     return Err(self.err_at_peek(
-                        "item — `#asm(...)` module-level asm doesn't take `pub`",
+                        "item — `#asm(...)` module-level asm doesn't take `export`",
                     ));
                 }
                 if !attributes.is_empty() {
@@ -306,7 +306,7 @@ impl Parser {
             TokenKind::Impl => {
                 if is_pub {
                     return Err(self.err_at_peek(
-                        "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
+                        "item — `impl` blocks don't take `export`; mark individual methods inside the block instead",
                     ));
                 }
                 if !attributes.is_empty() {
