@@ -122,7 +122,8 @@ fn buf_new() -> Buf {
     return Buf { ptr: { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
 }
 
-fn buf_push(ref b: Buf, byte: u8) -> Buf {
+fn buf_push(b: Buf, byte: u8) -> Buf {
+    var b: Buf = b;
     if b.len == b.cap {
         let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
         let raw: *u8 = { realloc(b.ptr, nc) };
@@ -154,7 +155,8 @@ fn hex_digit(c: u8) -> i32 {
     return - 1 as i32;
 }
 
-fn buf_push_utf8(ref b: Buf, cp: i32) -> Buf {
+fn buf_push_utf8(b: Buf, cp: i32) -> Buf {
+    var b: Buf = b;
     if cp < 0x80 {
         return buf_push(b, cp as u8);
     }
@@ -199,7 +201,8 @@ fn peek(p: Parser) -> i32 {
     return { *q } as i32;
 }
 
-fn skip_ws(ref p: Parser) -> Parser {
+fn skip_ws(p: Parser) -> Parser {
+    var p: Parser = p;
     while p.pos < p.len {
         let q: *u8 = { p.src + p.pos };
         let c: u8 = { *q };
@@ -227,7 +230,8 @@ fn match_keyword(p: Parser, kw: str) -> bool {
 
 struct StrParse { p: Parser, ok: bool, buf: Buf }
 
-fn parse_string_bytes(ref p: Parser) -> StrParse {
+fn parse_string_bytes(p: Parser) -> StrParse {
+    var p: Parser = p;
     // Caller has verified the opening `"`. Consume it.
     p.pos = p.pos +% (1 as usize);
     var b: Buf = buf_new();
@@ -339,7 +343,8 @@ fn is_number_byte(c: u8) -> bool {
     return false;
 }
 
-fn parse_number(ref p: Parser) -> ValParse {
+fn parse_number(p: Parser) -> ValParse {
+    var p: Parser = p;
     let start: usize = p.pos;
     // Scan the number token, tracking whether it is integer-shaped (no
     // fraction or exponent). The boundary rule (is_number_byte) is
@@ -414,7 +419,8 @@ fn parse_number(ref p: Parser) -> ValParse {
     return ValParse::Ok(Value::Number(val), p);
 }
 
-fn parse_value(ref p: Parser) -> ValParse {
+fn parse_value(p: Parser) -> ValParse {
+    var p: Parser = p;
     p = skip_ws(p);
     let c: i32 = peek(p);
     if c < 0 { return fail(p); }
@@ -443,7 +449,8 @@ fn parse_value(ref p: Parser) -> ValParse {
     return fail(p);
 }
 
-fn parse_array(ref p: Parser) -> ValParse {
+fn parse_array(p: Parser) -> ValParse {
+    var p: Parser = p;
     p.pos = p.pos +% (1 as usize);     // consume '['
     var elems: vec::Vec[Value] = vec::new::[Value]();
     p = skip_ws(p);
@@ -473,7 +480,8 @@ fn parse_array(ref p: Parser) -> ValParse {
     return fail(p);
 }
 
-fn parse_object(ref p: Parser) -> ValParse {
+fn parse_object(p: Parser) -> ValParse {
+    var p: Parser = p;
     p.pos = p.pos +% (1 as usize);     // consume '{'
     var members: vec::Vec[Member] = vec::new::[Member]();
     p = skip_ws(p);
@@ -674,7 +682,8 @@ fn object_get(v: Value, key: str) -> Value {
 
 // ---------------- Serializer ----------------------------------------------
 
-fn buf_push_str(ref b: Buf, s: str) -> Buf {
+fn buf_push_str(b: Buf, s: str) -> Buf {
+    var b: Buf = b;
     let n: usize = #str_len(s);
     let p: *u8 = #str_ptr(s);
     var i: usize = 0 as usize;
@@ -686,7 +695,8 @@ fn buf_push_str(ref b: Buf, s: str) -> Buf {
     return b;
 }
 
-fn buf_push_bytes(ref b: Buf, p: *u8, n: usize) -> Buf {
+fn buf_push_bytes(b: Buf, p: *u8, n: usize) -> Buf {
+    var b: Buf = b;
     var i: usize = 0 as usize;
     while i < n {
         let q: *u8 = { p + i };
@@ -696,7 +706,8 @@ fn buf_push_bytes(ref b: Buf, p: *u8, n: usize) -> Buf {
     return b;
 }
 
-fn encode_string(ref b: Buf, s: str) -> Buf {
+fn encode_string(b: Buf, s: str) -> Buf {
+    var b: Buf = b;
     b = buf_push(b, '"' as u8);
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
@@ -724,7 +735,8 @@ fn encode_string(ref b: Buf, s: str) -> Buf {
     return b;
 }
 
-fn encode_number(ref b: Buf, n: f64) -> Buf {
+fn encode_number(b: Buf, n: f64) -> Buf {
+    var b: Buf = b;
     // Shortest round-trip: prefer fixed-point form (`%.*f` with the
     // smallest decimal-place count that round-trips), falling back to
     // `%.*g` for very large / very small magnitudes where fixed-point
@@ -818,7 +830,8 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     return b;
 }
 
-fn encode_value(ref b: Buf, v: Value) -> Buf {
+fn encode_value(b: Buf, v: Value) -> Buf {
+    var b: Buf = b;
     let out: Buf = match v {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },

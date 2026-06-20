@@ -2314,10 +2314,21 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 /// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
 /// like an explicit `move x: T`. `move x: T` stays value-passed (the value is the
 /// transfer; the caller's drop flag flip suppresses the caller-side drop).
-fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> bool {
+fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bool {
     if move_ {
         return false;
     }
+    // v0.0.24 #9 (3c-copy): `ref x: T` is an exclusive borrow that writes back to
+    // the caller's place, so it must be pointer-passed (a `T*` out-parameter) for
+    // EVERY type — including Copy scalars (`ref n: i32` → `i32*`) and Copy
+    // structs. Value-passing a Copy `ref` (the old behavior) silently dropped the
+    // write. This mirrors `ref this`, which is already pointer-passed on Copy
+    // receivers (`b.set(42); b.get()` observes the write).
+    if mutable {
+        return true;
+    }
+    // A bare `x: T` is a read-only (shared) borrow: pointer-passed for non-Copy
+    // aggregates (the borrow ABI), value-passed (a plain copy) for Copy types.
     matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
 }
 
@@ -5509,10 +5520,21 @@ fn gen_function(
         //   9..16   → [2 x i64]
         //   >16     → ptr (caller-allocated; no `byval` on aarch64-darwin)
         //
-        // Pointer-passed `mut`/`move` params are not C-ABI exportable
-        // anyway (sema 5.C rejects non-Copy aggregates that aren't
-        // `#[repr(C)]` and rejects Drop entirely), so the `param_passes_by_ptr`
-        // path doesn't co-occur with non-Direct ABI classes here.
+        // A `ref x: T` param is a C out-parameter `T*` (write-back through the
+        // address), so it is passed as a bare `ptr` in the C ABI regardless of
+        // T's value-class — including a Copy struct that would otherwise be
+        // Coerce/Indirect (`ref p: Point` is `Point*`, not a coerced `i64`).
+        // Mirrors the native side (`param_passes_by_ptr`).
+        let ref_by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        if ref_by_ptr {
+            let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, types);
+            if attrs.is_empty() {
+                write!(out, "ptr %{}", llvm_idx).unwrap();
+            } else {
+                write!(out, "ptr {} %{}", attrs, llvm_idx).unwrap();
+            }
+            continue;
+        }
         match &param_abis[i] {
             CAbiClass::Coerce { llvm_ty, .. } => {
                 write!(out, "{} %{}", llvm_ty, llvm_idx).unwrap();
@@ -18059,19 +18081,33 @@ mod tests {
     }
 
     #[test]
-    fn mut_param_copy_struct_passed_by_value_c_abi() {
-        // Copy structs: `mut p: P` is local mutability per §2.9, not an exclusive
-        // borrow — the value is passed BY VALUE (a copy), so the caller's storage
-        // is unaffected. Under the C-ABI unification that by-value pass is the
-        // coerced C-ABI form (`i64`), matching clang, not a raw aggregate.
+    fn ref_param_copy_struct_passed_by_pointer() {
+        // #9 stage 3c-copy: `ref p: P` is an exclusive borrow that writes back to
+        // the caller, so even a Copy struct is pointer-passed (a `P*`
+        // out-parameter), NOT coerced to a value. Previously a Copy `ref` was
+        // value-passed (coerced `i64`) and the write was silently lost.
         let ir = gen_src(
             "struct P { v: i32 }\n\
              fn bump(ref p: P) -> i32 { p.v = p.v + 1; return p.v; }\n\
-             fn main() -> i32 { let q: P = P { v: 5 }; return bump(q); }",
+             fn main() -> i32 { var q: P = P { v: 5 }; return bump(q); }",
         );
         assert!(
-            ir.contains("i32 @bump(i64"),
-            "expected `ref p: P` on Copy struct to be passed by value via the C ABI (coerced i64), got: {ir}"
+            ir.contains("i32 @bump(ptr"),
+            "expected `ref p: P` on a Copy struct to be pointer-passed (write-back), got: {ir}"
+        );
+    }
+
+    #[test]
+    fn ref_param_copy_scalar_passed_by_pointer() {
+        // #9 stage 3c-copy: `ref n: i32` lowers to an `i32*` out-parameter, not a
+        // by-value `i32`, so the write reaches the caller.
+        let ir = gen_src(
+            "fn bump(ref n: i32) { n = n +% 1; }\n\
+             fn main() -> i32 { var i: i32 = 5; bump(i); return i; }",
+        );
+        assert!(
+            ir.contains("@bump(ptr"),
+            "expected `ref n: i32` to be pointer-passed (i32* out-param), got: {ir}"
         );
     }
 

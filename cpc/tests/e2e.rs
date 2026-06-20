@@ -3733,7 +3733,10 @@ fn main() -> i32 {
 /// stay local — caller observes the original value. Negative complement of
 /// the test above: documents the spec line that "mut on Copy" ≠ "borrow".
 #[test]
-fn mut_param_copy_struct_does_not_propagate() {
+fn ref_param_copy_struct_propagates() {
+    // #9 stage 3c-copy: a Copy struct `ref` param writes back to the caller's
+    // `var` place — the mutation IS observable after the call (it used to be
+    // value-passed and silently lost).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("prog.cplus");
@@ -3746,7 +3749,7 @@ fn bump(ref p: P) {
     return;
 }
 fn main() -> i32 {
-    let q: P = P { v: 10 };
+    var q: P = P { v: 10 };
     bump(q);
     #println(q.v);
     return 0;
@@ -3768,8 +3771,8 @@ fn main() -> i32 {
     );
     let run = Command::new(&bin).output().expect("run binary");
     assert!(run.status.success());
-    // Copy semantics: caller's q.v is unchanged.
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "10\n");
+    // Write-back: the Copy struct `ref` mutation reaches the caller — q.v is 11.
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "11\n");
 }
 
 /// Phase 5 slice 5BC.codegen: a non-Copy `mut x: T` parameter must produce
@@ -4398,9 +4401,10 @@ fn main() -> i32 {
 }
 
 #[test]
-fn mut_borrows_of_copy_type_accepted() {
-    // `mut x: i32` is local-mutability on Copy types, not a borrow. Two
-    // such args should compile without E0380 / E0381.
+fn ref_borrows_of_distinct_copy_places_accepted() {
+    // #9 stage 3c-copy: a Copy `ref` is now a real exclusive borrow (it writes
+    // back). Two `ref` args of DISTINCT `var` places are fine. (The same place
+    // twice would be E0380; a `let` place would be E0328.)
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
@@ -4409,8 +4413,9 @@ fn mut_borrows_of_copy_type_accepted() {
         "\
 fn modify_both(ref a: i32, ref b: i32) { return; }
 fn main() -> i32 {
-    let y: i32 = 1;
-    modify_both(y, y);
+    var x: i32 = 1;
+    var y: i32 = 2;
+    modify_both(x, y);
     return 0;
 }
 ",
@@ -4425,7 +4430,7 @@ fn main() -> i32 {
         .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "Copy mut args should compile; stderr: {}",
+        "two `ref` args of distinct `var` places should compile; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
@@ -5417,11 +5422,10 @@ fn main() -> i32 {
 }
 
 #[test]
-fn copy_struct_param_stays_by_value_no_attr() {
-    // `mut p: Point` on a Copy struct is local-mutability, not a borrow — passed
-    // BY VALUE (a copy), so the caller's storage is unaffected. Under the C-ABI
-    // unification that by-value pass is the coerced C-ABI form (8-byte
-    // {i32,i32} → `i64`), matching clang.
+fn ref_copy_struct_param_is_by_pointer() {
+    // #9 stage 3c-copy: `ref p: Point` is an exclusive borrow that writes back,
+    // so even a Copy struct is passed BY POINTER (a `Point*` out-parameter), not
+    // coerced to a value. The caller's place must therefore be `var`.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
@@ -5431,7 +5435,7 @@ fn copy_struct_param_stays_by_value_no_attr() {
 struct Point { x: i32, y: i32 }
 fn shift(ref p: Point) -> i32 { p.x = p.x + 1; return p.x; }
 fn main() -> i32 {
-    let v: Point = Point { x: 1, y: 2 };
+    var v: Point = Point { x: 1, y: 2 };
     return shift(v);
 }
 ",
@@ -5445,8 +5449,8 @@ fn main() -> i32 {
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
-        ir.contains("i32 @shift(i64"),
-        "Copy struct should be passed by value via the C ABI (coerced i64); got: {ir}"
+        ir.contains("i32 @shift(ptr"),
+        "Copy struct `ref` param should be pointer-passed (write-back); got: {ir}"
     );
 }
 
@@ -16642,6 +16646,93 @@ fn c_consumer_links_static_and_dynamic() {
         run.code(),
         Some(255),
         "5 - 6 = -1 → 255 (u8) from dynamic link"
+    );
+}
+
+#[test]
+fn ref_param_writes_back_native() {
+    // #9 stage 3c-copy: a Copy `ref` (scalar + Copy struct) writes back to the
+    // caller's `var` place — the increment is observable after the call.
+    let (_dir, bin) = compile_program(
+        "fn bump(ref n: i32) { n = n +% 1; }\n\
+         struct Pt { x: i32, y: i32 }\n\
+         fn shift(ref p: Pt) { p.x = p.x +% 10; p.y = p.y +% 20; }\n\
+         fn main() -> i32 {\n\
+             var i: i32 = 5; bump(i);\n\
+             var p: Pt = Pt { x: 1, y: 2 }; shift(p);\n\
+             if i != 6 { return 1; }\n\
+             if p.x != 11 { return 2; }\n\
+             if p.y != 22 { return 3; }\n\
+             return 0;\n\
+         }",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "Copy ref write-back lost (1=scalar, 2/3=struct field)"
+    );
+}
+
+#[test]
+fn export_ref_param_writes_back_through_c() {
+    // #9 stage 3c-copy, the C-ABI half: `export fn bump(ref n: i32)` is a C
+    // out-parameter `void bump(int32_t*)`. A clang-compiled C caller passing
+    // `&i` must observe the write — verifies the `ref`→`T*` lowering against the
+    // real C ABI (strict-C-ABI rule), including a `#[repr(C)]` Copy struct.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"reflib\"\n\n[lib]\ncrate-type = \"both\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Pt { x: i32, y: i32 }\n\
+         export fn bump(ref n: i32) { n = n +% 1; }\n\
+         export fn shift(ref p: Pt) { p.x = p.x +% 10; p.y = p.y +% 20; }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         extern void bump(int32_t*);\n\
+         typedef struct { int32_t x, y; } Pt;\n\
+         extern void shift(Pt*);\n\
+         int main(void) {\n\
+             int32_t i = 5; bump(&i);\n\
+             Pt p = {1, 2}; shift(&p);\n\
+             return (i == 6 && p.x == 11 && p.y == 22) ? 0 : 1;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/debug"))
+        .arg("-lreflib")
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
+    assert!(st.success(), "C link against the C+ lib failed");
+    let run = Command::new(&bin).status().expect("run c_user");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "C caller must observe `ref` write-back through the pointer params"
     );
 }
 

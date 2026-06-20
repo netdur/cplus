@@ -4889,24 +4889,24 @@ impl SemaCx<'_> {
     }
 
     fn check_function(&mut self, f: &Function) {
-        // Phase 5 Slice 5.C: `pub extern fn name(...) { body }` is a
-        // C-callable export definition (not an import declaration). Its
-        // signature must use only C-ABI-compatible types; the body
-        // type-checks normally like any other fn. Plain `extern fn ...;`
-        // is an import declaration — no body, no signature check beyond
-        // the standard "types resolve" pass already done in collection.
-        if f.is_extern {
-            // Parser invariant: `is_pub` on an extern fn marks it as the
-            // export form (with body); plain `extern fn ...;` always
-            // parses with `is_pub = false`. So `is_extern && is_pub` is
-            // exactly the export case.
-            if f.is_pub {
-                self.check_extern_export_signature(f);
-                // Fall through to the normal body-checking path below.
-            } else {
-                // Import declaration: nothing more to check here.
-                return;
-            }
+        // Phase 5 Slice 5.C: an `export fn name(...) { body }` (with or without
+        // `extern`) is a C-callable definition — it gets a bare, unmangled C
+        // symbol, so its signature must use only C-ABI-compatible types. The
+        // body type-checks normally like any other fn. A plain `extern fn ...;`
+        // (no body, `is_pub == false`) is an import declaration — no signature
+        // check beyond the "types resolve" pass already done in collection.
+        //
+        // v0.0.24: the check used to be gated on `is_extern && is_pub`, which
+        // silently skipped plain `export fn` — those still get a C symbol, so an
+        // un-C-representable parameter (a `Drop`/owning type, a `str`/slice fat
+        // pointer, a tagged enum, a non-`#[repr(C)]` struct) compiled to an
+        // unsound signature. Now every `export` (`is_pub`) function is checked.
+        if f.is_pub {
+            self.check_extern_export_signature(f);
+            // Fall through to the normal body-checking path below.
+        } else if f.is_extern {
+            // Plain `extern fn ...;` import declaration: nothing more to check.
+            return;
         }
         let sig = self.fns.get(&f.name.name).cloned().or_else(|| {
             // Slice 7GEN.x: generic free fns live in `fns_generic`, not `fns`.
@@ -5108,6 +5108,13 @@ impl SemaCx<'_> {
     /// type named in the message + a suggestion for the conventional
     /// workaround. Body type-checking continues afterward.
     fn check_extern_export_signature(&mut self, f: &Function) {
+        // The function form, for the diagnostic: `export extern fn` vs the plain
+        // `export fn` (both are C-callable definitions and checked identically).
+        let form = if f.is_extern {
+            "export extern fn"
+        } else {
+            "export fn"
+        };
         // Re-resolve each surface type so we can diagnose against the
         // structural `Ty`. (Sema also cached these in `self.fns` during
         // collection — we use resolve_type here for span fidelity.)
@@ -5117,7 +5124,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0410",
                     format!(
-                        "type `{}` in `export extern fn` parameter is not C-ABI compatible: {reason}",
+                        "type `{}` in `{form}` parameter is not C-ABI compatible: {reason}",
                         ty_display(&pty),
                     ),
                     p.span,
@@ -5130,7 +5137,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0410",
                     format!(
-                        "type `{}` in `export extern fn` return position is not C-ABI compatible: {reason}",
+                        "type `{}` in `{form}` return position is not C-ABI compatible: {reason}",
                         ty_display(&ret_ty),
                     ),
                     rt.span,
@@ -11839,17 +11846,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (`ref this`) is the E0328 check at the method-call site; this is the
         // same rule for value parameters.
         //
-        // Scoped to non-Copy `ref` for now: those are the params actually
-        // lowered by-pointer today, so the write-back is real and the rule has
-        // teeth. A Copy `ref` is still passed by value (the C-ABI form), so
-        // demanding a `var` there would be a false promise — making Copy `ref`
-        // write back (lower to `T*`, per the model) is a C-ABI change to verify
-        // against clang and lands as its own step. (`borrow`/bare params have
-        // `mutable == false`; `take` consumes rather than writes back.)
+        // Applies to every `ref` parameter regardless of type (#9 stage 3c-copy):
+        // a Copy `ref` now lowers to a `T*` out-parameter and writes back just
+        // like a non-Copy one (`ref n: i32` ⇒ `i32*`), so the `var` requirement
+        // has teeth for all types. (`borrow`/bare params have `mutable == false`;
+        // `take` consumes rather than writes back.)
         if expected.mutable
             && !expected.move_
             && !expected.borrow_
-            && !self.is_copy(&expected.ty)
             && !self.is_writable_place_quiet(arg)
         {
             self.err(
@@ -18600,11 +18604,12 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn mut_param_makes_binding_mutable() {
-        // `mut x: T` should allow writing `x = ...` inside the body without
-        // E0305 (assignment to immutable binding).
+        // `ref x: T` makes the parameter binding writable inside the body
+        // (`x = ...` is not E0305); the caller must pass a `var` place, since a
+        // `ref` writes back (#9 stage 3c-copy — a literal rvalue would be E0328).
         assert_clean(
             "fn inc(ref x: i32) -> i32 { x = x + 1; return x; }\n\
-             fn main() -> i32 { return inc(1); }",
+             fn main() -> i32 { var n: i32 = 1; return inc(n); }",
         );
     }
 
@@ -21776,6 +21781,40 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              export extern fn use_it(r: R) -> i32 { return r.fd; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    // v0.0.24: the C-ABI signature check now runs for a PLAIN `export fn` (not
+    // just `export extern fn`) — plain exports still get a bare C symbol, so a
+    // non-C-representable type in any parameter mode (incl. `take`/`ref`) must be
+    // rejected. (Previously the check was gated on `is_extern` and skipped these.)
+    #[test]
+    fn export_fn_take_drop_type_rejected_e0410() {
+        // `take b: Buf` where Buf owns heap + drops: a C caller would pass it by
+        // value, C+ would free it, and C's copy would dangle — no safe C mapping.
+        let codes = errors(
+            "struct Buf { opaque p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } }\n\
+             export fn sink(take b: Buf) -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn export_fn_str_param_rejected_e0410() {
+        let codes = errors("export fn f(s: str) -> i32 { return 0; }");
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn export_fn_ref_copy_scalar_clean() {
+        // `ref n: i32` is a C out-parameter `int*` — C-representable.
+        assert_clean("export fn bump(ref n: i32) { n = n +% 1; }");
+    }
+
+    #[test]
+    fn export_fn_take_copy_clean() {
+        // `take` of a Copy type is just by-value — C passes a copy, nothing to free.
+        assert_clean("export fn consume(take n: i32) -> i32 { return n; }");
     }
 
     #[test]

@@ -246,14 +246,28 @@ Tasks 1–6 are independent (any order among themselves).
     bare. So the 3c/3e "intertwining" I worried about was a misread; the noalias
     tests that used read-only `ref` just need `var` callers (interim; they move
     to bare at 3e). cplus-core 1565 / cpc e2e 630.
-  - [ ] **Stage 3c-copy — Copy `ref` → `T*` write-back.** mem.md: `ref x: T`
-    "lowers to a C out-parameter (`T*`)" for ANY type, incl. Copy (`bump(ref x:
-    i32)` writes back). Today Copy `ref` is by-value (the C-ABI coerced form;
-    pinned by `mut_param_copy_struct_passed_by_value_c_abi`). Unifying requires
-    dropping the `!is_copy` guard in `is_mut_pointer_passed` (sema) + the codegen
-    counterpart, extending the non-Copy by-pointer path to Copy, updating that
-    ABI test, AND verifying the new `T*` lowering against clang (strict-C-ABI
-    rule). Then extend the 3c is_var check to Copy `ref` too.
+  - [x] **Stage 3c-copy — Copy `ref` → `T*` write-back.** DONE 2026-06-20.
+    `ref x: T` now lowers to a `T*` out-parameter for ANY type, incl. Copy
+    (`bump(ref n: i32)` writes back; verified native + through clang for an
+    `export fn`). Codegen: `param_passes_by_ptr` returns true for every `mutable`
+    (`ref`) param; the export-sig path emits `ptr` even for Coerce/Indirect Copy
+    structs. Sema: dropped the `!is_copy` guard so the `var`-place rule (E0328)
+    has teeth for Copy `ref`. Tests: re-pointed the old by-value pins
+    (`ref_param_copy_struct_passed_by_pointer`, the `ref_*_propagates`/
+    `ref_borrows_of_distinct_copy_places` e2e tests), added native + C-link
+    write-back tests. **Corpus migration:** json.cplus used Copy `ref`
+    (`Parser`/`Buf`) as the old "mutable local copy" idiom (threading state via
+    the return value) — migrated 12 fns to bare param + `var` shadow
+    (behavior-preserving). No other corpus affected (the rest are non-Copy refs).
+    lib 1511 / e2e green.
+  - [x] **export C-ABI signature check now covers plain `export fn`** (found
+    while reviewing 3c-copy, 2026-06-20). The E0410 check was gated on
+    `is_extern && is_pub`, so a plain `export fn` (which still gets a bare C
+    symbol) was never validated — `export fn sink(take b: Buf)` on a Drop type
+    silently compiled to an unsound by-value signature. Now every `export`
+    (`is_pub`) fn is checked; non-C-representable types (Drop/owning, `str`/slice
+    fat pointers, tagged enums, non-`#[repr(C)]` structs) are E0410 in any mode
+    (`take`/`ref`/bare). `take`/`ref` of a Copy/repr-C type stays fine.
   - [x] **Stage 3d — `static` is the mutable, addressable global; `static mut`
     gone.** Per mem.md: every `static` is mutable, access is BARE, and an
     immutable addressable global is "a `static` you never write" → DECISION:
@@ -393,7 +407,7 @@ Tasks 1–6 are independent (any order among themselves).
   Surface that flips to PUBLIC under the new default: ~1248 non-pub items + ~617
   non-pub fields — per plan, MOST just become public; only invariant-protectors
   get `_` (judgment, small set).
-  - [→] **Stage 1 — visibility semantics.** Privacy becomes NAME-based: an
+  - [x] **Stage 1 — visibility semantics.** (all sub-stages 1a–done; #10 shipped.) Privacy becomes NAME-based: an
     item/field/method is private iff its name starts with `_`; public otherwise
     (Dart model, public-by-default). Enforce cross-module/file access at error
     level for fields AND items AND methods (extend E0403 beyond fields). Split
@@ -487,8 +501,16 @@ Tasks 1–6 are independent (any order among themselves).
 
 ## After the renames
 
-- [ ] **Docs / SPEC / SKILL / tutorial pass** — much rewritten by the vocab
-  work anyway; coordinate.
+- [x] **Docs / SPEC / SKILL / tutorial pass** — DONE 2026-06-20 (commits
+  12fa4fd, ecfbb05, 67ed3f6, 212159d). SKILL: stripped the C+ history + Rust
+  positioning (kept factual "no `&mut T`/`.unwrap()`→E0xxx" guardrails). SPEC +
+  MEMORY-MODEL: full v0.0.24 rewrite (MEMORY-MODEL needed real surgery — bare
+  `x: T` flipped move→borrow, `take`=consume, region `borrow A T` gone). errors:
+  vocab pass + removed 7 unreachable codes (E0801/E0X33/E0X34/E0511/E0512/E0383/
+  E0384); wrote a validator that recompiles every repro example (109/109 fire
+  their code). Fixed the stale E0359 message (`pub`→`export`). COMPILER/GPU +
+  vendor READMEs swept. LEFT as historical: docs/design/*.md, changeslog.md,
+  objc-c-interop/notes.md. lib 1506 / e2e 615.
 - [ ] **Resume bug-hunt** on the stable post-rename base (struct/enum dispatch
   divergences, `.expect("sema validated")` shape-assumptions, block-tail
   expected-type propagation, `subst_ty_plain` gap — see plan.md).
