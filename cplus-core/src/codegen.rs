@@ -3907,8 +3907,10 @@ fn write_preamble(out: &mut String) {
         }
         // Xtensa and RV32 have no LLVM spin-loop hint intrinsic and no
         // 128-bit SIMD here; `#cpu_relax()` compiles to nothing and `table`
-        // takes the portable per-lane fallback — nothing to declare.
-        TargetArch::Xtensa | TargetArch::Riscv32 => {}
+        // takes the portable per-lane fallback — nothing to declare. wasm32
+        // never reaches this LLVM-IR path (it has its own `wasm_emit`
+        // backend), but the match must stay exhaustive.
+        TargetArch::Xtensa | TargetArch::Riscv32 | TargetArch::Wasm32 => {}
     }
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
@@ -10377,7 +10379,8 @@ impl<'a> FnState<'a> {
             TargetArch::X86_64 => self.emit("call void @llvm.x86.sse2.pause()"),
             // No spin hint on Xtensa/RV32 — the hint is a power
             // optimization, not a correctness requirement; emit nothing.
-            TargetArch::Xtensa | TargetArch::Riscv32 => {}
+            // wasm32 has no LLVM-IR path here either.
+            TargetArch::Xtensa | TargetArch::Riscv32 | TargetArch::Wasm32 => {}
         }
     }
 

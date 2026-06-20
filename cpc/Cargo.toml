@@ -16,3 +16,7 @@ tempfile = { workspace = true }
 [dev-dependencies]
 serde_json = "1"
 tempfile = { workspace = true }
+# wasm playground differential test (plans/plan.wasm-playground.md): assemble +
+# run the emitted WAT so its output can be checked against the native binary.
+wat = "1"
+wasmi = "0.31"

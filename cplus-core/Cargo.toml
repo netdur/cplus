@@ -14,3 +14,8 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# wasm playground slice (plans/plan.wasm-playground.md): assemble the emitted
+# WAT (`wat`) and run it in a pure-Rust interpreter (`wasmi`) so the
+# compile→assemble→run path is verified in CI with no browser or toolchain.
+wat = "1"
+wasmi = "0.31"

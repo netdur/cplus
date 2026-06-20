@@ -29,6 +29,11 @@ pub enum TargetArch {
     /// RISC-V RV32 (ESP32-C3/C6/H2 class), ilp32 ABI. Mainline LLVM;
     /// compiled here with esp-clang for the ESP-IDF pairing.
     Riscv32,
+    /// WebAssembly (`wasm32`). 32-bit, little-endian, structured control
+    /// flow. Unlike every other arch, cpc emits the final artifact itself
+    /// (WebAssembly text via `wasm_emit`) — there is no external clang. Used
+    /// by the browser playground; see `plans/plan.wasm-playground.md`.
+    Wasm32,
 }
 
 /// Operating system, as codegen's ABI classifier and the driver's link
@@ -43,6 +48,10 @@ pub enum TargetOs {
     /// ESP-IDF (FreeRTOS + newlib). Not a POSIX desktop OS: no processes,
     /// no kqueue/epoll, heap discouraged in real-time contexts.
     EspIdf,
+    /// No OS — freestanding `wasm32-unknown-unknown`. The host environment
+    /// (the browser, via JS imports) supplies the libc floor; there is no
+    /// syscall layer, no processes, no filesystem.
+    Unknown,
 }
 
 /// Which clang consumes the IR cpc emits for this target. Rung 2 of the
@@ -64,6 +73,10 @@ pub enum ToolchainKind {
     /// (newest version) — the ESP-IDF `idf_tools.py install esp-clang`
     /// location. Verified to accept cpc's textual IR (2026-06-11 spike).
     EspClang,
+    /// No external compiler: cpc emits the final artifact (WebAssembly text)
+    /// itself. The wasm32 playground target. The native driver rejects it —
+    /// it is consumed only by `wasm_emit` in the browser front end.
+    Internal,
 }
 
 /// Relocatable-object container format the target's toolchain consumes.
@@ -74,6 +87,9 @@ pub enum ObjectFormat {
     MachO,
     Elf,
     Coff,
+    /// WebAssembly module. cpc emits it directly (no relocatable-object
+    /// handoff); carried for symmetry with the other targets.
+    Wasm,
 }
 
 /// Who runs the final link.
@@ -84,6 +100,9 @@ pub enum Handoff {
     /// cpc stops at object / static-archive emission; an external build
     /// system (Xcode, NDK, ESP-IDF) owns the final link and packaging.
     ExternalBuilder,
+    /// cpc produces the final, runnable artifact itself (WebAssembly text,
+    /// assembled in-browser). No clang, no linker, no external builder.
+    Internal,
 }
 
 /// One compilation target. `Copy` and built from `&'static` strings so the
@@ -284,6 +303,39 @@ pub const ESP32C3_RISCV32: TargetSpec = TargetSpec {
     // alongside `-target` (its multilibs are keyed on it).
     extra_clang_args: &["-march=rv32imc_zicsr_zifencei", "-mabi=ilp32"],
     min_os_default: None,
+    unsupported_stdlib: &[
+        "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
+    ],
+};
+
+/// WebAssembly (`wasm32-unknown-unknown`) for the browser playground —
+/// `plans/plan.wasm-playground.md`. Unlike every other spec, cpc emits the
+/// final artifact itself (WebAssembly text via `wasm_emit`); there is no
+/// clang, no linker, no external builder, no OS. The host (the browser, via
+/// JS imports) supplies the libc floor.
+///
+/// Deliberately **not** in [`SUPPORTED`]: the native `cpc` driver cannot
+/// build it (it has no in-process wasm assembler), so `--target wasm32` stays
+/// unresolvable. The spec is consumed only by `wasm_emit` / `cpc-wasm`, which
+/// install it with [`set_active_target`] so layout and `usize` come out 32-bit.
+pub const WASM32: TargetSpec = TargetSpec {
+    name: "wasm32",
+    arch: TargetArch::Wasm32,
+    os: TargetOs::Unknown,
+    pointer_width: 32,
+    little_endian: true,
+    object_format: ObjectFormat::Wasm,
+    triple: Some("wasm32-unknown-unknown"),
+    artifact_triple: Some("wasm32-unknown-unknown"),
+    apple_sdk: None,
+    handoff: Handoff::Internal,
+    toolchain: ToolchainKind::Internal,
+    extra_clang_args: &[],
+    min_os_default: None,
+    // The whole POSIX/embedded surface bottoms out at syscalls or an OS the
+    // browser sandbox does not provide. The playground front end rejects
+    // `import` outright today, so this list is informational for when the
+    // virtual-FS stdlib lands.
     unsupported_stdlib: &[
         "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
     ],
@@ -515,6 +567,26 @@ mod tests {
             names,
             "host, ios-arm64, ios-arm64-simulator, android-arm64, esp32-xtensa, esp32c3-riscv32"
         );
+    }
+
+    #[test]
+    fn wasm32_is_internal_browser_only_32_bit() {
+        // 32-bit, little-endian, freestanding, self-emitted.
+        assert_eq!(WASM32.pointer_width, 32);
+        assert!(WASM32.little_endian);
+        assert_eq!(WASM32.arch, TargetArch::Wasm32);
+        assert_eq!(WASM32.os, TargetOs::Unknown);
+        assert_eq!(WASM32.object_format, ObjectFormat::Wasm);
+        assert_eq!(WASM32.handoff, Handoff::Internal);
+        assert_eq!(WASM32.toolchain, ToolchainKind::Internal);
+        assert_eq!(WASM32.triple, Some("wasm32-unknown-unknown"));
+        assert!(!WASM32.is_host());
+
+        // Deliberately not a `--target` name: the native driver can't build
+        // wasm, so it must stay unresolvable and out of the help list.
+        assert_eq!(TargetSpec::from_name("wasm32"), None);
+        assert!(!SUPPORTED.iter().any(|t| t.name == "wasm32"));
+        assert!(!supported_names().contains("wasm32"));
     }
 
     #[test]

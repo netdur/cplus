@@ -22,3 +22,4 @@ pub mod parser;
 pub mod resolver;
 pub mod sema;
 pub mod target;
+pub mod wasm_emit;

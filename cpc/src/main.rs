@@ -823,6 +823,13 @@ fn clang_program_for(t: &TargetSpec) -> Result<String, String> {
         target::ToolchainKind::HostClang => Ok(clang_program().to_string()),
         target::ToolchainKind::AndroidNdk => ndk_clang().clone(),
         target::ToolchainKind::EspClang => esp_clang().clone(),
+        // wasm32 emits its artifact in-process (no clang) and is browser-only;
+        // it is not a `--target` the native driver resolves, so this is
+        // unreachable in practice — fail loudly rather than call a wrong clang.
+        target::ToolchainKind::Internal => Err(
+            "the wasm32 target is built by the browser playground, not the native cpc driver"
+                .to_string(),
+        ),
     }
 }
 
