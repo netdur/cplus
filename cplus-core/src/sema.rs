@@ -1444,6 +1444,23 @@ impl SemaCx<'_> {
             self.current_file = item.origin_file.clone();
             match &item.kind {
                 ItemKind::Enum(e) => {
+                    // An enum with zero variants is uninhabited: no value can
+                    // ever be constructed, yet match exhaustiveness treats it
+                    // as vacuously covered and the tag ABI lowers it as a plain
+                    // `i32`. C+ has no uninhabited / never type, so reject it
+                    // (E0361). We still fall through and register the (empty)
+                    // enum below so references to it don't cascade into
+                    // "unknown type" errors.
+                    if e.variants.is_empty() {
+                        self.err(
+                            "E0361",
+                            format!(
+                                "enum `{}` has no variants; an enum must declare at least one variant",
+                                e.name.name
+                            ),
+                            e.name.span,
+                        );
+                    }
                     // Slice 7GEN.5d: generic enum templates go to a
                     // separate table — they're not concrete types
                     // until instantiated.
@@ -5791,7 +5808,7 @@ impl SemaCx<'_> {
             ExprKind::BuilderBlock { .. } => {
                 panic!("sema saw an un-lowered builder block; driver must call crate::lower before sema::check");
             }
-            ExprKind::IntLit(_, suf) => self.check_int_lit(*suf, expected),
+            ExprKind::IntLit(v, suf) => self.check_int_lit(*v, *suf, expected, e.span, false, true),
             ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
             ExprKind::BoolLit(_) => Ty::Bool,
             ExprKind::StrLit(_) => Ty::Str,
@@ -8134,8 +8151,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    fn check_int_lit(&mut self, suffix: NumSuffix, expected: Option<Ty>) -> Ty {
-        match suffix {
+    fn check_int_lit(
+        &mut self,
+        value: u64,
+        suffix: NumSuffix,
+        expected: Option<Ty>,
+        span: ByteSpan,
+        negated: bool,
+        range_check: bool,
+    ) -> Ty {
+        let t = match suffix {
             NumSuffix::None => match expected {
                 Some(t) if t.is_int() => t,
                 _ => Ty::I32, // default
@@ -8155,8 +8180,36 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64 => {
                 unreachable!("float suffix on int literal")
             }
+        };
+        // v0.0.24 hardening (E0314): a literal must fit the integer type it
+        // resolves to. The lexer accepts any magnitude up to `u64::MAX`, and
+        // the stored value is the unsigned magnitude (a leading `-` is a
+        // separate unary op). For a negated signed literal the bound is the
+        // type minimum's magnitude — so `-128` is a valid `i8` and
+        // `-9223372036854775808` a valid `i64` — otherwise it's the maximum.
+        // An explicit `as` cast operand opts out (range_check == false): the
+        // cast is the programmer's opt-in to conversion/truncation, so both
+        // `0xffffffff as u32` and `300 as i8` stay valid.
+        if range_check {
+            if let Some(max_mag) = int_lit_max_magnitude(&t, negated) {
+                if value > max_mag {
+                    let sign = if negated { "-" } else { "" };
+                    self.err(
+                        "E0314",
+                        format!(
+                            "integer literal `{sign}{value}` is out of range for type `{}` (allowed magnitude up to {max_mag})",
+                            t.name()
+                        ),
+                        span,
+                    );
+                    return Ty::Error;
+                }
+            }
         }
+        t
     }
+
+    // (free helper `int_lit_max_magnitude` is defined at module scope below)
 
     fn check_float_lit(&mut self, suffix: NumSuffix, expected: Option<Ty>) -> Ty {
         match suffix {
@@ -8173,7 +8226,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     fn check_cast(&mut self, expr: &Expr, target: &Type, span: ByteSpan) -> Ty {
-        let from = self.check_expr(expr, None);
+        // A direct integer-literal cast operand opts out of the E0314 range
+        // check: an explicit `as` is the programmer choosing conversion /
+        // truncation, so `0xffffffff as u32` and `300 as i8` are both valid.
+        // The literal keeps its own (suffix or i32-default) type for the
+        // `cast_allowed` decision below; the cast performs the conversion.
+        let from = if let ExprKind::IntLit(v, suf) = &expr.kind {
+            self.check_int_lit(*v, *suf, None, expr.span, false, false)
+        } else {
+            self.check_expr(expr, None)
+        };
         let to = self.resolve_type(target);
         if from == Ty::Error || to == Ty::Error {
             return to;
@@ -12591,7 +12653,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // through to the `is_unsigned_int` error below with the
                 // same message as before.
                 let op_expected = expected.filter(|t| t.is_signed_int() || t.is_float());
-                let t = self.check_expr(operand, op_expected);
+                // E0314: a negated integer literal (`-128`) is validated
+                // against the type's minimum-magnitude bound, not the positive
+                // maximum, so signed minimums stay representable. Intercept the
+                // direct-literal operand; any other operand (a variable, a
+                // nested expression) takes the normal expression path.
+                let t = if let ExprKind::IntLit(v, suf) = &operand.kind {
+                    self.check_int_lit(*v, *suf, op_expected, operand.span, true, true)
+                } else {
+                    self.check_expr(operand, op_expected)
+                };
                 if t == Ty::Error {
                     return Ty::Error;
                 }
@@ -15117,6 +15188,32 @@ fn method_sig_matches(
         &impl_.return_type,
         target,
     )
+}
+
+/// Maximum unsigned magnitude an integer literal of type `t` may carry
+/// (E0314). `None` for non-integer types (no range check applies).
+///
+/// `negated` is true when the literal is the immediate operand of unary `-`:
+/// for a signed type the bound then rises to the minimum's magnitude (e.g.
+/// `128` for `i8`, `2^63` for `i64`) so signed minimums stay representable.
+/// It has no effect on unsigned types — a negated unsigned literal is an
+/// independent error (E0302).
+///
+/// `usize` / `isize` are treated as 64-bit (the host / default-target width).
+/// A narrower target only makes more literals out of range, never fewer, so
+/// this never under-rejects for the default target.
+fn int_lit_max_magnitude(t: &Ty, negated: bool) -> Option<u64> {
+    match t {
+        Ty::U8 => Some(u8::MAX as u64),
+        Ty::U16 => Some(u16::MAX as u64),
+        Ty::U32 => Some(u32::MAX as u64),
+        Ty::U64 | Ty::Usize => Some(u64::MAX),
+        Ty::I8 => Some(if negated { 1 << 7 } else { i8::MAX as u64 }),
+        Ty::I16 => Some(if negated { 1 << 15 } else { i16::MAX as u64 }),
+        Ty::I32 => Some(if negated { 1 << 31 } else { i32::MAX as u64 }),
+        Ty::I64 | Ty::Isize => Some(if negated { 1 << 63 } else { i64::MAX as u64 }),
+        _ => None,
+    }
 }
 
 fn cast_allowed(from: &Ty, to: &Ty) -> bool {
@@ -18570,6 +18667,117 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_eq!(diags[0].code.0, "E0300");
         // span must point at `foo`, which starts at byte offset 26
         assert_eq!(diags[0].primary.start.byte, 26);
+    }
+
+    // ----- Empty (uninhabited) enums: rejected (E0361) -----
+
+    #[test]
+    fn empty_enum_rejected_e0361() {
+        let codes = errors("enum Void {}\nfn main() -> i32 { return 0; }");
+        assert!(codes.contains(&"E0361"), "expected E0361, got: {codes:?}");
+    }
+
+    #[test]
+    fn empty_generic_enum_rejected_e0361() {
+        // A zero-variant generic template is just as uninhabited as a concrete
+        // one — the emptiness check runs before the generic/concrete split.
+        let codes = errors("enum Void[T] {}\nfn main() -> i32 { return 0; }");
+        assert!(codes.contains(&"E0361"), "expected E0361, got: {codes:?}");
+    }
+
+    #[test]
+    fn non_empty_enum_accepted() {
+        // Regression guard: an ordinary enum with variants stays clean.
+        assert_clean("enum Color { Red, Green }\nfn main() -> i32 { return 0; }");
+    }
+
+    // ----- Integer-literal range checking (E0314) -----
+
+    #[test]
+    fn int_lit_overflow_i8_e0314() {
+        let codes = errors("fn main() -> i32 { let x: i8 = 300; return x as i32; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_overflow_i64_e0314() {
+        // i64::MAX + 1 as a positive literal.
+        let codes = errors("fn main() -> i32 { let x: i64 = 9223372036854775808; return 0; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_suffix_overflow_e0314() {
+        // The suffix fixes the type; the value must still fit it.
+        let codes = errors("fn main() -> i32 { let x = 300i8; return 0; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_unsigned_overflow_e0314() {
+        let codes = errors("fn main() -> i32 { let x: u8 = 256; return 0; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_default_i32_overflow_e0314() {
+        // No annotation, no suffix: the literal defaults to i32 and must fit it.
+        let codes = errors("fn main() -> i32 { let x = 9999999999; return 0; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_negated_overflow_e0314() {
+        // -129 is below i8::MIN even though 129 is "small".
+        let codes = errors("fn main() -> i32 { let x: i8 = -129; return 0; }");
+        assert!(codes.contains(&"E0314"), "expected E0314, got: {codes:?}");
+    }
+
+    #[test]
+    fn int_lit_signed_min_accepted() {
+        // The whole point of the negated-literal carve-out: type minimums stay
+        // representable (`-128` for i8, `-2^63` for i64).
+        assert_clean("fn main() -> i32 { let a: i8 = -128; let b: i64 = -9223372036854775808; return 0; }");
+    }
+
+    #[test]
+    fn int_lit_boundaries_accepted() {
+        // Maxima for signed/unsigned types, and zero, all fit.
+        assert_clean(
+            "fn main() -> i32 {\n\
+             let a: i8 = 127;\n\
+             let b: u8 = 255;\n\
+             let c: i32 = 2147483647;\n\
+             let d: u64 = 18446744073709551615;\n\
+             let e: i64 = 9223372036854775807;\n\
+             return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn int_lit_explicit_cast_opts_out_of_range_check() {
+        // An explicit `as` cast is the programmer opting into conversion /
+        // truncation, so the operand literal is NOT range-checked: the
+        // `0xffffffff as u32` mask idiom and the `300 as i8` truncation idiom
+        // (and a 64-bit hex constant cast to u64) all stay valid.
+        assert_clean(
+            "fn main() -> i32 {\n\
+             let a: u32 = 0xffffffff as u32;\n\
+             let b: i8 = 300 as i8;\n\
+             let c: u64 = 0xcbf29ce484222325 as u64;\n\
+             return b as i32;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn int_lit_negate_unsigned_is_e0302_not_e0314() {
+        // `-1` against an unsigned type is a negate-unsigned error, not a range
+        // error — the magnitude (1) fits u8 fine.
+        let codes = errors("fn main() -> i32 { let x: u8 = -1; return 0; }");
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+        assert!(!codes.contains(&"E0314"), "should not be E0314, got: {codes:?}");
     }
 
     // ----- Phase 3 slice 3A: ownership markers on params -----

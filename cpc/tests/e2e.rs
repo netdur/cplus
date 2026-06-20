@@ -2817,6 +2817,59 @@ fn divide_by_zero_traps_in_release() {
     );
 }
 
+// ----- Integer-literal range checking (E0314) + empty enums (E0361) -----
+
+#[test]
+fn int_literal_boundaries_compile_and_run() {
+    // Valid extremes must still codegen and run correctly — including the
+    // negated-minimum carve-out (`-128` for i8, `-2^63` for i64). `span` is
+    // 127 - (-128) = 255, and the i64::MIN value participates so it can't be
+    // dead-code eliminated before codegen.
+    let (_dir, bin) = compile_program(
+        "fn main() -> i32 {\n\
+         let lo: i8 = -128;\n\
+         let hi: i8 = 127;\n\
+         let big: i64 = -9223372036854775808;\n\
+         let span: i32 = (hi as i32) - (lo as i32);\n\
+         if big < 0 { return span; }\n\
+         return 0;\n\
+         }",
+        false,
+    );
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(
+        run.status.code(),
+        Some(255),
+        "expected exit 255 (127 - -128); stderr={:?}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn int_literal_out_of_range_rejected_e0314() {
+    // The headline repro: `300` does not fit `i8` (would wrap to 44).
+    assert_compile_fails_with(
+        "fn main() -> i32 { let x: i8 = 300; return x as i32; }",
+        "E0314",
+    );
+}
+
+#[test]
+fn int_literal_i64_overflow_rejected_e0314() {
+    assert_compile_fails_with(
+        "fn main() -> i32 { let x: i64 = 9223372036854775808; return 0; }",
+        "E0314",
+    );
+}
+
+#[test]
+fn empty_enum_rejected_e0361() {
+    assert_compile_fails_with(
+        "enum Void {}\nfn main() -> i32 { return 0; }",
+        "E0361",
+    );
+}
+
 #[test]
 fn sema_error_in_compile_emits_diagnostic() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

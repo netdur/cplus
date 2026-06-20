@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **141 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **109** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **143 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **111** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -256,6 +256,18 @@ fn main() -> i32 { 1 = 2; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:12089 · test cplus-core/src/sema.rs:assign_to_non_ident_e0313</sub>
 
+### E0314 · Integer literal out of range
+
+An integer literal does not fit the type it resolves to (the annotated type, the suffix type, or the i32 default). The lexer accepts any magnitude up to u64::MAX, so the value is range-checked against the target type. A leading `-` is a separate unary op, so a negated literal is checked against the type minimum's magnitude (`-128` fits i8, `9223372036854775808` does not fit i64 but `-9223372036854775808` does).
+
+```cplus
+fn main() -> i32 { let x: i8 = 300; return x as i32; }
+```
+
+**Fix.** Use a value within the type's range, or widen the type (e.g. `i32`/`i64`, or an unsigned type for large non-negative values).
+
+<sub>repro: checked · cplus-core/src/sema.rs:8193 · test cplus-core/src/sema.rs:int_lit_overflow_i8_e0314</sub>
+
 ### E0315 · Invalid cast
 
 An `as` cast is between a pair of types that the language forbids.
@@ -501,6 +513,19 @@ fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
 **Fix.** Use a `Copy` element type, or construct each element explicitly with `[expr0, expr1, ...]`.
 
 <sub>repro: checked · cplus-core/src/sema.rs:6892 · test cplus-core/src/sema.rs:array_fill_noncopy_element_rejected_e0339</sub>
+
+### E0361 · Enum has no variants
+
+An enum is declared with zero variants. Such a type is uninhabited (no value can ever be constructed), but match exhaustiveness treats it as vacuously covered and the tag ABI lowers it as a plain i32. C+ has no uninhabited / never type.
+
+```cplus
+enum Void {}
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Declare at least one variant, or remove the enum.
+
+<sub>repro: checked · cplus-core/src/sema.rs:1456 · test cplus-core/src/sema.rs:empty_enum_rejected_e0361</sub>
 
 ### E0364 · Cannot infer struct type of `{ ... }`
 

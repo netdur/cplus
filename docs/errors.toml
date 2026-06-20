@@ -334,6 +334,22 @@ fn main() -> i32 { 1 = 2; return 0; }
 '''
 
 [[code]]
+id = "E0314"
+title = "Integer literal out of range"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:8193"
+test = "cplus-core/src/sema.rs:int_lit_overflow_i8_e0314"
+cause = "An integer literal does not fit the type it resolves to (the annotated type, the suffix type, or the i32 default). The lexer accepts any magnitude up to u64::MAX, so the value is range-checked against the target type. A leading `-` is a separate unary op, so a negated literal is checked against the type minimum's magnitude (`-128` fits i8, `9223372036854775808` does not fit i64 but `-9223372036854775808` does)."
+fix = "Use a value within the type's range, or widen the type (e.g. `i32`/`i64`, or an unsigned type for large non-negative values)."
+example = '''
+fn main() -> i32 { let x: i8 = 300; return x as i32; }
+'''
+
+[[code]]
 id = "E0315"
 title = "Invalid cast"
 category = "Names, types, and items"
@@ -1045,6 +1061,23 @@ cause = "A `#[test]` function is marked `export`; tests are project-internal hel
 fix = "Remove `export` from the test function."
 example = '''
 #[test] export fn t() { return; }
+fn main() -> i32 { return 0; }
+'''
+
+[[code]]
+id = "E0361"
+title = "Enum has no variants"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:1456"
+test = "cplus-core/src/sema.rs:empty_enum_rejected_e0361"
+cause = "An enum is declared with zero variants. Such a type is uninhabited (no value can ever be constructed), but match exhaustiveness treats it as vacuously covered and the tag ABI lowers it as a plain i32. C+ has no uninhabited / never type."
+fix = "Declare at least one variant, or remove the enum."
+example = '''
+enum Void {}
 fn main() -> i32 { return 0; }
 '''
 
