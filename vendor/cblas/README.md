@@ -34,7 +34,7 @@ CBLAS `int` constants.
 | 3 | `sgemm`/`dgemm` |
 
 Pointer args are `*f32` / `*f64`; produce them from arrays via
-`unsafe { #addr_of(arr) as *f32 }`. Unlike raw cuBLAS, CBLAS takes an
+`#addr_of(arr) as *f32`. Unlike raw cuBLAS, CBLAS takes an
 `Order`, so you can work **row-major** directly.
 
 ## Example — `y = A·x`
@@ -45,13 +45,13 @@ import "cblas/cblas" as blas;
 // A = [[1,2],[3,4]] (row-major), x = [5,6]  ->  y = [17, 39]
 let a: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
 let x: [f32; 2] = [5.0f32, 6.0f32];
-let mut y: [f32; 2] = [0.0f32, 0.0f32];
+var y: [f32; 2] = [0.0f32, 0.0f32];
 blas::sgemv(
     blas::Order::RowMajor, blas::Transpose::NoTrans,
     2 as i32, 2 as i32,
-    1.0f32, unsafe { #addr_of(a) as *f32 }, 2 as i32,
-    unsafe { #addr_of(x) as *f32 }, 1 as i32,
-    0.0f32, unsafe { #addr_of(y) as *f32 }, 1 as i32);
+    1.0f32, #addr_of(a) as *f32, 2 as i32,
+    #addr_of(x) as *f32, 1 as i32,
+    0.0f32, #addr_of(y) as *f32, 1 as i32);
 // y == [17, 39]
 ```
 

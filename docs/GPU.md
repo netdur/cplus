@@ -121,7 +121,7 @@ fn search_top_k(
     cmd_buf.wait_until_completed();
 
     // 4. Top-K on host (or via MPSMatrixSoftMax + sort on device)
-    let mut host_scores: Vec[f32] = vec::with_capacity::[f32](n);
+    var host_scores: Vec[f32] = vec::with_capacity::[f32](n);
     buf_scores.copy_to_slice(as_mut_bytes(host_scores));
     return top_k_indices(host_scores, k);
 }
@@ -148,7 +148,7 @@ fn search_top_k(query: f32[], database: f32[], n: usize, d: usize, k: usize) -> 
 
     handle.sgemv(cublas::Op::T, d, n, 1.0f32, d_database, d, d_query, 1, 0.0f32, d_scores, 1)?;
 
-    let mut host_scores: Vec[f32] = vec::with_capacity::[f32](n);
+    var host_scores: Vec[f32] = vec::with_capacity::[f32](n);
     d_scores.copy_to_host(&mut host_scores)?;
     return top_k_indices(host_scores, k);
 }

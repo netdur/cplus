@@ -75,7 +75,7 @@ strong reference and releases it once in `fn drop` ("+1 normal form"):
   `Pasteboard`, or a child view its parent retains) stays `opaque` and has no
   `drop` — releasing it would over-release.
 
-`self`/`mut self` method receivers are borrows (they do not consume), so builder
+`this`/`ref this` method receivers are borrows (they do not consume), so builder
 chaining works on owned wrappers. Keep an owned wrapper alive as long as the UI
 needs its object; do not drop a top-level object that nothing else retains while
 it is still on screen, and don't pass `Widget::new().obj` inline (the temporary

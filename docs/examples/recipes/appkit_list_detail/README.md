@@ -11,7 +11,7 @@ v0.0.16 binding surface together.
   delegate that quits when the window closes.
 
 The callbacks are closure-free: the data-source / selection functions reach the
-live table and detail field through `static mut` handles.
+live table and detail field through `static` handles.
 
 ## Build & run
 

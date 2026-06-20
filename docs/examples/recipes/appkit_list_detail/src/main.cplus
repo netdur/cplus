@@ -7,7 +7,7 @@
 // in one app.
 //
 // Closure-free callback model (locked principle #2): the data-source / delegate
-// functions reach the live table + detail field through `static mut` handles set
+// functions reach the live table + detail field through `static` handles set
 // during setup.
 //
 // Ownership note: every widget wrapper is held in a local that outlives the

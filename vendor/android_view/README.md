@@ -56,7 +56,7 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
     let env: av::Env = av::from_native(envp);
     let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
 
-    let mut root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
+    var root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
     root.set_orientation(av::orientation_vertical());
 
     let title: av::TextView = av::TextView::new(env, act.as_context());

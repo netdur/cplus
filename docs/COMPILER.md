@@ -199,7 +199,7 @@ In-place AST rewrites that happen before sema so the rest of the compiler only d
 
 - **`if let PAT = EXPR { THEN } else { ELSE }`** → `match EXPR { PAT => THEN, _ => ELSE }`.
 - **`guard let PAT = EXPR else { ELSE }; REST_OF_BLOCK`** → `match EXPR { PAT => { REST_OF_BLOCK }, _ => ELSE }`.
-- **`const FOO: T = EXPR;`** at module scope is substituted at every use site (no runtime indirection). Mutable statics (`static mut FOO: T = EXPR;`) and immutable statics (`static FOO: T = EXPR;`) stay as items — codegen emits one LLVM global per static.
+- **`const FOO: T = EXPR;`** at module scope is substituted at every use site (no runtime indirection, no address). **`static FOO: T = EXPR;`** is a mutable, addressable global (the C/FFI boundary) — codegen emits one LLVM global per static. There is no `static mut`: a `static` is always mutable.
 - **Implicit return checking** (E0333) — every non-`void` function must end with an explicit `return`. Lower validates this.
 
 Lower emits diagnostics in the E0347–E0352 range for malformed `if let` / `guard let` patterns, plus E0X30 for const substitution rules.
@@ -265,7 +265,7 @@ Methods are stored per-target in `methods_per_struct` / `methods_per_enum`. For 
 1. **Collect type declarations** — `StructDef` / `EnumDef` / `TypeAlias` registered without bodies.
 2. **Resolve type aliases** transitively. Cycle detection here.
 3. **Collect struct fields** with full type resolution. This is where field types may trigger generic-struct instantiation (the source of G-022 — see §15).
-4. **Collect methods** — both inherent (`impl T { ... }`) and interface (`impl T for Interface { ... }`). Two-phase: register all generic-impl-method templates first, then resolve their signatures.
+4. **Collect methods** — both inherent (`impl T { ... }`) and interface (`impl T: Interface { ... }`). Two-phase: register all generic-impl-method templates first, then resolve their signatures.
 5. **Backfill generic struct methods** (G-022 fix) — re-runs the impl-template substitution for any struct whose `methods` table was populated empty by a field-driven instantiation that ran before `collect_methods`.
 6. **Resolve function signatures** — param types, return type, generic bounds.
 7. **Check function bodies** — the main type-checking pass. Each fn gets its own `FunctionChecker` with a stack of local scopes.
@@ -360,10 +360,10 @@ For each function body:
 ### What it deliberately doesn't do
 
 - No region inference — every borrow's scope is determined lexically. The borrow ends at the end of the enclosing block.
-- No two-phase borrows. `f(&mut x, x.field)` either rejects or accepts based on argument order — no clever reordering.
-- No reborrows. A `*p` access in a function that took `borrow p: T` is a read of `p`, not a borrow.
+- No two-phase borrows. `f(ref x, x.field)` either rejects or accepts based on argument order — no clever reordering.
+- No reborrows. A `*p` access in a function that took a bare `p: T` is a read of `p`, not a borrow.
 
-This keeps the implementation manageable (5.4k LOC vs Rust's MIR borrowck) at the cost of some valid programs being rejected. Most rejected programs have a straightforward rewrite using `move` semantics.
+This keeps the implementation manageable (5.4k LOC) at the cost of some valid programs being rejected. Most rejected programs have a straightforward rewrite using `take` semantics.
 
 ---
 
@@ -397,7 +397,7 @@ After monomorphize, the program has no `Ty::Param` anywhere. Codegen can assume 
 
 ### Why monomorphize and not boxing?
 
-C+'s tag is "Rust without exceptions and closures." Monomorphization gives the predictable performance + zero-cost abstractions story. The cost is bigger binaries when a generic is instantiated with many types — acceptable for a systems language.
+C+ aims for predictable, zero-overhead generics. Monomorphization gives that — each instantiation is specialized, with no boxing or dynamic dispatch in the hot path. The cost is bigger binaries when a generic is instantiated with many types — acceptable for a systems language.
 
 ---
 
@@ -480,7 +480,7 @@ The TBAA tree today is coarse — one root, one per scalar type. Per-field TBAA 
 
 ### Static items
 
-`emit_statics` runs near the top of codegen output. For `static FOO: T = EXPR;` it emits `@FOO = constant <ty> <lit>` (immutable, lives in `.rodata`); for `static mut`, `@FOO = global <ty> <lit>` (in `.data`). The `Ty::Str` case emits a paired `@FOO.data` byte array + a `@FOO` `{ptr, i64}` fat-pointer global pointing at it.
+`emit_statics` runs near the top of codegen output. A `static FOO: T = EXPR;` (always mutable) emits `@FOO = global <ty> <lit>` in `.data`. (A `const` is inlined at each use site and emits no global.) The `Ty::Str` case emits a paired `@FOO.data` byte array + a `@FOO` `{ptr, i64}` fat-pointer global pointing at it.
 
 Reads of static names route through `gen_place`'s `md.statics` lookup. G-028 (fixed 2026-05-24) was that `generate_test_binary` was constructing the codegen with `&Default::default()` for the statics map, so vendor-package tests using `static` lookups would crash.
 
