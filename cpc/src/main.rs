@@ -387,7 +387,7 @@ fn main() -> ExitCode {
             }
             Some("--emit-header") => {
                 // Phase 5 Slice 5.E: emit a C header (`.h`) declaring
-                // every `pub` item that's C-ABI representable. Prints to
+                // every `export` item that's C-ABI representable. Prints to
                 // stdout; redirect with `> out.h`.
                 let Some(v) = args.get(i + 1) else {
                     eprintln!("cpc: --emit-header requires a FILE argument");
@@ -748,9 +748,9 @@ enum Subcommand {
     /// borrowck on a single file, no codegen. Promised in SKILL.md as
     /// the "fast feedback loop" command but never wired until now.
     Check,
-    /// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract `pub`
-    /// items + their `///` docs from a source file, emit Markdown to
-    /// `target/doc/<basename>.md`.
+    /// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract public
+    /// (non-`_`-private) items + their `///` docs from a source file,
+    /// emit Markdown to `target/doc/<basename>.md`.
     Doc,
     /// `cpc graph` — build the code knowledge graph for the project and
     /// print it as JSON (nodes + edges). See `plan.graph.md`.
@@ -3395,8 +3395,8 @@ fn run_check(path: PathBuf, mode: DiagMode) -> ExitCode {
     }
 }
 
-/// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract `pub` items
-/// + their `///` docs from FILE, emit Markdown to
+/// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract public
+/// (non-`_`-private) items + their `///` docs from FILE, emit Markdown to
 /// `target/doc/<basename>.md`. Output directory is created if needed.
 /// Prints the destination path to stdout so users + scripts can find
 /// the result.
@@ -3905,12 +3905,12 @@ fn dump_ll(
 /// `cpc --emit-obj` flag and as the first step inside the `cpc build`
 /// library pipeline (5.A.3 below).
 /// Phase 5 Slice 5.E: emit a C header for a `.cplus` source. Walks the
-/// program's top-level items, emits a C declaration for every `pub` item
+/// program's top-level items, emits a C declaration for every `export` item
 /// whose signature is C-ABI-compatible (Slice 5.C's predicate). Items
 /// that aren't representable in C (non-`#[repr(C)]` structs, Drop types,
 /// tagged enums, generics) are skipped silently — sema's E0410 already
-/// rejects them in `pub extern fn` signatures, so they can only reach
-/// the header path via plain `pub fn` / `pub struct` declarations and
+/// rejects them in `export extern fn` signatures, so they can only reach
+/// the header path via plain `export fn` / `export struct` declarations and
 /// will be silently dropped from the header surface.
 ///
 /// The generated header is hand-readable and idiomatic C99:
@@ -3918,8 +3918,8 @@ fn dump_ll(
 /// - `#include <stdbool.h>` + `<stddef.h>` + `<stdint.h>` for the
 ///   primitive type aliases.
 /// - Struct definitions before fn declarations so signatures can
-///   reference them. Order: pub structs / enums / type aliases first,
-///   then pub fn declarations.
+///   reference them. Order: exported structs / enums / type aliases first,
+///   then exported fn declarations.
 ///
 /// `lib_name` shapes the include-guard fallback when `#pragma once`
 /// isn't honored by the consumer toolchain (very rare today).
@@ -3957,7 +3957,7 @@ fn dump_header(input: PathBuf, lib_name: Option<&str>, diag_mode: DiagMode) -> E
     ExitCode::SUCCESS
 }
 
-/// Phase 5 Slice 5.E: render a C header for `program`'s `pub` surface.
+/// Phase 5 Slice 5.E: render a C header for `program`'s `export` surface.
 /// Public so the library build pipeline (5.A) can call it alongside the
 /// `.a` / `.dylib` artifact emission.
 fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String {
@@ -3972,11 +3972,12 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     out.push_str("#include <stdint.h>\n\n");
     out.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
 
-    // Pass 1: pub `#[repr(C)]` structs and pub plain enums (definitions
-    // that fn signatures may reference). Tagged enums and non-repr-C
-    // structs are skipped silently — sema's 5.C predicate already
-    // rejects them in `pub extern fn` signatures, so any fn that would
-    // need them in the header would have failed before reaching here.
+    // Pass 1: exported `#[repr(C)]` structs and exported plain enums
+    // (definitions that fn signatures may reference). Tagged enums and
+    // non-repr-C structs are skipped silently — sema's 5.C predicate
+    // already rejects them in `export extern fn` signatures, so any fn
+    // that would need them in the header would have failed before
+    // reaching here.
     for item in &program.items {
         match &item.kind {
             ItemKind::Struct(s) if s.is_pub => {
@@ -3985,7 +3986,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
                     continue;
                 }
                 // Drop check: a struct with a `drop` method isn't safe to
-                // expose by value. The user's `pub extern fn` would have
+                // expose by value. The user's `export extern fn` would have
                 // failed sema (5.C) if they tried; here we just skip.
                 // We can't easily check drop without sema state, so emit
                 // the struct definition and rely on consumers not to use
@@ -4017,9 +4018,9 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
         }
     }
 
-    // Pass 2: pub fn declarations. Both `pub fn` (C+-callable from inside
-    // the library; scalar-only ones are accidentally C-callable too) and
-    // `pub extern fn ... { body }` (Slice 5.C: explicit C-ABI export).
+    // Pass 2: exported fn declarations. Both `export fn` (C+-callable from
+    // inside the library; scalar-only ones are accidentally C-callable too)
+    // and `export extern fn ... { body }` (Slice 5.C: explicit C-ABI export).
     // Any signature element that fails the C-mapping (e.g. `str`, slice,
     // tagged enum) makes us skip the whole fn — that's sound because the
     // consumer couldn't write a matching signature anyway.
@@ -4048,7 +4049,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     out
 }
 
-/// Render a `#[repr(C)] pub struct Foo { ... }` as a C declaration.
+/// Render a `#[repr(C)] export struct Foo { ... }` as a C declaration.
 /// Returns None if any field's type isn't C-representable.
 fn render_struct_decl(s: &cplus_core::ast::StructDecl) -> Option<String> {
     let mut out = format!("typedef struct {} {{\n", s.name.name);
@@ -4060,7 +4061,7 @@ fn render_struct_decl(s: &cplus_core::ast::StructDecl) -> Option<String> {
     Some(out)
 }
 
-/// Render a `pub fn` (or `pub extern fn`) as a C prototype. Returns
+/// Render an `export fn` (or `export extern fn`) as a C prototype. Returns
 /// None when any param or return type isn't C-representable.
 fn render_fn_decl(f: &cplus_core::ast::Function) -> Option<String> {
     let ret = match &f.return_type {

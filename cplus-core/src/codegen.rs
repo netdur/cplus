@@ -68,7 +68,7 @@ struct ModuleMetadata {
     /// are safe to mark `fastcc`. Populated once per module before the
     /// per-item emission loop. A name is in this set iff:
     ///   1. The function has `internal` linkage in the LLVM module
-    ///      (non-`pub` user fn, non-`pub` non-drop method).
+    ///      (non-`export` user fn, non-`export` non-drop method).
     ///   2. The function's address is never taken anywhere in the
     ///      program (no bare-`Ident` reference resolving to it outside
     ///      a `Call` callee position).
@@ -656,7 +656,7 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
 /// pointers + fn pointers land in 5C alongside the cross-thread
 /// move work — their mangled forms include the inner pointee type
 /// and need a recursive name-builder that codegen doesn't expose
-/// yet. Aggregates (structs/enums/arrays/slices) and `string` need
+/// yet. Aggregates (structs/enums/arrays/slices) and `Text` need
 /// sret-aware trampolines and join paths — those land in 5C as well.
 fn is_thread_spawn_eligible(ty: &Ty) -> bool {
     match ty {
@@ -855,7 +855,7 @@ fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
 /// `is_thread_spawn_eligible` for scalars, but also accepts Copy
 /// structs (the canonical `Range`-style input for the parallel-sum
 /// recipe is a struct, not a scalar). Strings and Vec[T] are non-Copy
-/// — sema's `check_arg_with_move` enforces the `move` at the call
+/// — sema's `check_arg_with_move` enforces the `take` at the call
 /// site so the trampoline can read+pass them, but the typed store
 /// into ctx works the same as for Copy.
 fn is_thread_input_eligible(ty: &Ty, types: &TypeTable) -> bool {
@@ -874,14 +874,14 @@ fn is_thread_input_eligible(ty: &Ty, types: &TypeTable) -> bool {
         if info.is_copy {
             return true;
         }
-        // Non-Copy structs (e.g. Vec[T], string-shaped wrappers): the
+        // Non-Copy structs (e.g. Vec[T], Text-shaped wrappers): the
         // worker takes ownership via the typed store, so this is
         // technically safe — but ownership transfer of non-Copy I
         // depends on the parent flipping its drop flag at the
-        // spawn_with call site (sema's `move` machinery handles that),
+        // spawn_with call site (sema's `take` machinery handles that),
         // and the worker actually freeing if the worker's f does not.
         // For 5C v1 we accept structs; richer support for Vec[T] /
-        // string returns lands when we add sret-aware trampolines.
+        // Text returns lands when we add sret-aware trampolines.
         return true;
     }
     // Accept strings + slices as moveable input by value (they're
@@ -950,9 +950,9 @@ pub fn generate_with_mono(
     )
 }
 
-/// Phase 5 Slice 5.B: generate IR for a library target. Non-`pub` items
+/// Phase 5 Slice 5.B: generate IR for a library target. Non-`export` items
 /// get `internal` linkage so LTO can strip unused implementation detail
-/// from the final `.dylib` / `.a`. `pub` items keep external linkage and
+/// from the final `.dylib` / `.a`. `export` items keep external linkage and
 /// form the C-callable public ABI.
 ///
 /// Distinct from `generate` so existing executable builds (and the
@@ -1107,7 +1107,7 @@ fn generate_inner(
     *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
-    // linkage (non-`pub`, non-`main`, non-extern, non-drop) AND its
+    // linkage (non-`export`, non-`main`, non-extern, non-drop) AND its
     // address is not taken anywhere in the program. Drop methods stay
     // on `preserve_nonecc` — fastcc can't compose with it. `main` keeps
     // C cc so the OS runtime can invoke it.
@@ -1229,7 +1229,7 @@ fn generate_inner(
         emitted_extern_symbols.insert("objc_msgSend".to_string());
     }
     // v0.0.22 (android_view listener): a program may both *define* a C-ABI
-    // symbol (`pub extern fn cplus_on_click` in the app) and *declare* it
+    // symbol (`export extern fn cplus_on_click` in the app) and *declare* it
     // as an import elsewhere (a vendor package calling an app-provided
     // hook). Emitting both the `define` and a `declare` for one symbol is
     // an LLVM-level redefinition; pre-seed the dedup set with every
@@ -1669,7 +1669,7 @@ struct FnSig {
     /// "this is a C-ABI import" from "this is an internal cpc fn". Drives
     /// sret application on the import-declaration and call-site paths so
     /// the AArch64-Darwin ABI for >16B struct returns matches what clang
-    /// emits on the C side. `pub extern fn` definitions (which have
+    /// emits on the C side. `export extern fn` definitions (which have
     /// bodies, exported with the C ABI) are also `true`; the call-site
     /// branch only cares for the import direction since exports define
     /// their own sret shape via the def-side path.
@@ -1791,13 +1791,13 @@ struct StructInfo {
     /// Methods declared in `impl` blocks for this struct.
     methods: HashMap<String, MethodInfo>,
     /// True iff this struct has a destructor — a method named `drop` with
-    /// signature `fn drop(mut self)`. Sema validates the signature; codegen
+    /// signature `fn drop(ref this)`. Sema validates the signature; codegen
     /// mirrors the flag to decide whether `let x: T = ...` registers a
     /// scope-exit drop call. See `docs/design/phase3-drop.md`.
     is_drop: bool,
     /// Mirror of sema's Copy fixpoint. A struct is Copy iff it has no Drop
     /// destructor and every field is Copy. Used by the §2.9 mutable-borrow
-    /// ABI in `param_passes_by_ptr` — non-Copy `mut x: T` is pointer-passed
+    /// ABI in `param_passes_by_ptr` — non-Copy `ref x: T` is pointer-passed
     /// so the callee's writes propagate back to the caller.
     is_copy: bool,
     /// TEXT.R1: this struct is the `#[lang("string")]` designated owned-string
@@ -1826,23 +1826,23 @@ struct MethodInfo {
 }
 
 /// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
-/// inlining. Today: getter pattern only — `fn name(self) -> T { return
-/// self.<field>; }`. Setter / pass-through / primitive-return patterns
+/// inlining. Today: getter pattern only — `fn name(this) -> T { return
+/// this.<field>; }`. Setter / pass-through / primitive-return patterns
 /// can land in the same enum if they prove load-bearing on a future
 /// benchmark.
 #[derive(Debug, Clone)]
 enum TrivialInline {
-    /// `fn name(self) -> FieldTy { return self.<field>; }` — Read
-    /// receiver, zero params, single-`return self.field` body. Inlines
+    /// `fn name(this) -> FieldTy { return this.<field>; }` — Read
+    /// receiver, zero params, single-`return this.field` body. Inlines
     /// to `gep inbounds %S, ptr <recv>, i32 0, i32 <field_idx>` + load.
     GetField(String),
 }
 
 /// v0.0.8 fix D: detect the trivial-getter pattern. Returns
 /// `Some(GetField(field_name))` iff the method's body is a single
-/// `return self.<field>;` statement, the receiver is `self` (Read), the
+/// `return this.<field>;` statement, the receiver is `this` (Read), the
 /// param list is empty, and the method isn't gen / async / generic.
-/// Drop methods are excluded by their `mut self` receiver. Returns
+/// Drop methods are excluded by their `ref this` receiver. Returns
 /// `None` for any other shape.
 fn detect_trivial_inline(m: &Method) -> Option<TrivialInline> {
     if !matches!(m.receiver, Some(Receiver::Read)) {
@@ -2286,7 +2286,7 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         // Copy primitives; the whole vector is a register-sized value).
         // Masks share the SIMD lowering and Copy semantics.
         Ty::Simd { .. } | Ty::Mask { .. } => true,
-        // Phase 8 slice 8.STR.3: owned `string` is non-Copy + Drop.
+        // Phase 8 slice 8.STR.3: owned `Text` is non-Copy + Drop.
         Ty::String => false,
         Ty::Error => false,
         // Slice 7GEN.4: generic type parameters never reach codegen
@@ -2299,11 +2299,11 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 /// §2.9 borrow-ABI choice for a parameter. Returns true when the LLVM signature
 /// should use `ptr` for this parameter and the callee binds it directly (no
 /// alloca, no initial store, no drop registration), so that the callee's
-/// writes propagate back to the caller's place (for `mut`) or so the caller
+/// writes propagate back to the caller's place (for `ref`) or so the caller
 /// avoids an aggregate byte-copy (for shared).
 ///
 /// Fires on:
-/// - `mut x: T` where T is a non-Copy struct (slice 5BC.codegen) — exclusive
+/// - `ref x: T` where T is a non-Copy struct (slice 5BC.codegen) — exclusive
 ///   borrow ABI; writes propagate back, paired with LLVM `noalias` in 6BC.codegen.
 /// - `x: T` where T is a non-Copy struct — shared borrow pointer-pass
 ///   paired with LLVM `readonly`. Eliminates the byte-copy at call sites of
@@ -2312,7 +2312,7 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 ///
 /// Note: a *bare* `x: T` on a non-Copy struct no longer reaches the shared-borrow
 /// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
-/// like an explicit `move x: T`. `move x: T` stays value-passed (the value is the
+/// like an explicit `take x: T`. `take x: T` stays value-passed (the value is the
 /// transfer; the caller's drop flag flip suppresses the caller-side drop).
 fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bool {
     if move_ {
@@ -2343,11 +2343,11 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bo
 /// `fn f(take x: T) -> T { return x; }` then `let c = f(b);` dropped the one heap
 /// allocation twice (caller's unconditional drop of `b` + new owner `c`'s drop).
 ///
-/// Collapsing the bare case onto the existing, sound `move x: T` lowering fixes
+/// Collapsing the bare case onto the existing, sound `take x: T` lowering fixes
 /// it: value-pass, caller flips the arg's drop flag (`mark_moved`), and the
 /// callee `register_drop`s the param so it is freed exactly once — by the callee
-/// at scope exit, or by whoever it is forwarded to. `mut x` (exclusive borrow)
-/// and `borrow x` (shared borrow) do not consume, so they keep their
+/// at scope exit, or by whoever it is forwarded to. `ref x` (exclusive borrow)
+/// and a bare `x: T` (shared borrow) do not consume, so they keep their
 /// by-pointer borrow ABI.
 ///
 /// Covers `Ty::Struct` and `Ty::Enum` (v0.0.15) and `Ty::String` (v0.0.17): each
@@ -2360,14 +2360,14 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bo
 /// on the next read.
 ///
 /// `Ty::String` was the same class (bugs/string-param-store-double-free): a bare
-/// `string` value param used the borrow ABI (caller keeps the drop) guarded only
+/// `Text` value param used the borrow ABI (caller keeps the drop) guarded only
 /// by an auto-clone-on-*return* net (`borrowed_params`). That net never fired
 /// when the param was *stored or forwarded* instead of returned (e.g.
-/// `self.v.push(s)`, `self.field = s`), so the caller's drop and the new owner's
+/// `this.v.push(s)`, `this.field = s`), so the caller's drop and the new owner's
 /// drop freed the same buffer. Routing `Ty::String` through the move lowering —
 /// value-pass, caller `mark_moved`, callee `register_value_drop` — frees it
 /// exactly once: by the callee at scope exit, or by whoever it is forwarded to.
-/// The auto-clone-on-return net now only matters for explicit `s: string`
+/// The auto-clone-on-return net now only matters for explicit `s: Text`
 /// params, which keep the borrow ABI.
 ///
 /// `Vec[T]` and other generic owning containers are `Ty::Struct` after
@@ -2384,7 +2384,7 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
 /// `noalias`/`readonly`). Composes every attribute the frontend has already
 /// proven sound:
 /// - **Pointer-passed (non-Copy struct, by §2.9 borrow ABI):**
-///   - `noalias` (`mut`/`move`) or `readonly` (shared `self`/`x: T`) — the
+///   - `noalias` (`ref`/`take`) or `readonly` (shared `this`/`x: T`) — the
 ///     borrow checker proves disjointness for the first, write-freeness for
 ///     the second.
 ///   - `nonnull` — C+ has no null in safe code (cross-ref
@@ -2398,7 +2398,7 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
 ///   plain enum `iN'`):** `noundef` alone. Definite assignment justifies it
 ///   and LLVM's `-O2` uses `noundef` to fold redundant freeze/select
 ///   patterns.
-/// - **Value-passed aggregate (`str`, `string`, `T[]`, Copy struct, tagged
+/// - **Value-passed aggregate (`str`, `Text`, `T[]`, Copy struct, tagged
 ///   enum):** no attributes. Padding bytes are LLVM-`poison` after
 ///   `insertvalue` construction, so `noundef` would be unsound at the
 ///   aggregate level.
@@ -2451,7 +2451,7 @@ fn param_attrs(
 /// The plan describes `sret` for "non-Copy structs, slices, owned strings,
 /// or any aggregate exceeding a target-specific size threshold (start with
 /// > 16 bytes)". This implementation ships the **narrow** version: only
-/// owned `string` (24 bytes, has Drop, the canonical case where copy
+/// owned `Text` (24 bytes, has Drop, the canonical case where copy
 /// elision matters most). Generic non-Copy struct sret is deferred — it
 /// has substantial test-surface impact and the wins for small aggregates
 /// (≤ 16 bytes) are negligible at -O2 because LLVM already lowers them
@@ -2460,7 +2460,7 @@ fn param_attrs(
 /// `extern fn` boundaries are never sret-modified — those keep the C ABI
 /// the user declared. The callers of this predicate check `is_extern`
 /// before calling.
-/// Phase 5 Slice 5.D: classify a `pub extern fn` parameter or return type
+/// Phase 5 Slice 5.D: classify an `export extern fn` parameter or return type
 /// against the platform C ABI. Today we target aarch64-apple-darwin —
 /// the AArch64 Procedure Call Standard — and treat all aggregates as
 /// integer-class (no HFA detection; the plan defers float-class to v2).
@@ -2585,7 +2585,7 @@ fn classify_c_abi_impl(
     // register class and passes through cleanly.
     let is_aggregate = match ty {
         // Plain enums lower to i32 (scalar). Tagged enums are aggregates —
-        // but sema's 5.C predicate rejects them at the `pub extern fn`
+        // but sema's 5.C predicate rejects them at the `export extern fn`
         // boundary, so we never see one here. Defensively handle anyway:
         // a tagged enum reaching codegen for an extern fn would still
         // need coercion (and a future spec for the layout); treat as
@@ -2743,7 +2743,7 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
 /// area `[N x i64]`: the sum of the i64-padded sizes of the values before it
 /// (value 0 is at offset 0). Replaces the old slot-index GEP (`i64 pi`), which
 /// assumed one 8-byte slot per value and corrupted layout when an earlier value
-/// exceeded 8 bytes (a `string`/struct/enum payload before another). For
+/// exceeded 8 bytes (a `Text`/struct/enum payload before another). For
 /// all-≤8-byte payloads the offset equals `pi * 8`, identical to the old GEP.
 fn enum_payload_byte_offset(payload_tys: &[Ty], pi: usize, types: &TypeTable) -> u64 {
     let mut off: u64 = 0;
@@ -2846,7 +2846,7 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
 
 /// Slice 1C: scoped `!alias.scope` / `!noalias` metadata publication.
 ///
-/// The borrow checker proves that for every pointer-passed `mut`/`move`
+/// The borrow checker proves that for every pointer-passed `ref`/`take`
 /// param (the ones that carried `noalias` from Slice 1A), no other live
 /// pointer in the same function reaches the same memory. That fact is
 /// already encoded as the `noalias` parameter attribute — but parameter
@@ -2951,7 +2951,7 @@ fn extract_ptr_operand(s: &str) -> Option<String> {
 }
 
 /// True iff `ty` lowers to a single LLVM scalar (one register class).
-/// Aggregates (`str`, `string`, `T[]`, structs, tagged enums) are not
+/// Aggregates (`str`, `Text`, `T[]`, structs, tagged enums) are not
 /// scalars even when small. Used to decide whether `noundef` is sound on a
 /// value-passed parameter — aggregates carry `poison` padding so the
 /// whole-value `noundef` would be unsound.
@@ -2983,8 +2983,8 @@ fn is_scalar_ty(ty: &Ty, types: &TypeTable) -> bool {
 }
 
 /// Slice 6BC.opt move-scanning walker. Walks a function body collecting
-/// the names of bindings used at any `move`-position argument or `move
-/// self` receiver. Pure syntactic + callee-signature consultation —
+/// the names of bindings used at any move-position argument or `take
+/// this` receiver. Pure syntactic + callee-signature consultation —
 /// doesn't reason about flow, so a binding moved inside an `if` arm
 /// still counts as "moved somewhere." That's correct: if there's ANY
 /// path that moves the binding, the drop flag must be runtime-checked.
@@ -3128,7 +3128,7 @@ fn scan_moves_in_expr(
                 }
             }
             // Method calls: `recv.method(args)` — when `method` has
-            // `move self`, the receiver binding is moved. We don't
+            // `take this`, the receiver binding is moved. We don't
             // try to resolve method sigs from sigs; method-move is
             // detected via the type table lookup that codegen does
             // at the call site. Simplest conservative rule: if the
@@ -3153,7 +3153,7 @@ fn scan_moves_in_expr(
                 }
                 // G-027 fix: method calls also need to register
                 // bare-Ident args at positions where the method's
-                // param is `move`-marked. Pre-fix, codegen's
+                // param is `take`-marked. Pre-fix, codegen's
                 // call-site mark_moved fired on the local but
                 // find_drop_flag returned the `.unused` sentinel
                 // (since the binding wasn't pre-registered as a
@@ -3269,7 +3269,7 @@ fn scan_moves_in_expr(
             // shape as Let-init-from-Ident or Return-Ident. Compound
             // assigns (`+=`, etc.) read+modify and don't transfer
             // ownership, so they don't qualify. The most-cited surface
-            // is the raw-pointer store inside `unsafe { *p = val; }`
+            // is the raw-pointer store `*p = val;`
             // (used by `Box::new[T]`, `arena::alloc[T]`, and any
             // hand-rolled "copy into heap slot" helper).
             if matches!(op, AssignOp::Assign) {
@@ -3280,7 +3280,7 @@ fn scan_moves_in_expr(
                 // whatever the binding currently owns; a Drop binding must
                 // drop that old value first (else it leaks). That pre-drop is
                 // gated on a runtime liveness flag (a deferred-init
-                // `let mut x: T;` has nothing to drop on its first assignment),
+                // `var x: T;` has nothing to drop on its first assignment),
                 // so force the target onto the Runtime-drop-flag path here, the
                 // same way a moved binding is. `register_drop_kind` ignores
                 // this for non-Drop bindings, so it is a no-op for `i32` etc.
@@ -3382,8 +3382,10 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             return Ty::Array(Box::new(elem_ty), *len);
         }
         // Slice 6BC.5: region annotations are transparent at codegen
-        // time. `borrow A T` lowers exactly like T — the region is
-        // borrow-checker metadata, not a runtime construct.
+        // time. A region-annotated type lowers exactly like its inner T —
+        // the region was borrow-checker metadata, not a runtime construct.
+        // (The `borrow A T` region syntax is retired as of v0.0.24; this
+        // arm survives only for any residual `TypeKind::Borrowed` AST node.)
         TypeKind::Borrowed { inner, .. } => return ty_from(inner, types),
         // Slice 7GEN.5c: monomorphize rewrites every `TypeKind::Generic`
         // to a concrete `TypeKind::Path(mangled_name)` before codegen.
@@ -3674,7 +3676,7 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // targets those paths fail loudly at IR verification rather than
         // miscompile.
         Ty::Str => format!("{{ ptr, {} }}", usize_llvm_ty()),
-        // Phase 8 slice 8.STR.3: owned `string` is { ptr, len, cap } —
+        // Phase 8 slice 8.STR.3: owned `Text` is { ptr, len, cap } —
         // 24 bytes on 64-bit. Passed by value; the ptr is the only field
         // codegen ever sees per-call, but the cap field is what `drop`
         // reads when freeing the buffer.
@@ -3818,7 +3820,7 @@ fn write_preamble(out: &mut String) {
     out.push_str(&format!(
         "declare i32 @memcmp(ptr noundef readonly, ptr noundef readonly, {us} noundef)\n"
     ));
-    // Phase 8 slice 8.STR.3: owned `string` runtime. malloc + free for
+    // Phase 8 slice 8.STR.3: owned `Text` runtime. malloc + free for
     // construction + Drop; memcpy for clone. realloc reserved for future
     // mutation API (not used in v1).
     //
@@ -5284,7 +5286,7 @@ fn gen_function(
     // Param attributes (noalias/readonly) are skipped — they're only sound
     // on C+ fns whose call sites the borrow checker has analyzed.
     //
-    // Phase 5 Slice 5.C: `pub extern fn name(...) { body }` is the export
+    // Phase 5 Slice 5.C: `export extern fn name(...) { body }` is the export
     // form (definition). Parser sets `is_pub` only on that shape. Fall
     // through to normal `define` emission for those — they're regular
     // function bodies that happen to commit to a stable C-callable
@@ -5303,7 +5305,7 @@ fn gen_function(
         // Preamble-declared libc symbols. Skip re-emission if a user's
         // `extern fn malloc/free/memcpy` shadows; we trust the user's
         // signature matches the preamble's (i64 args / ptr returns). The
-        // preamble shapes are the ones the `string` runtime emits calls
+        // preamble shapes are the ones the `Text` runtime emits calls
         // against — a divergent user signature would mis-link anyway.
         if matches!(
             resolved_symbol,
@@ -5320,7 +5322,7 @@ fn gen_function(
         }
         emitted_extern_symbols.insert(resolved_symbol.to_string());
         // v0.0.12 G-027: apply the same C-ABI classification on extern
-        // *imports* that `pub extern fn` *exports* already use. Previously
+        // *imports* that `export extern fn` *exports* already use. Previously
         // the import side emitted `declare %T @f(...)` for any return type
         // — the AArch64-Darwin ABI requires structs >16B to be returned
         // via a hidden `ptr sret(%T)` first arg, and clang on the C side
@@ -5384,7 +5386,7 @@ fn gen_function(
         return;
     }
 
-    // Function header. Non-Copy `mut x: T` params lower to a `ptr noalias`
+    // Function header. Non-Copy `ref x: T` params lower to a `ptr noalias`
     // parameter (§2.9 exclusive borrow ABI, with 6BC.codegen's `noalias`
     // attribute proving uniqueness to LLVM). Non-Copy shared `x: T` params
     // lower to `ptr readonly` — pointer-pass avoids the byte-copy and the
@@ -5392,12 +5394,12 @@ fn gen_function(
     // Everything else stays value-passed.
     //
     // Slice 1D: when the return type triggers `return_passes_by_sret`
-    // (currently: owned `string` only), rewrite the signature so the
+    // (currently: owned `Text` only), rewrite the signature so the
     // result lands at a caller-provided slot. The sret pointer is the
     // first param (%0), and the user-declared params shift by one. The
     // function returns `void`.
     // Phase 5 Slice 5.D: classify return + params against the C ABI when
-    // this is a `pub extern fn` export. Indirect returns flow through the
+    // this is an `export extern fn` export. Indirect returns flow through the
     // existing Slice 1D `sret` path; ≤16-byte aggregate returns coerce
     // to integer-class types; scalar returns pass through.
     let is_c_export = f.is_extern && f.is_pub;
@@ -5416,10 +5418,10 @@ fn gen_function(
         CAbiClass::Direct
     };
     // C-ABI unification: a by-value COPY struct uses the C-ABI classification
-    // (Coerce/Indirect) in EVERY function — not just `pub extern fn` — so a cpc
+    // (Coerce/Indirect) in EVERY function — not just `export extern fn` — so a cpc
     // fn taking a `#[repr(C)]`-style value struct is C-callable and a fn-pointer
     // to it is a real C function pointer. Non-Copy structs keep cpc's ownership
-    // ABI (plain → `ptr`, `move` → raw value): they carry `Drop`, which sema
+    // ABI (plain → `ptr`, `take` → raw value): they carry `Drop`, which sema
     // bars from the C boundary, so they never cross to C. Scalars are `Direct`.
     let _ = is_c_export;
     let param_abis: Vec<CAbiClass> = sig
@@ -5437,7 +5439,7 @@ fn gen_function(
         })
         .collect();
 
-    // Existing Slice 1D path: owned `string` returns use sret. 5.D adds
+    // Existing Slice 1D path: owned `Text` returns use sret. 5.D adds
     // sret for any C-export with an Indirect-class return (>16 bytes).
     // v0.0.3 Slice 1P widens to non-Copy structs for non-C-export fns
     // (cross-module heap-owning struct return drop-after-move).
@@ -5460,14 +5462,14 @@ fn gen_function(
     };
     let ret_ty_str = llvm_ty(&return_ty, types); // raw underlying type (e.g. for sret(...))
     let sret_param_offset: u32 = if uses_sret { 1 } else { 0 };
-    // Phase 5 Slice 5.B: in library builds, non-`pub` items get
+    // Phase 5 Slice 5.B: in library builds, non-`export` items get
     // `internal` linkage so LTO can strip them out of the final
     // `.dylib` / `.a`. Executable builds keep external linkage (matches
     // pre-5.B behavior; the existing test substring assertions pin that).
-    // `main` is the linker entry point and always external. `pub` items
+    // `main` is the linker entry point and always external. `export` items
     // form the public ABI and stay external in lib mode.
     // v0.0.3 Slice 3D: roll lib-mode internal linkage out to executable
-    // builds. `main` and `pub` items stay external (linker entry +
+    // builds. `main` and `export` items stay external (linker entry +
     // public ABI); everything else is `internal` so LTO can strip
     // unused helpers. The `is_lib` parameter no longer gates this rule.
     let linkage = if f.name.name == "main" || f.is_pub {
@@ -5610,16 +5612,16 @@ fn gen_function(
     // Phase 5 Slice 5.D: coerced returns flow through StmtKind::Return.
     state.coerce_ret = coerce_ret_ty.clone();
 
-    // Bind params. Pointer-passed params (`mut x: T` non-Copy) bind directly
+    // Bind params. Pointer-passed params (`ref x: T` non-Copy) bind directly
     // to the SSA argument — no alloca, no initial store — exactly like
-    // receivers. Value-passed params copy into an alloca; `move`-marked Drop
-    // params register a scope-exit drop. Non-`move` value-passed params are
+    // receivers. Value-passed params copy into an alloca; `take`-marked Drop
+    // params register a scope-exit drop. Non-`take` value-passed params are
     // left unregistered to avoid double-free of the caller's value.
     //
     // Slice 1D: when sret is in effect, the user-declared params are at
     // SSA indices 1..N instead of 0..N-1 — the sret slot occupies %0.
     //
-    // Phase 5 Slice 5.D: `pub extern fn` exports apply C-ABI param
+    // Phase 5 Slice 5.D: `export extern fn` exports apply C-ABI param
     // coercions per `param_abis`:
     //   - Coerce: alloca a slot sized for the coerced type (≥ struct size,
     //     so the coerced store doesn't overflow), store the coerced SSA
@@ -5678,7 +5680,7 @@ fn gen_function(
             slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
-        // v0.0.5 Slice 1A: value-passed non-`move` Drop param. The
+        // v0.0.5 Slice 1A: value-passed non-`take` Drop param. The
         // aggregate is a bit-copy of the caller's; its heap pointer
         // (Ty::String → {ptr, len, cap}, Vec[T] → {ptr, len, cap},
         // etc.) ALIASES the caller's. Returning this binding without
@@ -5690,11 +5692,11 @@ fn gen_function(
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            // A moved-in owning value (string, struct with owning fields, or
+            // A moved-in owning value (Text, struct with owning fields, or
             // tagged enum with owning payloads) is the callee's to tear down.
             // `register_value_drop` is a no-op for trivially-droppable types and
             // flips to a runtime drop flag when the binding is forwarded out, so
-            // a `string` param stored into a Vec/field (v0.0.17, the
+            // a `Text` param stored into a Vec/field (v0.0.17, the
             // bugs/string-param-store-double-free fix) is freed exactly once.
             // A parameter always holds a live value on entry → initialized.
             state.register_value_drop(&param.name.name, &slot, pty, true);
@@ -5808,7 +5810,7 @@ fn gen_function(
 /// Generic async fns work because monomorphization fires before
 /// codegen (the async fn is a regular `Function` post-mono).
 /// v0.0.5 Phase 2B: lower a generator method (e.g.
-/// `pub gen fn iter(self) -> T`) to an LLVM coroutine returning
+/// `export gen fn iter(this) -> T`) to an LLVM coroutine returning
 /// `Iterator[T]`. Mirrors `gen_gen_function`'s overall shape but
 /// adapts to the method's receiver-prefix parameter layout.
 /// v0.0.5 Phase 4 Slice 4B: lower an `async fn` method to an LLVM
@@ -5847,7 +5849,7 @@ fn gen_async_method(
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
-    // v0.0.8 fix C: non-pub async method → eligible for fastcc.
+    // v0.0.8 fix C: non-export async method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
     } else {
@@ -5962,8 +5964,8 @@ fn gen_async_method(
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name, Ty::Struct(struct_id));
         } else {
-            // v0.0.8 fix A: Copy `self` (Read) arrives by value; spill to
-            // a slot so `self.x` field reads keep their place shape.
+            // v0.0.8 fix A: Copy `this` (Read) arrives by value; spill to
+            // a slot so `this.x` field reads keep their place shape.
             let slot = state.alloca_named("self", Ty::Struct(struct_id));
             state.body.push_str(&format!(
                 "  store {} %{}, ptr {}\n",
@@ -6082,7 +6084,7 @@ fn gen_gen_method(
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
-    // v0.0.8 fix C: non-pub gen method → eligible for fastcc.
+    // v0.0.8 fix C: non-export gen method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
     } else {
@@ -6181,8 +6183,8 @@ fn gen_gen_method(
 
     let mut next_idx: u32 = 0;
     // Bind the receiver. Non-Copy receivers are pointer-passed; Copy
-    // `self` (Read) is value-passed (v0.0.8 fix A) — spill to a slot so
-    // `self.x` keeps its place shape.
+    // `this` (Read) is value-passed (v0.0.8 fix A) — spill to a slot so
+    // `this.x` keeps its place shape.
     if let Some(rcv) = sig.receiver {
         let self_by_ptr =
             !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
@@ -6295,7 +6297,7 @@ fn gen_gen_function(
     } else {
         "internal "
     };
-    // v0.0.8 fix C: non-pub gen function → eligible for fastcc.
+    // v0.0.8 fix C: non-export gen function → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&f.name.name)
     } else {
@@ -6436,7 +6438,7 @@ fn gen_async_function(
     } else {
         "internal "
     };
-    // v0.0.8 fix C: non-pub async function → eligible for fastcc.
+    // v0.0.8 fix C: non-export async function → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&f.name.name)
     } else {
@@ -6445,7 +6447,7 @@ fn gen_async_function(
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
     // Function signature. Async fns can't be C-exports (no extern
-    // pub), so we don't need the C-ABI coercion paths. They also
+    // export), so we don't need the C-ABI coercion paths. They also
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
     write!(
@@ -6470,7 +6472,7 @@ fn gen_async_function(
     // and then called `coro.promise(...)` to write to it, which
     // returned undefined behavior for non-trivial inner types. For
     // primitive Copy returns the resulting OOB writes happened to land
-    // inside the frame's slack; for `string` (24 B) and `Vec[T]` they
+    // inside the frame's slack; for `Text` (24 B) and `Vec[T]` they
     // overflowed (ASan caught it on the chained-string async test).
     //
     // The LLVM coro intrinsic contract: pass an `alloca <T>` as the
@@ -6614,10 +6616,10 @@ fn gen_async_function(
 
 /// Emit a method as a regular LLVM function with a mangled name `@Type.method`.
 /// Receivers compile to LLVM parameters:
-/// - `self` (value): a struct-typed parameter, stored in an alloca
-/// - `self` / `mut self`: a `ptr` parameter, bound directly (no alloca)
+/// - `this` (value): a struct-typed parameter, stored in an alloca
+/// - `this` / `ref this`: a `ptr` parameter, bound directly (no alloca)
 /// v0.0.5 Phase 2C: emit an inherent method declared on an enum type
-/// (`impl EnumName { fn foo(self, ...) -> T { ... } }`). Mirror of
+/// (`impl EnumName { fn foo(this, ...) -> T { ... } }`). Mirror of
 /// `gen_method` adapted for enum receivers — same coroutine dispatch
 /// for `is_gen`, same calling-convention / linkage / sret rules.
 /// Enums skip the destructor-special-case (drops are struct-only today,
@@ -6670,7 +6672,7 @@ fn gen_enum_method(
     let enum_ty = Ty::Enum(enum_id);
 
     let linkage = if m.is_pub { "" } else { "internal " };
-    // v0.0.8 fix C: non-pub enum method → eligible for fastcc.
+    // v0.0.8 fix C: non-export enum method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
     } else {
@@ -6836,7 +6838,7 @@ fn gen_gen_enum_method(
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
-    // v0.0.8 fix C: non-pub gen enum method → eligible for fastcc.
+    // v0.0.8 fix C: non-export gen enum method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
     } else {
@@ -7022,7 +7024,7 @@ fn gen_method(
     let return_ty = sig.return_type.clone();
     let struct_ty = Ty::Struct(struct_id);
 
-    // Function header. Both `self` and `mut self` lower to a `ptr` parameter
+    // Function header. Both `this` and `ref this` lower to a `ptr` parameter
     // (the struct's address). The receiver kind only affects sema-level
     // mutability checks, not the LLVM signature.
     //
@@ -7033,9 +7035,9 @@ fn gen_method(
     // cold helper. `preserve_nonecc` requires clang/LLVM 17+; macOS
     // shipped that in Xcode 15.3 (Feb 2024).
     let is_drop_method = m.name.name == "drop";
-    // v0.0.8 bench-gap fix C: non-drop, non-pub methods can use
+    // v0.0.8 bench-gap fix C: non-drop, non-export methods can use
     // `fastcc` (LLVM-internal register-passing cc). Drop methods stay
-    // `preserve_nonecc` — fastcc can't compose with it. `pub` methods
+    // `preserve_nonecc` — fastcc can't compose with it. `export` methods
     // have external linkage and must keep C cc for the public ABI.
     let cc_prefix = if is_drop_method {
         "preserve_nonecc "
@@ -7052,14 +7054,14 @@ fn gen_method(
         inline_fn_attr(&m.attributes)
     );
     let fn_attrs = fn_attrs.as_str();
-    // Phase 5 Slice 5.B: in library builds, non-`pub` methods get
+    // Phase 5 Slice 5.B: in library builds, non-`export` methods get
     // `internal` linkage. `drop` is compiler-synthesized infrastructure —
-    // not part of the public C-ABI surface even when `pub`; always
+    // not part of the public C-ABI surface even when `export`; always
     // internal in lib mode. Executable builds keep external linkage on
     // every method (matches pre-5.B behavior).
     // v0.0.3 Slice 3D: methods also pick up internal linkage in bin
-    // builds. `pub` methods stay external; `drop` (synthesized) stays
-    // internal regardless of `pub`-ness.
+    // builds. `export` methods stay external; `drop` (synthesized) stays
+    // internal regardless of `export`-ness.
     let linkage = if m.is_pub && !is_drop_method {
         ""
     } else {
@@ -7109,17 +7111,17 @@ fn gen_method(
         if !first {
             out.push_str(", ");
         }
-        // v0.0.8 bench-gap fix A: Copy `self` (Read) passes by value,
+        // v0.0.8 bench-gap fix A: Copy `this` (Read) passes by value,
         // mirroring the rule for non-receiver Copy params
         // (`param_passes_by_ptr` returns false for Copy structs). Passing
-        // `self` by pointer for a 12-byte Copy struct like V3 forces
+        // `this` by pointer for a 12-byte Copy struct like V3 forces
         // alloca → store → pass-pointer at every call site, which
         // materializes the value into memory and blocks SROA + the SLP-
         // vectorizer from seeing field-parallel arithmetic.
         //
-        // Restricted to `Read`: `mut self` / `move self` must stay
+        // Restricted to `Read`: `ref this` / `take this` must stay
         // pointer-passed even on Copy types, because the language treats
-        // mutations through `mut self` as write-through to the caller's
+        // mutations through `ref this` as write-through to the caller's
         // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
         // `b.set(42); b.get()` must observe the write).
         let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
@@ -7190,10 +7192,10 @@ fn gen_method(
         next_idx = 1;
     }
 
-    // Bind the receiver. Non-Copy receivers are pointer-passed: `self`
-    // resolves directly to the SSA pointer argument. Copy `self` (Read)
+    // Bind the receiver. Non-Copy receivers are pointer-passed: `this`
+    // resolves directly to the SSA pointer argument. Copy `this` (Read)
     // is value-passed (v0.0.8 fix A) — spill `%{idx}` to a named slot so
-    // `self.x` keeps lowering as `gep slot, 0, fld`, the place shape the
+    // `this.x` keeps lowering as `gep slot, 0, fld`, the place shape the
     // field-access codegen expects. Mirror of the value-passed
     // non-receiver param path below. Must match the signature decision
     // above.
@@ -7202,10 +7204,10 @@ fn gen_method(
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name.clone(), struct_ty.clone());
-            // `move self` consumes the receiver: the method body owns it,
-            // so we register a scope-exit drop for `self` (unless we *are*
-            // the destructor — see `in_destructor` above). For `self` /
-            // `mut self` the receiver is non-owning (post-§2.8a
+            // `take this` consumes the receiver: the method body owns it,
+            // so we register a scope-exit drop for `this` (unless we *are*
+            // the destructor — see `in_destructor` above). For `this` /
+            // `ref this` the receiver is non-owning (post-§2.8a
             // pointer-pass), so no drop.
             if matches!(rcv, Receiver::Move) && !state.in_destructor {
                 // v0.0.14 auto field-drop: extend beyond explicit-`drop` structs
@@ -7215,14 +7217,14 @@ fn gen_method(
                         state.register_drop("self", &recv_name, *id);
                     }
                     Ty::Enum(id) if state.needs_drop(&struct_ty) => {
-                        // A `move self` receiver always holds a live value.
+                        // A `take this` receiver always holds a live value.
                         state.register_drop_kind("self", &recv_name, DropKind::Enum(*id), true);
                     }
                     _ => {}
                 }
             }
         } else {
-            // Copy by-value: spill into a slot so `self.x` reads still work.
+            // Copy by-value: spill into a slot so `this.x` reads still work.
             // No drop registration: Copy and Drop are mutually exclusive.
             let slot = state.alloca_named("self", struct_ty.clone());
             state.body.push_str(&format!(
@@ -7236,10 +7238,10 @@ fn gen_method(
         next_idx += 1;
     }
 
-    // Bind non-receiver params. Pointer-passed (`mut x: T` non-Copy) bind
+    // Bind non-receiver params. Pointer-passed (`ref x: T` non-Copy) bind
     // directly to the SSA argument so writes propagate to the caller's
-    // place. Value-passed params copy into an alloca; `move`-marked Drop
-    // params register a scope-exit drop. Non-`move` value-passed params are
+    // place. Value-passed params copy into an alloca; `take`-marked Drop
+    // params register a scope-exit drop. Non-`take` value-passed params are
     // bit-duplicates of the caller's value, so codegen does NOT register a
     // drop for them (the caller still owns the original).
     for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in
@@ -7260,16 +7262,16 @@ fn gen_method(
             slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
-        // v0.0.5 Slice 1A: value-passed non-`move` Ty::String shares heap.
+        // v0.0.5 Slice 1A: value-passed non-`take` Ty::String shares heap.
         if !*move_flag && matches!(pty, Ty::String) {
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            // A moved-in owning value (string, struct with owning fields, or
+            // A moved-in owning value (Text, struct with owning fields, or
             // tagged enum with owning payloads) is the callee's to tear down.
             // `register_value_drop` is a no-op for trivially-droppable types and
             // flips to a runtime drop flag when the binding is forwarded out, so
-            // a `string` param stored into a Vec/field (v0.0.17, the
+            // a `Text` param stored into a Vec/field (v0.0.17, the
             // bugs/string-param-store-double-free fix) is freed exactly once.
             // A parameter always holds a live value on entry → initialized.
             state.register_value_drop(&param.name.name, &slot, pty, true);
@@ -7286,13 +7288,13 @@ fn gen_method(
     }
 
     // Slice 1C: scoped alias metadata. The receiver counts as a noalias
-    // param when it's `mut self` or `move self`; `self` (Read) is
+    // param when it's `ref this` or `take this`; `this` (Read) is
     // `readonly` and does NOT participate in the scope set (two shared
     // refs may alias).
     let mut noalias_ssas: Vec<u32> = Vec::new();
     if let Some(rcv) = sig.receiver {
-        // Only `mut self` / `move self` participate in the alias-scope
-        // set. `self` (Read) gets `readonly` and may legitimately alias
+        // Only `ref this` / `take this` participate in the alias-scope
+        // set. `this` (Read) gets `readonly` and may legitimately alias
         // another shared borrow. (Read is also the only case where Copy
         // receivers become by-value — a by-value receiver isn't a pointer
         // anyway. So the Mut/Move match already excludes the by-value
@@ -7351,7 +7353,7 @@ fn gen_method(
 /// codegen walks these in reverse-registration order and emits a conditional
 /// call to `T::drop(value_slot)` gated on `flag_slot`. The flag is initialized
 /// to `true` when the binding is created and flipped to `false` whenever the
-/// binding is moved out (via a `move`-marked param or `move self` receiver).
+/// binding is moved out (via a `take`-marked param or `take this` receiver).
 #[derive(Debug, Clone)]
 struct DropEntry {
     binding_name: String,
@@ -7373,9 +7375,9 @@ struct DropEntry {
 #[derive(Debug, Clone)]
 enum DropKind {
     Struct(StructId),
-    /// Phase 8 slice 8.STR.3 follow-up: owned `string`. The drop body
+    /// Phase 8 slice 8.STR.3 follow-up: owned `Text`. The drop body
     /// loads the `ptr` field from the value slot and calls `@free(ptr)`.
-    /// `@free(null)` is a libc no-op so `string::new()` (which stores
+    /// `@free(null)` is a libc no-op so `Text::new()` (which stores
     /// `null`) drops cleanly without a separate null-check.
     String,
     /// v0.0.14 enum-variant drop: a tagged enum with owning payloads. The
@@ -7457,7 +7459,7 @@ struct FnState<'a> {
     /// construction. A binding name not in this set is provably never
     /// moved, so `register_drop` picks `DropDisposition::Always`.
     moved_bindings: std::collections::HashSet<String>,
-    /// v0.0.3 Slice 3C: SSA slot names of `let mut` bindings holding
+    /// v0.0.3 Slice 3C: SSA slot names of `var` bindings holding
     /// non-Copy types. Each gets its own `!alias.scope` after body
     /// generation, paired with the param-shape scopes from Slice 1C.
     /// The borrow checker proves these locals are disjoint by virtue of
@@ -7467,7 +7469,7 @@ struct FnState<'a> {
     block_counter: u32,
     terminated: bool,
     /// True iff we are currently emitting the body of a destructor (a method
-    /// named `drop`). The receiver `self` of a destructor is *not* registered
+    /// named `drop`). The receiver `this` of a destructor is *not* registered
     /// as a Drop binding — running drop at end of drop would recurse. Other
     /// local Drop bindings inside the destructor body still register normally.
     in_destructor: bool,
@@ -7514,7 +7516,7 @@ struct FnState<'a> {
     /// `StmtKind::Return` consults it: `Some(slot)` → store the value to
     /// the slot and `ret void`; `None` → emit `ret <ty> <val>` as usual.
     sret_slot: Option<String>,
-    /// Phase 5 Slice 5.D: when emitting a `pub extern fn` whose return
+    /// Phase 5 Slice 5.D: when emitting an `export extern fn` whose return
     /// type lowers to a coerced C-ABI integer class (≤8 → i64, 9..16 →
     /// `[2 x i64]`), `StmtKind::Return` packs the value through an
     /// alloca and emits `ret <coerced>` instead of `ret <original>`.
@@ -7538,7 +7540,7 @@ struct FnState<'a> {
     /// borrowed-not-owned — the body would otherwise hand the caller's
     /// pointer back, and the caller would then double-free (caller's
     /// original binding + caller's result binding both Drop the same
-    /// heap). Closes the long-open `fn echo(x: string) -> string { return x; }`
+    /// heap). Closes the long-open `fn echo(x: Text) -> Text { return x; }`
     /// runtime bug documented in plan.md Slice 1A. The fix: when this set
     /// contains the returned ident and the return type has heap-owned
     /// Drop semantics (currently `Ty::String`), emit a deep clone so the
@@ -7859,13 +7861,13 @@ impl<'a> FnState<'a> {
         value_slot: &str,
         struct_id: StructId,
     ) -> String {
-        // `self` receivers / struct bindings reached here always hold a live
+        // `this` receivers / struct bindings reached here always hold a live
         // value at registration → `initialized: true`.
         self.register_drop_kind(binding_name, value_slot, DropKind::Struct(struct_id), true)
     }
 
     /// v0.0.14 auto field-drop: register a scope-exit drop for a binding of any
-    /// owning type — `string`, a struct with owning fields (with or without an
+    /// owning type — `Text`, a struct with owning fields (with or without an
     /// explicit `drop`), or a tagged enum with owning payloads. No-op for
     /// trivially-droppable types. Used where the binding's full `Ty` is known
     /// (lets); the param/self sites that predate enums inline their own match.
@@ -7922,7 +7924,7 @@ impl<'a> FnState<'a> {
                 // #8 fix: the flag doubles as a liveness bit. A binding
                 // initialized at its `let` (or a param / match payload, always
                 // present) starts owning a value → `true`. A deferred-init
-                // `let mut x: T;` starts empty → `false`, so the first `x = ...`
+                // `var x: T;` starts empty → `false`, so the first `x = ...`
                 // (see `gen_assign`) does not pre-drop uninitialized stack
                 // garbage. The reassignment path re-arms the flag after storing.
                 let init = if initialized { "true" } else { "false" };
@@ -7972,8 +7974,8 @@ impl<'a> FnState<'a> {
     }
 
     /// Flip a Drop binding's flag to `false`, suppressing its scope-exit
-    /// drop. Called when codegen emits a `move`-marked argument or a
-    /// `move self` receiver and the source is a plain Ident.
+    /// drop. Called when codegen emits a `take`-marked argument or a
+    /// `take this` receiver and the source is a plain Ident.
     /// v0.0.5 Phase 1C: emit the drop call for the value at `*p_val`
     /// when T has Drop. No-op for Copy / non-Drop types. Mirrors the
     /// drop-dispatch logic in `emit_conditional_drop`'s body.
@@ -8039,7 +8041,7 @@ impl<'a> FnState<'a> {
 
     /// Emit the teardown for a value of type `ty` stored at pointer `p_val`.
     ///
-    /// - `string` → free its heap buffer (`ptr` field of `{ptr,len,cap}`).
+    /// - `Text` → free its heap buffer (`ptr` field of `{ptr,len,cap}`).
     /// - `Struct` → run the user `drop` (if any) first, then auto-drop owning
     ///   fields in **reverse declaration order** (construct forward, tear down
     ///   backward).
@@ -8169,7 +8171,7 @@ impl<'a> FnState<'a> {
         // If there's no flag, the binding isn't Drop — nothing to do.
     }
 
-    /// v0.0.5 Slice 1A: deep-clone a `string` aggregate value (`{ ptr, i64
+    /// v0.0.5 Slice 1A: deep-clone a `Text` aggregate value (`{ ptr, i64
     /// len, i64 cap }`). Allocates `len` bytes on the heap, memcpies the
     /// source bytes in, returns a fresh aggregate `{ new_ptr, len, len }`.
     /// `cap` is set to `len` (tighter than the source) — the result is
@@ -8230,7 +8232,7 @@ impl<'a> FnState<'a> {
         // decides whether to gate it on the flag.
         // All drop kinds route through `gen_drop_in_place`, the single source
         // of teardown logic: a struct runs its user `drop` then auto-drops
-        // owning fields; `string` frees its buffer; a tagged enum switches on
+        // owning fields; `Text` frees its buffer; a tagged enum switches on
         // the tag and drops the active payload.
         let drop_ty = match &entry.kind {
             DropKind::Struct(id) => Ty::Struct(*id),
@@ -8512,7 +8514,7 @@ impl<'a> FnState<'a> {
                 // the time anything references this binding).
                 //
                 // #8 fix: pass the binding's init state. A deferred-init
-                // `let mut x: T;` registers with `initialized: false` so its
+                // `var x: T;` registers with `initialized: false` so its
                 // runtime drop flag starts `false` — the first `x = ...` then
                 // skips the pre-drop (there is nothing to tear down yet), and
                 // `gen_assign` re-arms the flag after the store. An initialized
@@ -8613,7 +8615,7 @@ impl<'a> FnState<'a> {
                                         // ("cannot guarantee tail call due to
                                         // mismatched return types"). Surfaced by
                                         // the extern-wrapper shape
-                                        // `pub extern fn f(..) { return g(..); }`.
+                                        // `export extern fn f(..) { return g(..); }`.
                                         // Skip musttail when either side's
                                         // return is coerced; a plain `call` is
                                         // always correct.
@@ -8709,18 +8711,18 @@ impl<'a> FnState<'a> {
                         }
                         let raw = v.expect("non-Unit return value").0;
                         // v0.0.5 Slice 1A: auto-clone-on-return-of-borrowed.
-                        // `fn echo(x: string) -> string { return x; }` lifts
+                        // `fn echo(x: Text) -> Text { return x; }` lifts
                         // the caller's pointer into the result slot; the
                         // caller's source binding stays live → both Drop the
                         // same heap → double-free at exit.
                         //
                         // When the returned expression is a bare Ident bound
                         // to a shared-borrow parameter AND the return type
-                        // is `string` (the only currently-supported heap-
+                        // is `Text` (the only currently-supported heap-
                         // owning Drop type), emit a deep clone so the result
                         // is an independent allocation. Other heap-owning
                         // generic containers (Vec[T], HashMap[K,V]) still
-                        // need explicit `move` — their element-level clone
+                        // need explicit `take` — their element-level clone
                         // needs T::clone glue which is its own slice.
                         let cloned = match (&e.kind, &ret_ty) {
                             (ExprKind::Ident(name), Ty::String)
@@ -9514,10 +9516,9 @@ impl<'a> FnState<'a> {
                     };
                     return Some((format!("@{symbol}"), ty));
                 }
-                // v0.0.9 Phase 4: module-scope `static` read. Sema
-                // already gated `static mut` reads behind `unsafe`;
-                // codegen unconditionally emits a load against the
-                // global symbol. Routes before the local-lookup path
+                // v0.0.9 Phase 4: module-scope `static` read. A `static`
+                // is always mutable; codegen unconditionally emits a load
+                // against the global symbol. Routes before the local-lookup path
                 // so a local binding that shadows a static (which
                 // sema would have prevented via E0301) doesn't shadow
                 // here either.
@@ -9538,8 +9539,8 @@ impl<'a> FnState<'a> {
             }
 
             ExprKind::Block(b) => self.gen_block_expr(b),
-            // Slice 10.FFI.3: `unsafe { ... }` is a marker for sema;
-            // codegen treats it as a regular block.
+            // Slice 10.FFI.3: a block expression; codegen treats it as a
+            // regular block (v0.0.24 removed the `unsafe` block wrapper).
 
             // v0.0.3 Phase 5 Slice 5E.3: `await EXPR`. EXPR evaluates
             // to a `Future[U]`; we drive it to completion in a
@@ -9906,8 +9907,8 @@ impl<'a> FnState<'a> {
 
     /// v0.0.10 Phase 4 (GPU binding-layer wedge): lower `#selector(...)`,
     /// `#msg_send(...)`, and `#compile_shader(...)` intrinsics. Sema has
-    /// already validated each call (string-literal args, unsafe context,
-    /// etc.) and populated the per-module tables (`selectors`,
+    /// already validated each call (string-literal args, etc.) and
+    /// populated the per-module tables (`selectors`,
     /// `shader_blobs`) consumed by the pre-passes. Codegen's job is the
     /// per-call lowering.
     fn gen_intrinsic(
@@ -10558,11 +10559,10 @@ impl<'a> FnState<'a> {
     fn gen_place(&mut self, e: &Expr) -> (String, Ty) {
         match &e.kind {
             ExprKind::Ident(name) => {
-                // v0.0.9 Phase 4: module-scope `static mut` write. The
+                // v0.0.9 Phase 4: module-scope `static` write. The
                 // global symbol IS the place — no alloca, no load.
-                // Sema rejected writes to immutable statics (E0305)
-                // and gated `static mut` writes behind `unsafe`
-                // (E0X34), so reaching here means a permitted write.
+                // A `static` is always mutable, so reaching here means a
+                // permitted write.
                 let static_ty: Option<Ty> = self.md.statics.borrow().get(name).cloned();
                 if let Some(ty) = static_ty {
                     return (format!("@{name}"), ty);
@@ -10686,7 +10686,7 @@ impl<'a> FnState<'a> {
     /// a binding/static reached only through struct fields and array elements;
     /// false for anything reached through a raw pointer (`*p`, `ptr[i]`), which
     /// may point at uninitialized memory (Box::new / arena / a Vec's buffer) —
-    /// there the store is the caller's `unsafe` responsibility and a pre-drop
+    /// there the store is the caller's responsibility and a pre-drop
     /// would read garbage. The bare-Ident case is handled separately (it uses a
     /// liveness flag for deferred-init / moved-out bindings).
     fn place_is_safe_owned(&self, e: &Expr) -> bool {
@@ -11703,7 +11703,7 @@ impl<'a> FnState<'a> {
             (Ty::RawPtr(_), Ty::RawPtr(_)) => {
                 return (v, to);
             }
-            // Phase 11 / P3: integer → raw pointer. Sema gates on `unsafe`.
+            // Phase 11 / P3: integer → raw pointer (a bare cast expression).
             // If the source integer is narrower than i64, zero-extend it first
             // (`inttoptr` requires its operand to match the target pointer
             // width, which is i64 on our supported 64-bit targets).
@@ -11722,7 +11722,7 @@ impl<'a> FnState<'a> {
             }
             // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → 64-bit integer.
             // Sema's `cast_allowed` only admits `usize` / `u64` / `isize` /
-            // `i64` as targets and `check_cast` gates on `unsafe`. Lowers
+            // `i64` as targets; the cast is a bare expression. Lowers
             // to LLVM `ptrtoint`. All four target widths produce `i64` at
             // the IR level (every C+ 64-bit-int type lowers to LLVM `i64`).
             (Ty::RawPtr(_), b) if matches!(b, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
@@ -12044,7 +12044,7 @@ impl<'a> FnState<'a> {
         type_args: &[Type],
     ) -> Option<(String, Ty)> {
         // v0.0.8 bench-gap finding 1: a call may mutate any local
-        // bound by `mut x: T` / `move x: T` in the callee's
+        // bound by `ref x: T` / `take x: T` in the callee's
         // signature. Drop the field-read memo before evaluating
         // arguments so cached values can't outlive a mutation.
         self.invalidate_field_load_cache();
@@ -12066,9 +12066,9 @@ impl<'a> FnState<'a> {
         let want_musttail = self.pending_musttail;
         self.pending_musttail = false;
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
-        // For pointer-passed `mut x: T` params we take the address of the
+        // For pointer-passed `ref x: T` params we take the address of the
         // source place; for value-passed params we evaluate the value and
-        // flip the source's drop flag on a `move`.
+        // flip the source's drop flag on a `take`.
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         // Fixed (declared) params first.
         // v0.0.8 fix B (finish): mirror the callee's param attrs at the
@@ -12175,7 +12175,7 @@ impl<'a> FnState<'a> {
         }
         // Slice 10.FFI.4: variadic tail args. Each tail arg evaluated
         // at its natural type and passed by value (the C varargs ABI).
-        // No `move` semantics — varargs are inherently bit-copies.
+        // No `take` (ownership-transfer) semantics — varargs are inherently bit-copies.
         if sig.is_variadic {
             for a in args.iter().skip(sig.params.len()) {
                 let (v, ty) = self.gen_expr(a).expect("varargs tail arg has value");
@@ -12224,7 +12224,7 @@ impl<'a> FnState<'a> {
         // Slice 1D: detect sret callee. Only applies when the callee is
         // user-defined (sig has no link_name pointing at a C symbol and
         // the callee is non-variadic) and the return type triggers the
-        // predicate. The current narrow predicate fires only for `string`
+        // predicate. The current narrow predicate fires only for `Text`
         // returns (24-byte aggregate with Drop).
         // v0.0.3 Slice 1P: widen sret to non-Copy struct returns from
         // non-extern user functions, matching the widened predicate in
@@ -12306,7 +12306,7 @@ impl<'a> FnState<'a> {
                     // StmtKind::Return's value path becomes a no-op.
                     // (StmtKind::Return reads `ret_val` only — passing it
                     // None lands in the (None, Ty::Unit) arm... but
-                    // ret_ty is `string`, not Unit. Simpler: emit the
+                    // ret_ty is `Text`, not Unit. Simpler: emit the
                     // terminator + signal terminated.)
                     self.emit_terminator("ret void");
                     return None;
@@ -13169,7 +13169,7 @@ impl<'a> FnState<'a> {
         args: &[Expr],
     ) -> Option<(String, Ty)> {
         // v0.0.8 bench-gap finding 1: method calls may mutate the
-        // receiver (`fn inc(mut self)`) or any `mut`-arg-bound local.
+        // receiver (`fn inc(ref this)`) or any `ref`-arg-bound local.
         // Drop the field-read memo before lowering so a cached read
         // can't outlive a mutation. (See `gen_named_call` for the
         // same rationale.)
@@ -13263,7 +13263,7 @@ impl<'a> FnState<'a> {
         // Materialize the receiver as a place (pointer) — works for Ident,
         // Field chains, and value-producing temporaries (gen_place handles each).
         let (recv_ptr, recv_ty) = self.gen_place(receiver);
-        // Phase 8 slice 8.STR.3: blessed methods on `string` are
+        // Phase 8 slice 8.STR.3: blessed methods on `Text` are
         // intrinsic — no MethodSig lookup, no mangled-name call.
         if matches!(recv_ty, Ty::String) {
             return Some(self.gen_string_method_call(&recv_ptr, &name.name, args));
@@ -13349,9 +13349,9 @@ impl<'a> FnState<'a> {
             return Some((v, field_ty));
         }
 
-        // Build the LLVM call argument list. v0.0.8 fix A: Copy `self`
+        // Build the LLVM call argument list. v0.0.8 fix A: Copy `this`
         // (Read) is passed by value to match `gen_method`'s by-value
-        // signature. `mut self` / `move self` stay pointer-passed even on
+        // signature. `ref this` / `take this` stay pointer-passed even on
         // Copy types so writes propagate to the caller's place.
         // v0.0.8 fix B (finish): on the pointer-passed receiver, mirror
         // the callee's receiver attrs at the call site.
@@ -13404,7 +13404,7 @@ impl<'a> FnState<'a> {
         }
         let arg_str = arg_parts.join(", ");
 
-        // `move self` consumes the receiver: flip its drop flag if the
+        // `take this` consumes the receiver: flip its drop flag if the
         // receiver expression was a plain Ident bound as a Drop value.
         if matches!(rcv, Receiver::Move) {
             if let ExprKind::Ident(name) = &receiver.kind {
@@ -13960,13 +13960,13 @@ impl<'a> FnState<'a> {
         // A plain `=` to a Drop place overwrites the value it currently owns —
         // tear that old value down first, or it leaks (#8 for bindings; A1/A2
         // for fields/elements). The RHS is already evaluated above, so a move
-        // of the target out of the RHS (`x = f(move x)`) has already cleared
+        // of the target out of the RHS (`x = f(take x)`) has already cleared
         // the binding's flag and the pre-drop is correctly skipped.
         let mut stored = false;
         if matches!(op, AssignOp::Assign) && self.needs_drop(&target_ty) {
             match &target.kind {
                 // #8: a bare-Ident Drop binding. Gate the pre-drop on its
-                // liveness flag — a deferred-init `let mut x: T;` or a
+                // liveness flag — a deferred-init `var x: T;` or a
                 // moved-out binding owns nothing yet — then re-arm after the
                 // store. (`register_drop_kind` set the flag's initial value.)
                 ExprKind::Ident(n) => {
@@ -13985,7 +13985,7 @@ impl<'a> FnState<'a> {
                 // `place_is_safe_owned` excludes raw-pointer stores
                 // (`*p = v;`, `ptr[i] = v;`), which may target uninitialized
                 // memory (Box::new / arena / a Vec's buffer) and are the
-                // caller's `unsafe` responsibility.
+                // caller's responsibility.
                 ExprKind::Field { .. } | ExprKind::Index { .. } => {
                     if self.place_is_safe_owned(target) {
                         self.gen_drop_in_place(&target_ty, &slot);
@@ -14001,8 +14001,8 @@ impl<'a> FnState<'a> {
         }
         // G-023 fix: a plain `=` whose RHS was a bare-Ident source
         // consumes that binding into the destination slot. The most-
-        // cited surface is the raw-pointer store inside
-        // `unsafe { *p = val; }` (Box::new[T], arena::alloc[T]); also
+        // cited surface is the raw-pointer store
+        // `*p = val;` (Box::new[T], arena::alloc[T]); also
         // covers plain `x = y` between local bindings. Compound
         // assigns read+modify and don't transfer ownership — they
         // skip this. mark_moved is a no-op for non-Drop bindings.
@@ -14097,14 +14097,14 @@ impl<'a> FnState<'a> {
     // Lowers `"hello ${name}, n is ${n}"` to:
     //   1. For each Lit part: lookup the @.str.N global, take (ptr, len).
     //   2. For each Expr part: evaluate. If primitive/str, invoke the
-    //      blessed to_string intrinsic to produce a `string`. If
-    //      already `string`, use as-is.
+    //      blessed to_string intrinsic to produce a `Text`. If
+    //      already `Text`, use as-is.
     //   3. Compute total length = sum of all part lengths.
     //   4. malloc(total).
     //   5. memcpy each part's bytes into the buffer at the running offset.
     //   6. Build the result aggregate `{ buf, total, total }`.
     //
-    // v1 leak: any Expr-derived `string`'s buffer is malloc'd inside
+    // v1 leak: any Expr-derived `Text`'s buffer is malloc'd inside
     // to_string and never freed. Matches the broader 8.STR.3 leak
     // policy; Drop integration is a follow-up.
 
@@ -14137,7 +14137,7 @@ impl<'a> FnState<'a> {
                     let (v, t) = self.gen_expr(e).expect("interp expr has value");
                     // TEXT.R2: an owned `Text` part is passed through (its bytes
                     // are copied below; the binding still owns and drops it),
-                    // like `string` — but its value is the *named* `%Text`
+                    // like `Text` — but its value is the *named* `%Text`
                     // aggregate, so the extract must use that named type.
                     let is_text_part = matches!(&t, Ty::Struct(id)
                         if self.types.struct_defs[id.0 as usize].is_lang_string);
@@ -14588,7 +14588,7 @@ impl<'a> FnState<'a> {
         (result, Ty::Bool)
     }
 
-    /// Emit IR that produces a `string` aggregate for an arbitrary
+    /// Emit IR that produces a `Text` aggregate for an arbitrary
     /// primitive (or `str`) receiver value. Strategy:
     ///   - signed int: sign-extend to i64, snprintf("%lld") into a
     ///     32-byte malloc'd buffer, take snprintf's returned length.
@@ -14716,14 +14716,14 @@ impl<'a> FnState<'a> {
         (v, Ty::String)
     }
 
-    // ---------- Phase 8 slice 8.STR.3: owned `string` intrinsics ----------
+    // ---------- Phase 8 slice 8.STR.3: owned `Text` intrinsics ----------
     //
-    // The `string` runtime value is a 24-byte struct `{ ptr, i64, i64 }` —
+    // The `Text` runtime value is a 24-byte struct `{ ptr, i64, i64 }` —
     // (data pointer, length in bytes, capacity in bytes). Stored by value
     // in locals; produced as an LLVM aggregate via `insertvalue` so the
     // call site doesn't need to allocate a separate slot.
     //
-    // Drop is NOT integrated in this initial cut: `string` locals leak
+    // Drop is NOT integrated in this initial cut: `Text` locals leak
     // their buffer at scope exit. Wiring Drop alongside the existing
     // struct-Drop machinery is a follow-up slice — see plan.md resolved-log.
 
@@ -14853,7 +14853,7 @@ impl<'a> FnState<'a> {
         v2
     }
 
-    /// Build a `string` SSA value from three components.
+    /// Build a `Text` SSA value from three components.
     fn string_aggregate(&mut self, ptr: &str, len: &str, cap: &str) -> String {
         let us = usize_llvm_ty();
         let v0 = self.next_tmp();
@@ -14893,7 +14893,7 @@ impl<'a> FnState<'a> {
         }
     }
 
-    /// Methods on a `string` receiver. The receiver is materialized as a
+    /// Methods on a `Text` receiver. The receiver is materialized as a
     /// `ptr` to the local slot (24-byte aggregate); we load whichever
     /// fields the method needs via `getelementptr`/`load`.
     fn gen_string_method_call(
@@ -14909,7 +14909,7 @@ impl<'a> FnState<'a> {
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
-                // v0.0.7 Slice 1.2: string fat-pointer len field — usize leaf.
+                // v0.0.7 Slice 1.2: Text fat-pointer len field — usize leaf.
                 self.gen_load(&lv, &Ty::Usize, &lp);
                 (lv, Ty::Usize)
             }
@@ -14927,7 +14927,7 @@ impl<'a> FnState<'a> {
                 let pp = self.next_tmp();
                 self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
-                // v0.0.7 Slice 1.2: string ptr field — ptr leaf.
+                // v0.0.7 Slice 1.2: Text ptr field — ptr leaf.
                 self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
@@ -14949,7 +14949,7 @@ impl<'a> FnState<'a> {
                 let pp = self.next_tmp();
                 self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
-                // v0.0.7 Slice 1.2: string.clone() — ptr + len reads.
+                // v0.0.7 Slice 1.2: Text.clone() — ptr + len reads.
                 self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
@@ -15020,8 +15020,8 @@ impl<'a> FnState<'a> {
             "load" => {
                 // `f32x4::load(p)` — emit a vector load through the raw
                 // pointer. Use the lane scalar's alignment (caller's
-                // minimum contract). Misaligned addresses are UB; sema
-                // gated the call via the `unsafe { ... }` requirement.
+                // minimum contract). Misaligned addresses are UB; the raw
+                // load is self-flagging, so it's the caller's responsibility.
                 let (p, _) = self.gen_expr(&args[0]).expect("load arg");
                 let align = simd_lane_align_for(elem);
                 let out = self.next_tmp();
@@ -15188,8 +15188,8 @@ impl<'a> FnState<'a> {
             }
             "store" => {
                 // `v.store(p)` — write the vector through the raw pointer.
-                // Same alignment contract as `load`. Sema enforced
-                // `unsafe { ... }`.
+                // Same alignment contract as `load`; the raw store is
+                // self-flagging, so it's the caller's responsibility.
                 let (p, _) = self.gen_expr(&args[0]).expect("store arg");
                 let align = simd_lane_align_for(elem);
                 self.emit(&format!("store {lty} {recv}, ptr {p}, align {align}"));
@@ -16572,7 +16572,7 @@ mod tests {
         let ir = gen_src(
             "fn double(x: i32) -> i32 { return x + x; }\nfn main() -> i32 { return double(21); }",
         );
-        // v0.0.8 fix C: non-pub `double` gets internal linkage + fastcc.
+        // v0.0.8 fix C: non-export `double` gets internal linkage + fastcc.
         // Both the define and the call site emit the cc.
         assert!(ir.contains("i32 @double"));
         assert!(ir.contains("call fastcc i32 @double"));
@@ -16658,7 +16658,7 @@ mod tests {
 
     #[test]
     fn call_site_mirrors_callee_ptr_attrs() {
-        // v0.0.8 fix B (finish): when a callee declares `mut t: Tag`
+        // v0.0.8 fix B (finish): when a callee declares `ref t: Tag`
         // (non-Copy struct ptr-passed) the call site should mirror the
         // full attribute set, not just bare `ptr <addr>`. clang emits
         // these attrs at the call site too — it helps inter-procedural
@@ -16676,7 +16676,7 @@ mod tests {
             "bump definition missing param attrs, got:\n{ir}"
         );
         // Call site now mirrors the same attrs. v0.0.8 fix C: `bump`
-        // is non-pub so the call site also picks up `fastcc`.
+        // is non-export so the call site also picks up `fastcc`.
         assert!(
             ir.contains(
                 "call fastcc void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 "
@@ -16715,7 +16715,7 @@ mod tests {
     #[test]
     fn fix_d_trivial_getter_is_inlined_at_call_site() {
         // v0.0.8 bench-gap fix D: a method whose body is exactly
-        // `return self.<field>;` (no params, Read receiver, no
+        // `return this.<field>;` (no params, Read receiver, no
         // gen/async/generic) is inlined at the call site to a
         // `getelementptr inbounds` + `load`, skipping the call. The
         // method definition is still emitted (clang's DCE strips
@@ -16758,8 +16758,8 @@ mod tests {
 
     #[test]
     fn fix_d_mut_self_getter_is_not_inlined() {
-        // Negative pin: only `self` (Read) receivers trigger the
-        // inliner. `mut self` / `move self` keep the call (writes /
+        // Negative pin: only `this` (Read) receivers trigger the
+        // inliner. `ref this` / `take this` keep the call (writes /
         // ownership transfers aren't a getter shape).
         let ir = gen_src(
             "struct P { x: i32 }\n\
@@ -16963,7 +16963,7 @@ mod tests {
 
     #[test]
     fn fix_c_internal_fn_gets_fastcc() {
-        // v0.0.8 fix C: a non-pub, non-extern, non-main, not-address-
+        // v0.0.8 fix C: a non-export, non-extern, non-main, not-address-
         // taken function gets `internal fastcc`.
         let ir = gen_src(
             "fn helper(x: i32) -> i32 { return x +% x; }\n\
@@ -17058,7 +17058,7 @@ mod tests {
 
     #[test]
     fn deferred_init_drop_binding_flag_starts_false() {
-        // #8 edge: a deferred-init `let mut x: T;` registers its runtime
+        // #8 edge: a deferred-init `var x: T;` registers its runtime
         // liveness flag as `false`, so the first `x = ...` skips the pre-drop
         // (there is no value yet — dropping would tear down uninitialized stack
         // garbage). `gen_assign` re-arms the flag to `true` after each store.
@@ -17745,7 +17745,7 @@ mod tests {
              fn main() -> i32 { let _p: P = P::new(5); return 0; }",
         );
         assert!(ir.contains("%P @P.new(i32 "), "expected mangled name: {ir}");
-        // v0.0.8 fix C: `P.new` is non-pub → fastcc at the call site.
+        // v0.0.8 fix C: `P.new` is non-export → fastcc at the call site.
         assert!(
             ir.contains("call fastcc %P @P.new("),
             "expected mangled call: {ir}"
@@ -17755,7 +17755,7 @@ mod tests {
     #[test]
     fn read_self_on_copy_struct_takes_value_param() {
         // v0.0.8 bench-gap fix A: Copy receivers pass by value, so the
-        // optimizer sees `self` as a register-resident aggregate and can
+        // optimizer sees `this` as a register-resident aggregate and can
         // SROA / inline / vectorize the body. `P` has no Drop, so it's
         // Copy.
         let ir = gen_src(
@@ -17771,10 +17771,10 @@ mod tests {
 
     #[test]
     fn mut_self_on_copy_struct_stays_pointer_passed() {
-        // v0.0.8 fix A scope: only Copy `self` (Read) goes by-value.
-        // `mut self` on a Copy type stays pointer-passed so writes
-        // observed by `self.x = v` propagate to the caller's place — the
-        // language treats `mut self` as write-through, see
+        // v0.0.8 fix A scope: only Copy `this` (Read) goes by-value.
+        // `ref this` on a Copy type stays pointer-passed so writes
+        // observed by `this.x = v` propagate to the caller's place — the
+        // language treats `ref this` as write-through, see
         // `phase7_generic_typed_impl_mut_self_runs` (e2e): a follow-up
         // `b.get()` call must observe the mutation.
         let ir = gen_src(
@@ -17792,7 +17792,7 @@ mod tests {
 
     #[test]
     fn instance_call_on_copy_passes_value() {
-        // Body is `self.x +% 0` (not a bare `self.x`) so the trivial-
+        // Body is `this.x +% 0` (not a bare `this.x`) so the trivial-
         // getter inliner from v0.0.8 fix D doesn't fire — this test
         // still exercises the call-site path. (See
         // `trivial_getter_is_inlined_at_call_site` for the inline path.)
@@ -17802,7 +17802,7 @@ mod tests {
              fn main() -> i32 { let p: P = P { x: 1 }; return p.get(); }",
         );
         // Call site loads the Copy receiver and passes by value.
-        // v0.0.8 fix C: non-pub method → fastcc at call site.
+        // v0.0.8 fix C: non-export method → fastcc at call site.
         assert!(ir.contains("call fastcc i32 @P.get(%P "));
     }
 
@@ -17810,8 +17810,8 @@ mod tests {
     fn read_self_on_noncopy_struct_still_takes_ptr_param() {
         // Negative pin: the by-value lowering is gated on Copy. A
         // non-Copy struct (here, made non-Copy by an `impl Drop`) keeps
-        // the borrow-ABI pointer shape. Body is `self.x +% 0` (not a
-        // bare `self.x`) so v0.0.8 fix D's trivial-getter inliner
+        // the borrow-ABI pointer shape. Body is `this.x +% 0` (not a
+        // bare `this.x`) so v0.0.8 fix D's trivial-getter inliner
         // doesn't fire — this test still exercises the call-site path.
         let ir = gen_src(
             "struct Q { x: i32 }\n\
@@ -17822,7 +17822,7 @@ mod tests {
             ir.contains("i32 @Q.get(ptr "),
             "non-Copy receiver must stay pointer-passed: {ir}"
         );
-        // v0.0.8 fix C: non-pub Q.get → fastcc at the call site.
+        // v0.0.8 fix C: non-export Q.get → fastcc at the call site.
         assert!(
             ir.contains("call fastcc i32 @Q.get(ptr "),
             "non-Copy call site must stay pointer-passed: {ir}"
@@ -17973,20 +17973,20 @@ mod tests {
         );
     }
 
-    // ---- Phase 5 slice 5BC.codegen — §2.9 mut-borrow pointer ABI ----
+    // ---- Phase 5 slice 5BC.codegen — §2.9 ref-borrow pointer ABI ----
     //
-    // `mut x: T` on a non-Copy struct is an exclusive borrow per §2.9: the
+    // `ref x: T` on a non-Copy struct is an exclusive borrow per §2.9: the
     // callee's writes must propagate back to the caller's place. Codegen
     // lowers the parameter to a `ptr` and the call site takes the source's
     // address, so the callee operates on the caller's storage directly.
     //
-    // Copy types, `move`-marked params, and shared (`x: T`) params are
+    // Copy types, `take`-marked params, and shared (`x: T`) params are
     // unaffected — they stay value-passed.
 
     #[test]
     fn mut_param_noncopy_struct_lowers_to_ptr_noalias() {
         // Slice 6BC.codegen: Drop forces non-Copy. `bump` takes
-        // `mut t: Tag` as `ptr noalias` — the borrow checker proves
+        // `ref t: Tag` as `ptr noalias` — the borrow checker proves
         // uniqueness, so LLVM gets the strong promise.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
@@ -17999,7 +17999,7 @@ mod tests {
             "expected `ref t: Tag` to lower to `ptr noalias` param, got: {ir}"
         );
         // Call site still passes a pointer, not a struct value.
-        // v0.0.8 fix C: non-pub `bump` → fastcc at the call.
+        // v0.0.8 fix C: non-export `bump` → fastcc at the call.
         assert!(
             ir.contains("call fastcc void @bump(ptr "),
             "expected call site to pass ptr for non-Copy mut arg, got: {ir}"
@@ -18023,7 +18023,7 @@ mod tests {
             ir.contains("i32 @peek(ptr readonly "),
             "expected `t: Tag` to lower to `ptr readonly` param, got: {ir}"
         );
-        // v0.0.8 fix C: non-pub `peek` → fastcc at the call.
+        // v0.0.8 fix C: non-export `peek` → fastcc at the call.
         assert!(
             ir.contains("call fastcc i32 @peek(ptr "),
             "expected call site to pass ptr for non-Copy shared arg, got: {ir}"
@@ -18034,7 +18034,7 @@ mod tests {
     fn bare_noncopy_param_moves_value_passed() {
         // v0.0.12 fix: the v0.0.10 "non-Copy moves by default" rule, wired
         // through to codegen. A *bare* `x: T` on a non-Copy struct now lowers
-        // like an explicit `move x: T` — struct-by-value, callee drop, caller
+        // like an explicit `take x: T` — struct-by-value, callee drop, caller
         // drop-flag flip — NOT the old `ptr readonly` borrow shape. The old
         // lowering double-freed when the value was forwarded back out
         // (`fn f(take x: T) -> T { return x; }`): the caller's unconditional drop
@@ -18045,7 +18045,7 @@ mod tests {
              fn forward(take x: Tag) -> Tag { return x; }\n\
              fn main() -> i32 { let b: Tag = Tag { v: 7 }; let c: Tag = forward(b); return c.v; }",
         );
-        // Bare param is value-passed, like `move x: Tag`. (`forward` returns a
+        // Bare param is value-passed, like `take x: Tag`. (`forward` returns a
         // struct, so arg 0 is the sret pointer and the moved value is the
         // trailing `%Tag` by-value param.)
         assert!(
@@ -18065,7 +18065,7 @@ mod tests {
 
     #[test]
     fn move_param_noncopy_struct_stays_value_passed() {
-        // `move x: T` transfers ownership; the by-value LLVM signature is
+        // `take x: T` transfers ownership; the by-value LLVM signature is
         // correct (callee owns the bytes and registers a scope-exit drop;
         // caller's drop-flag is flipped at the call site).
         let ir = gen_src(
@@ -18136,7 +18136,7 @@ mod tests {
 
     #[test]
     fn mut_param_noncopy_struct_no_double_drop() {
-        // The callee bound a pointer to a non-Copy `mut` param must NOT
+        // The callee bound a pointer to a non-Copy `ref` param must NOT
         // register a scope-exit drop — only the caller owns the value.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
@@ -18187,7 +18187,7 @@ mod tests {
     #[test]
     fn mut_param_noncopy_struct_via_method_call() {
         // Same borrow-ABI rule applies to non-receiver method params:
-        // non-Copy `mut t: Tag` lowers as a `ptr noalias ...` parameter.
+        // non-Copy `ref t: Tag` lowers as a `ptr noalias ...` parameter.
         // v0.0.8 fix A: `Tool` is Copy (no Drop), so its receiver is
         // value-passed; only the second param keeps the ptr shape.
         let ir = gen_src(
@@ -18202,7 +18202,7 @@ mod tests {
                  return x.v;\n\
              }",
         );
-        // Tool.poke signature: Copy receiver by value, non-Copy mut param ptr.
+        // Tool.poke signature: Copy receiver by value, non-Copy ref param ptr.
         assert!(
             ir.contains("void @Tool.poke(%Tool "),
             "expected Copy receiver by value, got: {ir}"
@@ -18211,8 +18211,8 @@ mod tests {
             ir.contains(", ptr noalias "),
             "expected `ref t: Tag` to lower to `ptr noalias`, got: {ir}"
         );
-        // Call site: by-value receiver, ptr for the mut param.
-        // v0.0.8 fix C: non-pub Tool.poke → fastcc at the call.
+        // Call site: by-value receiver, ptr for the ref param.
+        // v0.0.8 fix C: non-export Tool.poke → fastcc at the call.
         assert!(
             ir.contains("call fastcc void @Tool.poke(%Tool "),
             "expected call to pass Copy receiver by value, got: {ir}"
@@ -18324,7 +18324,7 @@ mod tests {
 
     #[test]
     fn mut_param_noncopy_struct_emits_full_attr_set() {
-        // `mut t: Tag` (non-Copy) gets the full pointer-attribute set:
+        // `ref t: Tag` (non-Copy) gets the full pointer-attribute set:
         // noalias nonnull noundef dereferenceable(N) align A.
         // Tag = { i32 v } → size 4, align 4.
         let ir = gen_src(
@@ -18358,7 +18358,7 @@ mod tests {
 
     #[test]
     fn method_receiver_emits_receiver_attrs() {
-        // Self / mut self / move self map to readonly / noalias / noalias.
+        // this / ref this / take this map to readonly / noalias / noalias.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
@@ -18374,17 +18374,17 @@ mod tests {
                return 0;\n\
              }",
         );
-        // `self` (Read)  → readonly
+        // `this` (Read)  → readonly
         assert!(
             ir.contains("i32 @T.read(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.read receiver attrs missing, got:\n{ir}"
         );
-        // `mut self` (Mut) → noalias
+        // `ref this` (Mut) → noalias
         assert!(
             ir.contains("void @T.bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.bump receiver attrs missing, got:\n{ir}"
         );
-        // `move self` (Move) → noalias (callee owns; exclusive)
+        // `take this` (Move) → noalias (callee owns; exclusive)
         assert!(
             ir.contains("i32 @T.into(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.into receiver attrs missing, got:\n{ir}"
@@ -18411,7 +18411,7 @@ mod tests {
     fn raw_pointer_param_intptr_does_not_get_nonnull() {
         // Slice 1A negative: a `*T` value-passed param (Copy, by-value) is
         // a scalar — it gets `noundef` but NOT `nonnull`/`dereferenceable`.
-        // Raw pointers may be null in `unsafe` (slice 11.INTPTR via `0 as *T`).
+        // Raw pointers may be null (slice 11.INTPTR via `0 as *T`).
         let ir = gen_src(
             "fn take(p: *u8) -> i32 { return 0; }\n\
              fn main() -> i32 { return take({ 0 as *u8 }); }",
@@ -18639,7 +18639,7 @@ mod tests {
 
     // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
     //
-    // Borrowck proves that for every pointer-passed `mut`/`move` non-Copy
+    // Borrowck proves that for every pointer-passed `ref`/`take` non-Copy
     // param, no other live pointer in the same function reaches the same
     // memory. Slice 1A encodes this as the `noalias` param attribute —
     // which degrades after inlining. Scoped alias metadata survives
@@ -18647,7 +18647,7 @@ mod tests {
 
     #[test]
     fn two_mut_noncopy_params_emit_domain_and_scopes() {
-        // `swap(mut a: Tag, mut b: Tag)` has two noalias-shaped pointers.
+        // `swap(ref a: Tag, ref b: Tag)` has two noalias-shaped pointers.
         // The function gets one domain MD node and two scope nodes.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
@@ -18683,7 +18683,7 @@ mod tests {
 
     #[test]
     fn scope_propagates_through_gep_to_field_loads() {
-        // A direct field read on a `mut` non-Copy param GEPs off the param's
+        // A direct field read on a `ref` non-Copy param GEPs off the param's
         // SSA, then loads. The post-pass should propagate the scope from the
         // GEP source to the load.
         let ir = gen_src(
@@ -18754,8 +18754,8 @@ mod tests {
 
     #[test]
     fn method_receiver_and_mut_param_participate_in_scope_set() {
-        // `mut self` is pointer-passed-and-exclusive; combined with a
-        // separate `mut other: T` param, we have two scopes.
+        // `ref this` is pointer-passed-and-exclusive; combined with a
+        // separate `ref other: T` param, we have two scopes.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
@@ -18801,8 +18801,8 @@ mod tests {
 
     #[test]
     fn shared_self_receiver_does_not_get_scope() {
-        // `self` (Read) is readonly, NOT noalias. A method with `self` +
-        // a mut param has only one noalias-shaped pointer → no metadata.
+        // `this` (Read) is readonly, NOT noalias. A method with `this` +
+        // a ref param has only one noalias-shaped pointer → no metadata.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
@@ -18946,9 +18946,9 @@ mod tests {
         // cc that skips callee-save register saves). Other methods stay
         // out of that path.
         //
-        // v0.0.8 fix C: non-pub, non-drop methods now get `fastcc` (a
+        // v0.0.8 fix C: non-export, non-drop methods now get `fastcc` (a
         // different cc, but distinct from `preserve_nonecc`). Verify
-        // both: `R.drop` uses preserve_nonecc; `R.bump` (non-pub
+        // both: `R.drop` uses preserve_nonecc; `R.bump` (non-export
         // non-drop) uses fastcc.
         let ir = gen_src(
             "struct R { v: i32 }\n\
@@ -18994,7 +18994,7 @@ mod tests {
              }\n\
              fn main() -> i32 { return sum_to(10, 0); }",
         );
-        // The recursive call must be musttail. v0.0.8 fix C: non-pub
+        // The recursive call must be musttail. v0.0.8 fix C: non-export
         // `sum_to` → fastcc; musttail call site must mirror the cc.
         let line = ir
             .lines()
@@ -19042,7 +19042,7 @@ mod tests {
              fn main() -> i32 { return caller(0); }",
         );
         // caller → short_id: same signature, same return → musttail.
-        // v0.0.8 fix C: non-pub `short_id` → fastcc at the call.
+        // v0.0.8 fix C: non-export `short_id` → fastcc at the call.
         assert!(
             ir.contains("musttail call fastcc i32 @short_id"),
             "expected matching-sig musttail, got:\n{ir}"
@@ -19161,7 +19161,7 @@ mod tests {
 
     // ---- Phase v0.0.2 Slice 1D: sret for owned-string returns ----
     //
-    // Owned `string` is the canonical sret case: 24-byte aggregate with
+    // Owned `Text` is the canonical sret case: 24-byte aggregate with
     // Drop. Returning by value forces LLVM to copy through registers +
     // memory; `sret` collapses to a single write into the caller's slot.
     // The narrow scope (string only) bounds the ABI-change blast radius.
@@ -19203,7 +19203,7 @@ mod tests {
             "{OWNED24}fn greet() -> S24 {{ return mk24(); }}\n\
              fn main() -> i32 {{ let s: S24 = greet(); return 0; }}"
         ));
-        // v0.0.8 fix C: non-pub `greet` → fastcc at the call.
+        // v0.0.8 fix C: non-export `greet` → fastcc at the call.
         assert!(
             ir.contains("call fastcc void @greet(ptr "),
             "expected void-returning call to greet, got:\n{ir}"
@@ -19225,7 +19225,7 @@ mod tests {
         // with a direct struct return — the call wrote args into x0
         // where the callee expected the sret pointer → SIGSEGV.
         //
-        // `string` is a 24-byte aggregate (ptr, len, cap); any 24B
+        // `Text` is a 24-byte aggregate (ptr, len, cap); any 24B
         // `#[repr(C)]` struct would hit the same path.
         let ir = gen_src(&format!(
             "{OWNED24}extern fn make_str() -> S24;\n\
@@ -19332,7 +19332,7 @@ mod tests {
 
     #[test]
     fn primitive_returning_fn_keeps_value_abi() {
-        // Slice 1D narrow scope: only `string` triggers sret. i32 returns
+        // Slice 1D narrow scope: only `Text` triggers sret. i32 returns
         // continue to use the value form.
         let ir = gen_src(
             "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
@@ -19379,7 +19379,7 @@ mod tests {
         let c_start = ir.find("void @caller(").expect("caller emitted");
         let c_end = ir[c_start..].find("\n}\n").expect("caller close");
         let c_body = &ir[c_start..c_start + c_end];
-        // v0.0.8 fix C: non-pub helper → fastcc; the musttail call site
+        // v0.0.8 fix C: non-export helper → fastcc; the musttail call site
         // must mirror it.
         assert!(
             c_body.contains("musttail call fastcc void @helper(ptr sret(")
@@ -20348,7 +20348,7 @@ mod tests {
     fn non_extern_copy_struct_param_uses_c_abi() {
         // C-ABI unification: a regular (non-extern) C+ fn taking a by-value COPY
         // struct now lowers it per the platform C ABI — an 8-byte {i32,i32}
-        // coerces to `i64`, the SAME as `pub extern fn` and as clang — so the fn
+        // coerces to `i64`, the SAME as `export extern fn` and as clang — so the fn
         // is C-callable and a fn-pointer to it is a real C function pointer.
         // (Previously native fns kept the raw `%Point` aggregate, diverging from
         // C and segfaulting fn-pointer-to-C calls.)
@@ -20390,7 +20390,7 @@ mod tests {
 
     // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
     //
-    // For every pointer-passed `mut`/`move` param (the ones already
+    // For every pointer-passed `ref`/`take` param (the ones already
     // carrying `noalias` from Slice 1A), publish a unique scope inside a
     // per-function domain. Loads/stores derived from each param carry
     // `!alias.scope` of their own scope and `!noalias` of all other
@@ -20457,7 +20457,7 @@ mod tests {
 
     #[test]
     fn non_copy_locals_get_alias_scope() {
-        // v0.0.3 Slice 3C: two `let mut` non-Copy locals in a function
+        // v0.0.3 Slice 3C: two `var` non-Copy locals in a function
         // produce two `!alias.scope` annotations on their loads/stores.
         // Domain is per-function, scopes are `l0`/`l1` (locals only,
         // no noalias params in main).
@@ -20483,7 +20483,7 @@ mod tests {
         // Two `t: T` shared params get `readonly`, not `noalias`. The
         // borrow checker doesn't prove they're disjoint, so the *sum*
         // function itself doesn't publish alias.scope on its params.
-        // (Locals + mut/move params still get scopes per Slice 1C/3C —
+        // (Locals + ref/take params still get scopes per Slice 1C/3C —
         // we scope this test to the sum function's IR.)
         let ir = gen_src(
             "struct T { v: i32 }\n\
@@ -20511,8 +20511,8 @@ mod tests {
 
     #[test]
     fn method_mut_self_plus_mut_param_get_scopes() {
-        // `mut self` (Receiver::Mut → noalias-shaped, idx 0) and a
-        // non-Copy mut param both participate.
+        // `ref this` (Receiver::Mut → noalias-shaped, idx 0) and a
+        // non-Copy ref param both participate.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
@@ -20607,7 +20607,7 @@ mod tests {
         // codegen with "let init produces a value" because `expr_value_ty`
         // didn't handle string literals, so `gen_if` allocated no result slot
         // and returned None. (The struct case was already fixed; fat-pointer
-        // `str`/`string` arms were the residual.) Fixed by adding StrLit/
+        // `str`/`Text` arms were the residual.) Fixed by adding StrLit/
         // InterpStr to `expr_value_ty`.
         let ir = gen_src(
             "fn main() -> i32 {\n\

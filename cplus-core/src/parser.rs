@@ -249,9 +249,9 @@ impl Parser {
         // don't carry attributes in Phase 5 (per-method placement instead),
         // so an attribute followed by `impl` is rejected here.
         let attributes = self.parse_attributes()?;
-        // Optional `pub` prefix (slice 4B). Stays attached to the item that
-        // follows; `impl` blocks themselves don't take `pub` (per-method
-        // `pub` instead), so a `pub impl` is rejected.
+        // Optional `export` prefix (slice 4B). Stays attached to the item that
+        // follows; `impl` blocks themselves don't take `export` (per-method
+        // `export` instead), so an `export impl` is rejected.
         // v0.0.24 #10: `export` marks the C-ABI / linker / header surface
         // (external linkage + header emission + C-ABI check). Visibility is
         // name-based now, so `is_pub` no longer gates privacy — it means
@@ -284,7 +284,8 @@ impl Parser {
             TokenKind::TypeKw => self.parse_type_alias(is_pub, attributes),
             // v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;`.
             TokenKind::Const => self.parse_const_decl(is_pub, attributes),
-            // v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`.
+            // v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;` (every
+            // `static` is mutable in v0.0.24; there is no `static mut`).
             TokenKind::Static => self.parse_static_decl(is_pub, attributes),
             // v0.0.15: module-scope `#asm("...");` global asm item. The
             // `parse_attributes` loop above already declined to treat this
@@ -465,7 +466,7 @@ impl Parser {
     }
 
     /// Parse an optional `[T, U: Bound + Bound2]` generic-param list. Shared
-    /// by inherent-impl targets and `unsafe impl Arc[T: Send + Sync]: Send`
+    /// by inherent-impl targets and `impl Arc[T: Send + Sync]: Send`
     /// conditional marker impls. Returns an empty Vec when no `[` follows.
     fn parse_optional_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
         if !self.at(&TokenKind::LBracket) {
@@ -607,7 +608,7 @@ impl Parser {
         //
         // The target carries any generic params (`impl Vec[T] { ... }`,
         // `impl Vec[T]: Iterator { ... }`) and, for a conditional marker impl,
-        // the bound that gates it (`unsafe impl Arc[T: Send + Sync]: Send {}` —
+        // the bound that gates it (`impl Arc[T: Send + Sync]: Send {}` —
         // "Arc[X] is Send iff X is Send + Sync"). Interfaces stay plain (generic
         // interface impls deferred), so params bind to the target, parsed right
         // after its ident. The `[...]` generic params are consumed before the
@@ -644,10 +645,10 @@ impl Parser {
 
     /// Slice 7GEN.3: parse an `interface Name { ... }` declaration.
     /// The body is a sequence of method-signature declarations
-    /// `fn name(self, ...) -> T;` — note the trailing `;` in place of
-    /// a method body. Receivers (`self` / `mut self` / `move self`)
+    /// `fn name(this, ...) -> T;` — note the trailing `;` in place of
+    /// a method body. Receivers (`this` / `ref this` / `take this`)
     /// are admitted; no-receiver methods (associated functions) are
-    /// also legal. `Self` may appear in parameter / return types
+    /// also legal. `This` may appear in parameter / return types
     /// (parsed as `TypeKind::Path("Self")` — sema substitutes at
     /// impl-resolution).
     fn parse_interface_decl(
@@ -736,7 +737,7 @@ impl Parser {
         }
         // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
         // async methods) modifier before `fn`. Methods can be generators
-        // so `Vec[T]::iter(self) -> T` reads naturally.
+        // so `Vec[T]::iter(this) -> T` reads naturally.
         let is_async = self.eat(&TokenKind::Async);
         let is_gen = self.eat(&TokenKind::Gen);
         let start = self.expect(&TokenKind::Fn, "`fn`")?.span;
@@ -748,7 +749,7 @@ impl Parser {
         let generic_params = self.parse_generic_params()?;
         self.expect(&TokenKind::LParen, "`(`")?;
 
-        // Optional receiver as the first param: `self`, `&self`, `&mut self`.
+        // Optional receiver as the first param: `this`, `ref this`, `take this`.
         let receiver = self.try_parse_receiver()?;
 
         // Remaining params: zero or more, separated by commas. If we had a
@@ -796,9 +797,9 @@ impl Parser {
         })
     }
 
-    /// Try to parse a receiver (`self`, `mut self`, or `move self`) at the
+    /// Try to parse a receiver (`this`, `ref this`, or `take this`) at the
     /// start of a method's parameter list. Returns None and rewinds if no
-    /// receiver. The combinations `mut move self` and `move mut self` are
+    /// receiver. The combinations `ref take this` and `take ref this` are
     /// rejected as parse errors (mutually exclusive modifiers).
     fn try_parse_receiver(&mut self) -> Result<Option<Receiver>, ParseError> {
         match self.peek_kind() {
@@ -945,7 +946,7 @@ impl Parser {
         })
     }
 
-    /// v0.0.9 Phase 4: parse `pub? const NAME: Ty = LIT;`.
+    /// v0.0.9 Phase 4: parse `export? const NAME: Ty = LIT;`.
     /// Type annotation is mandatory (E0X31); initializer must be a
     /// literal expression — the literal-shape check happens in sema
     /// (`check_const_static_inits`, E0X30) so the parser stays
@@ -984,9 +985,10 @@ impl Parser {
         })
     }
 
-    /// v0.0.9 Phase 4: parse `pub? static mut? NAME: Ty = LIT;`.
-    /// Same shape as `const` with an optional `mut` modifier between
-    /// `static` and the name. Type annotation mandatory; literal-only
+    /// v0.0.9 Phase 4: parse `export? static NAME: Ty = LIT;`.
+    /// Same shape as `const`. v0.0.24 de-Rust (#9): every `static` is
+    /// mutable — there is no `static mut`, and a Rust-habit `mut` is
+    /// rejected with a hint. Type annotation mandatory; literal-only
     /// initializer enforced by sema.
     fn parse_static_decl(
         &mut self,
@@ -1193,8 +1195,8 @@ impl Parser {
     /// foreign-function declaration, no body, terminated by `;`.
     /// Calling convention is C (`ccc`) — Phase 10 hardening will admit
     /// future explicit conventions like `extern "fastcall" fn ...`.
-    /// Generic params and `pub` are rejected: an extern fn isn't
-    /// monomorphizable (the C symbol is concrete), and `pub` is
+    /// Generic params and `export` are rejected: an extern fn isn't
+    /// monomorphizable (the C symbol is concrete), and `export` is
     /// orthogonal to FFI visibility (the symbol is always reachable
     /// at the link level).
     fn parse_extern_fn(
@@ -1246,11 +1248,11 @@ impl Parser {
         } else {
             None
         };
-        // Phase 5 Slice 5.C: `pub extern fn NAME(...) { body }` defines an
+        // Phase 5 Slice 5.C: `export extern fn NAME(...) { body }` defines an
         // export with C ABI. The two shapes are mutually exclusive:
-        //   - `extern fn name(...);`       → import (declaration, no body)
-        //   - `pub extern fn name(...) {}` → export (definition, has body)
-        // Non-`pub extern fn ... {}` is rejected — the `pub` flag is what
+        //   - `extern fn name(...);`          → import (declaration, no body)
+        //   - `export extern fn name(...) {}` → export (definition, has body)
+        // Non-`export extern fn ... {}` is rejected — the export flag is what
         // distinguishes an export from an accidental body on an import.
         // Variadic + body is rejected because C+ has no `va_list` API to
         // walk the extra args; `printf`-style varargs is import-only.
@@ -1293,7 +1295,7 @@ impl Parser {
                 params,
                 return_type,
                 body,
-                // `pub` is meaningful when defining an export (5.C); it has
+                // `export` is meaningful when defining an export (5.C); it has
                 // no effect on an import declaration (the C symbol is
                 // always reachable). We preserve it on definitions so
                 // sema can route the export-only checks, and on
@@ -1416,19 +1418,18 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
-        // Optional ownership prefixes: `mut x: T`, `move x: T`,
+        // Optional ownership prefixes: `ref x: T`, `take x: T`,
         // `x: T`, `restrict x: *T`, or combinations. Order
         // doesn't matter at the syntax layer; sema checks the
-        // combination (E0334 for `mut` + `move` and analogous
-        // `borrow` conflicts; E0411 for `restrict` on a
-        // non-pointer type).
+        // combination (E0334 for `ref` + `take`; E0411 for
+        // `restrict` on a non-pointer type).
         //
-        // The `borrow` marker is the v0.0.9 follow-up addition. It
-        // distinguishes the type-position `borrow REGION T` (used
-        // for region-annotated borrow types) from a parameter
-        // marker — in this loop we only consume `borrow` when it
-        // sits BEFORE the parameter name (look-ahead at the next
-        // token to confirm it's an Ident or another marker).
+        // v0.0.24 de-Rust (#9): `ref`/`take` replaced the retired
+        // `mut`/`move` markers, and the `borrow` keyword (both the
+        // parameter prefix and the region-annotated `borrow REGION T`
+        // type) is removed — a bare parameter `x: T` is already a
+        // read-only borrow. `mut`/`move`/`borrow` stay reserved tokens
+        // and are rejected below with a hint at the new spelling.
         let mut mutable = false;
         let mut move_ = false;
         let mut restrict = false;
@@ -1703,7 +1704,7 @@ impl Parser {
                     span: tok.span.merge(end_span),
                 })
             }
-            // Slice 7GEN.4: `Self` is a magic type name in `interface` and
+            // Slice 7GEN.4: `This` is a magic type name in `interface` and
             // `impl` contexts. Parse it as a path; sema (with the
             // self_type_stack / type_params_stack) decides whether it
             // resolves to a concrete type, stays abstract, or errors with
@@ -1714,10 +1715,10 @@ impl Parser {
                     kind: TypeKind::Path("Self".to_string()),
                     span,
                 };
-                // `Self[]` — a slice of `Self`, the same surface as `Name[]`.
-                // (Only empty brackets: `Self[args]` is nonsensical since
-                // `Self` is a concrete type, not a generic template.) Without
-                // this the `[` is left dangling and `Self[]` fails to parse,
+                // `This[]` — a slice of `This`, the same surface as `Name[]`.
+                // (Only empty brackets: `This[args]` is nonsensical since
+                // `This` is a concrete type, not a generic template.) Without
+                // this the `[` is left dangling and `This[]` fails to parse,
                 // an inconsistency with every other slice element type.
                 if matches!(self.peek_kind(), TokenKind::LBracket)
                     && matches!(self.peek_kind_n(1), TokenKind::RBracket)
@@ -3231,7 +3232,7 @@ impl Parser {
             }
             TokenKind::SelfLower => {
                 self.bump();
-                // `self` in an expression is just an ident lookup; sema
+                // `this` in an expression is just an ident lookup; sema
                 // registers it as a local inside method bodies.
                 Ok(Expr {
                     kind: ExprKind::Ident("self".to_string()),
@@ -4253,7 +4254,8 @@ mod tests {
 
     #[test]
     fn unsafe_impl_still_parses() {
-        // The `unsafe impl` marker path must be untouched by the `unsafe fn` add.
+        // The bare `impl T: Send {}` marker path must keep parsing — the
+        // `unsafe` modifier on a marker impl is removed (write it bare).
         assert!(parse_src("struct S {} impl S: Send {}").is_ok());
     }
 
@@ -4504,7 +4506,7 @@ mod tests {
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
-    // ---- 6BC.5 — borrow REGION T syntax ----
+    // ---- 6BC.5 — `borrow REGION T` syntax (retired in v0.0.24 #9) ----
 
     // ---- 7GEN.1 — generic function parsing ----
 
@@ -4829,7 +4831,7 @@ mod tests {
 
     #[test]
     fn interface_associated_fn_no_receiver() {
-        // `fn default() -> Self;` — no `self` receiver, like Rust's
+        // `fn default() -> This;` — no `this` receiver, like Rust's
         // `Default::default`.
         let p = parse_src("interface Default { fn default() -> i32; }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
@@ -5213,14 +5215,14 @@ mod tests {
     #[test]
     fn extern_fn_with_body_requires_pub() {
         // Phase 5 Slice 5.C: a plain `extern fn` is an import declaration
-        // and must end in `;`. Bodies require `pub` (export form).
+        // and must end in `;`. Bodies require `export` (export form).
         let err = parse_src("extern fn abs(x: i32) -> i32 { return x; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
     #[test]
     fn extern_fn_decl_with_pub_rejected() {
-        // Phase 5 Slice 5.C: `pub` on a declaration (no body) is rejected
+        // Phase 5 Slice 5.C: `export` on a declaration (no body) is rejected
         // — the user likely forgot the body block. The diagnostic
         // suggests the export form.
         let err = parse_src("export extern fn abs(x: i32) -> i32;").unwrap_err();

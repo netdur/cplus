@@ -47,7 +47,7 @@ pub struct Item {
     /// merge (e.g. `"src.math"`). `None` in single-file mode, before the
     /// resolver runs, or for parser-only consumers. Sema uses this to
     /// determine same-vs-cross-file context when enforcing field-level
-    /// `pub`. The entry binary's items carry `Some(entry_file_id)` — the
+    /// visibility. The entry binary's items carry `Some(entry_file_id)` — the
     /// special-casing of `fn main()`'s mangled name doesn't leak here.
     pub origin_file: Option<String>,
 }
@@ -96,15 +96,15 @@ pub enum ItemKind {
     Impl(ImplBlock),
     /// Slice 7GEN.3: `interface Name { fn ... }` declaration. Lists the
     /// method signatures (no bodies) that implementing types must
-    /// provide. `Self` inside method signatures refers to the
+    /// provide. `This` inside method signatures refers to the
     /// implementing type at `impl`-resolution time.
     Interface(InterfaceDecl),
     /// Phase 11 polish (2026-05-13): `type Foo = Bar;` — transparent
     /// type alias. The aliased name resolves to the same `Ty` as the
     /// target everywhere it's used. No new type, no nominal distinction.
-    /// Cross-file `pub` visible per the usual rules.
+    /// Cross-file visible per the usual name-based rules.
     TypeAlias(TypeAlias),
-    /// v0.0.9 Phase 4: `pub? const NAME: Ty = LIT;` module-scope named
+    /// v0.0.9 Phase 4: `export? const NAME: Ty = LIT;` module-scope named
     /// literal. Lowered by `crate::lower` — every use-site path
     /// expression that resolves to a const is rewritten to a clone of
     /// the initializer expression before sema runs its expression-level
@@ -112,13 +112,14 @@ pub enum ItemKind {
     /// (sema enforces, E0X30); type annotation required (parser
     /// enforces, E0X31).
     Const(ConstDecl),
-    /// v0.0.9 Phase 4: `pub? static mut? NAME: Ty = LIT;` module-scope
-    /// global with a real address. Immutable form lowers to LLVM
-    /// `@NAME = constant <ty> <lit>` in `.rodata`; the `mut` form
-    /// lowers to `@NAME = global <ty> <lit>` in `.data`. Reads and
-    /// writes of `static mut` must occur inside `unsafe { ... }`
-    /// (E0X33 / E0X34) — the borrow checker can't prove absence of
-    /// data races for module-scope mutable state.
+    /// v0.0.9 Phase 4: `export? static NAME: Ty = LIT;` module-scope
+    /// global with a real address. A `static` is a mutable, C-facing
+    /// global: it lowers to LLVM `@NAME = global <ty> <lit>` in `.data`.
+    /// (A `const`-style immutable global instead uses `const`, which
+    /// lowers to `@NAME = constant <ty> <lit>` in `.rodata`.) Reads and
+    /// writes of a `static` carry E0X33 / E0X34 accountability — the
+    /// borrow checker can't prove absence of data races for module-scope
+    /// mutable state.
     Static(StaticDecl),
     /// v0.0.15: module-scope `#asm("...");` → LLVM `module asm "..."`. Raw
     /// assembly emitted at module top level, outside any function — the
@@ -159,10 +160,10 @@ pub struct ConstDecl {
     pub attributes: Vec<Attribute>,
 }
 
-/// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`
-/// declaration. Survives through lowering and reaches codegen, which
-/// emits one LLVM global per declaration (read via load, written via
-/// store for the `mut` variant).
+/// v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;` declaration.
+/// Survives through lowering and reaches codegen, which emits one LLVM
+/// global per declaration (read via load, written via store — every
+/// `static` is mutable in v0.0.24).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDecl {
     pub name: Ident,
@@ -189,9 +190,11 @@ pub struct TypeAlias {
 pub struct EnumDecl {
     pub name: Ident,
     pub variants: Vec<EnumVariant>,
-    /// Slice 4B: `pub enum E { ... }` exports the enum's name AND all its
-    /// variants to importers. There is no per-variant `pub` (variants
-    /// inherit the enum's visibility).
+    /// Slice 4B (v0.0.24 #10): `true` when the enum is marked `export`,
+    /// placing its name AND all its variants on the C-ABI / header surface.
+    /// There is no per-variant marker (variants inherit the enum's). General
+    /// module visibility is name-based — a leading `_` is module-private,
+    /// everything else is public — independent of this flag.
     pub is_pub: bool,
     /// Slice 5ATTR.1: `#[NAME] enum E { ... }` attributes collected by the
     /// parser. Empty when no attributes precede the declaration.
@@ -218,9 +221,12 @@ pub struct EnumVariant {
 pub struct StructDecl {
     pub name: Ident,
     pub fields: Vec<StructField>,
-    /// Slice 4B: `pub struct S { ... }` exports the type-name. Fields stay
-    /// private unless individually marked `pub field: T` — "expose the
-    /// type, hide the layout" is the default.
+    /// Slice 4B (v0.0.24 #10): `true` when the struct is marked `export`,
+    /// placing the type-name on the C-ABI / header surface. General module
+    /// visibility is name-based instead — a leading `_` is module-private,
+    /// everything else public. Field visibility follows the same name rule
+    /// (`_field` is private); fields are never reachable cross-file unless
+    /// the struct itself is exported.
     pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this struct.
     pub attributes: Vec<Attribute>,
@@ -236,10 +242,12 @@ pub struct StructField {
     pub name: Ident,
     pub ty: Type,
     pub span: Span,
-    /// Slice 4B: `pub field: T`. Individually-marked fields are visible
-    /// to cross-file struct-literal construction and field access; without
-    /// `pub` the field is only reachable from within the same file even
-    /// when the struct type itself is `pub`.
+    /// Slice 4B. Vestigial, always `false` since v0.0.24 #10: field
+    /// visibility is name-based — a `_`-prefixed field is module-private,
+    /// every other field is visible to cross-file struct-literal
+    /// construction and field access (when the struct type itself is
+    /// exported). The old per-field `pub` marker is retired (the parser
+    /// rejects it with a hint), so this flag is never set.
     pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this field.
     pub attributes: Vec<Attribute>,
@@ -262,7 +270,7 @@ pub struct ImplBlock {
     /// parameterized by these params during monomorphization.
     pub target_generic_params: Vec<GenericParam>,
     pub methods: Vec<Method>,
-    /// Slice 7GEN.3: when present, this `impl Type for Interface`
+    /// Slice 7GEN.3: when present, this `impl Type: Interface`
     /// block claims that `target` implements `interface_name`'s method
     /// set. Sema validates method-coverage / signature-match (E0503 /
     /// E0504 / E0505) and coherence (E0507). `None` for plain inherent
@@ -271,15 +279,16 @@ pub struct ImplBlock {
 }
 
 /// Slice 7GEN.3: an interface declaration. The body holds method
-/// signatures with bodies elided (`fn name(self, ...) -> T;` — note
-/// the trailing `;` instead of a body block). `Self` appearing
+/// signatures with bodies elided (`fn name(this, ...) -> T;` — note
+/// the trailing `;` instead of a body block). `This` appearing
 /// anywhere in a method signature is a placeholder for the
 /// implementing type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDecl {
     pub name: Ident,
     pub methods: Vec<InterfaceMethod>,
-    /// Slice 4B: interfaces are `pub`-flagged like other items.
+    /// Slice 4B: `true` when the interface is marked `export`, like other
+    /// items (general visibility is name-based, `_`-prefix = private).
     pub is_pub: bool,
     pub attributes: Vec<Attribute>,
 }
@@ -299,7 +308,7 @@ pub struct InterfaceMethod {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     pub name: Ident,
-    /// Slice 7GEN.5e: method-level generic parameters. `fn cast[T](self) -> T`
+    /// Slice 7GEN.5e: method-level generic parameters. `fn cast[T](this) -> T`
     /// records `T` here. Distinct from the enclosing impl block's
     /// `target_generic_params` (which apply to all methods in the
     /// block); these apply only to this method.
@@ -309,9 +318,11 @@ pub struct Method {
     pub return_type: Option<Type>,
     pub body: Block,
     pub span: Span,
-    /// Slice 4B: methods are individually `pub`-flagged even on `pub` types.
-    /// A non-`pub` method on a `pub struct` is only callable from inside
-    /// the declaring file — same logic as private fields.
+    /// Slice 4B (v0.0.24 #10): `true` when the method is marked `export`
+    /// (C-ABI / linker surface). Method visibility itself is name-based —
+    /// a `_`-prefixed method is module-private (callable only inside the
+    /// declaring file), every other method is callable cross-file when its
+    /// type is reachable — same logic as private fields.
     pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this method. Per the design
     /// note `#[test]` is rejected inside `impl` (E0360); validation lives
@@ -319,19 +330,19 @@ pub struct Method {
     pub attributes: Vec<Attribute>,
     /// v0.0.4 Phase 4 Slice 4E: `async fn` / `gen fn` method modifiers.
     /// Currently only `is_gen = true` exercises a real lowering path
-    /// (async methods land alongside non-Copy `self` async).
+    /// (async methods land alongside non-Copy `this` async).
     pub is_async: bool,
     pub is_gen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Receiver {
-    /// `self` — read-only access; lowered to a pointer parameter.
+    /// `this` — read-only access; lowered to a pointer parameter.
     Read,
-    /// `mut self` — mutable access; lowered to a pointer parameter; the
+    /// `ref this` — mutable access; lowered to a pointer parameter; the
     /// caller's place must be writable.
     Mut,
-    /// `move self` — ownership transfer; lowered to a pointer parameter;
+    /// `take this` — ownership transfer; lowered to a pointer parameter;
     /// the caller's place becomes uninitialized after the call.
     Move,
 }
@@ -357,7 +368,9 @@ pub struct Function {
     /// `is_extern` is true. Codegen emits `(<fixed params>, ...)` in
     /// the LLVM `declare` and routes call sites through varargs ABI.
     pub is_variadic: bool,
-    /// Slice 4B: `pub fn foo(...)` exports the function to importers.
+    /// Slice 4B (v0.0.24 #10): `true` when the fn is marked `export`,
+    /// placing it on the C-ABI / header surface. General cross-file
+    /// visibility is name-based (a `_`-prefixed fn is module-private).
     pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this function. `#[test]`
     /// discovery walks the merged Program looking for fns whose attributes
@@ -403,10 +416,10 @@ pub struct GenericParam {
 pub struct Param {
     pub name: Ident,
     pub ty: Type,
-    /// `mut x: T` — exclusive borrow for non-Copy types; mutable local
+    /// `ref x: T` — exclusive borrow for non-Copy types; mutable local
     /// binding for Copy types. Mutually exclusive with `move_`.
     pub mutable: bool,
-    /// `move x: T` — ownership transfer. Mutually exclusive with `mutable`.
+    /// `take x: T` — ownership transfer. Mutually exclusive with `mutable`.
     pub move_: bool,
     /// v0.0.8 (post-bench-gap): `restrict x: *T` — opt-in `noalias` for
     /// raw-pointer params. The borrow checker doesn't reason about
@@ -417,15 +430,11 @@ pub struct Param {
     /// part of the calling convention). Sema (E0411) restricts this to
     /// `*T` param types; on other shapes it's a hard error.
     pub restrict: bool,
-    /// v0.0.9 follow-up: `x: T` — explicit shared by-value
-    /// parameter. For v0.0.9 this is semantically identical to the
-    /// unmarked form (`x: T`) on non-Copy types — both mean "callee
-    /// takes a shared copy of the binding, no ownership transfer".
-    /// The flag is reserved for a future Phase 1 slice that flips
-    /// the default for non-Copy `T` to `move` semantics; `borrow`
-    /// will then be the opt-out escape hatch. Sema rejects
-    /// `borrow` + `move` and `borrow` + `mut` (mutually exclusive
-    /// ownership semantics, like `mut` + `move`).
+    /// Vestigial flag, always `false` since v0.0.24. The `borrow` keyword
+    /// it once recorded was retired: a bare parameter `x: T` is already a
+    /// read-only borrow, so the explicit opt-in marker is gone (the parser
+    /// now rejects a Rust-habit `borrow` with a hint at the bare form).
+    /// The field is kept to avoid churning every AST-construction site.
     pub borrow_: bool,
     pub span: Span,
 }
@@ -449,15 +458,15 @@ pub enum TypeKind {
         len: u32,
         len_name: Option<String>,
     },
-    /// Slice 6BC.5: region-annotated borrow type — `borrow REGION T`.
-    /// The region is a region-name identifier local to the enclosing
-    /// signature (or struct definition); the inner type is the
-    /// underlying place's type. Sema and codegen treat this as a
-    /// transparent wrapper for the inner type — region info is
-    /// metadata that only the borrow checker reads. Composes with
-    /// parameter markers: `xs: borrow A T` is a shared borrow,
-    /// `mut xs: borrow A T` an exclusive borrow; `move x: borrow A T`
-    /// is a parse error (ownership transfer doesn't borrow).
+    /// Slice 6BC.5: region-annotated borrow type, historically written
+    /// `borrow REGION T`. No source path constructs this anymore: the
+    /// `borrow` keyword (both the region-annotated type and the parameter
+    /// prefix) was retired in v0.0.24, so the variant is unreachable from
+    /// the surface syntax. The region was a region-name identifier local to
+    /// the enclosing signature (or struct definition); the inner type was
+    /// the underlying place's type. Sema and codegen treat it as a
+    /// transparent wrapper for the inner type — region info is metadata
+    /// that only the borrow checker reads.
     Borrowed {
         region: String,
         inner: Box<Type>,
@@ -500,9 +509,10 @@ pub enum TypeKind {
     /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
     /// view `{ptr, len}` over a contiguous run of `T`. Copy semantics
     /// (a view, not an owner). Constructed via `slice_from_raw_parts`
-    /// (unsafe) or — pending follow-up — via an array→slice conversion.
-    /// Indexing `s[i]` is bounds-checked at runtime; element access
-    /// via `#slice_ptr(s)` / `#slice_len(s)` intrinsics is safe.
+    /// (a raw-pointer operation) or — pending follow-up — via an
+    /// array→slice conversion. Indexing `s[i]` is bounds-checked at
+    /// runtime; element access via `#slice_ptr(s)` / `#slice_len(s)`
+    /// intrinsics is safe.
     Slice(Box<Type>),
     /// v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`. Arity must
     /// be ≥ 2; a parenthesised single type is grouping, and `()` is the
@@ -647,7 +657,7 @@ pub struct Expr {
 /// alias storage (the drift that caused the v0.0.23 match double-free class).
 ///
 /// Only a bare whole binding or a field/index projection is read in place
-/// (codegen `gen_place`). Everything else — a block, `unsafe` block, `if`,
+/// (codegen `gen_place`). Everything else — a block, `if`,
 /// nested `match`, call, constructor, **or a raw-pointer deref `*p`** — is
 /// evaluated by value into a temp (codegen `gen_expr` + spill). A `*p` is
 /// deliberately NOT in-place: spilling it bit-copies the pointee, which sema
@@ -674,7 +684,8 @@ pub enum ExprKind {
     /// `c"..."` C-string literal. Decoded payload (NUL appended at codegen).
     /// Type is `*u8` — a bare pointer to a NUL-terminated `.rodata` blob, for
     /// FFI. Safe to *form* (it's a pointer to static data); dereferencing it
-    /// needs `unsafe` like any raw pointer.
+    /// is a bare raw-pointer deref like any other (self-flagging at the deref
+    /// site — there is no `unsafe` block wrapping).
     CStrLit(String),
     /// Phase 8 slice 8.STR.B.1: interpolated string literal —
     /// `"hello ${name}, n is ${n}"`. Alternating Lit and Expr parts.
@@ -772,7 +783,7 @@ pub enum ExprKind {
         fields: Vec<StructLitField>,
     },
     /// Slice 7GEN.5d: generic enum constructor call —
-    /// `Option[i32]::Some(7)`, `Result[i32, string]::Err("e")`.
+    /// `Option[i32]::Some(7)`, `Result[i32, Text]::Err("e")`.
     /// `enum_name` is the generic enum template; `type_args` are the
     /// concrete type args; `variant` is the variant name; `args` is
     /// the payload expression list (may be empty for payload-less

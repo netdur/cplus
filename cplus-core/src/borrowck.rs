@@ -18,9 +18,9 @@
 //! - **5BC.2a**:
 //!   - `CopyOracle` mirrors sema's struct + enum `Copy` fixpoint.
 //!   - Per-binding type tracking — parameter types, annotated lets,
-//!     `self` (impl target), for-range loop var (synthesized i32).
+//!     `this` (impl target), for-range loop var (synthesized i32).
 //!     Unannotated lets stay `Unknown`, skip Copy-gated diagnostics.
-//!   - Owned → Moved transitions are Copy-gated; `move x: i32` is a
+//!   - Owned → Moved transitions are Copy-gated; `take x: i32` is a
 //!     bit-copy and leaves the source Owned.
 //!   - **E0370** — move-and-shared-borrow of the same place in one call.
 //! - **5BC.2b**:
@@ -53,7 +53,7 @@
 //! - **5BC.5**: partial-place tracking through field / index projections
 //!   → E0374.
 //! - Method-call move detection (`x.consume()` where `consume` takes
-//!   `move self`).
+//!   `take this`).
 //! - Sema integration for fully-typed binding-type lookup.
 //! - Replacing sema's linear E0335 with borrowck's flow-sensitive
 //!   tracking (would let E0371 actually fire in user-visible cases).
@@ -167,7 +167,7 @@ pub enum PlaceState {
     /// other access (reads, writes, moves, shared borrows, additional
     /// exclusive borrows). The payload names the borrowing binding so the
     /// diagnostic can point at it; cross-statement tracking (5BC.2) wires
-    /// this into `let r = f(mut x);` in a future slice.
+    /// this into `let r = f(ref x);` in a future slice.
     BorrowedExclusive(String),
     Moved,
     MaybePartial,
@@ -396,7 +396,9 @@ impl CopyOracle {
             }
             TypeKind::Array { elem, .. } => self.definitely_non_copy(elem),
             // Slice 6BC.5: region annotation is transparent for Copy
-            // classification — `borrow A T` is Copy iff T is.
+            // classification — a borrow-region type is Copy iff T is.
+            // (The `borrow A T` source syntax is retired; this arm is now
+            // unreachable from source but kept for the type's invariants.)
             TypeKind::Borrowed { inner, .. } => self.definitely_non_copy(inner),
             // Slice 7GEN.5c: generic instantiation in type position.
             // Borrowck runs *before* monomorphize, so `Pair[i32, bool]`
@@ -472,12 +474,12 @@ fn is_primitive_name(name: &str) -> bool {
 /// note's elision rules.
 ///
 /// **Rule E1**: function with exactly one non-`Copy` shared-borrow param
-/// (no `mut`, no `move`) and a non-`Copy` return type, where every
+/// (no `ref`, no `take`) and a non-`Copy` return type, where every
 /// `return EXPR;` has EXPR rooted at that parameter. Records `Param(0)`.
 ///
-/// **Rule E2**: method with a non-`move` non-`Copy` receiver (`self`)
+/// **Rule E2**: method with a non-`take` non-`Copy` receiver (`this`)
 /// and a non-`Copy` return, where every `return EXPR;` has EXPR rooted
-/// at `self`. Records `SelfReceiver`.
+/// at `this`. Records `SelfReceiver`.
 ///
 /// **Rule E3** (5BC.4): function with 2+ non-`Copy` shared-borrow params
 /// and a non-`Copy` return, where every `return EXPR;` is rooted at
@@ -494,7 +496,7 @@ pub enum ReturnBorrowSource {
     /// Return borrows from the parameter at index N (counting from 0;
     /// methods exclude the receiver from this count).
     Param(u32),
-    /// Method return borrows from the receiver `self`.
+    /// Method return borrows from the receiver `this`.
     SelfReceiver,
     /// 5BC.4 / Rule E3: return borrows from one or more parameters; at
     /// the call site, the return-binding is treated as borrowing from
@@ -517,13 +519,13 @@ pub enum BorrowFlavor {
 }
 
 /// Per-function signature info collected from the AST. Today this is
-/// `move`-flag list and (5BC.3a) the elision-rule return source. Future
+/// the `take`-flag list and (5BC.3a) the elision-rule return source. Future
 /// slices will add types and lifetime info.
 #[derive(Debug, Default)]
 struct FnEntry {
     param_moves: Vec<bool>,
-    /// Slice 6BC.1: per-parameter `mut` flag, parallel to `param_moves`.
-    /// `param_muts[i]` is true iff parameter i was declared `mut x: T`.
+    /// Slice 6BC.1: per-parameter `ref` flag, parallel to `param_moves`.
+    /// `param_muts[i]` is true iff parameter i was declared `ref x: T`.
     /// Drives E0380/E0381/E0382 intra-call conflict detection in
     /// `apply_call`.
     param_muts: Vec<bool>,
@@ -610,9 +612,9 @@ impl SigTable {
         self.fns.get(name).map(|e| &e.param_moves)
     }
 
-    /// Slice 6BC.1: per-parameter `mut` flag list. Parallel shape to
+    /// Slice 6BC.1: per-parameter `ref` flag list. Parallel shape to
     /// `fn_param_moves`. Used by `apply_call` to claim a
-    /// `BorrowedExclusive` against each `mut`-marked non-Copy argument
+    /// `BorrowedExclusive` against each `ref`-marked non-Copy argument
     /// and detect the four intra-call conflict patterns.
     fn fn_param_muts(&self, name: &str) -> Option<&Vec<bool>> {
         self.fns.get(name).map(|e| &e.param_muts)
@@ -671,12 +673,13 @@ pub fn method_return_borrow_source_with_flavor(
 }
 
 /// Slice 6BC.2 / 6BC.4 / 6BC.5: free-function elision with flavor.
-/// Explicit `borrow REGION T` annotations (slice 6BC.5) take
-/// precedence over body-flow elision rules. When the signature
-/// carries any region annotation, the source set is computed from
-/// the regions instead of running E1/E1-mut/E3/E3-mut. When no
-/// annotation is present, falls through to the rule ladder:
-/// E1-mut → E1 → E3-mut → E3.
+/// Explicit region annotations (slice 6BC.5) take precedence over
+/// body-flow elision rules. When the signature carries any region
+/// annotation, the source set is computed from the regions instead of
+/// running E1/E1-mut/E3/E3-mut. When no annotation is present, falls
+/// through to the rule ladder: E1-mut → E1 → E3-mut → E3. (The
+/// `borrow REGION T` source syntax these annotations came from is
+/// retired, so this branch is now unreachable from user source.)
 fn detect_fn_elision_with_flavor(
     f: &Function,
     oracle: &CopyOracle,
@@ -700,21 +703,24 @@ fn detect_fn_elision_with_flavor(
     (None, None)
 }
 
-/// Slice 6BC.5: explicit `borrow REGION T` annotation detection.
+/// Slice 6BC.5: explicit region-annotation detection. The source
+/// syntax this matched (`borrow REGION T`) is retired, so this detector
+/// is now unreachable from user source; the structural rules it encodes
+/// are kept for the region-typed AST it still recognizes.
 ///
 /// Qualifies iff:
-/// 1. The return type is `borrow REGION T` for some region name R.
-/// 2. At least one parameter type is `borrow REGION T` for the same R.
+/// 1. The return type is a borrow-region type for some region name R.
+/// 2. At least one parameter type is a borrow-region type for the same R.
 /// 3. The return type and all matching parameter types are non-Copy.
 ///
 /// The flavor is **Exclusive** when any of the matching parameters is
-/// `mut`-marked, else **Shared**. (Mixed mut/shared on the same
+/// `ref`-marked, else **Shared**. (Mixed ref/shared on the same
 /// region is rejected by sema in a future polish; 6BC.5 first cut
-/// picks Exclusive whenever any contributing param is `mut`.)
+/// picks Exclusive whenever any contributing param is `ref`.)
 ///
 /// Sources = the indices of every parameter typed with the matching
 /// region. Single-source collapses to `Param(N)`; multi-source uses
-/// `MultiParam(indices)`. `move`-marked params don't carry regions
+/// `MultiParam(indices)`. `take`-marked params don't carry regions
 /// (parser rejects); they never contribute to the source set.
 fn detect_fn_explicit_regions(
     f: &Function,
@@ -768,8 +774,8 @@ fn detect_fn_explicit_regions(
 }
 
 /// Slice 6BC.2: method elision with flavor. Same shape as the free-fn
-/// version, but for methods: tries Rule E2-mut (`mut self` + non-Copy
-/// return) before Rule E2 (`self` + non-Copy return).
+/// version, but for methods: tries Rule E2-mut (`ref this` + non-Copy
+/// return) before Rule E2 (`this` + non-Copy return).
 fn detect_method_elision_with_flavor(
     b: &ImplBlock,
     m: &Method,
@@ -784,9 +790,9 @@ fn detect_method_elision_with_flavor(
     (None, None)
 }
 
-/// Slice 6BC.2 — Rule E1-mut. Mirror of E1 but for a `mut`-marked param:
-/// 1. Exactly one parameter, marked `mut` (and not `move`).
-/// 2. Parameter type non-`Copy` (Copy `mut x` is local-mutability, not a borrow).
+/// Slice 6BC.2 — Rule E1-mut. Mirror of E1 but for a `ref`-marked param:
+/// 1. Exactly one parameter, marked `ref` (and not `take`).
+/// 2. Parameter type non-`Copy` (Copy `ref x` is local-mutability, not a borrow).
 /// 3. Non-`Copy` return type.
 /// 4. Every `return EXPR;` rooted at the parameter (same body-walk as E1).
 /// When all checks pass, the return is an *exclusive* borrow of the parameter.
@@ -808,12 +814,12 @@ fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSou
     Some(ReturnBorrowSource::Param(0))
 }
 
-/// Slice 6BC.2 — Rule E2-mut. Mirror of E2 but for `mut self`:
-/// 1. Receiver is `mut self` (i.e. `Receiver::Mut`).
+/// Slice 6BC.2 — Rule E2-mut. Mirror of E2 but for `ref this`:
+/// 1. Receiver is `ref this` (i.e. `Receiver::Mut`).
 /// 2. Impl-target type non-`Copy`.
 /// 3. Non-`Copy` return type.
-/// 4. Every `return EXPR;` rooted at `self`.
-/// The return is an exclusive borrow of `self`.
+/// 4. Every `return EXPR;` rooted at `this`.
+/// The return is an exclusive borrow of `this`.
 fn detect_method_e2_mut(
     b: &ImplBlock,
     m: &Method,
@@ -841,7 +847,7 @@ fn detect_method_e2_mut(
 
 /// Rule E1 detection. The function qualifies iff:
 /// 1. Exactly one parameter (zero parameters can't return a borrow of one).
-/// 2. That parameter is a shared borrow (no `mut`, no `move`).
+/// 2. That parameter is a shared borrow (no `ref`, no `take`).
 /// 3. The parameter type is non-`Copy`.
 /// 4. The function has a non-`Copy` return type.
 /// 5. The function body has at least one `return` statement, and every
@@ -850,7 +856,7 @@ fn detect_method_e2_mut(
 fn detect_fn_e1(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     // Step 1: exactly one parameter.
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
-    // Step 2: shared-borrow form (no mut, no move).
+    // Step 2: shared-borrow form (no ref, no take).
     if p.mutable || p.move_ {
         return None;
     }
@@ -919,11 +925,11 @@ fn detect_fn_e3(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
     Some(ReturnBorrowSource::MultiParam(indices))
 }
 
-/// Slice 6BC.4 — Rule E3-mut. Mirror of E3 for `mut`-marked params.
+/// Slice 6BC.4 — Rule E3-mut. Mirror of E3 for `ref`-marked params.
 /// Qualifies iff:
-/// 1. 2+ params, all `mut`-marked (no `move`), all non-Copy.
+/// 1. 2+ params, all `ref`-marked (no `take`), all non-Copy.
 /// 2. Non-Copy return type.
-/// 3. Every `return EXPR;` rooted at some `mut`-param. At least one
+/// 3. Every `return EXPR;` rooted at some `ref`-param. At least one
 ///    return exists. Returns of fresh-constructed values on any path
 ///    disqualify.
 /// Result is an exclusive multi-source borrow — the caller's binding
@@ -1139,13 +1145,13 @@ fn check_expr_returns_e3(
     }
 }
 
-/// Rule E2 detection. Same shape as E1 but for methods with a `self`
+/// Rule E2 detection. Same shape as E1 but for methods with a `this`
 /// receiver. The method qualifies iff:
-/// 1. The method has a `Receiver::Read` receiver (i.e. `self`, not
-///    `mut self`, not `move self`).
+/// 1. The method has a `Receiver::Read` receiver (i.e. `this`, not
+///    `ref this`, not `take this`).
 /// 2. The impl target type is non-`Copy`.
 /// 3. The method's return type is non-`Copy`.
-/// 4. Every `return EXPR;` is a path rooted at `self`.
+/// 4. Every `return EXPR;` is a path rooted at `this`.
 fn detect_method_e2(b: &ImplBlock, m: &Method, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     if m.receiver != Some(Receiver::Read) {
         return None;
@@ -1763,8 +1769,8 @@ impl<'p> Analyzer<'p> {
     ///   * **5BC.3b / Rule E1**: shared single-param → one-element vec.
     ///   * **5BC.3b / Rule E2**: shared self-method → receiver place.
     ///   * **5BC.4 / Rule E3**: shared multi-param → one entry per param.
-    ///   * **6BC.2 / Rule E1-mut**: exclusive single-`mut`-param → one entry.
-    ///   * **6BC.2 / Rule E2-mut**: exclusive `mut self` method → receiver place.
+    ///   * **6BC.2 / Rule E1-mut**: exclusive single-`ref`-param → one entry.
+    ///   * **6BC.2 / Rule E2-mut**: exclusive `ref this` method → receiver place.
     fn classify_borrow_source(&self, e: &Expr) -> (Vec<Place>, BorrowFlavor) {
         let ExprKind::Call { callee, args, .. } = &e.kind else {
             return (Vec::new(), BorrowFlavor::Shared);
@@ -1909,8 +1915,9 @@ fn raw_to_diagnostic(r: RawDiag, file: &PathBuf, src: &str, lm: &LineMap) -> Dia
 ///   - The body has *at least one* return rooted at a parameter
 ///
 /// Fresh-value-on-every-path functions stay silent (the return is
-/// owned, not borrowed). The diagnostic teaches the `borrow REGION T`
-/// annotation surface (slice 6BC.5 will activate the parser side).
+/// owned, not borrowed). The diagnostic historically taught the
+/// `borrow REGION T` annotation surface, but that source syntax is now
+/// retired, so the suggested annotation is no longer writable.
 fn collect_e0384_diagnostics(
     prog: &Program,
     sigs: &SigTable,
@@ -1946,7 +1953,7 @@ fn e0384_for_fn(f: &Function, sigs: &SigTable, oracle: &CopyOracle) -> Option<Ra
     if f.params.len() < 2 {
         return None;
     }
-    // Every param must be non-Copy borrow-like (no `move`).
+    // Every param must be non-Copy borrow-like (no `take`).
     for p in &f.params {
         if p.move_ {
             return None;
@@ -2189,7 +2196,7 @@ impl Analyzer<'_> {
     ) -> FunctionAnalysis {
         let mut state: BTreeMap<Place, PlaceState> = BTreeMap::new();
         if receiver.is_some() {
-            // `self`'s type is the impl block's target. Build a synthetic
+            // `this`'s type is the impl block's target. Build a synthetic
             // `Type` so the oracle can answer.
             let synth = Type {
                 kind: TypeKind::Path(target_type.to_string()),
@@ -2703,7 +2710,7 @@ impl Analyzer<'_> {
     }
 
     /// Slice 6BC.2: the move-arg variant of `record_read`. Used when an
-    /// argument names a binding at a `move`-position. Fires E0371 for
+    /// argument names a binding at a `take`-position. Fires E0371 for
     /// the MaybePartial-on-move case (Phase 5 behavior preserved), but
     /// suppresses E0383 — moving is more specific than reading, and the
     /// E0372 path emits the precise diagnostic for that case. Without
@@ -2740,8 +2747,8 @@ impl Analyzer<'_> {
         state: &mut BTreeMap<Place, PlaceState>,
     ) {
         // Slice 6BC.opt / Phase-6 exit: method-call receiver claim
-        // check. When `recv.method(args)` is a `mut self` / `move self`
-        // method, the receiver itself is a `mut`-position claim against
+        // check. When `recv.method(args)` is a `ref this` / `take this`
+        // method, the receiver itself is a `ref`-position claim against
         // its place — this is the iterator-invalidation pattern's
         // structural rejection. Without this check, calling
         // `vec.push(x)` while a shared borrow of `vec` is alive would
@@ -2761,7 +2768,7 @@ impl Analyzer<'_> {
             ExprKind::Ident(name) => self.sigs.fn_param_moves(name).cloned(),
             _ => None,
         };
-        // Slice 6BC.1: per-parameter `mut` flags for the callee, parallel
+        // Slice 6BC.1: per-parameter `ref` flags for the callee, parallel
         // to `move_flags`. None for non-Ident callees and unknown fns —
         // matches the conservative gate Phase 5 already applies.
         let mut_flags: Option<Vec<bool>> = match &callee.kind {
@@ -2783,7 +2790,7 @@ impl Analyzer<'_> {
         // Disjoint sub-places (`buf.left` vs `buf.right`) admit; that's
         // the design-note §5.2 win — partial-place tracking via
         // `Place::projections`. Copy bindings produce no claim (per
-        // §2.9 `mut`-on-Copy is local-mutability, not a borrow).
+        // §2.9 `ref`-on-Copy is local-mutability, not a borrow).
         self.check_intra_call_conflicts(args, &move_flags, &mut_flags);
 
         // State transitions. Each move-arg of a *non-Copy* binding
@@ -2834,8 +2841,8 @@ impl Analyzer<'_> {
     /// appropriate diagnostic for each conflict. Replaces the per-error
     /// scanning loops from 6BC.1, with two correctness gains:
     ///   - Partial-place overlap is admitted/rejected on `Place`
-    ///     comparison: `mut buf.left` + `mut buf.right` no longer
-    ///     conflict; `mut buf` + `mut buf.left` now reject as E0374.
+    ///     comparison: `ref buf.left` + `ref buf.right` no longer
+    ///     conflict; `ref buf` + `ref buf.left` now reject as E0374.
     ///   - Each pair fires at most one diagnostic. Same-place codes
     ///     win over E0374 when the projections match exactly; partial
     ///     overlap routes through E0374 regardless of which kinds are
@@ -3011,7 +3018,7 @@ impl Analyzer<'_> {
     /// method isn't resolvable. Treats all method calls on borrowed
     /// receivers as potentially conflicting — for shared-receiver
     /// methods this is over-strict but sound; tightening to "only
-    /// `mut self` methods" requires plumbing receiver kind into the
+    /// `ref this` methods" requires plumbing receiver kind into the
     /// SigTable, deferred to a polish slice.
     fn check_method_receiver_claim(
         &mut self,
@@ -3998,7 +4005,7 @@ fn make(b: B) -> B { return B { x: 0 }; }";
 
     #[test]
     fn e1_does_not_fire_with_move_marker() {
-        // `move b: B` — the function takes ownership, the return is a
+        // `take b: B` — the function takes ownership, the return is a
         // transferred owned value, not a borrow.
         let src = "\
 struct B { x: i32 }
@@ -4010,7 +4017,7 @@ fn consume(take b: B) -> B { return b; }";
 
     #[test]
     fn e1_mut_fires_on_mut_marker_with_exclusive_flavor() {
-        // Slice 6BC.2: `mut b: B` qualifies for Rule E1-mut. The return
+        // Slice 6BC.2: `ref b: B` qualifies for Rule E1-mut. The return
         // is classified as an *exclusive* borrow of the parameter.
         // Compare to Rule E1 (shared form) which requires no marker.
         let src = "\
@@ -4100,8 +4107,8 @@ fn weird(b: B) -> B {
 
     #[test]
     fn e2_fires_on_self_passthrough_method() {
-        // Rule E2: method with self receiver + non-Copy target + non-Copy
-        // return + every return rooted at self.
+        // Rule E2: method with `this` receiver + non-Copy target + non-Copy
+        // return + every return rooted at `this`.
         let src = "\
 struct B { x: i32 }
 impl B {
@@ -4117,7 +4124,7 @@ impl B {
 
     #[test]
     fn e2_fires_on_self_field_access() {
-        // `return self.field;` — Rule E2 admits field chains rooted at
+        // `return this.field;` — Rule E2 admits field chains rooted at
         // the receiver.
         let src = "\
 struct Inner { x: i32 }
@@ -4136,9 +4143,9 @@ impl Outer {
 
     #[test]
     fn e2_mut_fires_on_mut_self_with_exclusive_flavor() {
-        // Slice 6BC.2: `mut self` qualifies for Rule E2-mut. The return
-        // is an exclusive borrow of `self`. Rule E2 (shared `self`)
-        // continues to apply separately when the receiver is `self`.
+        // Slice 6BC.2: `ref this` qualifies for Rule E2-mut. The return
+        // is an exclusive borrow of `this`. Rule E2 (shared `this`)
+        // continues to apply separately when the receiver is `this`.
         let src = "\
 struct B { x: i32 }
 impl B {
@@ -4154,7 +4161,7 @@ impl B {
 
     #[test]
     fn e2_does_not_fire_on_move_self() {
-        // `move self` is ownership transfer; the receiver is owned by
+        // `take this` is ownership transfer; the receiver is owned by
         // the method, so the return is an owned transfer, not a borrow.
         let src = "\
 struct B { x: i32 }
@@ -4425,8 +4432,8 @@ fn caller() {
 
     #[test]
     fn e0372_fires_on_move_while_e1_borrow_live() {
-        // The classic case: `let r = passthrough(x); drain(move x);`
-        // where drain takes `move b: B`. The move-arg path detects `x`
+        // The classic case: `let r = passthrough(x); drain(take x);`
+        // where drain takes `take b: B`. The move-arg path detects `x`
         // is borrowed and fires E0372.
         let src = "\
 struct B { x: i32 }
@@ -4449,7 +4456,7 @@ fn caller() {
     #[test]
     fn e0372_does_not_fire_after_borrower_scope_exits() {
         // `let r = passthrough(x)` is inside a block; the block closes
-        // before `drain(move x)` runs. After scope exit r is gone and
+        // before `drain(take x)` runs. After scope exit r is gone and
         // its borrow is released, so the move is fine.
         let src = "\
 struct B { x: i32 }
@@ -4493,8 +4500,8 @@ fn caller() {
 
     #[test]
     fn moving_borrower_releases_borrow() {
-        // `let r = passthrough(x); drain_b(move r);` — moving r out
-        // releases its borrow on x; subsequent `drain_b(move x)` is OK.
+        // `let r = passthrough(x); drain_b(take r);` — moving r out
+        // releases its borrow on x; subsequent `drain_b(take x)` is OK.
         let src = "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
@@ -4574,7 +4581,7 @@ fn caller() {
 
     #[test]
     fn e0380_does_not_fire_on_two_mut_copy_args() {
-        // `mut x: i32` is local-mutability for Copy types, not a borrow.
+        // `ref x: i32` is local-mutability for Copy types, not a borrow.
         let src = "\
 fn modify_both(ref a: i32, ref b: i32) { return; }
 fn caller() {
@@ -4683,8 +4690,8 @@ fn caller() {
 
     #[test]
     fn e0382_suppresses_e0370_for_same_pair() {
-        // A `mut`+`move` conflict should fire E0382 only, NOT E0370.
-        // E0370 is the move-and-shared-read class; the mut-position
+        // A `ref`+`take` conflict should fire E0382 only, NOT E0370.
+        // E0370 is the move-and-shared-read class; the `ref`-position
         // sibling is a more specific (and structurally different) case.
         let src = "\
 struct B { x: i32 }
@@ -4945,7 +4952,7 @@ fn caller() {
 
     #[test]
     fn exclusive_borrow_does_not_fire_on_copy_param() {
-        // `mut x: i32` is local-mutability for Copy, not a borrow. The
+        // `ref x: i32` is local-mutability for Copy, not a borrow. The
         // E1-mut detector must require non-Copy.
         let src = "\
 fn handle(ref x: i32) -> i32 { return x; }
@@ -4990,7 +4997,7 @@ fn through(b: B) -> B { return b; }";
 
     #[test]
     fn e1_mut_does_not_fire_on_move_marker() {
-        // `move x: B` is ownership transfer, not an exclusive borrow.
+        // `take x: B` is ownership transfer, not an exclusive borrow.
         // No elision rule applies.
         let src = "\
 struct B { x: i32 }
@@ -5065,7 +5072,7 @@ fn drain(take b: B) -> B { return b; }";
 
     #[test]
     fn partial_place_admit_disjoint_subfields_in_one_call() {
-        // The headline 6BC.3 win: `mut buf.left` + `mut buf.right`
+        // The headline 6BC.3 win: `ref buf.left` + `ref buf.right`
         // claim disjoint sub-places and admit.
         let src = "\
 struct Inner { v: i32 }
@@ -5093,7 +5100,7 @@ fn caller() {
 
     #[test]
     fn e0374_partial_overlap_parent_with_subfield_in_one_call() {
-        // `mut buf` + a sibling reading `buf.left` overlap (parent
+        // `ref buf` + a sibling reading `buf.left` overlap (parent
         // contains sub-place). Fires E0374 not E0381.
         let src = "\
 struct Inner { v: i32 }
@@ -5210,8 +5217,8 @@ fn longest_mut(ref a: B, ref b: B) -> B {
 
     #[test]
     fn e3_mut_does_not_fire_with_mixed_shared_and_mut_params() {
-        // E3-mut requires *every* param to be `mut`. A function
-        // mixing `a: B` (shared) and `mut b: B` (exclusive) doesn't
+        // E3-mut requires *every* param to be `ref`. A function
+        // mixing `a: B` (shared) and `ref b: B` (exclusive) doesn't
         // qualify for either E3 or E3-mut.
         let src = "\
 struct B { x: i32 }
@@ -5221,7 +5228,7 @@ fn mixed(a: B, ref b: B) -> B { return b; }";
         assert_eq!(return_borrow_source_with_flavor(&prog, "mixed"), None);
     }
 
-    // ---- 6BC.5 — explicit `borrow REGION T` annotations ----
+    // ---- 6BC.5 — explicit region annotations (the `borrow REGION T` source syntax is retired) ----
 
     #[test]
     fn e3_mut_multi_source_borrow_at_call_site() {

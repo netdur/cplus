@@ -179,8 +179,10 @@ pub enum TokenKind {
     /// lowers the body to an LLVM coroutine.
     Gen,
     Yield,
-    /// Slice 6BC.5: `borrow` keyword. Opens a region-annotated borrow
-    /// type: `borrow A T` (shared) or `mut x: borrow A T` (exclusive).
+    /// Slice 6BC.5: `borrow` keyword — kept as a reserved-and-rejected
+    /// token. It historically opened a region-annotated borrow type
+    /// (`borrow A T` shared / exclusive); v0.0.24 removed that region
+    /// feature, so the token still lexes but the parser rejects it.
     Borrow,
     /// Slice 7GEN.3: `interface` keyword — opens an interface
     /// declaration `interface Name { fn ... }`. Phase 7's bounded-
@@ -740,7 +742,7 @@ impl<'a> Lexer<'a> {
                         // produce invalid UTF-8. For non-ASCII bytes,
                         // either embed the UTF-8 sequence directly in
                         // the literal or build the byte array manually
-                        // and call `str_from_raw_parts` under `unsafe`.
+                        // and call `str_from_raw_parts`.
                         Some(b'x') => {
                             self.pos += 1;
                             let hi = self.peek(0).and_then(hex_digit);
@@ -2043,8 +2045,9 @@ mod tests {
 
     #[test]
     fn borrow_keyword() {
-        // Phase 6 slice 6BC.5 — `borrow` is a reserved keyword opening
-        // a region-annotated type: `borrow A T`.
+        // Phase 6 slice 6BC.5 — `borrow` stays a reserved-and-rejected
+        // keyword; it once opened a region-annotated type (`borrow A T`),
+        // a feature v0.0.24 removed. This only checks it still tokenizes.
         assert_eq!(
             kinds("borrow A string"),
             vec![

@@ -157,10 +157,11 @@ pub enum PrivateKind {
     Method,
     Interface,
     TypeAlias,
-    /// v0.0.9 Phase 4: module-scope `const NAME`. Same cross-file pub
-    /// gate as a function; missing `pub` triggers E0403.
+    /// v0.0.9 Phase 4: module-scope `const NAME`. Same cross-file
+    /// visibility gate as a function; a leading `_` (module-private)
+    /// triggers E0403 on cross-file access.
     Const,
-    /// v0.0.9 Phase 4: module-scope `static NAME`. Same pub gate.
+    /// v0.0.9 Phase 4: module-scope `static NAME`. Same visibility gate.
     Static,
 }
 
@@ -1322,10 +1323,10 @@ fn merge(
     //
     // `local_items` is everything declared at top level; `pub_items` is
     // the subset that's exported. `pub_methods[file_id][type_name]` is the
-    // set of methods marked `pub` on that type — separately tracked
-    // because methods live inside `impl` blocks. Enum variants inherit the
-    // enum's `pub` (no per-variant flag), so the variant gate just
-    // re-checks `pub_items`.
+    // set of exported (non-`_`-prefixed) methods on that type — separately
+    // tracked because methods live inside `impl` blocks. Enum variants
+    // inherit the enum's visibility (no per-variant marker), so the variant
+    // gate just re-checks `pub_items`.
     let mut local_items: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut local_enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut local_structs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -1383,7 +1384,7 @@ fn merge(
                     }
                 }
                 // Slice 7GEN.3: interface declarations register as items.
-                // Cross-file `impl Type for Interface` blocks reference
+                // Cross-file `impl Type: Interface` blocks reference
                 // the interface by name; pub-status gates cross-file use.
                 ItemKind::Interface(i) => {
                     all.insert(i.name.name.clone());
@@ -1393,7 +1394,7 @@ fn merge(
                     }
                 }
                 // Phase 11 polish: aliases register as ordinary type-level
-                // names so cross-file `pub use` lookups + import-alias
+                // names so cross-file re-export lookups + import-alias
                 // rewrites apply.
                 ItemKind::TypeAlias(a) => {
                     all.insert(a.name.name.clone());
@@ -1536,7 +1537,7 @@ enum ItemKindTag {
     /// the inlined literal at every use site; same cross-file pub gate
     /// as `Function`.
     Const,
-    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`.
+    /// v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;`.
     /// Survives to codegen as an LLVM global; same cross-file pub gate
     /// as `Function`.
     Static,
@@ -1555,8 +1556,8 @@ struct RewriteCtx {
     entry_file_id: String,
     /// Phase 5 Slice 5.A: this project's root file is the entry of a
     /// `[lib]` target. Top-level items in `entry_file_id` skip mangling
-    /// so C consumers can link against `pub fn add` as the bare `_add`
-    /// symbol. Files imported by the entry stay qualified normally —
+    /// so C consumers can link against an exported `fn add` as the bare
+    /// `_add` symbol. Files imported by the entry stay qualified normally —
     /// they're not part of the public C ABI.
     is_lib_entry: bool,
     /// Map of `as`-prefix → target file id.
@@ -1571,15 +1572,17 @@ struct RewriteCtx {
     #[allow(dead_code)]
     local_structs: BTreeMap<String, BTreeSet<String>>,
     /// Per-file public surface (slice 4B). `pub_items[file_id]` is the set
-    /// of top-level item names marked `pub`; `pub_methods[file_id][type]`
-    /// is the set of pub methods on that type. Used to gate cross-file
-    /// access (E0403). Same-file access ignores these.
+    /// of exported top-level item names (no leading `_`);
+    /// `pub_methods[file_id][type]` is the set of exported methods on that
+    /// type. Used to gate cross-file access (E0403). Same-file access
+    /// ignores these.
     pub_items: BTreeMap<String, BTreeSet<String>>,
     pub_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     /// `item_kind[file_id][name]` tags each top-level item as Function /
     /// Struct / Enum. Used to pick the right error phrasing for E0403 and
     /// to decide if a 3-segment path is `Enum::Variant` (variants inherit
-    /// the enum's pub) vs `Struct::method` (per-method pub check).
+    /// the enum's visibility) vs `Struct::method` (per-method visibility
+    /// check).
     item_kind: BTreeMap<String, BTreeMap<String, ItemKindTag>>,
     /// Public type aliases can act as small facade re-exports. This maps
     /// `file_id::Alias` to the concrete type item it names.
@@ -1593,8 +1596,8 @@ impl RewriteCtx {
     /// Phase 5 Slice 5.A: when this is a library target's entry file,
     /// every top-level name skips qualification — the bare names ARE the
     /// public ABI. Internal helpers also stay unqualified for MVP; Slice
-    /// 5.B will mark non-`pub` items with `internal` linkage so they
-    /// don't leak as exported symbols.
+    /// 5.B will mark module-private (`_`-prefixed) items with `internal`
+    /// linkage so they don't leak as exported symbols.
     fn qualify_local(&self, name: &str) -> String {
         if name == "main" && self.self_file_id == self.entry_file_id {
             return "main".to_string();
@@ -1616,11 +1619,11 @@ impl RewriteCtx {
         format!("{target_id}.{name}")
     }
 
-    /// Check that top-level `name` is `pub` in `target_id` (cross-file).
-    /// Same-file access is never blocked. Returns an E0403 if the item
-    /// isn't pub. The `kind` is best-effort — looked up from item_kind;
-    /// defaults to Function when unknown so the diagnostic still names
-    /// something.
+    /// Check that top-level `name` is exported (non-`_`-prefixed) in
+    /// `target_id` (cross-file). Same-file access is never blocked. Returns
+    /// an E0403 if the item is module-private. The `kind` is best-effort —
+    /// looked up from item_kind; defaults to Function when unknown so the
+    /// diagnostic still names something.
     fn check_pub_item(&self, target_id: &str, name: &str, span: Span) -> Result<(), ResolveError> {
         if target_id == self.self_file_id {
             return Ok(());
@@ -1703,8 +1706,9 @@ impl RewriteCtx {
         ])
     }
 
-    /// Check that method `method` on type `type_name` is `pub` in
-    /// `target_id` (cross-file). Same-file access is never blocked.
+    /// Check that method `method` on type `type_name` is exported
+    /// (non-`_`-prefixed) in `target_id` (cross-file). Same-file access is
+    /// never blocked.
     fn check_pub_method(
         &self,
         target_id: &str,
@@ -1948,8 +1952,10 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
         }
         TypeKind::Array { elem, .. } => rewrite_type(elem, ctx)?,
         // Slice 6BC.5: region annotations are transparent for resolver
-        // qualification — `borrow A prefix::T` rewrites to
-        // `borrow A <qualified>` by recursing into the inner type.
+        // qualification — recurse into the inner type so a `prefix::T`
+        // inside is qualified. (The surface `borrow REGION T` syntax was
+        // retired in v0.0.24 #9; this variant only persists for any
+        // already-parsed inner types.)
         TypeKind::Borrowed { inner, .. } => rewrite_type(inner, ctx)?,
         // Slice 7GEN.5c: `prefix::Pair[i32, bool]` — qualify the generic
         // name + recurse into each arg (args may themselves reference
@@ -1999,7 +2005,8 @@ fn rewrite_type_name(s: &str, span: Span, ctx: &RewriteCtx) -> Result<String, Re
                 prefix: prefix.to_string(),
             });
         };
-        // Slice 4B: the referenced type must be `pub` in the target file.
+        // Slice 4B: the referenced type must be exported (non-`_`) in the
+        // target file.
         ctx.check_pub_item(target_id, rest, span)?;
         return Ok(ctx.qualify_external(target_id, rest));
     }
@@ -2152,7 +2159,7 @@ fn rewrite_stmt(
 ///
 /// Walks the direct expression structure (calls, operators, indexing,
 /// field receivers, literals' elements) but stops at nested
-/// block-introducing constructs — `Block`, `Unsafe`, `If`, `Match`, and
+/// block-introducing constructs — `Block`, `If`, `Match`, and
 /// nested `@`-blocks — which own their own scopes (and, for nested
 /// builder blocks, their own context). Names inside those must be
 /// written qualified; that is consistent with DSL.3's scope (item
@@ -2477,8 +2484,8 @@ fn rewrite_expr(
                     let method_or_variant = segments[2].name.clone();
                     let type_span = segments[1].span;
                     let leaf_span = segments[2].span;
-                    // Slice 4B: the type itself must be `pub` to be
-                    // referenced cross-file at all.
+                    // Slice 4B: the type itself must be exported (non-`_`)
+                    // to be referenced cross-file at all.
                     ctx.check_pub_item(target_id, &type_name, type_span)?;
                     let resolved_alias = ctx.resolve_alias_target(target_id, &type_name);
                     let (actual_target_id, actual_type_name) = match &resolved_alias {
@@ -2486,9 +2493,9 @@ fn rewrite_expr(
                         None => (target_id.as_str(), type_name.as_str()),
                     };
                     // If the type is an enum, variants inherit the enum's
-                    // pub (no per-variant flag) — the `check_pub_item`
+                    // visibility (no per-variant marker) — the `check_pub_item`
                     // above covers it. If the type is a struct, the method
-                    // also needs its own `pub`.
+                    // also needs to be exported (non-`_`) in its own right.
                     if !ctx.external_is_enum(actual_target_id, actual_type_name) {
                         ctx.check_pub_method(
                             actual_target_id,
@@ -2523,8 +2530,9 @@ fn rewrite_expr(
             {
                 if let Some(target_id) = ctx.imports.get(&prefix) {
                     // Slice 4B: cross-file struct literal requires the
-                    // struct to be `pub`. Field-pub is enforced by sema
-                    // (it has the field-level info after resolver-rewrite).
+                    // struct to be exported (non-`_`). Field visibility is
+                    // enforced by sema (it has the field-level info after
+                    // resolver-rewrite).
                     ctx.check_pub_item(target_id, &rest, name.span)?;
                     if let Some(target) = ctx.resolve_alias_target(target_id, &rest) {
                         name.name = ctx.qualify_external(&target.target_id, &target.name);
@@ -3072,7 +3080,8 @@ mod tests {
 
     #[test]
     fn cross_file_pub_enum_variants_are_accessible() {
-        // `pub enum` exports variants automatically (no per-variant pub).
+        // An exported enum (non-`_` name) exports its variants automatically
+        // (no per-variant marker).
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();

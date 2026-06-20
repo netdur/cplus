@@ -14,7 +14,7 @@
 //! The validator returns a flat `Vec<Diagnostic>`; the driver fails the
 //! pipeline when any diagnostic carries `Severity::Error`.
 //!
-//! Sema-level rules for `#[test]` functions (signature, `pub` rejection,
+//! Sema-level rules for `#[test]` functions (signature, `export` rejection,
 //! `impl`-placement rejection — E0358/E0359/E0360) live in sema where the
 //! type info is available. This pass only enforces the surface-level
 //! attribute-shape rules.

@@ -1,7 +1,7 @@
 //! Phase 11 polish (2026-05-14): documentation generator.
 //!
-//! Walks a C+ source file looking for `pub` items immediately preceded
-//! by a block of `///` doc comments. Emits Markdown — one page per
+//! Walks a C+ source file looking for public (non-`_`) items immediately
+//! preceded by a block of `///` doc comments. Emits Markdown — one page per
 //! input file — that pairs each item's signature with its docs.
 //!
 //! Reuses the same surface as the doctest extractor (slice 5DOC):
@@ -61,14 +61,14 @@ impl ItemKind {
     }
 }
 
-/// Extract every `pub` item with a preceding `///` doc block from
-/// `src`. Items without docs are silently skipped — undocumented
+/// Extract every public (non-`_`) item with a preceding `///` doc block
+/// from `src`. Items without docs are silently skipped — undocumented
 /// internals shouldn't pollute the user-facing reference. Private
 /// items are skipped regardless of whether they have docs.
 ///
 /// `impl` blocks are a slight special case: the impl itself is
-/// emitted if its target type is pub (parsed conservatively from the
-/// `impl Name` line), and `pub fn`s *inside* the impl get their own
+/// emitted if its target type is public (parsed conservatively from the
+/// `impl Name` line), and public `fn`s *inside* the impl get their own
 /// entries with `name = "TargetName::method_name"`.
 pub fn extract(src: &str) -> Vec<DocItem> {
     let lines: Vec<&str> = src.lines().collect();

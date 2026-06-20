@@ -75,9 +75,12 @@ pub enum Ty {
     Str,
     /// Phase 8 slice 8.STR.3: owned heap-backed string. Lowered to
     /// `{ptr: *u8, len: usize, cap: usize}` — 24 bytes on 64-bit.
-    /// Non-Copy, has Drop (frees the buffer via libc `free`). Built by
-    /// `string::new()`, `string::with_capacity(n)`, and (slice 8.STR.B)
-    /// the `"...${expr}..."` interpolation literal.
+    /// Non-Copy, has Drop (frees the buffer via libc `free`). The internal
+    /// lowering target for the stdlib owned-string type `Text`
+    /// (`#[lang("string")]`); also produced by (slice 8.STR.B) the
+    /// `"...${expr}..."` interpolation literal. (The old built-in `string`
+    /// type and its `string::new()` / `string::with_capacity(n)`
+    /// constructors were removed in v0.0.18.)
     String,
     /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
     /// view `{ptr: *T, len: usize}`. 16 bytes on 64-bit. Copy semantics
@@ -134,7 +137,7 @@ pub enum Ty {
     },
     /// Slice 7GEN.4: a generic type parameter, identified by name. Appears
     /// inside the body of a generic fn / method / struct / enum or inside an
-    /// `interface` / `impl Interface: ...` block (where `Self` is
+    /// `interface` / `impl Interface: ...` block (where `This` is
     /// represented as `Param("Self")`). Two `Ty::Param` values are equal
     /// iff their names match — the surrounding signature gives them meaning.
     /// Substitution at instantiation time (slice 7GEN.5) replaces each
@@ -235,7 +238,7 @@ impl Ty {
             | Ty::Simd { .. }
             | Ty::Mask { .. }
             | Ty::Error => true,
-            // Phase 8 slice 8.STR.3: owned `string` is non-Copy and Drop.
+            // Phase 8 slice 8.STR.3: the owned-string type (`Text`) is non-Copy and Drop.
             Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) | Ty::String => false,
             // Slice 7GEN.4: a generic type parameter's Copy-ness is
             // determined by the concrete substitution. Conservatively
@@ -302,7 +305,7 @@ pub struct StructDef {
     /// resolved. See `docs/design/phase3-copy-derivation.md`.
     pub is_copy: bool,
     /// True iff this struct has a destructor (a method named `drop` with the
-    /// signature `fn drop(mut self)`). Drop types are always non-`Copy` —
+    /// signature `fn drop(ref this)`). Drop types are always non-`Copy` —
     /// see `docs/design/phase3-drop.md`. Set by `collect_methods`.
     pub is_drop: bool,
     /// Slice 10.FFI.5: true when the struct carries `#[repr(C)]`.
@@ -330,8 +333,8 @@ pub struct StructDef {
 }
 
 /// Type + ownership marker for a single parameter. The `move_` flag indicates
-/// the parameter was declared `move x: T` and consumes its argument (when the
-/// argument's type is non-Copy). The `mutable` flag (`mut x: T`) is recorded
+/// the parameter was declared `take x: T` and consumes its argument (when the
+/// argument's type is non-Copy). The `mutable` flag (`ref x: T`) is recorded
 /// for completeness but is body-internal — call sites don't care.
 #[derive(Debug, Clone)]
 pub struct ParamSig {
@@ -438,7 +441,7 @@ pub struct GenericFnSig {
 }
 
 /// Slice 7GEN.4: a registered `interface Name { fn ... }` declaration.
-/// Method signatures are stored with `Self` represented as
+/// Method signatures are stored with `This` represented as
 /// `Ty::Param("Self")` so impl-validation can substitute the concrete
 /// implementing type by walking the type tree once.
 #[derive(Debug, Clone)]
@@ -472,9 +475,9 @@ struct LocalInfo {
     /// to reject returning views into locals that will be dropped.
     borrow_roots: BTreeSet<String>,
     /// True iff this binding OWNS the value it holds — a `let` local, a
-    /// by-value or `move` parameter, `move self`, or a `match` payload bound
-    /// from an owned scrutinee. False for `borrow`/`mut` parameters, `self` /
-    /// `mut self` receivers, and payloads bound from a borrowed-place
+    /// by-value or `take` parameter, `take this`, or a `match` payload bound
+    /// from an owned scrutinee. False for bare-borrow/`ref` parameters, `this` /
+    /// `ref this` receivers, and payloads bound from a borrowed-place
     /// scrutinee — those name a value owned elsewhere. The match ownership
     /// model (`classify_scrutinee`) reads this to decide whether moving a
     /// payload out is a legitimate move (owned) or a partial move of a place
@@ -496,13 +499,13 @@ enum ScrutineeClass {
     /// match.
     Owned,
     /// The match BORROWS a value owned elsewhere — a field/index projection, or
-    /// a `borrow`/`mut`/`self` binding. The owner still drops it. Payload
+    /// a bare-borrow/`ref`/`this` binding. The owner still drops it. Payload
     /// bindings are borrows (no drop obligation); moving one out is a partial
     /// move of the place (E0337).
     Borrowed,
     /// Evaluating the scrutinee would move a non-Copy value out of a place
     /// owned elsewhere: a wrapper-forced bit-copy of a projection
-    /// (`match { h.e }`), a raw-pointer deref (`match unsafe { *p }`), or a
+    /// (`match { h.e }`), a raw-pointer deref (`match { *p }`), or a
     /// borrowed binding copied out. The copy aliases live storage → double-free.
     /// Rejected at the scrutinee, with the leaf span + reason.
     Forbidden {
@@ -520,11 +523,11 @@ enum PartialMoveKind {
     /// A field/index of an aggregate whose type carries `drop` — stealing it
     /// from under the destructor double-frees (E0509). Carries the base name.
     DropField(String),
-    /// A raw-pointer dereference of a non-Copy value (`*p`): `unsafe` permits
+    /// A raw-pointer dereference of a non-Copy value (`*p`): the deref permits
     /// the read, not ownership transfer — the pointee's owner drops it again
     /// (E0337, a non-binding place).
     RawDeref,
-    /// A non-owning, Drop-carrying binding (a `borrow`/`mut`/`self` parameter,
+    /// A non-owning, Drop-carrying binding (a bare-borrow/`ref`/`this` parameter,
     /// or a payload bound from a borrowed `match`) read by value into an owned
     /// location — the binding's real owner still drops it, so the copy is a
     /// second owner (double-free). E0337. Carries the binding name.
@@ -613,7 +616,7 @@ pub struct MonoInfo {
     /// `compile_time_blobs` but keyed by the env var name (sema dedup
     /// happens in the codegen-side emission pass).
     pub env_vars: HashMap<ByteSpan, EnvVarEntry>,
-    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;` items.
+    /// v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;` items.
     /// Keyed by qualified name. Codegen iterates this to emit one
     /// LLVM global per static, then routes use-site Ident references
     /// through load/store ops against the emitted symbol.
@@ -1050,17 +1053,19 @@ struct SemaCx<'a> {
     /// return type is malformed.
     current_gen_yield_ty: Option<Ty>,
     /// v0.0.12 (returned-borrow checking): names bound as parameters (plus
-    /// `self` for methods) of the function currently being checked. Lets the
+    /// `this` for methods) of the function currently being checked. Lets the
     /// `return` site tell a parameter-rooted borrow (caller-tied, sound) from a
     /// local-rooted one (dropped at function exit → dangling). Set fresh at the
     /// top of `check_function` / `check_method`.
     current_fn_param_names: std::collections::HashSet<String>,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
-    /// `borrow REGION T` region it carries, for parameters that have one. Used
+    /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
+    /// The `borrow REGION T` syntax is retired (v0.0.24 #9), so this stays empty.
     current_fn_param_regions: HashMap<String, String>,
     /// v0.0.12 (#2 region enforcement): the explicit region on the current
-    /// function's return type (`-> borrow REGION T`), if any.
+    /// function's return type (`-> borrow REGION T`), if any. Retired syntax
+    /// (v0.0.24 #9), so always `None`.
     current_fn_return_region: Option<String>,
     /// v0.0.12 realtime Phase 1 (method-dispatch hole): whether the function
     /// whose body is currently being checked carries `#[no_alloc]` (directly
@@ -1102,12 +1107,12 @@ struct SemaCx<'a> {
     /// consults the top-of-stack to recognize `T` as `Ty::Param("T")`
     /// instead of erroring E0303.
     ///
-    /// `Self` is treated as a magic type-param name. Inside an
-    /// `interface { ... }` body it stays abstract (`Ty::Param("Self")`);
-    /// inside an `impl Type { ... }` body it resolves to the impl
-    /// target's concrete `Ty` via `self_type_stack` (consulted before
-    /// the generic-param scope so `Self` always wins when both are
-    /// pushed). Outside both contexts, the name `Self` is rejected
+    /// The keyword `This` is treated as a magic type-param name (carried
+    /// internally as `Ty::Param("Self")`). Inside an `interface { ... }` body
+    /// it stays abstract; inside an `impl Type { ... }` body it resolves to the
+    /// impl target's concrete `Ty` via `self_type_stack` (consulted before
+    /// the generic-param scope so it always wins when both are
+    /// pushed). Outside both contexts, the name `This` is rejected
     /// with E0508.
     type_params_stack: Vec<std::collections::HashSet<String>>,
     /// v0.0.5: parallel to `type_params_stack` — maps each in-scope
@@ -1117,15 +1122,16 @@ struct SemaCx<'a> {
     /// together with `type_params_stack` via `push_type_params` /
     /// `pop_type_params`.
     param_bounds_stack: Vec<HashMap<String, Vec<String>>>,
-    /// Slice 7GEN.4: stack of "what does `Self` refer to here?" entries.
+    /// Slice 7GEN.4: stack of "what does `This` refer to here?" entries.
     /// `Some(ty)` inside an `impl Type { ... }` body (or its method
     /// signatures); `None` everywhere else. When present, `resolve_type`
-    /// returns this `Ty` for the magic name `Self`. Used by both impl-body
+    /// returns this `Ty` for the magic name (internally `Ty::Param("Self")`).
+    /// Used by both impl-body
     /// resolution and the interface-impl signature substitution pass.
     self_type_stack: Vec<Ty>,
     /// Slice 7GEN.4: interface registry. Indexed by name (interfaces live
     /// in their own namespace, distinct from struct/enum). Each entry
-    /// holds the interface's declared method signatures with `Self`
+    /// holds the interface's declared method signatures with `This`
     /// represented as `Ty::Param("Self")` — substitution to a concrete
     /// type happens at impl-validation time.
     interfaces: HashMap<String, InterfaceDef>,
@@ -1134,13 +1140,13 @@ struct SemaCx<'a> {
     /// E0506 (duplicate impl) and by future bound-checking call sites
     /// (E0502 — type does not satisfy interface bound, slice 7GEN.5).
     interface_impls: std::collections::HashSet<(String, String)>,
-    /// v0.0.14: registered `unsafe impl Send/Sync: T {}` overrides, keyed
+    /// v0.0.14: registered `impl T: Send/Sync {}` marker overrides, keyed
     /// by `(marker, type_name)` where `type_name` is the source-written name
     /// (the template leaf for a generic target, e.g. `"Arc"`). The value is
     /// the per-type-param bound list from a conditional impl
-    /// (`unsafe impl Arc[T: Send + Sync]: Send` → `[["Send","Sync"]]`);
-    /// an empty Vec means an unconditional override (`unsafe impl Send for
-    /// Handle {}`). Consulted by `is_send`/`is_sync` to re-enable a type the
+    /// (`impl Arc[T: Send + Sync]: Send` → `[["Send","Sync"]]`);
+    /// an empty Vec means an unconditional override (`impl Handle: Send {}`).
+    /// Consulted by `is_send`/`is_sync` to re-enable a type the
     /// structural raw-pointer rule would otherwise reject.
     marker_overrides: HashMap<(String, String), Vec<Vec<String>>>,
     /// v0.0.14 `#[no_alloc]` drop-glue: leaf names of types whose user `drop`
@@ -1148,7 +1154,7 @@ struct SemaCx<'a> {
     /// non-allocating by `check_no_alloc`). A drop-carrying local in a
     /// `#[no_alloc]` fn is rejected unless every destructor its scope-exit
     /// teardown runs is in this set (or is a pure auto field-drop with no
-    /// heap-freeing leaf). `string`/`Vec`/`Box` are never in it — their drop
+    /// heap-freeing leaf). `Text`/`Vec`/`Box` are never in it — their drop
     /// frees.
     no_alloc_drop_types: std::collections::HashSet<String>,
     /// v0.0.14 graph value-depth: when set, `check_expr` records each
@@ -1237,11 +1243,12 @@ struct SemaCx<'a> {
     /// macro call's source span. Sema populates; codegen reads from
     /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
     env_vars_table: HashMap<ByteSpan, EnvVarEntry>,
-    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;` items.
+    /// v0.0.9 Phase 4: module-scope `static NAME: Ty = LIT;` items.
     /// Keyed by qualified name (the resolver-rewritten form). Used by
     /// `resolve_value_ident` to surface the static's type at use sites
-    /// and by `check_assign` to gate `static mut` writes behind
-    /// `unsafe { ... }`. Codegen reads the snapshot from `MonoInfo`.
+    /// and by `check_assign` to type-check writes. Every `static` is
+    /// mutable and access is bare (v0.0.24 #9). Codegen reads the
+    /// snapshot from `MonoInfo`.
     statics_table: HashMap<String, StaticInfo>,
     /// v0.0.10 Phase 4A: ObjC selectors used by `#selector(...)` /
     /// `#msg_send(... "sel" ...)`. Codegen emits one cached-pointer
@@ -1267,9 +1274,10 @@ struct SemaCx<'a> {
 pub struct StaticInfo {
     /// Resolved type of the static (what the user wrote after `:`).
     pub ty: Ty,
-    /// `true` for `static mut NAME: ...`. Reads and writes require
-    /// `unsafe { ... }` only when this flag is set; immutable statics
-    /// read safely from any context.
+    /// Carried from the AST static def. Since v0.0.24 #9 every `static` is
+    /// mutable and access is bare (no `static mut` spelling, no `unsafe` gate
+    /// on read/write), so this flag no longer gates anything; it is retained
+    /// for codegen's mutability metadata.
     pub is_mut: bool,
     /// Initializer expression, post-lower-validation. Always one of
     /// the literal shapes accepted by `lower::is_const_initializer`.
@@ -1742,7 +1750,7 @@ impl SemaCx<'_> {
     /// to the acquiring thread). All other types remain `Send`. Detected by
     /// the generic template name behind the instantiated struct.
     ///
-    /// Deferred (needs an `unsafe impl T: Send {}` opt-in that doesn't
+    /// Deferred (needs an `impl T: Send {}` opt-in that doesn't
     /// exist yet): the broad "structs with raw-pointer fields are `!Send`"
     /// rule. Enabling it without an escape hatch would reject most FFI code
     /// (ObjC bindings, channels, mutexes). Structural propagation through a
@@ -1752,8 +1760,8 @@ impl SemaCx<'_> {
     }
 
     /// Structural Sync membership. A nominal type that (transitively) hides a
-    /// raw pointer is `!Sync` unless the author opts in via `unsafe impl Sync
-    /// for T {}`; `Rc[T]` is always `!Sync` (shared `&Rc` across threads would
+    /// raw pointer is `!Sync` unless the author opts in via `impl T: Sync {}`;
+    /// `Rc[T]` is always `!Sync` (shared `&Rc` across threads would
     /// race the non-atomic refcount).
     pub fn is_sync(&self, ty: &Ty) -> bool {
         self.type_is_marker(ty, "Sync")
@@ -1762,9 +1770,10 @@ impl SemaCx<'_> {
     /// v0.0.14 broad rule: a type satisfies the `Send`/`Sync` marker unless it
     /// is a nominal type that (transitively) hides a raw pointer with no
     /// override. A *bare* raw pointer (`*u8` used directly, e.g. as a spawn
-    /// result) stays Send/Sync — it is already visibly unsafe at every use;
-    /// the rule targets struct/enum types that wrap a pointer behind a
-    /// safe-looking API, where the unsafety would otherwise be invisible.
+    /// result) stays Send/Sync — every use is already a visibly raw operation
+    /// (self-flagging by syntax); the rule targets struct/enum types that wrap
+    /// a pointer behind a safe-looking API, where the unsafety would otherwise
+    /// be invisible.
     fn type_is_marker(&self, ty: &Ty, marker: &str) -> bool {
         match ty {
             Ty::RawPtr(_) => true,
@@ -1774,8 +1783,8 @@ impl SemaCx<'_> {
 
     /// Does `ty` carry something that blocks `marker`? A raw-pointer *field*
     /// blocks; an `Rc`/`MutexGuard` blocks (by template-leaf name, even with
-    /// no literal pointer field); a sub-aggregate blocks if it does. An
-    /// `unsafe impl` override on a nominal type short-circuits — making it
+    /// no literal pointer field); a sub-aggregate blocks if it does. A bare
+    /// `impl T: Send/Sync {}` override on a nominal type short-circuits — making it
     /// (and any container holding it) unblocked, subject to the conditional
     /// bounds. `visited` breaks struct/enum reference cycles.
     fn marker_blocked(&self, ty: &Ty, marker: &str, visited: &mut Vec<u32>) -> bool {
@@ -1836,7 +1845,7 @@ impl SemaCx<'_> {
                 visited.pop();
                 blocked
             }
-            // Primitives, `str`/`string`/slices (safe abstractions over their
+            // Primitives, `str`/`Text`/slices (safe abstractions over their
             // storage), fn pointers, SIMD, unit — never block.
             _ => false,
         }
@@ -1854,10 +1863,10 @@ impl SemaCx<'_> {
         }
     }
 
-    /// For a conditional override (`unsafe impl Arc[T: Send + Sync]: Send`),
+    /// For a conditional override (`impl Arc[T: Send + Sync]: Send`),
     /// check the instantiation's type args against the declared per-param
-    /// bounds. Empty bounds = an unconditional override (`unsafe impl Send for
-    /// Handle {}`). A conditional impl on a type with no recoverable args is
+    /// bounds. Empty bounds = an unconditional override (`impl Handle: Send {}`).
+    /// A conditional impl on a type with no recoverable args is
     /// treated as unsatisfied (the impl is malformed).
     fn override_satisfied(&self, ty: &Ty, bounds: &[Vec<String>]) -> bool {
         if bounds.is_empty() {
@@ -1892,7 +1901,7 @@ impl SemaCx<'_> {
     /// For an instantiated generic struct or enum, the trailing segment of its
     /// template name (`stdlib.rc.Rc` → `"Rc"`). `None` for non-nominal or
     /// non-generic types. Used to recognize stdlib marker types and match
-    /// `unsafe impl` overrides structurally rather than by mangled name.
+    /// marker-`impl` overrides structurally rather than by mangled name.
     fn nominal_template_leaf(&self, ty: &Ty) -> Option<&str> {
         match ty {
             Ty::Struct(id) => self.structs[id.0 as usize]
@@ -2046,7 +2055,7 @@ impl SemaCx<'_> {
         // interfaces. v0.0.4 baseline is permissive — every type
         // satisfies both. Future slices tighten: Rc[T] / MutexGuard[T]
         // explicitly !Send, raw-pointer-bearing structs !Send unless
-        // user opts in via `unsafe impl T: Send`. The bound API
+        // user opts in via `impl T: Send {}`. The bound API
         // is locked in now so generic signatures (`thread::spawn[O: Send]`)
         // compose forward-compatibly with future tightening.
         if bound == "Send" {
@@ -2157,7 +2166,7 @@ impl SemaCx<'_> {
     /// tagged-enum payload rule (§3.3 of the design note).
     fn ty_carries_drop(&self, ty: &Ty) -> bool {
         match ty {
-            // v0.0.14 auto field-drop: `string` owns a heap buffer.
+            // v0.0.14 auto field-drop: the owned-string type (`Text`) owns a heap buffer.
             Ty::String => true,
             // A struct carries drop if it has an explicit `drop` OR any field
             // is itself drop-carrying (transitive auto field-drop). Cycle-safe:
@@ -2206,7 +2215,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.14 `#[no_alloc]` drop-glue: is the scope-exit teardown of `ty`
-    /// non-allocating? `string` (and any `Vec`/`Box`-style type) frees its
+    /// non-allocating? `Text` (and any `Vec`/`Box`-style type) frees its
     /// buffer, so it is never safe. A struct with a user `drop` is safe only
     /// if that `drop` is `#[no_alloc]` (its body verified by `check_no_alloc`);
     /// then its auto-dropped fields must each be safe too. Enums recurse into
@@ -2239,14 +2248,14 @@ impl SemaCx<'_> {
     /// of this `(marker, ty)` run a destructor in *this* function at scope exit?
     /// Mirrors codegen's callee-side drop rule (`effective_move` + the
     /// Struct/Enum `register_drop` path in `gen_function`):
-    ///   - **Owned** means `move x: T`, or a bare `x: T` whose non-Copy struct
-    ///     type is move-by-default (the v0.0.10 rule). `borrow x` / `mut x` are
-    ///     caller-owned — no callee teardown.
+    ///   - **Owned** means `take x: T`, or a bare `x: T` whose non-Copy struct
+    ///     type is move-by-default (the v0.0.10 rule). A bare-borrow `x` / `ref x`
+    ///     is caller-owned — no callee teardown.
     ///   - Of the owned params, codegen only emits a callee drop for a
-    ///     `Struct`/`Enum` aggregate. A `string`/`Vec[T]` *value* param is
+    ///     `Struct`/`Enum` aggregate. A `Text`/`Vec[T]` *value* param is
     ///     caller-dropped via the auto-clone-on-return safety net
     ///     (`borrowed_params`), so the callee frees nothing — `Ty::String`
-    ///     therefore returns `false` here even under `move`.
+    ///     therefore returns `false` here even under `take`.
     /// Returning `true` means this parameter's implicit teardown is the
     /// callee's, so a `#[no_alloc]` function must reject it when that teardown
     /// allocates (`!no_alloc_safe_drop`).
@@ -2326,7 +2335,7 @@ impl SemaCx<'_> {
                 );
                 continue;
             };
-            // Slice 7GEN.4: `Self` inside an impl body resolves to the
+            // Slice 7GEN.4: `This` inside an impl body resolves to the
             // target type's concrete `Ty`. Push for the duration of this
             // impl block so method-signature resolution sees it.
             self.self_type_stack.push(Ty::Struct(id));
@@ -2380,7 +2389,7 @@ impl SemaCx<'_> {
                     continue;
                 }
                 // `drop` is the destructor: the signature must be exactly
-                // `fn drop(mut self)` (mutable receiver, no extra params, no
+                // `fn drop(ref this)` (mutable receiver, no extra params, no
                 // return type). Defining a method named `drop` marks the
                 // struct as `Drop`, which forces non-Copy in
                 // `compute_struct_copy_flags`. See
@@ -2516,7 +2525,7 @@ impl SemaCx<'_> {
 
     /// v0.0.5 Phase 2C: collect methods from `impl EnumName { fn ... }`.
     /// Mirror of the struct path in `collect_methods` — sigs go into
-    /// `EnumDef::methods`, `Self` resolves to `Ty::Enum(enum_id)`, no
+    /// `EnumDef::methods`, `This` resolves to `Ty::Enum(enum_id)`, no
     /// destructor detection (enums don't carry Drop yet; relaxes when
     /// the no-Drop-payload rule does).
     fn collect_enum_impl_methods(&mut self, enum_id: EnumId, b: &ImplBlock) {
@@ -2647,7 +2656,7 @@ impl SemaCx<'_> {
             impl_scope.insert(n.clone());
         }
         self.type_params_stack.push(impl_scope);
-        // `Self` inside the impl body resolves to the (uninstantiated)
+        // `This` inside the impl body resolves to the (uninstantiated)
         // generic — represent it as Ty::Param("Self") for now;
         // substitution to a concrete struct happens per instantiation.
         self.self_type_stack.push(Ty::Param("Self".to_string()));
@@ -2730,7 +2739,7 @@ impl SemaCx<'_> {
 
     /// Slice 7GEN.4: collect interface declarations into the
     /// `interfaces` registry. Method signatures are resolved with a
-    /// magic `Self` type-param frame pushed so any occurrence of `Self`
+    /// magic `This` type-param frame pushed so any occurrence of `This`
     /// in a method signature becomes `Ty::Param("Self")`. Substitution
     /// to a concrete type happens at impl-validation time.
     ///
@@ -2789,7 +2798,7 @@ impl SemaCx<'_> {
             // Phase 8 slice 8.STR.6 (renamed v0.0.19): `ToText` — produces an
             // owned `Text`. Blessed impls cover every primitive + str; user
             // types add their own via the usual
-            // `impl Foo: ToText { fn to_text(self) -> Text }` surface.
+            // `impl Foo: ToText { fn to_text(this) -> Text }` surface.
             // (Was `ToString`/`to_string` until v0.0.19; renamed to track the
             // surviving owned-string type after `string` → `Text`.)
             ("ToText", "to_text", Ty::String, false),
@@ -2814,8 +2823,10 @@ impl SemaCx<'_> {
                     return_type: ret.clone(),
                     generic_params: Vec::new(),
                     generic_bounds: Vec::new(),
-                    // interface signatures are not `unsafe fn` (TEXT.1 targets
-                    // inherent `impl` methods); unsafe interfaces can come later.
+                    // interface signatures carry no unsafety marker. (TEXT.1
+                    // once added `unsafe fn` on inherent `impl` methods; v0.0.24
+                    // removed it — raw operations self-flag by syntax now, so
+                    // there is no `unsafe fn` to mark either way.)
                 },
             );
             self.interfaces.insert(
@@ -2889,7 +2900,8 @@ impl SemaCx<'_> {
                         return_type,
                         generic_params: Vec::new(),
                         generic_bounds: Vec::new(),
-                        // `m` here is an InterfaceMethod (no `unsafe fn`).
+                        // `m` here is an InterfaceMethod (no unsafety marker —
+                        // `unsafe fn` was removed in v0.0.24).
                     },
                 );
             }
@@ -2911,7 +2923,7 @@ impl SemaCx<'_> {
     /// Reports:
     /// - **E0503** — interface impl missing a required method.
     /// - **E0504** — interface impl has a method not declared by the interface.
-    /// - **E0505** — interface method signature mismatch (with `Self`
+    /// - **E0505** — interface method signature mismatch (with `This`
     ///   substituted to the implementing type).
     /// - **E0506** — duplicate `impl Type: Interface` for the same pair.
     /// - **E0507** — orphan rule: impl must live in the same file as
@@ -3158,7 +3170,7 @@ impl SemaCx<'_> {
 
     /// v0.0.5 Phase 2C: type-check the body of a method declared inside
     /// `impl EnumName { fn ... }`. Mirror of `check_method` for structs;
-    /// `Self` resolves to `Ty::Enum(enum_id)` and receiver bindings
+    /// `This` resolves to `Ty::Enum(enum_id)` and receiver bindings
     /// take the enum's type.
     fn check_enum_method(&mut self, enum_id: EnumId, m: &Method) {
         let Some(sig) = self.enums[enum_id.0 as usize]
@@ -3200,8 +3212,8 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
-                    // `move self` owns the value inside the body; `self` / `mut
-                    // self` borrow it (the caller still owns and drops it).
+                    // `take this` owns the value inside the body; `this` / `ref
+                    // this` borrow it (the caller still owns and drops it).
                     owns_value: matches!(rcv, Receiver::Move),
                 },
             );
@@ -3212,9 +3224,9 @@ impl SemaCx<'_> {
                     "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
                     param.span);
             }
-            // v0.0.9 follow-up: `borrow` is mutually exclusive with
-            // both `move` (ownership-transfer vs shared) and `mut`
-            // (exclusive borrow vs shared). Reuses E0334 — same shape
+            // v0.0.9 follow-up: the (now-retired) `borrow` marker was mutually
+            // exclusive with both `take` (ownership-transfer vs shared) and
+            // `ref` (exclusive borrow vs shared). Reuses E0334 — same shape
             // of category error.
             if param.borrow_ && param.move_ {
                 self.err("E0334",
@@ -3242,7 +3254,7 @@ impl SemaCx<'_> {
             }
             let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
             {
-                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
                 !param.mutable
             } else {
                 param.move_ || self.is_copy(&psig.ty)
@@ -3255,10 +3267,10 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
-                    // A by-value or `move` parameter owns its value; `borrow`
-                    // and `mut` parameters are shared/exclusive borrows the
-                    // caller still owns (so a payload moved out of a matched
-                    // borrow param is a partial move → E0337).
+                    // A by-value or `take` parameter owns its value; a bare
+                    // (read-only) or `ref` parameter is a shared/exclusive borrow
+                    // the caller still owns (so a payload moved out of a matched
+                    // borrowing param is a partial move → E0337).
                     owns_value: param_owns_value,
                 },
             );
@@ -3288,13 +3300,13 @@ impl SemaCx<'_> {
         else {
             return;
         };
-        // Slice 7GEN.4: re-push the impl's `Self` mapping so `Self`
+        // Slice 7GEN.4: re-push the impl's self-type mapping so `This`
         // references in the method body resolve to the target type.
         self.self_type_stack.push(Ty::Struct(struct_id));
         // Slice 7GEN.5e: re-push method-level generic params for
         // body checking so `T` references in the body resolve.
         self.push_type_params(&m.generic_params);
-        // v0.0.5 Phase 2B: gen methods (e.g. `pub gen fn iter(self) -> T`)
+        // v0.0.5 Phase 2B: gen methods (e.g. `export gen fn iter(this) -> T`)
         // expose `Iterator[T]` at the signature level; the body sees the
         // unwrapped element type T and uses `yield V;` to produce values.
         // Mirror `check_function`'s state-threading for `current_fn_is_gen`
@@ -3325,11 +3337,11 @@ impl SemaCx<'_> {
         let fn_no_alloc = marks_no_alloc(&m.attributes);
         self.scopes.push(HashMap::new());
 
-        // v0.0.15 `#[no_alloc]` drop-glue, receiver arm: a `move self` receiver
+        // v0.0.15 `#[no_alloc]` drop-glue, receiver arm: a `take this` receiver
         // is consumed by the method, so codegen registers a scope-exit drop for
         // it (mirrors `gen_function`'s self path) — unless this *is* the
-        // destructor, where self is being torn down already. An allocating
-        // teardown of an owned `self` violates `#[no_alloc]`.
+        // destructor, where the receiver is being torn down already. An allocating
+        // teardown of an owned `this` violates `#[no_alloc]`.
         if fn_no_alloc {
             if let Some(Receiver::Move) = sig.receiver {
                 let self_ty = Ty::Struct(struct_id);
@@ -3346,9 +3358,9 @@ impl SemaCx<'_> {
             }
         }
 
-        // Register `self` if there's a receiver. `mut self` makes self
-        // a mutable binding (enables `self.x = ...`); other forms don't.
-        // `move self` is read-only inside the body — consumption happens at
+        // Register the receiver binding if there's a receiver. `ref this` makes
+        // it a mutable binding (enables `this.x = ...`); other forms don't.
+        // `take this` is read-only inside the body — consumption happens at
         // the call site, not from within.
         if let Some(rcv) = sig.receiver {
             let mutable = matches!(rcv, Receiver::Mut);
@@ -3360,8 +3372,8 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
-                    // `move self` owns the value inside the body; `self` / `mut
-                    // self` borrow it (the caller still owns and drops it).
+                    // `take this` owns the value inside the body; `this` / `ref
+                    // this` borrow it (the caller still owns and drops it).
                     owns_value: matches!(rcv, Receiver::Move),
                 },
             );
@@ -3385,7 +3397,7 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            // E0334: `mut` and `move` are mutually exclusive ownership markers.
+            // E0334: `ref` and `take` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
                     "E0334",
@@ -3403,7 +3415,7 @@ impl SemaCx<'_> {
             }
             let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
             {
-                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
                 !param.mutable
             } else {
                 param.move_ || self.is_copy(&psig.ty)
@@ -3416,10 +3428,10 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
-                    // A by-value or `move` parameter owns its value; `borrow`
-                    // and `mut` parameters are shared/exclusive borrows the
-                    // caller still owns (so a payload moved out of a matched
-                    // borrow param is a partial move → E0337).
+                    // A by-value or `take` parameter owns its value; a bare
+                    // (read-only) or `ref` parameter is a shared/exclusive borrow
+                    // the caller still owns (so a payload moved out of a matched
+                    // borrowing param is a partial move → E0337).
                     owns_value: param_owns_value,
                 },
             );
@@ -3447,10 +3459,10 @@ impl SemaCx<'_> {
             let ItemKind::Function(f) = &item.kind else {
                 continue;
             };
-            // Slice 10.FFI.3: record extern fns so call sites can gate
-            // them behind `unsafe { ... }`. The signature still goes
-            // into `fns` (so calls type-check normally); the membership
-            // set just drives the unsafe gate.
+            // Slice 10.FFI.3: record extern fns. The signature still goes
+            // into `fns` (so calls type-check normally); the membership set
+            // is used for the duplicate-extern-declaration check (extern
+            // calls are bare expressions — the old `unsafe` gate is gone).
             if f.is_extern {
                 self.extern_fns.insert(f.name.name.clone());
             }
@@ -4027,7 +4039,7 @@ impl SemaCx<'_> {
     // `Path { segments }` cases only. Field-method calls (`recv.method(...)`)
     // are skipped: resolving them needs full type-dispatch info that we
     // don't conservatively expose here. In practice this is fine because
-    // the only way to construct an allocating receiver (Vec / String / Box /
+    // the only way to construct an allocating receiver (Vec / Text / Box /
     // HashMap) is through a free or assoc fn that the walker *does* see —
     // so the call to e.g. `vec::new()` already fires E0901.
 
@@ -4123,7 +4135,7 @@ impl SemaCx<'_> {
     /// v0.0.14 inline asm Tier 3: a `#[naked]` function emits no
     /// prologue/epilogue, so its body must be inline asm only — anything else
     /// would read/write a stack frame that doesn't exist. Each statement must
-    /// be `#asm(...)` (optionally wrapped in `unsafe { ... }`); a non-asm
+    /// be `#asm(...)` (optionally wrapped in a plain `{ ... }` block); a non-asm
     /// statement or a value tail is **E0906**.
     fn check_naked(&mut self, p: &Program) {
         for item in &p.items {
@@ -4472,9 +4484,9 @@ impl SemaCx<'_> {
     /// raw-pointer (`*T`) struct field must be *accounted for*:
     ///   - marked `opaque` (another owner releases it), or
     ///   - released by the struct's `drop`, in one of two structural shapes —
-    ///     an unconditional direct release (`unsafe { free(self.f); }`) or a
+    ///     an unconditional direct release (`{ free(this.f); }`) or a
     ///     release guarded by a null-test on the same field
-    ///     (`if self.f.is_not_null() { ... }` / `if !self.f.is_null() { ... }`).
+    ///     (`if this.f.is_not_null() { ... }` / `if !this.f.is_null() { ... }`).
     /// Anything else (no `drop`, an omitted field, or a release hidden behind an
     /// arbitrary condition / loop / helper call) is **E0510**. The check is a
     /// structural pattern match over the `drop` body — no dataflow, no
@@ -4485,8 +4497,8 @@ impl SemaCx<'_> {
         fn is_raw_ptr(t: &Type) -> bool {
             matches!(t.kind, TypeKind::RawPtr(_))
         }
-        /// `self.field` used as a call argument — seeing through an `as` cast,
-        /// since the common release idiom is `free(self.ptr as *u8)` (the
+        /// `this.field` used as a call argument — seeing through an `as` cast,
+        /// since the common release idiom is `free(this.ptr as *u8)` (the
         /// releaser takes `*u8` but the field is `*T`). The cast is trivial and
         /// keeps the field visibly the call's argument, so it still satisfies
         /// the "direct, local release" rule.
@@ -4508,7 +4520,7 @@ impl SemaCx<'_> {
                         && matches!(&ty.kind, crate::ast::TypeKind::RawPtr(_))
             )
         }
-        /// `self.field.is_not_null()`, `!self.field.is_null()`, or
+        /// `this.field.is_not_null()`, `!this.field.is_null()`, or
         /// `this.field != 0 as *T`.
         fn is_null_guard(cond: &Expr, field: &str) -> bool {
             match &cond.kind {
@@ -4538,7 +4550,7 @@ impl SemaCx<'_> {
             match &e.kind {
                 // A direct release: `field` passed to a direct call.
                 ExprKind::Call { args, .. } => args.iter().any(|a| arg_is_self_field(a, field)),
-                // Transparent wrappers — `unsafe { ... }` and bare blocks.
+                // Transparent wrapper — a bare block.
                 ExprKind::Block(b) => block_releases(b, field),
                 // The one allowed conditional: a null-guard on the same field,
                 // no `else`. Arbitrary conditions are intentionally NOT descended.
@@ -4568,7 +4580,7 @@ impl SemaCx<'_> {
         /// Used to tell "freed conditionally" (→ warning) from "never freed at
         /// all / delegated to a helper" (→ error). A method/helper call that
         /// doesn't pass the field as an argument is not a release, so delegation
-        /// (`self.cleanup()`) correctly does not count.
+        /// (`this.cleanup()`) correctly does not count.
         fn appears_released(body: &Block, field: &str) -> bool {
             fn e(x: &Expr, f: &str) -> bool {
                 match &x.kind {
@@ -4980,7 +4992,7 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            // E0334: `mut` and `move` are mutually exclusive ownership markers.
+            // E0334: `ref` and `take` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
                     "E0334",
@@ -4988,8 +5000,8 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            // v0.0.9 follow-up: `borrow` is mutually exclusive with
-            // both `move` and `mut`. See the matching check in
+            // v0.0.9 follow-up: the (now-retired) `borrow` marker was mutually
+            // exclusive with both `take` and `ref`. See the matching check in
             // `check_methods` for the rationale.
             if param.borrow_ && param.move_ {
                 self.err("E0334",
@@ -5017,7 +5029,7 @@ impl SemaCx<'_> {
             // suspension must survive in the coroutine frame (which LLVM
             // promotes to the heap). Parameters that are *borrows of
             // caller data* — fat-pointer-shaped (`str`, `T[]`) or
-            // mutably-borrowed (`mut x: NonCopyT`, which is pointer-passed
+            // mutably-borrowed (`ref x: NonCopyT`, which is pointer-passed
             // per Phase-6 ABI) — risk pointing into a caller's stack
             // frame that doesn't survive the suspension. v0.0.3's
             // executor is compute-only so the hazard is latent; v0.0.4's
@@ -5029,12 +5041,12 @@ impl SemaCx<'_> {
             // borrow surface is parameters of these shapes; (b) banning
             // the shape outright forces async fns to be owned-data-only,
             // which is the right default; (c) escape hatches exist
-            // (`string`, `Vec[T]`, owned types) for every banned case.
+            // (`Text`, `Vec[T]`, owned types) for every banned case.
             //
             // Forbidden in async-fn param position:
             //   - `Ty::Str` (fat ptr borrowing into a string)
             //   - `Ty::Slice(_)` (fat ptr borrowing into an array/vec)
-            //   - `mut x: NonCopyT` (pointer-passed by Phase-6 ABI)
+            //   - `ref x: NonCopyT` (pointer-passed by Phase-6 ABI)
             if f.is_async {
                 let pty = &psig.ty;
                 let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_));
@@ -5062,7 +5074,7 @@ impl SemaCx<'_> {
             }
             let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
             {
-                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
                 !param.mutable
             } else {
                 param.move_ || self.is_copy(&psig.ty)
@@ -5075,10 +5087,10 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
-                    // A by-value or `move` parameter owns its value; `borrow`
-                    // and `mut` parameters are shared/exclusive borrows the
-                    // caller still owns (so a payload moved out of a matched
-                    // borrow param is a partial move → E0337).
+                    // A by-value or `take` parameter owns its value; a bare
+                    // (read-only) or `ref` parameter is a shared/exclusive borrow
+                    // the caller still owns (so a payload moved out of a matched
+                    // borrowing param is a partial move → E0337).
                     owns_value: param_owns_value,
                 },
             );
@@ -5102,7 +5114,7 @@ impl SemaCx<'_> {
     /// Function body: must produce a value matching the return type, OR end
     /// with an explicit `return`. Phase-1 heuristic; full divergence analysis
     /// is Phase 3 work.
-    /// Phase 5 Slice 5.C: validate that every type in a `pub extern fn`
+    /// Phase 5 Slice 5.C: validate that every type in an `export extern fn`
     /// signature is C-ABI-compatible. Each rejected type emits E0410 at
     /// the parameter's (or return-type's) span, with the unsupported
     /// type named in the message + a suggestion for the conventional
@@ -5279,7 +5291,7 @@ impl SemaCx<'_> {
             // Type-check the tail first so the E0333 message can suggest the
             // right fix. v0.0.12 G-022: when the function returns `()` and
             // the tail expression is itself unit-typed (the very common
-            // `fn f() { unsafe { ... } }` / `fn f() { if c { ... } }`
+            // `fn f() { { ... } }` / `fn f() { if c { ... } }`
             // shape), the right fix is `;` after the closing brace, not
             // `return ...;`. The previous one-size message led writers to
             // append `return;` which compiles but reads worse than `};`.
@@ -5378,7 +5390,7 @@ impl SemaCx<'_> {
                     }
                 };
                 // v0.0.14 `#[no_alloc]` drop-glue: a local whose scope-exit
-                // teardown frees heap (a `string`/`Vec`/`Box`) or runs a
+                // teardown frees heap (a `Text`/`Vec`/`Box`) or runs a
                 // `drop` not marked `#[no_alloc]` would allocate/deallocate at
                 // the closing brace — invisible in the body but real. Reject it
                 // in a `#[no_alloc]` function.
@@ -5952,9 +5964,10 @@ impl SemaCx<'_> {
     /// — `#str_ptr`, `#str_len`, `#str_from_raw_parts`, `#slice_ptr`,
     /// `#slice_len`, `#slice_from_raw_parts`, and `#bswap{16,32,64}` /
     /// `#htons` / `#htonl` / `#ntohs` / `#ntohl`. Returns `Some(result_ty)` when
-    /// `name` is one of them (else `None`). `*_from_raw_parts` require an
-    /// enclosing `unsafe` block. The single source for both the `#name`
-    /// dispatch (`check_intrinsic`) and the bare-call path during migration.
+    /// `name` is one of them (else `None`). `*_from_raw_parts` are bare
+    /// expressions — they self-flag by syntax, with no `unsafe` wrapper. The
+    /// single source for both the `#name` dispatch (`check_intrinsic`) and the
+    /// bare-call path during migration.
     fn ffi_builtin_ty(&mut self, name: &str, args: &[Expr], span: ByteSpan) -> Option<Ty> {
         // `#println(x)` — type-dispatched primitive print (`i32` or `str`). Not
         // user-visible overloading; one of the compiler-known builtins. The
@@ -6549,8 +6562,8 @@ impl SemaCx<'_> {
     /// v0.0.24 de-Rust: `#addr(p)` — raw pointer → integer (`usize`). The loud
     /// replacement for `p as usize`: the pointer op is visible in the
     /// expression (`#addr`), not hidden in the destination type. Inverse of
-    /// `#addr_of`. Unsafe-gated today like `p as usize`; un-gates with the rest
-    /// when `unsafe` is dropped (task #7).
+    /// `#addr_of`. A bare expression like `p as usize` (no `unsafe` wrapper) —
+    /// it self-flags by syntax (`unsafe` was dropped in v0.0.24, task #7).
     fn check_intrinsic_addr(
         &mut self,
         type_args: &[Type],
@@ -7370,8 +7383,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // Slice 10.FFI.2: indexing on a raw pointer is unchecked
             // pointer arithmetic. `p[i]` = `*(p + i)`. Pointee is the
             // result type. No bounds check (pointer length unknown).
-            // Slice 10.FFI.3: requires `unsafe` block — pointer
-            // indexing dereferences arbitrary memory.
+            // Slice 10.FFI.3: a bare expression (no `unsafe` wrapper) — pointer
+            // indexing self-flags by syntax while dereferencing arbitrary memory.
             Ty::RawPtr(inner) => (*inner).clone(),
             Ty::Error => Ty::Error,
             other => {
@@ -7430,7 +7443,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let scrutinee_class = self.classify_scrutinee(scrutinee);
         if let ScrutineeClass::Forbidden { span, kind } = &scrutinee_class {
             // A wrapper-forced bit-copy of a projection (`match { h.e }`), a raw
-            // deref (`match unsafe { *p }`), or a borrowed binding — evaluating
+            // deref (`match { *p }`), or a borrowed binding — evaluating
             // it aliases a value owned elsewhere. Reject at the scrutinee.
             // (`kind` borrows the local `scrutinee_class`, not `self`.)
             self.emit_partial_move(*span, kind);
@@ -7438,7 +7451,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // An owned scrutinee (an owning binding the match consumes, or an owned
         // temporary) makes payload / catch-all bindings OWN their values — they
         // may be moved out. A borrowed scrutinee (a field/index projection or a
-        // `borrow`/`mut`/`self` binding) makes them borrows; a move-out is a
+        // bare-borrow/`ref`/`this` binding) makes them borrows; a move-out is a
         // partial move of the place (E0337), checked per-arm below. A forbidden
         // scrutinee is already rejected; treat its hypothetical value as owned
         // so arms don't cascade spurious errors.
@@ -7514,7 +7527,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             // BORROWED scrutinee, pattern position = MOVED: moving an owning
             // payload out of a value the match only borrows (a field/index
-            // projection, or a `borrow`/`mut`/`self` binding) is a partial move
+            // projection, or a bare-borrow/`ref`/`this` binding) is a partial move
             // of a value owned elsewhere — both the move target and the owner
             // would drop it. Reject (E0337). Checked after the body so a
             // read-only (borrowed) payload stays allowed; only an escaped
@@ -8612,8 +8625,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if name == "__cplus_reactor_yield_now" {
             return Some(self.check_reactor_yield_now(callee, args, type_args, call_span));
         }
-        // Atomic ops `#atomic_<op>_<ty>_<ord>(...)`. All require `unsafe` (they
-        // read/write through a raw pointer the compiler can't prove valid).
+        // Atomic ops `#atomic_<op>_<ty>_<ord>(...)`. All are bare expressions
+        // (no `unsafe` wrapper) — they self-flag by syntax while reading/writing
+        // through a raw pointer the compiler can't prove valid.
         if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
             let expected_args = 1 + spec.value_arg_count();
             if args.len() != expected_args {
@@ -8812,9 +8826,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ///   different concrete types across arguments.
     /// v0.0.3 Phase 5 Slice 5B: type-check `#thread_spawn::[O](f)`
     /// and `#thread_join::[O](h)`. Both intrinsics take one
-    /// turbofish type argument and one value argument; both require
-    /// `unsafe`. Spawn returns `JoinHandle[O]` (from stdlib/thread),
-    /// join returns `O`.
+    /// turbofish type argument and one value argument; both are bare
+    /// expressions (no `unsafe` wrapper). Spawn returns `JoinHandle[O]`
+    /// (from stdlib/thread), join returns `O`.
     fn check_thread_intrinsic(
         &mut self,
         name: &str,
@@ -8913,7 +8927,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     /// v0.0.3 Phase 5 Slice 5E.5: type-check
     /// `#block_on::[T](future)`. Takes one type arg T and one
-    /// value arg (a `Future[T]`); returns T. Requires `unsafe`.
+    /// value arg (a `Future[T]`); returns T. A bare expression (no
+    /// `unsafe` wrapper).
     fn check_block_on(
         &mut self,
         callee: &Expr,
@@ -8961,8 +8976,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// v0.0.4 Phase 3 Slice 3A.1: type-check
     /// `#reactor_wait_read(fd: i32)`. Single i32 arg, returns
     /// Unit. Must appear inside an `async fn` body (we need a coroutine
-    /// to suspend) and inside `unsafe { ... }` (it's an FFI-shaped
-    /// intrinsic that the compiler can't safety-check beyond shape).
+    /// to suspend). It's a bare FFI-shaped intrinsic (no `unsafe` wrapper)
+    /// that the compiler can't safety-check beyond shape.
     fn check_reactor_wait_read(
         &mut self,
         callee: &Expr,
@@ -9046,7 +9061,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// v0.0.5 Phase 4 Slice 4A: `#reactor_wait_timer(ms: u64)`.
     /// Registers a kqueue EVFILT_TIMER for `ms` milliseconds, then
     /// suspends self. Reactor wakes us when the timer fires. Same
-    /// unsafe + async-only gates as wait_read / wait_write.
+    /// async-only gate as wait_read / wait_write (bare, no `unsafe` wrapper).
     fn check_reactor_wait_timer(
         &mut self,
         callee: &Expr,
@@ -9290,10 +9305,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             // Now check each arg against the substituted parameter type.
             // v0.0.3 Phase 5 Slice 5C: thread through the param's move/
-            // mutable flags via `check_arg_with_move` so `move`-marked
+            // mutable flags via `check_arg_with_move` so `take`-marked
             // params in a turbofish call correctly mark the source
             // binding as moved. Without this, calls like
-            // `thread::spawn_with::[string, i64](s, f)` leave `s`
+            // `thread::spawn_with::[Text, i64](s, f)` leave `s`
             // un-marked and post-move use is silently accepted.
             let mut had_err = false;
             for (param, arg) in gsig.params.iter().zip(args.iter()) {
@@ -9452,7 +9467,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 receiver.span,
             );
         }
-        // `move self` consumes the receiver place — but only for a non-Copy
+        // `take this` consumes the receiver place — but only for a non-Copy
         // receiver (`is_copy` is bound-aware for a `Ty::Param`). `consume_place`
         // runs the shared move/borrow path, so a borrowed/Drop-field/raw-deref
         // receiver is the same E0337/E0509 here as at any other consuming site,
@@ -9545,7 +9560,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // receivers (string / SIMD / raw-ptr / iterator) are not in the map and
         // are handled at their own sites below (e.g. `to_string`).
         self.check_method_contract(&recv_ty, &name.name, call_span);
-        // Phase 8 slice 8.STR.3: blessed methods on owned `string`.
+        // Phase 8 slice 8.STR.3: blessed methods on the owned-string type (`Text`).
         if matches!(recv_ty, Ty::String) {
             if !type_args.is_empty() {
                 self.err(
@@ -9574,7 +9589,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Phase 8 slice 8.STR.6 (renamed v0.0.19): blessed `to_text()` on every
         // primitive + `str`. Returns an owned `Text`. User-defined structs hit
         // the normal method-lookup below; if they provide
-        // `impl Foo: ToText { fn to_text(self) -> Text }`, that path handles
+        // `impl Foo: ToText { fn to_text(this) -> Text }`, that path handles
         // them.
         if name.name == "to_text" && args.is_empty() && Self::is_blessed_to_text_receiver(&recv_ty)
         {
@@ -9683,7 +9698,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw-pointer
         // receivers. Lowers to a single `icmp eq ptr %p, null` (and its
         // inverse). No memory access — just inspecting the bit pattern —
-        // so neither method requires `unsafe`. Closes the C `if (p == NULL)`
+        // so both are plain safe calls (no raw-deref hazard). Closes the C `if (p == NULL)`
         // ergonomic gap without needing a `#null` intrinsic or special-case
         // sugar.
         if matches!(recv_ty, Ty::RawPtr(_))
@@ -9746,7 +9761,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // interface bounds. It runs the SAME shared checks as a concrete call
         // (`check_method_receiver` + `check_method_args_and_return`) with `Self`
         // substituted to `Ty::Param(T)` — so receiver-less (E0327), arity
-        // (E0308), `mut`-receiver (E0328), and arg/receiver move-consumption
+        // (E0308), `ref`-receiver (E0328), and arg/receiver move-consumption
         // (E0335/E0337) are all covered, not a hand-rolled subset.
         // Codegen dispatches each monomorphized instantiation to the
         // concrete impl's method.
@@ -10160,20 +10175,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         )
     }
 
-    /// Phase 8 slice 8.STR.3: dispatch `s.method(args)` on a `string`
-    /// receiver. Methods: `len() -> usize`, `is_empty() -> bool`,
-    /// `as_str() -> str`, `clone() -> string`. Anything else fires E0324.
+    /// Phase 8 slice 8.STR.3: dispatch `s.method(args)` on an owned-string
+    /// (`Text`) receiver. Methods: `len() -> usize`, `is_empty() -> bool`,
+    /// `as_str() -> str`, `clone() -> Text`. Anything else fires E0324.
     /// v0.0.6 Slice 1B: dispatch a SIMD instance method on a `Ty::Simd`
     /// receiver. Methods are blessed (no user-defined SIMD impls); the
     /// table here is the source of truth for which methods exist and
     /// their per-method signatures.
     ///
     /// First cut: only `f32x4` works end-to-end. Methods accepted:
-    ///   - `add(b: Self)`, `sub(b: Self)`, `mul(b: Self)`, `div(b: Self)` → Self
-    ///   - `fma(b: Self, c: Self) -> Self` (uses `llvm.fma.<vN>`)
-    ///   - `sqrt() -> Self` (uses `llvm.sqrt.<vN>`)
+    ///   - `add(b: This)`, `sub(b: This)`, `mul(b: This)`, `div(b: This)` → This
+    ///   - `fma(b: This, c: This) -> This` (uses `llvm.fma.<vN>`)
+    ///   - `sqrt() -> This` (uses `llvm.sqrt.<vN>`)
     ///   - `lane(i: u32) -> elem` (i must be a literal `u32` in `0..lanes`)
-    ///   - `with_lane(i: u32, x: elem) -> Self`
+    ///   - `with_lane(i: u32, x: elem) -> This`
     ///   - `to_array() -> [elem; lanes]`
     ///
     /// E0873: non-literal lane index.
@@ -11811,20 +11826,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     /// Type-check a single call argument and apply move tracking. If the
-    /// parameter is `move` and the argument's type is non-Copy, the source
+    /// parameter is `take` and the argument's type is non-Copy, the source
     /// place is consumed:
     ///   - Plain Ident referencing a local: mark the binding as moved.
     ///   - Anything else (Field/Index/temp): reject as E0337 — partial moves
     ///     out of struct fields or array slots are deferred to Phase 5/6.
-    /// `Copy`-typed arguments are unaffected — the `move` marker on a Copy
+    /// `Copy`-typed arguments are unaffected — the `take` marker on a Copy
     /// parameter is redundant (a future E0336 lint will suggest removing it).
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
         // TEXT.R1c: a string literal where an *owned* `Text` is expected
         // constructs an owned Text (an rvalue — nothing to consume). Scoped to
-        // owning, implicit-move params (not `mut`/`borrow`/`move`): those are
+        // owning, implicit-move params (not `ref`/`take`): those are
         // exactly the non-Copy by-ptr params whose call-site lowering
         // (`gen_place_coerced`) materializes the literal into a temp. A literal
-        // for a `mut`/`borrow` param makes no sense (no place to mutate / borrow)
+        // for a `ref` param makes no sense (no place to mutate / borrow)
         // and still needs `from_str`.
         if matches!(arg.kind, ExprKind::StrLit(_))
             && !expected.mutable
@@ -11849,7 +11864,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Applies to every `ref` parameter regardless of type (#9 stage 3c-copy):
         // a Copy `ref` now lowers to a `T*` out-parameter and writes back just
         // like a non-Copy one (`ref n: i32` ⇒ `i32*`), so the `var` requirement
-        // has teeth for all types. (`borrow`/bare params have `mutable == false`;
+        // has teeth for all types. (bare read-only params have `mutable == false`;
         // `take` consumes rather than writes back.)
         if expected.mutable
             && !expected.move_
@@ -11875,8 +11890,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// loop was a use-after-move / double-free hole).
     ///
     /// v0.0.10 Phase 5: a non-Copy by-value param consumes the caller's binding;
-    /// `mut`/`borrow` opt out (by-pointer, caller keeps ownership); `move x: T`
-    /// is the explicit spelling. Copy types are never consumed. Rvalues own
+    /// `ref` (and a bare read-only param) opt out (by-pointer, caller keeps
+    /// ownership); `take x: T` is the explicit consuming spelling. Copy types
+    /// are never consumed. Rvalues own
     /// their value outright, so the move-marking is a no-op for them; a forbidden
     /// partial move (Drop field/index → E0509, Drop-carrying raw deref or a
     /// borrowed binding → E0337) is rejected.
@@ -11891,7 +11907,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    /// Consume the receiver in a `move self` method call. Runs the SAME path as
+    /// Consume the receiver in a `take this` method call. Runs the SAME path as
     /// let-init / call args / construction (`reject_partial_move_of_drop` +
     /// `mark_moved_through_wrappers`): it rejects a forbidden receiver (a Drop
     /// field → E0509, a Drop-carrying raw deref or a borrowed binding → E0337)
@@ -11961,7 +11977,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Mark whole-binding moves consumed when a non-Copy value is taken
     /// by-value at a consuming site (let-init, return, construction, assignment,
     /// call arg). The move-marking must peel value-transparent wrappers (`{}`,
-    /// `unsafe {}`, `if`, `match`) the SAME way `classify_partial_move`
+    /// `if`, `match`) the SAME way `classify_partial_move`
     /// (detection) does — otherwise `let y = { x }` consumes `x` in codegen but
     /// not in sema, so a later `let z = x` slips through as a use-after-move and
     /// `x` is owned twice (double-free). Marks every whole-binding `Ident` leaf
@@ -12024,12 +12040,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     /// THE shared partial-move classifier. A value is produced not only by a
-    /// bare place but by any *value-transparent* wrapper around one: a block /
-    /// `unsafe` block yields its tail, an `if`/`match` yields each branch / arm
+    /// bare place but by any *value-transparent* wrapper around one: a block
+    /// yields its tail, an `if`/`match` yields each branch / arm
     /// body. Codegen lowers all of these by **bit-copying** the value into a
     /// temp (no move-out, no source disarm). So if any leaf moves a non-Copy
     /// value out of a place owned elsewhere — a field/index of a Drop aggregate
-    /// (`{ obj.f }`), a raw-pointer deref (`unsafe { *p }`), or a borrowed
+    /// (`{ obj.f }`), a raw-pointer deref (`{ *p }`), or a borrowed
     /// binding — the copy aliases live storage and double-frees. Returns the
     /// first offending leaf's span + kind, or `None` if every leaf is an owned
     /// binding / temporary the consumer may legitimately take. Callers gate on
@@ -12066,8 +12082,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // A non-owning, Drop-carrying binding read by value: a `borrow`/`mut`/
-        // `self` parameter, or a payload bound from a borrowed `match`
+        // A non-owning, Drop-carrying binding read by value: a bare-borrow/`ref`/
+        // `this` parameter, or a payload bound from a borrowed `match`
         // (`owns_value == false`). Its real owner still drops it, so copying it
         // into an owned location is a second owner → double-free. Gate on
         // `ty_carries_drop` (a Copy or drop-free borrow copies harmlessly — the
@@ -12136,7 +12152,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // Bare in-place place forms (codegen `gen_place`):
             ExprKind::Ident(name) => {
                 // An owning binding is consumed by the match (its drop is
-                // disarmed). A `borrow`/`mut`/`self` binding names a value owned
+                // disarmed). A bare-borrow/`ref`/`this` binding names a value owned
                 // elsewhere — only borrowed (a payload move-out is E0337).
                 if self.lookup_local(name).map_or(true, |i| i.owns_value) {
                     ScrutineeClass::Owned
@@ -12210,12 +12226,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ///
     /// - **#2 (E0512)** — if the signature declares a return region, a returned
     ///   borrow rooted at a parameter must root at a *same-region* parameter.
-    ///   `fn f(a: borrow A str, b: borrow B str) -> borrow A str { return b; }`
-    ///   is rejected (b lives in region B, not A).
+    ///   (The `borrow REGION T` region-type syntax this checked was retired in
+    ///   v0.0.24 #9, so the path is now vestigial.)
     /// - **#3 (E0513)** — a `str` / `T[]` view rooted at a *local* non-Copy
-    ///   owned value (a `string`, `Vec[T]`, or any Drop type — directly, or via
+    ///   owned value (a `Text`, `Vec[T]`, or any Drop type — directly, or via
     ///   `as_str` / `as_slice`) dangles: that local is freed when the function
-    ///   returns. Borrows rooted at parameters / `self` are caller-tied and
+    ///   returns. Borrows rooted at parameters / `this` are caller-tied and
     ///   left alone; literals and untraceable call results are conservatively
     ///   allowed.
     fn check_returned_borrow(&mut self, e: &Expr) {
@@ -12280,7 +12296,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Only engages for aggregate literals; a bare-view return is left to the
     /// `ret_borrow_shaped` path (#3) so the two don't double-report. Only the
     /// unambiguous view-producing forms are flagged, so moving an owned
-    /// `string`/`Vec` field (`Holder { s: local }`) is never a false positive.
+    /// `Text`/`Vec` field (`Holder { s: local }`) is never a false positive.
     fn flag_escaping_local_views(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::StructLit { .. }
@@ -12697,8 +12713,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // bare — there is no immutable `static` (E0305) and no `unsafe` gate on
         // the write (E0X34 dropped; the marker is the `static` declaration
         // itself). Cross-`static` data races are the developer's responsibility
-        // (mem.md). The deref/cast `unsafe` surface is untouched (it stays for
-        // #7).
+        // (mem.md). Raw deref/cast operations are likewise bare — they
+        // self-flag by syntax (no `unsafe` wrapper, which is removed).
         if let ExprKind::Ident(name) = &target.kind {
             if self.lookup_local(name).is_none() {
                 if let Some(info) = self.statics_table.get(name).cloned() {
@@ -12874,7 +12890,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let local = self.lookup_local(name).cloned();
                 let Some(info) = local else {
                     // v0.0.12 G-034 (llama.cplus): not a local — a module-scope
-                    // `static mut` is a writable place root. `TABLE[i] = v` and
+                    // `static` is a writable place root. `TABLE[i] = v` and
                     // `STATIC.field = v` reach here through the Index / Field
                     // arms' recursion on their receiver; the scalar `STATIC = v`
                     // case is handled earlier in `check_assign`.
@@ -12952,9 +12968,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let elem_ty = self.resolve_type(elem);
                 return Ty::Array(Box::new(elem_ty), *len);
             }
-            // Slice 6BC.5: region annotations are transparent at the
-            // sema level — `borrow A T` resolves to the same `Ty` as
-            // T. The region is borrow-checker metadata.
+            // Slice 6BC.5: region annotations were transparent at the
+            // sema level — `borrow A T` resolved to the same `Ty` as
+            // T (the region was borrow-checker metadata). The `borrow REGION T`
+            // syntax is retired in v0.0.24 #9, so the parser no longer produces
+            // this node; the arm is kept defensively.
             TypeKind::Borrowed { inner, .. } => return self.resolve_type(inner),
             // Slice 7GEN.5c: resolve generic-struct instantiation —
             // returns the StructId for the synthesized concrete struct.
@@ -13184,7 +13202,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 lanes: 4,
             },
             _ => {
-                // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
+                // Slice 7GEN.4: `This` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
                 // `interface { ... }` body it stays abstract as
                 // `Ty::Param("Self")` — that case falls through to the
@@ -14150,9 +14168,9 @@ fn collect_value_leaves<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
             if let Some(t) = &b.tail {
                 collect_value_leaves(t, out);
             }
-            // A tail-less block evaluates to unit — no value to move. An
-            // `unsafe { .. }` block is value-transparent like a plain block:
-            // `unsafe { *p }` yields `*p`, so a raw-deref move-out is caught.
+            // A tail-less block evaluates to unit — no value to move. A block is
+            // value-transparent: `{ *p }` yields `*p`, so a raw-deref move-out
+            // is caught.
         }
         ExprKind::If {
             then, else_branch, ..
@@ -14269,7 +14287,7 @@ fn unify_param_against_concrete(
 /// origin args do.
 /// The trailing dotted segment of a (possibly module-qualified) type name —
 /// `vendor.stdlib.src.arc.Arc` → `Arc`, `Handle` → `Handle`. Used to match
-/// `unsafe impl Send/Sync` overrides by leaf so registration (which sees the
+/// `impl T: Send/Sync {}` marker overrides by leaf so registration (which sees the
 /// qualified target name in multi-file builds) and lookup (which sees the
 /// instantiation's template leaf) agree.
 fn name_leaf(name: &str) -> &str {
@@ -14298,7 +14316,7 @@ fn is_asm_scalar(ty: &Ty) -> bool {
 }
 
 /// v0.0.14 inline asm Tier 3: is this expression nothing but inline asm? `#asm`,
-/// or an `unsafe { ... }` / block wrapping asm-only statements. Used to verify a
+/// or a block wrapping asm-only statements. Used to verify a
 /// `#[naked]` body.
 fn expr_is_asm_only(e: &Expr) -> bool {
     match &e.kind {
@@ -14994,14 +15012,14 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
 }
 
 /// Slice 7GEN.4: read-only structural equality of an interface method
-/// type (`iface_ty`, which may mention `Self`) against the corresponding
-/// impl type (`impl_ty`), with `Self` mapped to `target`. Recurses into
-/// EVERY compound type that can nest `Self` — array, slice, raw pointer,
-/// fn-pointer params/return — so `fn(Self) -> i32`, `Self[]`, `*Self`,
-/// etc. line up; a nested `Self` left unmatched spuriously fails the impl
-/// signature match (E0505). Generic *instantiations* (`Vec[Self]` vs
+/// type (`iface_ty`, which may mention `This`) against the corresponding
+/// impl type (`impl_ty`), with `This` mapped to `target`. Recurses into
+/// EVERY compound type that can nest `This` — array, slice, raw pointer,
+/// fn-pointer params/return — so `fn(This) -> i32`, `This[]`, `*This`,
+/// etc. line up; a nested `This` left unmatched spuriously fails the impl
+/// signature match (E0505). Generic *instantiations* (`Vec[This]` vs
 /// `Vec[P]`) are compared by their `generic_origin` (name + recursive
-/// args) rather than by synthesized id, so a `Self` buried in a generic
+/// args) rather than by synthesized id, so a `This` buried in a generic
 /// argument is handled too — without re-instantiating, which keeps this
 /// borrow-only (`&[StructDef]` / `&[EnumDef]`) and composable with the
 /// borrowed sigs at the call site. Other `Ty::Param` names (proper
@@ -15084,12 +15102,12 @@ fn ty_eq_modulo_self(
 /// Slice 7GEN.4: compare an interface method's signature against an
 /// impl method's signature after substituting `Self -> target`. The
 /// comparison is strict — receiver kind, parameter count, parameter
-/// markers (`mut` / `move` / `borrow`), parameter types, and return type
-/// all must match. The convention markers are load-bearing: a `borrow`
-/// param (caller keeps ownership) vs a by-value `move` param (callee
+/// markers (`ref` / `take`, or bare read-only), parameter types, and return
+/// type all must match. The convention markers are load-bearing: a bare
+/// read-only param (caller keeps ownership) vs a by-value `take` param (callee
 /// consumes) is a DIFFERENT ownership contract — accepting the mismatch
 /// lets a generic caller dispatch through the interface (which says
-/// `borrow`, so it keeps + drops the value) while the impl consumed it,
+/// read-only, so it keeps + drops the value) while the impl consumed it,
 /// a double-free.
 fn method_sig_matches(
     structs: &[StructDef],
@@ -15145,16 +15163,16 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     }
     // Phase 11 / P3 (FFI null + integer-to-pointer): integer → raw pointer.
     // The cast itself just reinterprets bits as an address (LLVM `inttoptr`).
-    // The unsafe gate lives in `check_cast` — `cast_allowed` answers only
-    // the type-pair shape question.
+    // The `as *T` cast self-flags by syntax (no `unsafe` wrapper) — `cast_allowed`
+    // answers only the type-pair shape question.
     if from.is_int() && matches!(to, Ty::RawPtr(_)) {
         return true;
     }
     // Phase 11: raw-pointer → raw-pointer reinterpretation (`*u8 as *T`).
     // The standard C / Rust idiom for treating an allocator-returned byte
     // buffer as a typed pointer. Codegen is a no-op at the LLVM level
-    // (every raw pointer lowers to `ptr` already). The unsafe gate in
-    // `check_cast` covers the soundness side — caller asserts the
+    // (every raw pointer lowers to `ptr` already). The `as *T` cast self-flags
+    // by syntax (no `unsafe` wrapper) — the caller asserts the
     // reinterpretation is valid.
     if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) {
         return true;
@@ -15162,8 +15180,8 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → 64-bit integer.
     // Only `usize`, `u64`, `isize`, and `i64` are accepted — narrower
     // targets would silently truncate a 64-bit address and are almost
-    // always a bug. Codegen lowers to LLVM `ptrtoint`. The unsafe gate
-    // in `check_cast` covers the safety side — pointer-as-integer
+    // always a bug. Codegen lowers to LLVM `ptrtoint`. The `as` cast self-flags
+    // by syntax (no `unsafe` wrapper) — pointer-as-integer
     // crosses the type system; the borrow checker has no way to reason
     // about whether the resulting integer round-trips back to a
     // pointer that gets dereferenced.
@@ -16374,8 +16392,8 @@ mod tests {
 
     #[test]
     fn generic_borrow_param_returned_as_owned_e0337() {
-        // Returning an unbounded-`T` `borrow` param as an owned value: the
-        // caller still owns+drops it, so for a Drop instantiation this is a
+        // Returning an unbounded-`T` bare (borrowing) param as an owned value:
+        // the caller still owns+drops it, so for a Drop instantiation this is a
         // double-free. Abstract `T` can't be cleared by `ty_carries_drop`
         // (which reads false for `Param`), so a non-Copy `Param` borrow is
         // flagged conservatively.
@@ -16406,7 +16424,7 @@ mod tests {
 
     #[test]
     fn generic_body_path_assoc_instance_method_e0327() {
-        // `T::val()` where `val` takes `self` is an instance method called via
+        // `T::val()` where `val` takes `this` is an instance method called via
         // the path form — E0327.
         assert_has_code(
             "struct P { x: i32 }\n\
@@ -16468,9 +16486,9 @@ mod tests {
 
     #[test]
     fn generic_move_self_method_through_bound_on_borrow_e0337() {
-        // `t.take()` where `take(move self)` consumes the receiver, but `t` is
-        // a `borrow` param: moving it out launders the borrow into an owned
-        // value the caller still drops (double-free). Must be E0337 — the
+        // `t.take()` where `take(take this)` consumes the receiver, but `t` is
+        // a bare (borrowing) param: moving it out launders the borrow into an
+        // owned value the caller still drops (double-free). Must be E0337 — the
         // receiver path, not just args, runs the move classifier.
         assert_has_code(
             "interface Take { fn take(take this) -> i32; }\n\
@@ -16485,7 +16503,7 @@ mod tests {
 
     #[test]
     fn generic_body_move_out_of_borrow_e0337() {
-        // Moving a `borrow` parameter by value into a bound method's by-value
+        // Moving a bare (borrowing) parameter by value into a bound method's by-value
         // arg would create a second owner (the caller still drops it): E0337.
         assert_has_code(
             "struct R { opaque data: *u8 }\n\
@@ -16680,7 +16698,7 @@ fn main() -> i32 { return 0; }\n";
     //
     // Call RESOLUTION must behave IDENTICALLY whether the type is concrete (`P`)
     // or a generic param (`T: I`). The axes: method-form (`recv.f()`) vs
-    // path-form (`Type::f()`); an instance method (declared with `self`) vs an
+    // path-form (`Type::f()`); an instance method (declared with `this`) vs an
     // associated fn (no receiver); right vs wrong arity; and unknown names.
     // The `t.make()` / `T::make()` bugs were missing cells of exactly this grid
     // — method-form and path-form are twin resolution surfaces, and a
@@ -16697,7 +16715,7 @@ fn main() -> i32 { return 0; }\n";
         // (name, call template — `{V}` value receiver, `{T}` type — needs a
         //  value receiver in scope, expected code | "" = clean)
         let cases: &[(&str, &str, bool, &str)] = &[
-            // instance method (`self`): correct via method-form, wrong via path
+            // instance method (`this`): correct via method-form, wrong via path
             ("inst_method_ok", "{V}.inst(1)", true, ""),
             ("inst_method_arity", "{V}.inst(1, 2)", true, "E0308"),
             ("inst_via_path", "{T}::inst(1)", false, "E0327"),
@@ -16816,8 +16834,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn cstring_literal_types_as_raw_ptr() {
-        // c"..." is `*u8` and safe to *form* (a pointer to static data); no
-        // `unsafe` is needed to bind it.
+        // c"..." is `*u8` and safe to *form* (a pointer to static data) — a
+        // plain binding (only dereferencing it is a raw operation).
         assert!(errors("fn f() -> i32 { let p: *u8 = c\"hi\"; return 0; }").is_empty());
         // Binding it to a non-pointer is a type mismatch.
         assert!(errors("fn f() -> i32 { let n: i32 = c\"hi\"; return 0; }").contains(&"E0302"));
@@ -16900,9 +16918,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn addr_of_local_in_unsafe_clean() {
-        // The happy path: `unsafe { #addr_of(x) }` returns `*T` for a
-        // local binding. No-unsafe / non-Ident / wrong-arity cases are
-        // checked separately below.
+        // The happy path: a bare `#addr_of(x)` returns `*T` for a
+        // local binding (no `unsafe` wrapper). Non-Ident / wrong-arity cases
+        // are checked separately below.
         assert_clean(
             "extern fn use_ptr(p: *i64);\n\
              fn main() -> i32 {\n\
@@ -17067,7 +17085,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     // v0.0.12 G-030 (llama.cplus G-029): `__cplus_atomic_fence_<ord>`
-    // memory fence intrinsic. Requires unsafe; 0 args.
+    // memory fence intrinsic. A bare expression (no `unsafe` wrapper); 0 args.
 
     #[test]
     fn atomic_fence_seqcst_in_unsafe_clean_g030() {
@@ -17179,9 +17197,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
     #[test]
     fn unsafe_fn_to_fn_ptr_inside_unsafe_clean() {
-        // The escape hatch: take the pointer inside an `unsafe` block (where
-        // the `let` annotation supplies the `fn(...)` type hint). The danger
-        // is acknowledged at the coercion site.
+        // Take the pointer in a plain block (where the `let` annotation supplies
+        // the `fn(...)` type hint). `unsafe fn` and the `unsafe` block it once
+        // required are retired (TEXT.1), so `danger` is an ordinary fn here.
         assert_clean(
             "fn danger(x: i32) -> i32 { return x + 1; }\n\
              fn main() -> i32 {\n\
@@ -17217,7 +17235,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn safe_method_beside_unsafe_method_needs_no_unsafe_text1() {
-        // A non-`unsafe` method on the same type is callable without a block.
+        // Every method is callable without a wrapping block (`unsafe fn` retired).
         assert_clean(
             "struct Counter { n: i32 }\n\
              impl Counter {\n\
@@ -17276,7 +17294,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn lang_string_literal_as_mut_arg_errors_text_r1c() {
-        // Coercion is scoped to *owning* params; a literal for a `mut` param has
+        // Coercion is scoped to *owning* params; a literal for a `ref` param has
         // no place to mutate and still mismatches (E0302).
         let codes = errors(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
@@ -18624,7 +18642,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn move_param_parses_clean() {
-        // `move x: T` is accepted; full move tracking is deferred to a later
+        // `take x: T` is accepted; full move tracking is deferred to a later
         // slice of Phase 3, so this should currently behave like a plain param.
         assert_clean(
             "fn consume(take x: i32) -> i32 { return x; }\n\
@@ -18691,15 +18709,15 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // ----- Phase 3 slice 3A: move tracking + E0335 -----
     //
     // Revived in slice 3F: each test's `struct P { x: i32 }` now also has
-    // an empty `impl P { fn drop(mut self) {} }` block. The presence of a
+    // an empty `impl P { fn drop(ref this) {} }` block. The presence of a
     // destructor makes P non-Copy (Drop overrides Copy auto-derive), which
-    // makes the `move` consumption real and re-fires E0335 / E0337.
+    // makes the `take` consumption real and re-fires E0335 / E0337.
 
-    // ---- v0.0.10 Phase 5: default-move flip + `borrow` opt-out ----
+    // ---- v0.0.10 Phase 5: default-move flip + read-only opt-out (was `borrow`, retired) ----
 
     #[test]
     fn phase5_implicit_non_copy_param_consumes_e0335() {
-        // No explicit `move` — but the param is non-Copy, so under
+        // No explicit `take` — but the param is non-Copy, so under
         // v0.0.10 Phase 5 semantics the caller's `p` is consumed.
         // Reading `p.x` after the call fires E0335.
         let codes = errors(
@@ -18865,7 +18883,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn move_on_copy_param_does_not_consume() {
-        // `move x: i32` is redundant — `i32` is Copy, so the source remains
+        // `take x: i32` is redundant — `i32` is Copy, so the source remains
         // usable. (A future E0336 lint will suggest removing the keyword.)
         assert_clean(
             "fn take(take x: i32) -> i32 { return x; }\n\
@@ -18875,7 +18893,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn shared_borrow_does_not_consume() {
-        // `p: P` (no `move`) is a shared borrow at the design level; in
+        // `p: P` (no `take`) is a shared borrow at the design level; in
         // Phase 3 it doesn't track borrows yet, but the source must remain
         // usable across calls.
         assert_clean(
@@ -18888,7 +18906,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn move_from_field_e0337() {
         // Partial moves out of struct fields are deferred. With Inner marked
-        // Drop (and therefore non-Copy), passing `o.i` through a `move`
+        // Drop (and therefore non-Copy), passing `o.i` through a `take`
         // parameter must be rejected.
         let codes = errors(
             "struct Inner { x: i32 }\n\
@@ -18978,7 +18996,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn copy_struct_move_self_is_silent_noop() {
-        // `move self` on a Copy receiver: ditto.
+        // `take this` on a Copy receiver: ditto.
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
              impl Point { fn into_x(take this) -> i32 { return this.x; } }\n\
@@ -19361,8 +19379,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn non_test_fn_with_pub_is_clean() {
-        // Sanity guard: `pub` rejection is gated on the `#[test]` attribute.
-        // A regular `pub fn` is fine.
+        // Sanity guard: `export` rejection is gated on the `#[test]` attribute.
+        // A regular `export fn` is fine.
         assert_clean(
             "fn helper() { return; }\n\
              fn main() -> i32 { return 0; }",
@@ -19551,9 +19569,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn impl_interface_receiver_convention_mismatch_e0505() {
         // Receiver convention is part of the contract too: `this` (borrow, caller
-        // keeps) vs `move this` (consume) vs `mut this` differ. A mismatch lets a
+        // keeps) vs `take this` (consume) vs `ref this` differ. A mismatch lets a
         // generic caller drop a receiver the impl consumed (double-free), so it
-        // must be E0505 — in both directions and for `mut this`.
+        // must be E0505 — in both directions and for `ref this`.
         let mism = |iface_recv: &str, impl_recv: &str| {
             errors(&format!(
                 "struct P {{ x: i32 }} \
@@ -19578,7 +19596,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn impl_interface_matching_borrow_param_clean() {
-        // Same `borrow` convention on both sides type-checks.
+        // Same bare (read-only borrow) convention on both sides type-checks.
         assert_clean(
             "struct R { tag: i32 } \
              struct P {} \
@@ -19625,8 +19643,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn interface_method_self_in_fn_ptr_param_matches() {
-        // Interface says `fn apply(self, f: fn(Self) -> i32) -> i32`; the impl
-        // writes the same param as `fn(P) -> i32`. `Self` nested inside a
+        // Interface says `fn apply(this, f: fn(This) -> i32) -> i32`; the impl
+        // writes the same param as `fn(P) -> i32`. `This` nested inside a
         // fn-pointer parameter type must be substituted when matching the
         // signature — otherwise the (valid) impl is spuriously rejected (a
         // false E0505). Regression: `subst_self`/`ty_eq_modulo_self` used to
@@ -19641,7 +19659,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn interface_method_self_in_raw_ptr_and_slice_match() {
-        // `Self` nested in a raw pointer (`*Self`) and a slice (`Self[]`) is
+        // `This` nested in a raw pointer (`*This`) and a slice (`This[]`) is
         // substituted the same way — the impl's `*P` / `P[]` lines up.
         assert_clean(
             "struct P { x: i32 } \
@@ -19659,8 +19677,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn interface_method_self_in_generic_instantiation_matches() {
-        // `Self` buried in a generic instantiation argument (`Holder[Self]`,
-        // `Pair[Self]`) must be substituted too — compared by `generic_origin`
+        // `This` buried in a generic instantiation argument (`Holder[This]`,
+        // `Pair[This]`) must be substituted too — compared by `generic_origin`
         // (name + recursive args), so the impl's `Holder[P]` / `Pair[P]`
         // matches. Both an argument position and a return position.
         assert_clean(
@@ -19786,7 +19804,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn generic_assoc_fn_on_generic_struct_clean() {
-        // A generic associated function (no `self`) on a generic struct,
+        // A generic associated function (no `this`) on a generic struct,
         // both the explicit method turbofish and the inferred form, must
         // type-check clean. The turbofish form used to be a parse error.
         assert_clean(
@@ -19991,7 +20009,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn extern_fn_declaration_clean() {
-        // Slice 10.FFI.3: extern call must be in `unsafe { ... }`.
+        // Slice 10.FFI.3: an extern call is a bare expression (no `unsafe` wrapper).
         assert_clean(
             "extern fn abs(x: i32) -> i32; \
              fn main() -> i32 { return { abs(0 -% 42) }; }",
@@ -20021,7 +20039,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Type position works outside extern fn too. No way to
         // construct a *u8 from nothing yet (10.FFI.2 wires that),
         // so this test only checks the type parses + resolves.
-        // Slice 10.FFI.3: extern calls require `unsafe`.
+        // Slice 10.FFI.3: extern calls are bare expressions (no `unsafe` wrapper).
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { let p: *u8 = { malloc(8 as usize) }; return 0; }",
@@ -20040,7 +20058,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn pointer_deref_returns_pointee_clean() {
         // Slice 10.FFI.2a: `*p` where p: *u8 has type u8.
-        // Slice 10.FFI.3: deref + extern call wrapped in `unsafe`.
+        // Slice 10.FFI.3: deref + extern call are bare expressions (no `unsafe` wrapper).
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
@@ -20079,7 +20097,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
     #[test]
     fn pointer_store_through_deref_clean() {
-        // Slice 10.FFI.2b + 10.FFI.3: `*p = v` inside unsafe.
+        // Slice 10.FFI.2b + 10.FFI.3: `*p = v` is a bare expression (no `unsafe` wrapper).
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
@@ -20094,7 +20112,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn pointer_indexing_returns_pointee_clean() {
-        // Slice 10.FFI.2c + 10.FFI.3: `p[i]` inside unsafe.
+        // Slice 10.FFI.2c + 10.FFI.3: `p[i]` is a bare expression (no `unsafe` wrapper).
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
@@ -20110,7 +20128,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn pointer_arithmetic_add_returns_pointer_clean() {
-        // Slice 10.FFI.2d + 10.FFI.3: pointer arithmetic + deref inside unsafe.
+        // Slice 10.FFI.2d + 10.FFI.3: pointer arithmetic + deref are bare expressions (no `unsafe` wrapper).
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
@@ -20128,7 +20146,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn raw_pointer_is_copy_clean() {
         // Pointers are Copy — passing through a fn doesn't move them.
-        // Slice 10.FFI.3: extern calls live in an unsafe block.
+        // Slice 10.FFI.3: extern calls are bare expressions (no `unsafe` wrapper).
         assert_clean(
             "extern fn use_ptr(p: *u8) -> i32; \
              extern fn malloc(n: usize) -> *u8; \
@@ -20505,8 +20523,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn match_read_only_payload_of_field_scrutinee_clean() {
         // The fix must reject only the *escaping* move, not a borrow-read: a
-        // payload bound from a field scrutinee and only read (passed `borrow`)
-        // is sound (the field's owner drops it) and stays accepted.
+        // payload bound from a field scrutinee and only read (passed to a bare
+        // read-only param) is sound (the field's owner drops it) and stays accepted.
         assert_clean(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
@@ -20675,7 +20693,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn match_raw_deref_of_drop_type_rejected_e0337() {
-        // `match unsafe { *p }` for a Drop-carrying pointee bit-copies the value
+        // `match { *p }` for a Drop-carrying pointee bit-copies the value
         // out of a place the deref doesn't own → double-free. Rejected (E0337).
         let codes = errors(
             "struct R { opaque data: *u8 } \
@@ -20710,7 +20728,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn match_move_out_of_borrow_param_scrutinee_rejected_e0337() {
-        // A `borrow` parameter is owned by the caller; matching it and moving a
+        // A bare (borrowing) parameter is owned by the caller; matching it and moving a
         // payload out is a partial move of a value owned elsewhere (E0337). This
         // is the `owns_value=false` branch of `classify_scrutinee`.
         let codes = errors(
@@ -20781,7 +20799,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     // v0.0.23 whole-binding move through value-transparent wrappers: the move
-    // *marking* must peel `{}`/`unsafe {}`/`if`/`match` the SAME way partial-move
+    // *marking* must peel `{}`/`if`/`match` the SAME way partial-move
     // *detection* does, or codegen consumes the binding through the wrapper while
     // sema doesn't → a later use slips through and the value is owned twice
     // (double-free). These pin every consuming site.
@@ -20897,7 +20915,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn rvalue_arg_to_move_param_clean() {
-        // FALSE-POSITIVE GUARD: passing a fresh rvalue to an explicit `move`
+        // FALSE-POSITIVE GUARD: passing a fresh rvalue to an explicit `take`
         // param is a legitimate ownership transfer — must not be rejected (the
         // old immediate-Ident-only `consume_arg_place` wrongly E0337'd it).
         assert_clean(
@@ -20909,11 +20927,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         );
     }
 
-    // v0.0.23 returned borrows: returning/moving a `borrow`/`mut` *marker*
+    // v0.0.23 returned borrows: returning/moving a bare-borrow/`ref` *marker*
     // parameter of a Drop type into an owned value is unsound (it bit-copies a
     // value the caller still owns → double-free; C+ has no copy ctor) → E0337.
-    // The SHARED region-typed form (`b: borrow A T -> borrow A T`, no `mut`)
-    // stays sound (codegen returns a non-owning reference) and is accepted.
+    // (The region-typed `borrow A T -> borrow A T` form that once stayed sound
+    // is retired in v0.0.24 #9 along with the `borrow` keyword.)
 
     #[test]
     fn return_borrow_marker_param_rejected_e0337() {
@@ -21005,8 +21023,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn move_self_method_on_borrow_param_rejected_e0337() {
-        // Laundering path: `r.take()` where `take(move self)` consumes the
-        // receiver. Calling it on a `borrow` param moves the borrow out into an
+        // Laundering path: `r.take()` where `take(take this)` consumes the
+        // receiver. Calling it on a bare-borrow param moves the borrow out into an
         // owned value (the caller still drops it) → E0337, same as `return r`.
         let codes = errors(
             "struct R { opaque data: *u8 } \
@@ -21019,7 +21037,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn move_self_method_on_owned_local_clean() {
-        // The same `move self` call on an OWNED local is a legitimate move.
+        // The same `take this` call on an OWNED local is a legitimate move.
         assert_clean(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } fn take(take this) -> R { return this; } } \
@@ -21033,7 +21051,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn read_only_borrow_param_reusable_clean() {
-        // A `borrow` param read-only and not moved out: the caller keeps it,
+        // A bare (borrowing) param read-only and not moved out: the caller keeps it,
         // reusable. Must not be over-rejected by the returned-borrow check.
         assert_clean(
             "struct B { x: i32 } \
@@ -21140,7 +21158,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     // v0.0.19 regression lock: a Copy struct field passed by value out of
-    // `self` is accepted (the move-checker exempts Copy projections). The
+    // `this` is accepted (the move-checker exempts Copy projections). The
     // plan listed an E0337 "even when Copy" hole that no longer reproduces.
     #[test]
     fn copy_struct_field_moved_by_value_out_of_self_clean_v0019() {
@@ -21415,8 +21433,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     // Phase 11 / P3 from null design (design.md): integer-to-raw-pointer
     // casts. `0 as *T` is how C+ expresses FFI null and how integer addresses
-    // become typed pointers. Gated by `unsafe` — the cast itself just
-    // reinterprets bits; the unsafety is trusting the integer is a valid address.
+    // become typed pointers. A bare `as *T` cast (no `unsafe` wrapper) — it
+    // self-flags by syntax; the unsafety is trusting the integer is a valid address.
 
     #[test]
     fn int_to_raw_pointer_cast_in_unsafe_clean() {
@@ -21488,7 +21506,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_typed_pointer_then_usize_clean() {
         // Realistic chain: opaque byte buffer → typed pointer → address.
         // Exercises both raw-ptr-to-raw-ptr (Phase 11) and the new
-        // raw-ptr-to-integer cast in a single unsafe block.
+        // raw-ptr-to-integer cast in a single bare block (no `unsafe` wrapper).
         assert_clean(
             "fn main() -> i32 { \
                 let p: *u8 = { 0 as *u8 }; \
@@ -21501,7 +21519,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn pointer_to_u32_rejected_e0315() {
         // u32 isn't 64 bits — narrowing a pointer is almost always a bug,
-        // so `cast_allowed` doesn't admit it even inside unsafe.
+        // so `cast_allowed` rejects it outright (it was never a matter of gating).
         let codes = errors(
             "fn main() -> i32 { \
                 let p: *u8 = { 0 as *u8 }; \
@@ -21704,7 +21722,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         );
     }
 
-    // ---- Phase 5 Slice 5.C: `pub extern fn body` export signature gates ----
+    // ---- Phase 5 Slice 5.C: `export extern fn body` export signature gates ----
 
     #[test]
     fn pub_extern_fn_with_scalar_args_clean() {
@@ -22106,7 +22124,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         );
     }
 
-    // ---- v0.0.14: broad raw-pointer !Send rule + `unsafe impl Send/Sync` ----
+    // ---- v0.0.14: broad raw-pointer !Send rule + `impl T: Send/Sync {}` ----
 
     #[test]
     fn send_rejects_raw_ptr_struct_e0502() {
@@ -22139,7 +22157,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn unsafe_impl_send_overrides_raw_ptr_struct() {
-        // `unsafe impl Handle: Send {}` re-enables the marker.
+        // `impl Handle: Send {}` re-enables the marker.
         assert_clean(
             "struct Handle { opaque p: *u8 }\n\
              impl Handle: Send {}\n\
@@ -22155,8 +22173,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn bare_raw_pointer_stays_send() {
         // A *bare* raw pointer (not wrapped in a nominal type) is still Send —
-        // it is visibly unsafe at every use; the rule targets pointer-hiding
-        // structs. Preserves `thread::spawn::[*u8]`.
+        // every use is a visibly raw operation (self-flagging by syntax); the
+        // rule targets pointer-hiding structs. Preserves `thread::spawn::[*u8]`.
         assert_clean(
             "fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
@@ -22169,7 +22187,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn unsafe_impl_send_conditional_generic_met() {
-        // `unsafe impl Arc[T: Send + Sync]: Send` — Arc[i32] is Send
+        // `impl Arc[T: Send + Sync]: Send` — Arc[i32] is Send
         // because i32 is Send + Sync.
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
@@ -23434,7 +23452,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     // v0.0.24 de-Rust (#9 stage 3d): `static` is mutable and access is bare —
     // no `static mut`, no `unsafe` gate on read (E0X33) or write (E0X34), no
-    // immutable `static` (E0305). The deref/cast `unsafe` surface is untouched.
+    // immutable `static` (E0305). Raw deref/cast are likewise bare (no `unsafe`
+    // wrapper, which is removed).
     #[test]
     fn static_read_is_bare() {
         let codes = lowered_errors(
@@ -23807,7 +23826,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn no_alloc_move_self_freeing_drop_e0901() {
-        // A `move self` receiver is consumed by the method, so codegen drops it
+        // A `take this` receiver is consumed by the method, so codegen drops it
         // at scope exit. A freeing `drop` deallocates there.
         let codes = errors(
             "extern fn free(p: *u8);\n\

@@ -11,10 +11,10 @@ All four Phase 11 ObjC-interop slices working together, end-to-end:
 
 | Primitive | Used for |
 |---|---|
-| `extern fn` + raw pointers + `unsafe` (Phase 10) | The ObjC runtime C API: `objc_getClass`, `sel_registerName`, `class_addMethod`, etc. |
+| `extern fn` + raw pointers (Phase 10) | The ObjC runtime C API: `objc_getClass`, `sel_registerName`, `class_addMethod`, etc. |
 | `#[repr(C)] struct` (Phase 10) | `NSPoint`, `NSSize`, `NSRect` passed by value across the FFI boundary. |
 | `#[link_name = "objc_msgSend"]` (11.LINKNAME) | The 10 typed aliases of `objc_msgSend` — each call site picks its own ABI shape. |
-| `0 as *u8` in `unsafe` (11.INTPTR) | NULL sender args, e.g. `makeKeyAndOrderFront:nil`. |
+| `0 as *u8` (11.INTPTR) | NULL sender args, e.g. `makeKeyAndOrderFront:nil`. |
 | `fn(*u8, *u8, *u8) -> i8` (11.FN_PTR) | The `IMP` function pointer for `class_addMethod`. The C+ delegate method coerces to fn-pointer at the type-directed call site. |
 | `size_of[T]()` (11.LAYOUT) | Not used in this hello-world, but available for any struct allocation needs. |
 

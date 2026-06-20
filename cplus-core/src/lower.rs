@@ -1518,13 +1518,13 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
 /// ```text
 /// // @view { ... }  (root, container = None)        // vstack { ... }  (container)
 /// {                                                 {
-///     let mut __b = view::Builder::new();               let mut __b = view::Builder::new();
+///     var __b = view::Builder::new();                   var __b = view::Builder::new();
 ///     ... entries add into __b ...                      ... entries add into __b ...
 ///     __b.finish()        // -> Root                    view::vstack(__b)   // -> Item
 /// }                                                 }
 /// ```
 ///
-/// Each item entry becomes `let mut __i = <item>; <modifiers>; __b.add(__i);`.
+/// Each item entry becomes `var __i = <item>; <modifiers>; __b.add(__i);`.
 /// `if` / `for` entries (DSL.4) lower to an ordinary `if`/`for` whose body
 /// adds into the *same* `__b` — Flutter-style collection-if/for. A
 /// container item's expr is itself a builder block; it is left in place
@@ -1555,7 +1555,7 @@ pub fn desugar_builder_block(e: &mut Expr) {
     let ctx_span = context.last().map(|i| i.span).unwrap_or(block_span);
     let b_name = format!("__b{}", block_span.start);
 
-    // let mut __b = ctx::Builder::new();
+    // var __b = ctx::Builder::new();
     let mut new_path = context.clone();
     new_path.push(Ident {
         name: "Builder".to_string(),
@@ -1631,7 +1631,7 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
         BuilderEntry::Item { expr, modifiers } => {
             let item_span = expr.span;
             let i_name = format!("__i{}", item_span.start);
-            // let mut __i = <item>;  (a container item's expr is itself a
+            // var __i = <item>;  (a container item's expr is itself a
             // builder block, desugared later by the caller's walk.)
             out.push(Stmt {
                 kind: StmtKind::Let {
@@ -2321,7 +2321,7 @@ mod tests {
     fn builder_block_desugars_to_protocol_calls() {
         let src = "fn main() -> i32 {\n    let v = @view {\n        text(1)\n            .font = 2\n            .pad(3)\n        text(4)\n    };\n    return 0;\n}\n";
         let b = desugared_builder(src);
-        // let mut __b = view::Builder::new();
+        // var __b = view::Builder::new();
         let StmtKind::Let {
             mutable: true,
             name,
@@ -2340,7 +2340,7 @@ mod tests {
         };
         let path: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(path, ["view", "Builder", "new"]);
-        // let mut __i = text(1);
+        // var __i = text(1);
         let StmtKind::Let {
             mutable: true,
             name: item_name,
@@ -2420,7 +2420,7 @@ mod tests {
         let ExprKind::Block(inner) = &inner.kind else {
             panic!("container must desugar to a Block, got {:?}", inner.kind);
         };
-        // Inner accumulator: `let mut __b = Builder::new();`
+        // Inner accumulator: `var __b = Builder::new();`
         let StmtKind::Let {
             init: Some(new_call),
             ..
