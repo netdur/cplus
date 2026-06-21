@@ -12410,7 +12410,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 matches!(self.lookup_local(name), Some(info) if info.mutable)
             }
             ExprKind::Field { receiver, .. } => self.is_writable_place_quiet(receiver),
-            ExprKind::Index { receiver, .. } => self.is_writable_place_quiet(receiver),
+            ExprKind::Index { receiver, .. } => {
+                // `p[i]` through a raw pointer is a writable place regardless of
+                // `p`'s binding mutability — the pointed-to memory is mutated,
+                // not the pointer. Mirrors `target_is_writable_place`'s Index
+                // arm (Slice 10.FFI.2). Only a direct `Ident: *T` receiver is
+                // resolvable in this `&self` predicate (no span→type cache);
+                // deeper receivers fall back to the recursive mutability check.
+                if let ExprKind::Ident(name) = &receiver.kind {
+                    if matches!(self.lookup_local(name), Some(info) if matches!(&info.ty, Ty::RawPtr(_))) {
+                        return true;
+                    }
+                }
+                self.is_writable_place_quiet(receiver)
+            }
+            // `*p` is a writable place: `*` is raw-pointer-only in C+ (a deref of
+            // a non-pointer is rejected in `check_expr`) and every raw pointer is
+            // mutable-capable (no `*const`). Same rule as
+            // `target_is_writable_place`'s Deref arm — the FFI raw-pointer
+            // write/borrow permission (Slice 10.FFI.2) that had drifted out of
+            // sync here, producing a spurious E0328 on `(*p).mut_method()` and a
+            // `ref` argument `(*p)` even though `(*p).field = v` was allowed.
+            ExprKind::Unary {
+                op: UnaryOp::Deref, ..
+            } => true,
             _ => false,
         }
     }
@@ -18536,6 +18559,38 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }",
         );
         assert!(codes.contains(&"E0328"));
+    }
+
+    // Regression: calling a `ref this` method through a raw-pointer deref is a
+    // write through `*q` (a writable place — raw pointers are mutable-capable),
+    // exactly like `(*q).field = v` is already allowed. `is_writable_place_quiet`
+    // had no Deref arm and spuriously raised E0328; it now mirrors
+    // `target_is_writable_place`.
+    #[test]
+    fn mut_method_through_raw_ptr_deref_clean() {
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             impl P { fn bump(ref this) { this.x = this.x + 1; } }\n\
+             fn via_ptr(p: *u8) { let q: *P = { p as *P }; (*q).bump(); return; }",
+        );
+        assert!(
+            !codes.contains(&"E0328"),
+            "spurious E0328 on `(*ptr).mut_method()`: {codes:?}"
+        );
+    }
+
+    // Same fix, the other call site: passing a raw-pointer deref `*q` to a
+    // `ref` parameter (which shares `is_writable_place_quiet`).
+    #[test]
+    fn ref_arg_through_raw_ptr_deref_clean() {
+        let codes = errors(
+            "fn takes_ref(ref n: i32) { n = n + 1; }\n\
+             fn via_ptr(p: *u8) { let q: *i32 = { p as *i32 }; takes_ref(*q); return; }",
+        );
+        assert!(
+            !codes.contains(&"E0328"),
+            "spurious E0328 on `ref` arg `(*ptr)`: {codes:?}"
+        );
     }
 
     #[test]
