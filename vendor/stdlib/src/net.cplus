@@ -26,9 +26,8 @@ extern fn listen(fd: i32, backlog: i32) -> i32;
 extern fn accept(fd: i32, addr: *u8, len: *u32) -> i32;
 extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
 extern fn shutdown(fd: i32, how: i32) -> i32;
-extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
-extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
-extern fn close(fd: i32) -> i32;
+// read / write / close on a socket fd differ by platform (POSIX read/write/
+// close vs Winsock recv/send/closesocket), so they route through netsys.
 extern fn inet_addr(s: *u8) -> u32;
 extern fn malloc(n: usize) -> *u8;
 extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
@@ -67,6 +66,9 @@ fn build_sockaddr(ip_dotted: str, port: u16) -> *u8 {
 // Connect to `ip:port` over TCP. `ip` is a dotted-quad string ("127.0.0.1");
 // DNS resolution is out of scope for v0.0.3.
 fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError] {
+    // Initialize the socket subsystem (Winsock on Windows; no-op on POSIX)
+    // before the first socket call.
+    { netsys::startup(); }
     // AF_INET=2, SOCK_STREAM=1.
     let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
@@ -76,7 +78,7 @@ fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError]
     let crc: i32 = { connect(fd, sa, 16 as u32) };
     { free(sa); }
     if crc != (0 as i32) {
-        { close(fd); }
+        { netsys::close_fd(fd); }
         return result::io_err::[TcpStream](result::IoError::ConnectionRefused);
     }
     return result::io_ok::[TcpStream](TcpStream { fd: fd });
@@ -85,6 +87,9 @@ fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError]
 // Bind a listener to 127.0.0.1:port and start listening. Sets SO_REUSEADDR
 // so quick test restarts don't hit EADDRINUSE.
 fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
+    // Initialize the socket subsystem (Winsock on Windows; no-op on POSIX)
+    // before the first socket call.
+    { netsys::startup(); }
     let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return result::io_err::[TcpListener](result::IoError::Other);
@@ -102,12 +107,12 @@ fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
     let brc: i32 = { bind(fd, sa, 16 as u32) };
     { free(sa); }
     if brc != (0 as i32) {
-        { close(fd); }
+        { netsys::close_fd(fd); }
         return result::io_err::[TcpListener](result::IoError::AddrInUse);
     }
     let lrc: i32 = { listen(fd, 16 as i32) };
     if lrc != (0 as i32) {
-        { close(fd); }
+        { netsys::close_fd(fd); }
         return result::io_err::[TcpListener](result::IoError::Other);
     }
     return result::io_ok::[TcpListener](TcpListener { fd: fd });
@@ -123,7 +128,7 @@ impl TcpStream {
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = { malloc(chunk_size) };
         loop {
-            let n: isize = { read(this.fd, chunk, chunk_size) };
+            let n: isize = { netsys::recv_fd(this.fd, chunk, chunk_size) };
             if n < (0 as isize) {
                 { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::ConnectionReset);
@@ -155,7 +160,7 @@ impl TcpStream {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
-            let w: isize = { write(this.fd, q, remaining) };
+            let w: isize = { netsys::send_fd(this.fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -175,7 +180,7 @@ impl TcpStream {
 
     fn close(ref this) {
         if this.fd >= (0 as i32) {
-            { close(this.fd); }
+            { netsys::close_fd(this.fd); }
             this.fd = 0 -% 1 as i32;
         }
         return;
@@ -183,7 +188,7 @@ impl TcpStream {
 
     fn drop(ref this) {
         if this.fd >= (0 as i32) {
-            { close(this.fd); }
+            { netsys::close_fd(this.fd); }
         }
         return;
     }
@@ -242,7 +247,7 @@ impl TcpListener {
 
     fn close(ref this) {
         if this.fd >= (0 as i32) {
-            { close(this.fd); }
+            { netsys::close_fd(this.fd); }
             this.fd = 0 -% 1 as i32;
         }
         return;
@@ -250,7 +255,7 @@ impl TcpListener {
 
     fn drop(ref this) {
         if this.fd >= (0 as i32) {
-            { close(this.fd); }
+            { netsys::close_fd(this.fd); }
         }
         return;
     }
@@ -286,34 +291,15 @@ impl TcpListener {
 // fns sidestep that — pass `stream.fd` and keep your handle. A friendlier
 // method API can re-export these once impl-on-non-Copy-this async lands.
 //
-// EAGAIN / O_NONBLOCK / errno differ across macOS and Linux — netsys
-// supplies the right values for the target.
-
-// fcntl is variadic in libc — the third arg is read from the variadic
-// area, not a fixed register. Declaring as fixed-arity silently breaks
-// `F_SETFL` on AArch64-darwin where varargs come from the stack.
-extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
-
-// F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
-fn f_getfl() -> i32 { return 3 as i32; }
-fn f_setfl() -> i32 { return 4 as i32; }
+// EAGAIN / O_NONBLOCK / errno and the read/write/close + non-blocking
+// mechanics all differ across macOS, Linux and Windows — netsys supplies
+// the right ones for the target.
 
 // Set fd to non-blocking mode. Idempotent — safe to call repeatedly on the
-// same fd. Returns 0 on success, -1 on fcntl error.
+// same fd. Returns 0 on success, -1 on error. Delegates to the platform
+// netsys shim (fcntl(O_NONBLOCK) on POSIX, ioctlsocket(FIONBIO) on Windows).
 fn set_nonblocking(fd: i32) -> i32 {
-    let flags: i32 = { fcntl(fd, f_getfl(), 0 as i32) };
-    if flags < (0 as i32) {
-        return 0 -% 1 as i32;
-    }
-    let new_flags: i32 = flags|netsys::o_nonblock();
-    if new_flags == flags {
-        return 0 as i32;
-    }
-    let rc: i32 = { fcntl(fd, f_setfl(), new_flags) };
-    if rc < (0 as i32) {
-        return 0 -% 1 as i32;
-    }
-    return 0 as i32;
+    return netsys::set_nonblocking(fd);
 }
 
 // Async read from `fd` into `buf` for up to `count` bytes. Returns:
@@ -325,7 +311,7 @@ fn set_nonblocking(fd: i32) -> i32 {
 // under `block_on`, other queued tasks make progress meanwhile.
 async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
-        let n: isize = { read(fd, buf, count) };
+        let n: isize = { netsys::recv_fd(fd, buf, count) };
         if n >= (0 as isize) {
             return n;
         }
@@ -344,7 +330,7 @@ async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
 //   < 0  — error (-1 generic).
 async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
-        let n: isize = { write(fd, buf, count) };
+        let n: isize = { netsys::send_fd(fd, buf, count) };
         if n >= (0 as isize) {
             return n;
         }

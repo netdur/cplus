@@ -12,17 +12,28 @@
 // so async lowering, executor::block_on, time::sleep and the cooperative
 // primitives (yield_now / spawn_local / await chains) all work unchanged.
 //
+// **Readiness source: WSAPoll.** Socket/file readiness is wired through
+// Winsock's `WSAPoll` — the level-triggered, *readiness* analogue of epoll
+// (it reports a socket readable/writable without consuming any bytes, which
+// is exactly what read_fd_async / write_fd_async need: they do their own
+// recv/send after being woken). IOCP, by contrast, is a *completion* model
+// and would consume the data the caller expects to read itself, so WSAPoll
+// is the right fit for this reactor's contract. Timers and fd readiness
+// share a single `WSAPoll` wait the same way the Linux backend unifies them
+// under `epoll_wait`: the poll timeout is bounded by the earliest pending
+// timer deadline, so a `time::sleep` and a pending socket read in one
+// `block_on` both fire correctly.
+//
 // **Scope.** The pending-task queue and the awaiter table are pure
 // bookkeeping (malloc/realloc + parallel arrays) and are copied from the
 // other backends verbatim — they drive yield_now, spawn_local and await.
-// Timers are implemented against the Win32 clock (`GetTickCount64` +
-// `Sleep`) rather than a kernel event object, which is sufficient for
-// `time::sleep` on the single-threaded executor. **Socket/file readiness
-// (register_read/register_write) is not yet wired to IOCP**: the fd is
-// recorded so `waiter_count` stays correct, but `poll_one_event` cannot
-// wake it. Real async I/O on Windows is a follow-up (an IOCP-backed
-// readiness source); the synchronous async surface the test-suite exercises
-// (block_on of computed futures, yield_now, await) needs none of it.
+// Timers use the Win32 clock (`GetTickCount64`); when no fd is parked they
+// fall back to a plain `Sleep` to the earliest deadline.
+//
+// **Socket handles.** Win32 `SOCKET` is a 64-bit `UINT_PTR`; the reactor
+// stores fds as i32 to match the rest of stdlib, zero-extending into the
+// 8-byte WSAPOLLFD slot. Valid for the small handles a normal process is
+// handed (same assumption as netsys_windows / net.cplus).
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -32,6 +43,12 @@ extern fn free(p: *u8);
 extern fn Sleep(ms: u32);
 extern fn GetTickCount64() -> u64;
 
+// Winsock readiness wait + init (ws2_32). WSAPoll takes an array of
+// WSAPOLLFD { SOCKET fd@0; SHORT events@8; SHORT revents@10; } (16 bytes
+// each, 8-byte aligned), a count, and a millisecond timeout (-1 = infinite).
+extern fn WSAPoll(fdarray: *u8, nfds: u32, timeout: i32) -> i32;
+extern fn WSAStartup(version: u16, data: *u8) -> i32;
+
 // LLVM coroutine intrinsics — surfaced via stable wrapper symbols emitted
 // by codegen, so stdlib can call them as plain extern fns.
 extern fn __cplus_coro_resume(hdl: *u8);
@@ -40,6 +57,12 @@ extern fn __cplus_coro_done(hdl: *u8) -> i32;
 // Reactor-state-slot accessors emitted in the codegen preamble.
 extern fn __cplus_reactor_get_state() -> *u8;
 extern fn __cplus_reactor_set_state(p: *u8);
+
+// WSAPOLLFD event bits. POLLRDNORM (read-ready) = 0x0100, POLLWRNORM
+// (write-ready) = 0x0010. Stored per waiter and written into the events
+// field; on return any non-zero revents (incl. POLLHUP/POLLERR) wakes it.
+fn pollrdnorm() -> i16 { return 0x0100 as i16; }
+fn pollwrnorm() -> i16 { return 0x0010 as i16; }
 
 // Heap-block layout (Windows-private; only this module reads these offsets).
 // Eight i32 counters, then eight pointers to the parallel arrays.
@@ -60,6 +83,8 @@ fn off_timer_deadlines() -> usize { return 56 as usize; }
 fn off_timer_hdls() -> usize { return 64 as usize; }
 fn off_awaitee_hdls() -> usize { return 72 as usize; }
 fn off_awaiter_hdls() -> usize { return 80 as usize; }
+// Per-waiter WSAPOLLFD events mask (i16), parallel to waiter_fds/_hdls.
+fn off_waiter_evmask() -> usize { return 88 as usize; }
 
 fn ptr_is_null(p: *u8) -> bool {
     let null_p: *u8 = { 0 as *u8 };
@@ -91,6 +116,8 @@ fn ensure() -> *u8 {
     { *wf_slot = malloc((8 *% 4) as usize); }
     let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
     { *wh_slot = malloc((8 *% 8) as usize); }
+    let wm_slot: **u8 = { (state + off_waiter_evmask()) as **u8 };
+    { *wm_slot = malloc((8 *% 2) as usize); }
     let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
     { *ph_slot = malloc((8 *% 8) as usize); }
     let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
@@ -101,6 +128,11 @@ fn ensure() -> *u8 {
     { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
     { *ar_slot = malloc((8 *% 8) as usize); }
+    // Bring Winsock up so WSAPoll is usable even if the reactor is driven
+    // before net's own WSAStartup. Refcounted by the OS; safe to repeat.
+    let wsad: *u8 = { malloc(512 as usize) };
+    { WSAStartup(0x0202 as u16, wsad); }
+    { free(wsad); }
     { #reactor_set_state(state); }
     return state;
 }
@@ -150,45 +182,52 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     return 0 as i32;
 }
 
-// Record an fd for read-readiness. Not wired to IOCP yet (see header): the
-// fd is parked so `waiter_count` is accurate, but it is never woken.
+// Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
-    register_fd(fd, hdl);
+    register_fd(fd, hdl, pollrdnorm());
     return;
 }
 
+// Register fd for write-readiness.
 fn register_write(fd: i32, hdl: *u8) {
-    register_fd(fd, hdl);
+    register_fd(fd, hdl, pollwrnorm());
     return;
 }
 
-fn register_fd(fd: i32, hdl: *u8) {
+// Append a (fd, hdl, events) triple to the waiter arrays. `poll_one_event`
+// builds a WSAPOLLFD array from these and matches the firing fd back.
+fn register_fd(fd: i32, hdl: *u8, evmask: i16) {
     let state: *u8 = ensure();
     let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
     let cw_slot: *i32 = { (state + off_cap_waiters()) as *i32 };
     let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
+    let wm_slot: **u8 = { (state + off_waiter_evmask()) as **u8 };
     var n: i32 = { *nw_slot };
     var cap: i32 = { *cw_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_fds: *u8 = { realloc(*wf_slot, (cap *% 4) as usize) };
         let new_hdls: *u8 = { realloc(*wh_slot, (cap *% 8) as usize) };
+        let new_masks: *u8 = { realloc(*wm_slot, (cap *% 2) as usize) };
         { *wf_slot = new_fds; }
         { *wh_slot = new_hdls; }
+        { *wm_slot = new_masks; }
         { *cw_slot = cap; }
     }
     let fds: *i32 = { *wf_slot as *i32 };
     let hdls: **u8 = { *wh_slot as **u8 };
+    let masks: *i16 = { *wm_slot as *i16 };
     { *(fds + (n as usize)) = fd; }
     { *(hdls + (n as usize)) = hdl; }
+    { *(masks + (n as usize)) = evmask; }
     { *nw_slot = n +% (1 as i32); }
     return;
 }
 
 // Register a one-shot timer that fires `ms` milliseconds from now and
 // resumes `hdl`. Stored as an absolute Win32 tick deadline; poll_one_event
-// sleeps to the earliest deadline and resumes its handle.
+// bounds its wait by the earliest deadline and resumes its handle.
 fn register_timer(ms: u64, hdl: *u8) {
     let state: *u8 = ensure();
     let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
@@ -215,19 +254,12 @@ fn register_timer(ms: u64, hdl: *u8) {
     return;
 }
 
-// Wait for one event. The only wakeable source on Windows today is a timer:
-// pick the earliest deadline, sleep until it, resume its handle, and
-// swap-remove it. Returns true if a coroutine was resumed.
-fn poll_one_event() -> bool {
-    let state: *u8 = ensure();
+// Index of the timer with the earliest deadline (caller guarantees n>0).
+fn earliest_timer(state: *u8) -> i32 {
     let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
     let n: i32 = { *nt_slot };
-    if n == (0 as i32) { return false; }
     let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
-    let th_slot: **u8 = { (state + off_timer_hdls()) as **u8 };
     let deadlines: *u64 = { *td_slot as *u64 };
-    let hdls: **u8 = { *th_slot as **u8 };
-    // Find the earliest deadline.
     var best: i32 = 0;
     var best_dl: u64 = { *(deadlines + (0 as usize)) };
     var i: i32 = 1;
@@ -239,12 +271,25 @@ fn poll_one_event() -> bool {
         }
         i = i +% (1 as i32);
     }
+    return best;
+}
+
+// Resume the earliest timer (sleeping to its deadline first if it has not
+// yet elapsed) and swap-remove it. Caller guarantees n_timers > 0.
+fn fire_earliest_timer(state: *u8) -> bool {
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    let n: i32 = { *nt_slot };
+    let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+    let th_slot: **u8 = { (state + off_timer_hdls()) as **u8 };
+    let deadlines: *u64 = { *td_slot as *u64 };
+    let hdls: **u8 = { *th_slot as **u8 };
+    let best: i32 = earliest_timer(state);
+    let best_dl: u64 = { *(deadlines + (best as usize)) };
     let now: u64 = { GetTickCount64() };
     if best_dl > now {
         { Sleep((best_dl -% now) as u32); }
     }
     let hdl: *u8 = { *(hdls + (best as usize)) };
-    // Swap-remove the fired timer.
     let last_i: i32 = n -% (1 as i32);
     if best != last_i {
         let last_dl: u64 = { *(deadlines + (last_i as usize)) };
@@ -255,6 +300,95 @@ fn poll_one_event() -> bool {
     { *nt_slot = last_i; }
     { #coro_resume(hdl); }
     return true;
+}
+
+// Wait for one event — a ready fd or an elapsed timer — and resume its
+// waiter. With fd waiters parked, blocks on WSAPoll bounded by the earliest
+// timer deadline; with timers only, sleeps to the deadline. Returns true if
+// a coroutine was resumed.
+fn poll_one_event() -> bool {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    let nw: i32 = { *nw_slot };
+    let nt: i32 = { *nt_slot };
+    if nw == (0 as i32) {
+        if nt == (0 as i32) { return false; }
+        return fire_earliest_timer(state);
+    }
+    // Bound the wait by the earliest timer (so timers + I/O share one wait);
+    // -1 means block until an fd is ready when no timer is pending.
+    var timeout: i32 = (0 as i32) -% (1 as i32);
+    if nt > (0 as i32) {
+        let best: i32 = earliest_timer(state);
+        let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+        let deadlines: *u64 = { *td_slot as *u64 };
+        let best_dl: u64 = { *(deadlines + (best as usize)) };
+        let now: u64 = { GetTickCount64() };
+        if best_dl <= now {
+            timeout = 0 as i32;
+        } else {
+            timeout = (best_dl -% now) as i32;
+        }
+    }
+    // Build the WSAPOLLFD array (16 bytes/entry: fd@0, events@8, revents@10).
+    let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
+    let wm_slot: **u8 = { (state + off_waiter_evmask()) as **u8 };
+    let fds: *i32 = { *wf_slot as *i32 };
+    let hdls: **u8 = { *wh_slot as **u8 };
+    let masks: *i16 = { *wm_slot as *i16 };
+    let arr: *u8 = { malloc((nw as usize) *% (16 as usize)) };
+    var i: i32 = 0;
+    while i < nw {
+        let base: *u8 = { arr + ((i as usize) *% (16 as usize)) };
+        let fd_slot: *u64 = { base as *u64 };
+        let fd_i32: i32 = { *(fds + (i as usize)) };
+        { *fd_slot = (fd_i32 as u32) as u64; }
+        let ev_slot: *i16 = { (base + (8 as usize)) as *i16 };
+        { *ev_slot = *(masks + (i as usize)); }
+        let rev_slot: *i16 = { (base + (10 as usize)) as *i16 };
+        { *rev_slot = 0 as i16; }
+        i = i +% (1 as i32);
+    }
+    let nready: i32 = { WSAPoll(arr, nw as u32, timeout) };
+    if nready > (0 as i32) {
+        // Resume the first waiter whose revents is set; one event per call.
+        var j: i32 = 0;
+        while j < nw {
+            let base: *u8 = { arr + ((j as usize) *% (16 as usize)) };
+            let rev: i16 = { *((base + (10 as usize)) as *i16) };
+            if rev != (0 as i16) {
+                let hdl: *u8 = { *(hdls + (j as usize)) };
+                let last_i: i32 = nw -% (1 as i32);
+                if j != last_i {
+                    let last_fd: i32 = { *(fds + (last_i as usize)) };
+                    let last_hdl: *u8 = { *(hdls + (last_i as usize)) };
+                    let last_mask: i16 = { *(masks + (last_i as usize)) };
+                    { *(fds + (j as usize)) = last_fd; }
+                    { *(hdls + (j as usize)) = last_hdl; }
+                    { *(masks + (j as usize)) = last_mask; }
+                }
+                { *nw_slot = last_i; }
+                { free(arr); }
+                { #coro_resume(hdl); }
+                return true;
+            }
+            j = j +% (1 as i32);
+        }
+        { free(arr); }
+        return false;
+    }
+    { free(arr); }
+    if nready == (0 as i32) {
+        // Timed out — the earliest timer is due.
+        if nt > (0 as i32) {
+            return fire_earliest_timer(state);
+        }
+        return false;
+    }
+    // WSAPoll error (nready < 0).
+    return false;
 }
 
 // Drain the spawn_local / yield task queue: resume each handle once.

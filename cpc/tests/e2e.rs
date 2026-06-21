@@ -18454,6 +18454,466 @@ fn recipe_async_fetch_runs() {
     );
 }
 
+/// Stage the stdlib modules the Windows async-I/O tests import (+ their
+/// transitive deps), including the Winsock variants the resolver swaps in on
+/// Windows: `reactor_windows.cplus` (WSAPoll readiness) and
+/// `netsys_windows.cplus` (recv/send/closesocket/ioctlsocket + WSAStartup).
+/// The base `reactor.cplus`/`netsys.cplus` are staged alongside so the
+/// platform-override resolution has a base to shadow.
+#[cfg(target_os = "windows")]
+fn stage_win_async_stdlib(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    let files: &[(&str, &str)] = &[
+        ("future.cplus", include_str!("../../vendor/stdlib/src/future.cplus")),
+        ("executor.cplus", include_str!("../../vendor/stdlib/src/executor.cplus")),
+        ("reactor.cplus", include_str!("../../vendor/stdlib/src/reactor.cplus")),
+        ("reactor_windows.cplus", include_str!("../../vendor/stdlib/src/reactor_windows.cplus")),
+        ("net.cplus", include_str!("../../vendor/stdlib/src/net.cplus")),
+        ("netsys.cplus", include_str!("../../vendor/stdlib/src/netsys.cplus")),
+        ("netsys_windows.cplus", include_str!("../../vendor/stdlib/src/netsys_windows.cplus")),
+        ("time.cplus", include_str!("../../vendor/stdlib/src/time.cplus")),
+        ("result.cplus", include_str!("../../vendor/stdlib/src/result.cplus")),
+        ("vec.cplus", include_str!("../../vendor/stdlib/src/vec.cplus")),
+        ("iterator.cplus", include_str!("../../vendor/stdlib/src/iterator.cplus")),
+        ("option.cplus", include_str!("../../vendor/stdlib/src/option.cplus")),
+    ];
+    for (name, src) in files {
+        std::fs::write(dir.join("vendor/stdlib/src").join(name), src).unwrap();
+    }
+}
+
+/// Run `bin` (with `FETCH_PORT` set) against a one-shot sidecar TCP echo
+/// server on 127.0.0.1, returning the child's exit code. The server accepts
+/// one connection, echoes the single byte the client sends, and lingers
+/// briefly so the client's read sees the byte rather than EOF. Mirrors the
+/// macOS `recipe_async_fetch_runs` harness.
+#[cfg(target_os = "windows")]
+fn run_against_echo_server(bin: &std::path::Path) -> i32 {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1];
+        conn.read_exact(&mut buf).expect("read");
+        conn.write_all(&buf).expect("echo");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        drop(conn);
+    });
+    let out = Command::new(bin)
+        .env("FETCH_PORT", port.to_string())
+        .output()
+        .expect("run");
+    server.join().expect("server thread");
+    out.status.code().unwrap_or(-1)
+}
+
+/// v0.0.24 (issue #5): Windows async I/O round-trip. The Windows reactor
+/// (`reactor_windows.cplus`) wakes a suspended coroutine via WSAPoll
+/// readiness — the readiness analogue of the macOS kqueue / Linux epoll
+/// backends — and the Winsock socket stack (`netsys_windows.cplus`) routes
+/// recv/send/closesocket/ioctlsocket + WSAStartup behind netsys. A C+ async
+/// client connects, sends 'A', and reads the echoed byte under `block_on`,
+/// driven by WSAPoll rather than busy-polling.
+#[test]
+#[cfg(target_os = "windows")]
+fn windows_async_tcp_echo_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"wecho\"\n\n[[bin]]\nname = \"wecho\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win_async_stdlib(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "stdlib/executor" as executor;
+import "stdlib/future" as future;
+import "stdlib/net" as net;
+import "stdlib/result" as result;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn getenv(name: *u8) -> *u8;
+extern fn atoi(s: *u8) -> i32;
+
+fn target_port() -> u16 {
+    let env_p: *u8 = { getenv(#str_ptr("FETCH_PORT\0")) };
+    let null_p: *u8 = { 0 as *u8 };
+    if env_p == null_p { return 7878 as u16; }
+    return { atoi(env_p) } as u16;
+}
+
+async fn fetch_one_byte(port: u16) -> i32 {
+    guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp("127.0.0.1", port)
+        else { return 0 -% 1 as i32; };
+    var stream: net::TcpStream = s;
+    let _nb: i32 = stream.make_nonblocking();
+    let req: *u8 = { malloc(1 as usize) };
+    { *req = 0x41 as u8; }
+    let _w: isize = await stream.write_all_async(req, 1 as usize);
+    { free(req); }
+    let buf: *u8 = { malloc(1 as usize) };
+    let n: isize = await stream.read_async(buf, 1 as usize);
+    if n != (1 as isize) { { free(buf); } return 0 -% 2 as i32; }
+    let v: u8 = { *buf };
+    { free(buf); }
+    return v as i32;
+}
+
+fn main() -> i32 {
+    let f: future::Future[i32] = fetch_one_byte(target_port());
+    return executor::block_on::[i32](f);
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (windows async echo)");
+    let code = run_against_echo_server(&dir.join("target/debug/wecho"));
+    assert_eq!(
+        code, 0x41,
+        "expected WSAPoll-woken async read to yield echoed 'A' (0x41); got {code}"
+    );
+}
+
+/// v0.0.24 (issue #5, acceptance #2): on Windows a `time::sleep` (timer
+/// source) and a pending socket read (WSAPoll readiness) both fire correctly
+/// in the same `block_on`. The async fn first awaits a 25ms timer, then
+/// connects + reads the echoed byte; main asserts the byte arrived (0x41)
+/// and that the timer actually elapsed (>= 20ms), so both reactor sources
+/// are exercised in one drive loop.
+#[test]
+#[cfg(target_os = "windows")]
+fn windows_async_timer_and_socket_coexist() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"wcoex\"\n\n[[bin]]\nname = \"wcoex\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win_async_stdlib(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "stdlib/executor" as executor;
+import "stdlib/future" as future;
+import "stdlib/net" as net;
+import "stdlib/time" as time;
+import "stdlib/result" as result;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn getenv(name: *u8) -> *u8;
+extern fn atoi(s: *u8) -> i32;
+extern fn GetTickCount64() -> u64;
+
+fn target_port() -> u16 {
+    let env_p: *u8 = { getenv(#str_ptr("FETCH_PORT\0")) };
+    let null_p: *u8 = { 0 as *u8 };
+    if env_p == null_p { return 7878 as u16; }
+    return { atoi(env_p) } as u16;
+}
+
+async fn sleep_then_read(port: u16) -> i32 {
+    await time::sleep(25 as u64);
+    guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp("127.0.0.1", port)
+        else { return 0 -% 1 as i32; };
+    var stream: net::TcpStream = s;
+    let _nb: i32 = stream.make_nonblocking();
+    let req: *u8 = { malloc(1 as usize) };
+    { *req = 0x41 as u8; }
+    let _w: isize = await stream.write_all_async(req, 1 as usize);
+    { free(req); }
+    let buf: *u8 = { malloc(1 as usize) };
+    let n: isize = await stream.read_async(buf, 1 as usize);
+    if n != (1 as isize) { { free(buf); } return 0 -% 2 as i32; }
+    let v: u8 = { *buf };
+    { free(buf); }
+    return v as i32;
+}
+
+fn main() -> i32 {
+    let t0: u64 = { GetTickCount64() };
+    let got: i32 = executor::block_on::[i32](sleep_then_read(target_port()));
+    let elapsed: u64 = { GetTickCount64() } -% t0;
+    if got != (0x41 as i32) { return got; }
+    if elapsed < (20 as u64) { return 50 as i32; }
+    return 0 as i32;
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (windows timer+socket coexist)");
+    let code = run_against_echo_server(&dir.join("target/debug/wcoex"));
+    assert_eq!(
+        code, 0,
+        "expected timer + WSAPoll socket read to both fire in one block_on; got {code}"
+    );
+}
+
+/// Stage the full `vendor/win32` binding (umbrella + every module) into a temp
+/// project. The native Windows GUI binding — the counterpart to `vendor/appkit`
+/// (Cocoa) and `vendor/gtk` (GTK 4) — needs nothing installed: user32 / gdi32 /
+/// comctl32 / comdlg32 ship with Windows and are on the linker's default search
+/// path.
+#[cfg(target_os = "windows")]
+fn stage_win32(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("vendor/win32/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/win32/Cplus.toml"),
+        include_str!("../../vendor/win32/Cplus.toml"),
+    )
+    .unwrap();
+    let files: &[(&str, &str)] = &[
+        ("win32.cplus", include_str!("../../vendor/win32/src/win32.cplus")),
+        ("core.cplus", include_str!("../../vendor/win32/src/core.cplus")),
+        ("window.cplus", include_str!("../../vendor/win32/src/window.cplus")),
+        ("controls.cplus", include_str!("../../vendor/win32/src/controls.cplus")),
+        ("menu.cplus", include_str!("../../vendor/win32/src/menu.cplus")),
+        ("dialogs.cplus", include_str!("../../vendor/win32/src/dialogs.cplus")),
+        ("graphics.cplus", include_str!("../../vendor/win32/src/graphics.cplus")),
+    ];
+    for (name, src) in files {
+        std::fs::write(dir.join("vendor/win32/src").join(name), src).unwrap();
+    }
+}
+
+/// v0.0.24: native Win32 GUI binding (`vendor/win32`) builds + runs end to end.
+/// Registers the window class, creates a top-level window with Label/Button/
+/// CheckBox/ComboBox/ProgressBar children (one of each control class, common
+/// controls included), shows it, and runs the message loop; the window
+/// self-closes via a timer so the test terminates headlessly. Exercises the
+/// full register→create→show→pump→destroy→quit cycle, the multi-module umbrella,
+/// and the `#[repr(C)]` WNDCLASSEXA with an `fn`-typed wndproc field.
+#[test]
+#[cfg(target_os = "windows")]
+fn win32_window_opens_and_message_loop_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"w32d\"\n\n[[bin]]\nname = \"w32d\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win32(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+
+fn main() -> i32 {
+    let win: win32::Window = win32::Window::new(#str_ptr("C+ on Win32\0"), 420 as i32, 320 as i32);
+    let _lbl: controls::Label = controls::Label::new(win.raw(), #str_ptr("Hello from C+ via native Win32\0"), 20 as i32, 16 as i32, 380 as i32, 22 as i32);
+    let _btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Press me\0"), 20 as i32, 48 as i32, 120 as i32, 30 as i32);
+    let _chk: controls::CheckBox = controls::CheckBox::new(win.raw(), #str_ptr("Toggle\0"), 20 as i32, 88 as i32, 120 as i32, 24 as i32);
+    let cb: controls::ComboBox = controls::ComboBox::new(win.raw(), 160 as i32, 88 as i32, 160 as i32, 120 as i32);
+    cb.add_item(#str_ptr("one\0"));
+    cb.add_item(#str_ptr("two\0"));
+    let pb: controls::ProgressBar = controls::ProgressBar::new(win.raw(), 20 as i32, 124 as i32, 300 as i32, 18 as i32);
+    pb.set_range(0 as i32, 100 as i32);
+    pb.set_value(60 as i32);
+    win.show();
+    win.close_after(200 as u32);
+    return win32::run();
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (win32 binding)");
+    let run = Command::new(dir.join("target/debug/w32d"))
+        .status()
+        .expect("run w32d");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected the Win32 window + message loop to run and self-close to exit 0"
+    );
+}
+
+/// v0.0.24: the win32 binding's event dispatch. A button's click is routed
+/// through Win32's WM_COMMAND to the window's dispatch table and into a plain
+/// C+ `fn` handler (the gtk `g_signal_connect` analogue). Synthesizing the
+/// click with BM_CLICK sends the WM_COMMAND synchronously, so the round-trip is
+/// deterministic and needs no message loop: the handler bumps a counter via its
+/// user-data pointer, and `main` returns it.
+#[test]
+#[cfg(target_os = "windows")]
+fn win32_command_dispatch_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"w32c\"\n\n[[bin]]\nname = \"w32c\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win32(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+import "win32/core" as core;
+
+extern fn malloc(n: usize) -> *u8;
+
+fn on_click(sender: *u8, user: *u8) {
+    let c: *i32 = { user as *i32 };
+    { *c = *c +% (7 as i32); }
+    return;
+}
+
+fn main() -> i32 {
+    let counter: *i32 = { malloc(4 as usize) as *i32 };
+    { *counter = 0 as i32; }
+    let win: win32::Window = win32::Window::new(#str_ptr("dispatch\0"), 300 as i32, 200 as i32);
+    let btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Go\0"), 20 as i32, 20 as i32, 100 as i32, 30 as i32);
+    btn.on_click(on_click, counter as *u8);
+    // BM_CLICK = 0x00F5: the button sends WM_COMMAND to the parent synchronously.
+    { core::send(btn.raw(), 0x00F5 as u32, 0 as u64, 0 as i64); }
+    return { *counter };
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (win32 dispatch)");
+    let run = Command::new(dir.join("target/debug/w32c"))
+        .status()
+        .expect("run w32c");
+    assert_eq!(
+        run.code(),
+        Some(7),
+        "expected the button click to route WM_COMMAND into the C+ handler (exit 7)"
+    );
+}
+
+/// Copy a vendor package (its `Cplus.toml` + every `src/*.cplus`) from the repo
+/// into a temp project's `vendor/`. Used by the agent-surface test, which spans
+/// several packages (win32 + agent_win32 + agent_core + stdlib) — copying the
+/// real sources keeps the fixture in sync without a giant `include_str!` list.
+#[cfg(target_os = "windows")]
+fn copy_vendor_pkg(dir: &std::path::Path, pkg: &str) {
+    let repo_vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor");
+    let dst = dir.join("vendor").join(pkg);
+    std::fs::create_dir_all(dst.join("src")).unwrap();
+    std::fs::copy(repo_vendor.join(pkg).join("Cplus.toml"), dst.join("Cplus.toml")).unwrap();
+    for entry in std::fs::read_dir(repo_vendor.join(pkg).join("src")).unwrap() {
+        let p = entry.unwrap().path();
+        if p.extension().map_or(false, |e| e == "cplus") {
+            std::fs::copy(&p, dst.join("src").join(p.file_name().unwrap())).unwrap();
+        }
+    }
+}
+
+/// v0.0.24: the `agent_win32` surface — the Windows counterpart to
+/// `agent_appkit`. Builds a real win32 window (Button/Label/Edit), tags the
+/// button + edit agent-exposed, then drives the bridge: `open` walks the HWND
+/// tree into agent-core's identity registry, `describe` snapshots it, and the
+/// gated write path runs — `click` authorizes + routes BM_CLICK into the C+
+/// handler, an unknown id is `NotFound`, and `set_text` authorizes + edits +
+/// bumps the optimistic-concurrency version. The encoded exit (30) confirms
+/// each step; `agent_core` is reused unchanged (platform-neutral).
+#[test]
+#[cfg(target_os = "windows")]
+fn agent_win32_describe_and_gated_actions() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ag32\"\n\n[[bin]]\nname = \"ag32\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\nagent_win32 = \"*\"\nagent_core = \"*\"\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    copy_vendor_pkg(&dir, "win32");
+    copy_vendor_pkg(&dir, "agent_win32");
+    copy_vendor_pkg(&dir, "agent_core");
+    copy_vendor_pkg(&dir, "stdlib");
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+import "agent_win32/agent_win32" as agent;
+import "agent_core/surface" as surface;
+import "stdlib/vec" as vec;
+
+extern fn malloc(n: usize) -> *u8;
+
+fn on_click(sender: *u8, user: *u8) {
+    let c: *i32 = { user as *i32 };
+    { *c = *c +% (5 as i32); }
+    return;
+}
+
+fn main() -> i32 {
+    let counter: *i32 = { malloc(4 as usize) as *i32 };
+    { *counter = 0 as i32; }
+    let win: win32::Window = win32::Window::new(#str_ptr("agent demo\0"), 400 as i32, 300 as i32);
+    let btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Go\0"), 20 as i32, 20 as i32, 100 as i32, 30 as i32);
+    btn.on_click(on_click, counter as *u8);
+    let _lbl: controls::Label = controls::Label::new(win.raw(), #str_ptr("label\0"), 20 as i32, 60 as i32, 200 as i32, 20 as i32);
+    let ed: controls::Edit = controls::Edit::new(win.raw(), #str_ptr("\0"), 20 as i32, 90 as i32, 200 as i32, 24 as i32);
+
+    agent::set_agent_id(btn.raw(), #str_ptr("btn_go\0"));
+    agent::set_agent_id(ed.raw(), #str_ptr("field\0"));
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::UiNode] = s.describe();
+
+    var r: i32 = 0;
+    if surface::outcome_eq({ s.click("btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
+    r = r +% { *counter };
+    if surface::outcome_eq({ s.click("ghost") }, surface::Outcome::NotFound) { r = r +% (2 as i32); }
+    if nodes.len() >= (4 as usize) { r = r +% (10 as i32); }
+    let v0: u64 = s.text_version("field");
+    if surface::outcome_eq({ s.set_text("field", "hi", v0) }, surface::Outcome::Allowed) { r = r +% (4 as i32); }
+    if s.text_version("field") > v0 { r = r +% (8 as i32); }
+    return r;
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (agent_win32)");
+    let run = Command::new(dir.join("target/debug/ag32"))
+        .status()
+        .expect("run ag32");
+    assert_eq!(
+        run.code(),
+        Some(30),
+        "expected describe + gated click/set_text round-trip (1+5+2+10+4+8=30); got {:?}",
+        run.code()
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn recipe_async_yield_demo_runs() {

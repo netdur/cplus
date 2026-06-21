@@ -1,0 +1,69 @@
+// win32/window.cplus — the top-level application window.
+//
+// Mirrors appkit's `Window` and gtk's `Window`. A `Window` owns its HWND and
+// the dispatch table attached to it (see core.cplus); control modules add
+// children to it and register their handlers through that table. The wrapper
+// stays `opaque` with no `drop` — the window is torn down by closing it
+// (WM_CLOSE → DestroyWindow) or at process exit.
+
+import "./core" as core;
+
+struct Window {
+    opaque hwnd: *u8,
+    opaque hinst: *u8,
+}
+
+impl Window {
+    // The owning HWND — pass to control constructors as the parent.
+    fn raw(this) -> *u8 { return this.hwnd; }
+    // The module HINSTANCE — control constructors need it for CreateWindowExA.
+    fn hinst(this) -> *u8 { return this.hinst; }
+
+    fn from_raw(hwnd: *u8, hinst: *u8) -> Window {
+        return Window { hwnd: hwnd, hinst: hinst };
+    }
+
+    // Create a top-level overlapped window titled `title`, sized w x h px.
+    fn new(title: *u8, width: i32, height: i32) -> Window {
+        let hinst: *u8 = core::module_handle();
+        core::register_window_class(hinst);
+        let hwnd: *u8 = core::create_window(
+            hinst, core::window_class_name(), title, core::ws_overlappedwindow(),
+            core::cw_usedefault(), core::cw_usedefault(), width, height,
+            0 as *u8, 0 as *u8);
+        core::attach_dispatch(hwnd);
+        return Window { hwnd: hwnd, hinst: hinst };
+    }
+
+    // Make the window visible and paint it.
+    fn show(this) { core::show_window(this.hwnd); return; }
+
+    fn set_title(this, title: *u8) { core::set_text(this.hwnd, title); return; }
+
+    // Attach a menu bar (see the `menu` module) and redraw it.
+    fn set_menu(this, menu: *u8) { core::set_window_menu(this.hwnd, menu); return; }
+
+    // Force a repaint (fires the registered `on_paint` handler).
+    fn redraw(this) { core::invalidate(this.hwnd); return; }
+
+    // Register a handler fired when the user closes the window (before it is
+    // destroyed). `user` is threaded back to the handler.
+    fn on_close(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_close_handler(this.hwnd, handler, user);
+        return;
+    }
+
+    // Register a paint handler `fn(window_hwnd, hdc)` invoked inside WM_PAINT.
+    // Use the `graphics` module's `Painter::from_hdc(hdc)` to draw.
+    fn on_paint(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_paint_handler(this.hwnd, handler, user);
+        return;
+    }
+
+    // Schedule a self-close after `ms` milliseconds (demos / headless tests).
+    fn close_after(this, ms: u32) { core::schedule_close(this.hwnd, ms); return; }
+}
+
+// Run the application message loop until the window closes. The appkit/gtk
+// `app.run()` analogue; re-exported on the umbrella as `win32::run`.
+fn run() -> i32 { return core::run(); }

@@ -1,0 +1,89 @@
+// stdlib/netsys_windows.cplus — Windows/Winsock variant of netsys.cplus
+// (loaded in place of it by the resolver's `_windows` platform-override —
+// see resolver::platform_override). Exports the identical public surface
+// with Winsock values + syscall shims, so net.cplus stays single-source
+// and platform-neutral.
+//
+// **Socket handles.** Win32 `SOCKET` is a 64-bit `UINT_PTR`, but the whole
+// stdlib models fds as `i32` (matching the POSIX backends). On x86_64 a
+// 32-bit register write zero-extends into its 64-bit pair, so passing an
+// i32 handle where Winsock expects a 64-bit `SOCKET` lands the correct
+// zero-extended value — valid as long as the handle fits in 32 bits, which
+// holds for the small handles a normal process is handed. inet_addr /
+// socket / connect / accept stay declared `i32` in net.cplus for the same
+// reason.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Winsock entry points (ws2_32, linked on Windows by the driver).
+extern fn WSAGetLastError() -> i32;
+extern fn WSAStartup(version: u16, data: *u8) -> i32;
+extern fn recv(s: i32, buf: *u8, len: i32, flags: i32) -> i32;
+extern fn send(s: i32, buf: *u8, len: i32, flags: i32) -> i32;
+extern fn closesocket(s: i32) -> i32;
+extern fn ioctlsocket(s: i32, cmd: i32, argp: *u32) -> i32;
+
+// Current thread's last Winsock error (the errno analogue for sockets).
+fn errno() -> i32 {
+    return { WSAGetLastError() };
+}
+
+// O_NONBLOCK has no Winsock analogue (non-blocking is flipped via
+// ioctlsocket below); kept for surface parity, never read on Windows.
+fn o_nonblock() -> i32 { return 0 as i32; }
+
+// EAGAIN analogue: WSAEWOULDBLOCK = 10035.
+fn eagain() -> i32 { return 10035 as i32; }
+
+// setsockopt level / optname for SO_REUSEADDR. Winsock: SOL_SOCKET=0xffff,
+// SO_REUSEADDR=0x4 (same values as BSD/macOS).
+fn sol_socket() -> i32 { return 0xffff as i32; }
+fn so_reuseaddr() -> i32 { return 0x4 as i32; }
+
+// First two bytes of `sockaddr_in`. Windows, like Linux, has no `sin_len`:
+// the struct starts with `ADDRESS_FAMILY sin_family` (a 2-byte field), so
+// for AF_INET=2 the little-endian bytes are [2, 0].
+fn sa_family_byte0() -> u8 { return 2 as u8; }
+fn sa_family_byte1() -> u8 { return 0 as u8; }
+
+// recv/send/closesocket shims — net.cplus routes its read/write/close
+// through these so the POSIX backends can use read/write/close while
+// Windows uses the Winsock calls that actually work on a SOCKET.
+fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    let n: i32 = { recv(fd, buf, count as i32, 0 as i32) };
+    return n as isize;
+}
+
+fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    let n: i32 = { send(fd, buf, count as i32, 0 as i32) };
+    return n as isize;
+}
+
+fn close_fd(fd: i32) -> i32 {
+    return { closesocket(fd) };
+}
+
+// Flip the socket to non-blocking via ioctlsocket(FIONBIO, 1). FIONBIO is
+// _IOW('f', 126, u_long) = 0x8004667E. Returns 0 on success, -1 on error.
+fn set_nonblocking(fd: i32) -> i32 {
+    let arg: *u32 = { malloc(4 as usize) as *u32 };
+    { *arg = 1 as u32; }
+    let cmd: i32 = { (0x8004667E as u32) as i32 };
+    let rc: i32 = { ioctlsocket(fd, cmd, arg) };
+    { free(arg as *u8); }
+    if rc != (0 as i32) {
+        return 0 -% 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Initialize Winsock 2.2 (MAKEWORD(2,2) = 0x0202). Refcounted by the OS, so
+// calling it once per socket-creating entry point is safe. The 512-byte
+// scratch covers WSADATA (~408 bytes); we don't read the fields back.
+fn startup() -> i32 {
+    let data: *u8 = { malloc(512 as usize) };
+    let rc: i32 = { WSAStartup(0x0202 as u16, data) };
+    { free(data); }
+    return rc;
+}
