@@ -245,6 +245,18 @@ fn emit_diag(d: &Diagnostic, mode: DiagMode, src: &str) {
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = env::args_os().skip(1).collect();
+
+    // Unified subcommands that own the rest of argv and don't flow through the
+    // build-style flag parser below. Dispatched before it so their arguments
+    // (a project name, package-manager flags, `--write`) aren't misread as
+    // build flags.
+    match args.first().and_then(|a| a.to_str()) {
+        Some("skill") => return run_skill(&args[1..]),
+        Some("init") => return run_init(&args[1..]),
+        Some("pm") => return run_pm(&args[1..]),
+        _ => {}
+    }
+
     let mut input: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut diag_mode = DiagMode::Human;
@@ -4380,4 +4392,206 @@ fn dump_ast(path: PathBuf, mode: DiagMode) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+// ---- `cpc skill` : the embedded agent/LLM reference --------------------------
+
+/// The C+ agent reference, bundled into the binary at build time so `cpc skill`
+/// works from any install (brew / cargo / source) with no network, and is
+/// always version-matched to this `cpc`. Source of truth: `docs/SKILL.md`.
+const SKILL_MD: &str = include_str!("../../docs/SKILL.md");
+
+const SKILL_USAGE: &str = "\
+cpc skill - print the C+ reference for an LLM/agent (version-matched to this cpc)
+
+usage:
+  cpc skill                 print the reference to stdout
+  cpc skill --write [PATH]  write it into the project (default: ./SKILL.md)
+  cpc skill --write --force overwrite an existing file
+";
+
+/// `cpc skill [--write [PATH]] [--force]`.
+fn run_skill(args: &[OsString]) -> ExitCode {
+    let mut write = false;
+    let mut force = false;
+    let mut dest: Option<PathBuf> = None;
+    for a in args {
+        match a.to_str() {
+            Some("--write") | Some("-w") => write = true,
+            Some("--force") | Some("-f") => force = true,
+            Some("-h") | Some("--help") => {
+                print!("{SKILL_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            Some(p) if write && dest.is_none() && !p.starts_with('-') => {
+                dest = Some(PathBuf::from(p));
+            }
+            other => {
+                eprintln!("cpc skill: unexpected argument `{}`", other.unwrap_or("<non-utf8>"));
+                eprint!("{SKILL_USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if !write {
+        print!("{SKILL_MD}");
+        return ExitCode::SUCCESS;
+    }
+
+    let path = dest.unwrap_or_else(|| PathBuf::from("SKILL.md"));
+    if path.exists() && !force {
+        eprintln!(
+            "cpc skill: {} already exists (use --force to overwrite)",
+            path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    match std::fs::write(&path, SKILL_MD) {
+        Ok(()) => {
+            println!("wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("cpc skill: could not write {}: {e}", path.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- `cpc pm` : the package manager, unified under cpc ----------------------
+
+/// `cpc pm <command> ...` — dispatch to the package manager (the same
+/// dispatcher as the standalone `cplus-pm` binary). Shipping it under `cpc`
+/// means the one Homebrew-installed toolchain carries the package manager too.
+fn run_pm(args: &[OsString]) -> ExitCode {
+    let strs: Option<Vec<String>> =
+        args.iter().map(|a| a.to_str().map(String::from)).collect();
+    let Some(strs) = strs else {
+        eprintln!("cpc pm: arguments must be valid UTF-8");
+        return ExitCode::FAILURE;
+    };
+    match cplus_pm::cli::run(strs) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("error: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- `cpc init` : scaffold a new project ------------------------------------
+
+const INIT_USAGE: &str = "\
+cpc init - scaffold a new C+ project
+
+usage:
+  cpc init [NAME]   create a project. With NAME, scaffold into NAME/; without,
+                    scaffold in the current directory (name = directory name).
+
+writes: Cplus.toml, src/main.cplus, .gitignore, SKILL.md
+";
+
+/// `cpc init [NAME]`.
+fn run_init(args: &[OsString]) -> ExitCode {
+    let mut name: Option<String> = None;
+    for a in args {
+        match a.to_str() {
+            Some("-h") | Some("--help") => {
+                print!("{INIT_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            Some(s) if name.is_none() && !s.starts_with('-') => name = Some(s.to_string()),
+            other => {
+                eprintln!("cpc init: unexpected argument `{}`", other.unwrap_or("<non-utf8>"));
+                eprint!("{INIT_USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Where to scaffold. An existing project takes precedence over every other
+    // check, so re-running `cpc init` in a project reports the real reason.
+    let root = match &name {
+        Some(n) => PathBuf::from(n),
+        None => PathBuf::from("."),
+    };
+    let manifest = root.join("Cplus.toml");
+    if manifest.exists() {
+        eprintln!(
+            "cpc init: {} already exists — refusing to overwrite an existing project",
+            manifest.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    // The package name is the final path component, so `cpc init path/to/demo`
+    // scaffolds into that directory but names the package `demo`. With no
+    // argument, it's the current directory's name.
+    let proj_name = root
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .or_else(|| {
+            env::current_dir()
+                .ok()
+                .and_then(|d| d.file_name().map(|f| f.to_string_lossy().into_owned()))
+        })
+        .unwrap_or_else(|| "app".to_string());
+    if proj_name.is_empty()
+        || !proj_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        eprintln!("cpc init: project name `{proj_name}` must be alphanumeric (plus `_` or `-`)");
+        if name.is_none() {
+            eprintln!("    (derived from the directory name; pass an explicit name: `cpc init NAME`)");
+        }
+        return ExitCode::FAILURE;
+    }
+
+    let src = root.join("src");
+    if let Err(e) = std::fs::create_dir_all(&src) {
+        eprintln!("cpc init: could not create {}: {e}", src.display());
+        return ExitCode::FAILURE;
+    }
+
+    let manifest_toml = format!(
+        "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [[bin]]\nname = \"{proj_name}\"\npath = \"src/main.cplus\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n"
+    );
+    let main_cplus = "import \"stdlib/io\" as io;\n\n\
+         fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";
+    let gitignore = "/target\n/vendor\n";
+
+    let files: [(PathBuf, &str); 4] = [
+        (manifest, &manifest_toml),
+        (src.join("main.cplus"), main_cplus),
+        (root.join(".gitignore"), gitignore),
+        // The agent reference, so the fresh project is immediately LLM-ready.
+        (root.join("SKILL.md"), SKILL_MD),
+    ];
+    for (path, content) in files {
+        if let Err(e) = std::fs::write(&path, content) {
+            eprintln!("cpc init: could not write {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // `cpc init`, `cpc init .`, and `cpc init ./` all scaffold the current
+    // directory in place (no `cd` to suggest); a name/path scaffolds into it.
+    let in_place = matches!(name.as_deref(), None | Some(".") | Some("./"));
+    if in_place {
+        println!("created C+ project `{proj_name}` in the current directory");
+    } else {
+        println!("created C+ project `{proj_name}` in {}/", name.as_deref().unwrap());
+    }
+    println!("next:");
+    if !in_place {
+        println!("  cd {}", name.as_deref().unwrap());
+    }
+    println!("  cpc build            # compile and link");
+    println!();
+    println!("note: src/main.cplus imports `stdlib/io`; vendor the stdlib package into");
+    println!("      vendor/stdlib before building — from");
+    println!("      https://github.com/netdur/cplus/tree/main/vendor/stdlib");
+    ExitCode::SUCCESS
 }

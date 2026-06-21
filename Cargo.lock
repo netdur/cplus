@@ -43,6 +43,7 @@ name = "cpc"
 version = "0.0.24"
 dependencies = [
  "cplus-core",
+ "cplus-pm",
  "serde_json",
  "tempfile",
  "wasmi",

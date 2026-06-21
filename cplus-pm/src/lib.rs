@@ -6,6 +6,7 @@
 //! hashing, cache, lockfile). Building packages — and binary packaging — are
 //! separate concerns, not this tool's job. See `plans/pm.md`.
 
+pub mod cli;
 pub mod fetch;
 pub mod hash;
 pub mod id;
