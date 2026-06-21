@@ -1,0 +1,171 @@
+import "./glib" as g;
+
+// GtkWidget — the base class of every on-screen object. This module is the GTK
+// analog of appkit's `view` + `layout`: visibility, sizing, focus, the margin
+// / alignment / expand knobs that drive GTK's layout, CSS classes, and
+// tooltips. The `Widget` wrapper takes any widget pointer so you can apply
+// these to a `Button`, `Box`, `Label`, … via `Widget::from_raw(thing.raw())`.
+
+#[link_name = "gtk_widget_set_visible"]
+extern fn gtk_widget_set_visible(widget: *u8, visible: i32);
+
+#[link_name = "gtk_widget_get_visible"]
+extern fn gtk_widget_get_visible(widget: *u8) -> i32;
+
+#[link_name = "gtk_widget_set_sensitive"]
+extern fn gtk_widget_set_sensitive(widget: *u8, sensitive: i32);
+
+#[link_name = "gtk_widget_set_size_request"]
+extern fn gtk_widget_set_size_request(widget: *u8, width: i32, height: i32);
+
+#[link_name = "gtk_widget_grab_focus"]
+extern fn gtk_widget_grab_focus(widget: *u8) -> i32;
+
+#[link_name = "gtk_widget_queue_draw"]
+extern fn gtk_widget_queue_draw(widget: *u8);
+
+#[link_name = "gtk_widget_set_margin_start"]
+extern fn gtk_widget_set_margin_start(widget: *u8, margin: i32);
+
+#[link_name = "gtk_widget_set_margin_end"]
+extern fn gtk_widget_set_margin_end(widget: *u8, margin: i32);
+
+#[link_name = "gtk_widget_set_margin_top"]
+extern fn gtk_widget_set_margin_top(widget: *u8, margin: i32);
+
+#[link_name = "gtk_widget_set_margin_bottom"]
+extern fn gtk_widget_set_margin_bottom(widget: *u8, margin: i32);
+
+#[link_name = "gtk_widget_set_halign"]
+extern fn gtk_widget_set_halign(widget: *u8, align: i32);
+
+#[link_name = "gtk_widget_set_valign"]
+extern fn gtk_widget_set_valign(widget: *u8, align: i32);
+
+#[link_name = "gtk_widget_set_hexpand"]
+extern fn gtk_widget_set_hexpand(widget: *u8, expand: i32);
+
+#[link_name = "gtk_widget_set_vexpand"]
+extern fn gtk_widget_set_vexpand(widget: *u8, expand: i32);
+
+#[link_name = "gtk_widget_set_tooltip_text"]
+extern fn gtk_widget_set_tooltip_text(widget: *u8, text: *u8);
+
+#[link_name = "gtk_widget_add_css_class"]
+extern fn gtk_widget_add_css_class(widget: *u8, css_class: *u8);
+
+#[link_name = "gtk_widget_remove_css_class"]
+extern fn gtk_widget_remove_css_class(widget: *u8, css_class: *u8);
+
+#[link_name = "gtk_widget_set_opacity"]
+extern fn gtk_widget_set_opacity(widget: *u8, opacity: f64);
+
+struct Widget {
+    opaque obj: *u8,
+}
+
+impl Widget {
+    fn raw(this) -> *u8 { return this.obj; }
+
+    // Wrap any existing widget pointer to apply the base-class knobs below.
+    fn from_raw(obj: *u8) -> Widget {
+        return Widget { obj: obj };
+    }
+
+    fn set_visible(this, visible: i32) {
+        { gtk_widget_set_visible(this.obj, visible); };
+    }
+
+    fn is_visible(this) -> i32 {
+        return { gtk_widget_get_visible(this.obj) };
+    }
+
+    fn show(this) {
+        { gtk_widget_set_visible(this.obj, 1 as i32); };
+    }
+
+    fn hide(this) {
+        { gtk_widget_set_visible(this.obj, 0 as i32); };
+    }
+
+    // Grey out / disable interaction (0) or re-enable (1).
+    fn set_sensitive(this, sensitive: i32) {
+        { gtk_widget_set_sensitive(this.obj, sensitive); };
+    }
+
+    // Request a minimum natural size (pass -1 for "don't care" on an axis).
+    fn set_size_request(this, width: i32, height: i32) {
+        { gtk_widget_set_size_request(this.obj, width, height); };
+    }
+
+    fn grab_focus(this) -> i32 {
+        return { gtk_widget_grab_focus(this.obj) };
+    }
+
+    // Schedule a redraw (for a `graphics::DrawingArea` after state changes).
+    fn queue_draw(this) {
+        { gtk_widget_queue_draw(this.obj); };
+    }
+
+    fn set_margin_start(this, margin: i32) {
+        { gtk_widget_set_margin_start(this.obj, margin); };
+    }
+
+    fn set_margin_end(this, margin: i32) {
+        { gtk_widget_set_margin_end(this.obj, margin); };
+    }
+
+    fn set_margin_top(this, margin: i32) {
+        { gtk_widget_set_margin_top(this.obj, margin); };
+    }
+
+    fn set_margin_bottom(this, margin: i32) {
+        { gtk_widget_set_margin_bottom(this.obj, margin); };
+    }
+
+    // Set the same margin on all four edges.
+    fn set_margin(this, margin: i32) {
+        { gtk_widget_set_margin_start(this.obj, margin); };
+        { gtk_widget_set_margin_end(this.obj, margin); };
+        { gtk_widget_set_margin_top(this.obj, margin); };
+        { gtk_widget_set_margin_bottom(this.obj, margin); };
+    }
+
+    // Horizontal / vertical alignment within the parent's allocation — pass a
+    // `glib::align_*` value.
+    fn set_halign(this, align: i32) {
+        { gtk_widget_set_halign(this.obj, align); };
+    }
+
+    fn set_valign(this, align: i32) {
+        { gtk_widget_set_valign(this.obj, align); };
+    }
+
+    // Whether the widget claims extra space along an axis when its container
+    // grows.
+    fn set_hexpand(this, expand: i32) {
+        { gtk_widget_set_hexpand(this.obj, expand); };
+    }
+
+    fn set_vexpand(this, expand: i32) {
+        { gtk_widget_set_vexpand(this.obj, expand); };
+    }
+
+    fn set_tooltip_text(this, text: *u8) {
+        { gtk_widget_set_tooltip_text(this.obj, text); };
+    }
+
+    // Add/remove a CSS class — the GTK styling hook (e.g. "suggested-action",
+    // "destructive-action", "title", "dim-label").
+    fn add_css_class(this, css_class: *u8) {
+        { gtk_widget_add_css_class(this.obj, css_class); };
+    }
+
+    fn remove_css_class(this, css_class: *u8) {
+        { gtk_widget_remove_css_class(this.obj, css_class); };
+    }
+
+    fn set_opacity(this, opacity: f64) {
+        { gtk_widget_set_opacity(this.obj, opacity); };
+    }
+}

@@ -1,0 +1,23 @@
+[package]
+name    = "gtk"
+version = "0.0.1"
+edition = "2026"
+
+# C+ bindings for GTK 4 — the cross-platform (Linux/BSD-first) GUI toolkit,
+# mirroring `vendor/appkit` (macOS) and `vendor/uikit` (iOS). Unlike Cocoa,
+# GTK is a plain C / GObject library, so these are direct `extern fn`
+# bindings (no objc_msgSend dispatch).
+#
+# Linking goes through the system GTK 4 shared libraries. On Debian/Ubuntu
+# install `libgtk-4-dev` (which provides the `gtk4` pkg-config file and the
+# unversioned `.so` link symlinks). The libs below are GTK 4's core stack;
+# the loader resolves the rest (pango, cairo, gdk-pixbuf, graphene, harfbuzz)
+# transitively from their NEEDED entries.
+[link]
+libs = ["gtk-4", "gobject-2.0", "gio-2.0", "glib-2.0", "cairo"]
+
+# stdlib backs the `convert` and `data` modules (text::Text / vec::Vec). The
+# widget modules themselves are stdlib-free, so apps that never import those two
+# pull nothing extra.
+[dependencies]
+stdlib = "*"

@@ -1,0 +1,174 @@
+import "./glib" as g;
+
+// Images and custom drawing — the GTK analog of appkit's `graphics`:
+// Image (icon/themed), Picture (scaled file content), DrawingArea (a canvas
+// you paint with `cairo`), and a `Color` value (GdkRGBA). Pair `DrawingArea`
+// with the `cairo` module for the actual drawing commands.
+
+// ---- Image ----
+
+#[link_name = "gtk_image_new"]
+extern fn gtk_image_new() -> *u8;
+
+#[link_name = "gtk_image_new_from_icon_name"]
+extern fn gtk_image_new_from_icon_name(icon_name: *u8) -> *u8;
+
+#[link_name = "gtk_image_set_from_icon_name"]
+extern fn gtk_image_set_from_icon_name(image: *u8, icon_name: *u8);
+
+#[link_name = "gtk_image_set_from_file"]
+extern fn gtk_image_set_from_file(image: *u8, filename: *u8);
+
+#[link_name = "gtk_image_set_pixel_size"]
+extern fn gtk_image_set_pixel_size(image: *u8, pixel_size: i32);
+
+struct Image {
+    opaque obj: *u8,
+}
+
+impl Image {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Image { return Image { obj: obj }; }
+
+    fn new() -> Image {
+        return Image { obj: { gtk_image_new() } };
+    }
+
+    // A themed icon by name (e.g. "document-open-symbolic").
+    fn from_icon_name(icon_name: *u8) -> Image {
+        return Image { obj: { gtk_image_new_from_icon_name(icon_name) } };
+    }
+
+    fn set_from_icon_name(this, icon_name: *u8) {
+        { gtk_image_set_from_icon_name(this.obj, icon_name); };
+    }
+
+    fn set_from_file(this, filename: *u8) {
+        { gtk_image_set_from_file(this.obj, filename); };
+    }
+
+    // Fixed render size in pixels (icons scale to this).
+    fn set_pixel_size(this, pixel_size: i32) {
+        { gtk_image_set_pixel_size(this.obj, pixel_size); };
+    }
+}
+
+// ---- Picture (scales to fit, for photos / large images) ----
+
+#[link_name = "gtk_picture_new"]
+extern fn gtk_picture_new() -> *u8;
+
+#[link_name = "gtk_picture_new_for_filename"]
+extern fn gtk_picture_new_for_filename(filename: *u8) -> *u8;
+
+#[link_name = "gtk_picture_set_filename"]
+extern fn gtk_picture_set_filename(picture: *u8, filename: *u8);
+
+#[link_name = "gtk_picture_set_can_shrink"]
+extern fn gtk_picture_set_can_shrink(picture: *u8, can_shrink: i32);
+
+struct Picture {
+    opaque obj: *u8,
+}
+
+impl Picture {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Picture { return Picture { obj: obj }; }
+
+    fn new() -> Picture {
+        return Picture { obj: { gtk_picture_new() } };
+    }
+
+    fn for_filename(filename: *u8) -> Picture {
+        return Picture { obj: { gtk_picture_new_for_filename(filename) } };
+    }
+
+    fn set_filename(this, filename: *u8) {
+        { gtk_picture_set_filename(this.obj, filename); };
+    }
+
+    fn set_can_shrink(this, can_shrink: i32) {
+        { gtk_picture_set_can_shrink(this.obj, can_shrink); };
+    }
+}
+
+// ---- DrawingArea (custom canvas) ----
+//
+// Set a draw function and GTK calls it with a `cairo_t*` whenever the area
+// needs repainting. Trigger a redraw after state changes via
+// `widget::Widget::queue_draw`.
+
+#[link_name = "gtk_drawing_area_new"]
+extern fn gtk_drawing_area_new() -> *u8;
+
+#[link_name = "gtk_drawing_area_set_content_width"]
+extern fn gtk_drawing_area_set_content_width(area: *u8, width: i32);
+
+#[link_name = "gtk_drawing_area_set_content_height"]
+extern fn gtk_drawing_area_set_content_height(area: *u8, height: i32);
+
+// The draw func: `fn(area: *u8, cr: *u8, width: i32, height: i32, user_data: *u8)`.
+// `cr` is the `cairo_t*` you paint into (see the `cairo` module).
+#[link_name = "gtk_drawing_area_set_draw_func"]
+extern fn gtk_drawing_area_set_draw_func(area: *u8, draw_func: fn(*u8, *u8, i32, i32, *u8), data: *u8, destroy: *u8);
+
+struct DrawingArea {
+    opaque obj: *u8,
+}
+
+impl DrawingArea {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> DrawingArea { return DrawingArea { obj: obj }; }
+
+    fn new() -> DrawingArea {
+        return DrawingArea { obj: { gtk_drawing_area_new() } };
+    }
+
+    fn set_content_width(this, width: i32) {
+        { gtk_drawing_area_set_content_width(this.obj, width); };
+    }
+
+    fn set_content_height(this, height: i32) {
+        { gtk_drawing_area_set_content_height(this.obj, height); };
+    }
+
+    // Install the paint callback. Pass `0 as *u8` for `data`/`destroy` when you
+    // don't need user data.
+    fn set_draw_func(this, draw_func: fn(*u8, *u8, i32, i32, *u8), data: *u8) {
+        { gtk_drawing_area_set_draw_func(this.obj, draw_func, data, 0 as *u8); };
+    }
+}
+
+// ---- Color (GdkRGBA) ----
+//
+// GTK colors are four 0.0–1.0 components. `gdk_rgba_parse` fills one from a CSS
+// color spec ("#ff8800", "rgb(…)", "cornflowerblue").
+
+#[repr(C)]
+struct Color {
+    red: f32,
+    green: f32,
+    blue: f32,
+    alpha: f32,
+}
+
+#[link_name = "gdk_rgba_parse"]
+extern fn gdk_rgba_parse(rgba: *u8, spec: *u8) -> i32;
+
+impl Color {
+    fn rgba(red: f32, green: f32, blue: f32, alpha: f32) -> Color {
+        return Color { red: red, green: green, blue: blue, alpha: alpha };
+    }
+
+    fn rgb(red: f32, green: f32, blue: f32) -> Color {
+        return Color { red: red, green: green, blue: blue, alpha: 1.0 };
+    }
+
+    fn black() -> Color { return Color { red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0 }; }
+    fn white() -> Color { return Color { red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0 }; }
+
+    // Parse a CSS color spec into `out` (a `*GdkRGBA`); returns 1 on success.
+    fn parse(out: *u8, spec: *u8) -> i32 {
+        return { gdk_rgba_parse(out, spec) };
+    }
+}

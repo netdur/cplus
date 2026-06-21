@@ -1,0 +1,97 @@
+// gtk_hello — a GTK 4 GUI app via vendor/gtk.
+//
+// A window with a header bar, a greeting label, a text entry, a "Greet"
+// button that copies the entry text into the label, a toggle switch, and a
+// volume slider whose value is mirrored into a second label. Demonstrates the
+// typed `vendor/gtk` surface — Application, Window, HeaderBar, Box, Label,
+// Entry, Button, Switch, Scale — instead of hand-written `extern fn gtk_*`
+// boilerplate, plus the closure-free signal model (handlers reach the widgets
+// they need through the signal's emitter pointer and associated data).
+
+import "gtk/gtk" as gtk;
+import "gtk/glib" as glib;
+
+extern fn snprintf(buf: *u8, size: usize, fmt: *u8, val: f64) -> i32;
+
+// Associated-data keys: we stash the label pointers on the emitter widget so
+// the signal handlers (which only receive the emitter + user_data) can reach
+// them without globals.
+fn on_greet(button: *u8, data: *u8) {
+    // `data` is the Entry pointer; the greeting Label is associated on it.
+    let entry = gtk::Entry::from_raw(data);
+    let label_ptr: *u8 = glib::get_data(data, #str_ptr("greet-label\0"));
+    let label = gtk::Label::from_raw(label_ptr);
+    label.set_text(entry.text());
+}
+
+fn on_scale_changed(range: *u8, data: *u8) {
+    let scale = gtk::Scale::from_raw(range);
+    let value: f64 = scale.value();
+    let out = gtk::Label::from_raw(data);
+    var buf: [u8; 32] = [0u8; 32];
+    let _n: i32 = { snprintf(#addr_of(buf) as *u8, 32 as usize, #str_ptr("Volume: %.0f\0"), value) };
+    out.set_text(#addr_of(buf) as *u8);
+}
+
+fn on_activate(app: *u8, data: *u8) {
+    let win = gtk::Window::for_application(app);
+    win.set_title(#str_ptr("C+ GTK Demo\0"));
+    win.set_default_size(420 as i32, 320 as i32);
+
+    // Header bar with a title.
+    let header = gtk::HeaderBar::new();
+    let title = gtk::Label::new(#str_ptr("Hello, GTK 4\0"));
+    gtk::Widget::from_raw(title.raw()).add_css_class(#str_ptr("title\0"));
+    header.set_title_widget(title.raw());
+    win.set_titlebar(header.raw());
+
+    // Vertical content box with margins.
+    let vbox = gtk::Box::new(glib::orientation_vertical(), 12 as i32);
+    gtk::Widget::from_raw(vbox.raw()).set_margin(20 as i32);
+
+    let greeting = gtk::Label::new(#str_ptr("Type a name and press Greet\0"));
+    gtk::Widget::from_raw(greeting.raw()).set_hexpand(1 as i32);
+    vbox.append(greeting.raw());
+
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(#str_ptr("your name\0"));
+    vbox.append(entry.raw());
+
+    // Wire the Greet button: pass the entry as user_data, and stash the label
+    // on the entry so the handler can reach both.
+    glib::set_data(entry.raw(), #str_ptr("greet-label\0"), greeting.raw());
+    let greet = gtk::Button::new(#str_ptr("Greet\0"));
+    gtk::Widget::from_raw(greet.raw()).add_css_class(#str_ptr("suggested-action\0"));
+    let _gid: u64 = glib::signal_connect(greet.raw(), #str_ptr("clicked\0"), on_greet, entry.raw());
+    vbox.append(greet.raw());
+
+    // A horizontal row with a switch.
+    let row = gtk::Box::new(glib::orientation_horizontal(), 8 as i32);
+    let sw_label = gtk::Label::new(#str_ptr("Enabled\0"));
+    row.append(sw_label.raw());
+    let sw = gtk::Switch::new();
+    sw.set_active(1 as i32);
+    gtk::Widget::from_raw(sw.raw()).set_halign(glib::align_start());
+    row.append(sw.raw());
+    vbox.append(row.raw());
+
+    // A volume slider that mirrors its value into a label.
+    let vol_label = gtk::Label::new(#str_ptr("Volume: 50\0"));
+    vbox.append(vol_label.raw());
+    let scale = gtk::Scale::new(glib::orientation_horizontal(), 0.0, 100.0, 1.0);
+    scale.set_value(50.0);
+    scale.set_draw_value(0 as i32);
+    let _sid: u64 = glib::signal_connect(scale.raw(), #str_ptr("value-changed\0"), on_scale_changed, vol_label.raw());
+    vbox.append(scale.raw());
+
+    win.set_child(vbox.raw());
+    win.present();
+}
+
+fn main() -> i32 {
+    let app = gtk::Application::new(#str_ptr("org.cplus.GtkHello\0"));
+    app.connect_activate(on_activate);
+    let status = app.run();
+    app.unref();
+    return status;
+}

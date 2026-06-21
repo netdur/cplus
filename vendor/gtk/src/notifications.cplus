@@ -1,0 +1,76 @@
+import "./glib" as g;
+
+// Desktop notifications — the GTK analog of appkit's `notifications`. A
+// `GNotification` is a message the desktop shell displays on the app's behalf;
+// it is sent through the `GApplication`. (GTK's *in-process* observer pattern
+// is plain signals — see `glib::signal_connect` — so this module is just the
+// desktop-notification surface.) Import directly:
+//
+//   import "gtk/notifications" as notifications;
+
+#[link_name = "g_notification_new"]
+extern fn g_notification_new(title: *u8) -> *u8;
+
+#[link_name = "g_notification_set_title"]
+extern fn g_notification_set_title(notification: *u8, title: *u8);
+
+#[link_name = "g_notification_set_body"]
+extern fn g_notification_set_body(notification: *u8, body: *u8);
+
+// Priority is a `GNotificationPriority`: 0 normal, 1 low, 2 high, 3 urgent.
+#[link_name = "g_notification_set_priority"]
+extern fn g_notification_set_priority(notification: *u8, priority: i32);
+
+// Add a button that activates an `"app.<name>"` action when clicked.
+#[link_name = "g_notification_add_button"]
+extern fn g_notification_add_button(notification: *u8, label: *u8, detailed_action: *u8);
+
+#[link_name = "g_application_send_notification"]
+extern fn g_application_send_notification(app: *u8, id: *u8, notification: *u8);
+
+#[link_name = "g_application_withdraw_notification"]
+extern fn g_application_withdraw_notification(app: *u8, id: *u8);
+
+struct Notification {
+    opaque obj: *u8,
+}
+
+impl Notification {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Notification { return Notification { obj: obj }; }
+
+    fn new(title: *u8) -> Notification {
+        return Notification { obj: { g_notification_new(title) } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { g_notification_set_title(this.obj, title); };
+    }
+
+    fn set_body(this, body: *u8) {
+        { g_notification_set_body(this.obj, body); };
+    }
+
+    fn set_priority(this, priority: i32) {
+        { g_notification_set_priority(this.obj, priority); };
+    }
+
+    fn add_button(this, label: *u8, detailed_action: *u8) {
+        { g_notification_add_button(this.obj, label, detailed_action); };
+    }
+
+    fn unref(this) {
+        g::unref(this.obj);
+    }
+}
+
+// Send `notification` through `app` (a GApplication `raw()`). `id` is a string
+// tag — re-sending with the same id replaces the earlier notification.
+fn send(app: *u8, id: *u8, notification: *u8) {
+    { g_application_send_notification(app, id, notification); };
+}
+
+// Remove a previously-sent notification by its `id`.
+fn withdraw(app: *u8, id: *u8) {
+    { g_application_withdraw_notification(app, id); };
+}

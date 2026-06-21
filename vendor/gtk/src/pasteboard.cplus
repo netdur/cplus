@@ -1,0 +1,55 @@
+import "./glib" as g;
+
+// Clipboard access — the GTK analog of appkit's `pasteboard`. GTK reads/writes
+// the system clipboard through `GdkClipboard`, reached from any realized widget
+// via `gtk_widget_get_clipboard`. Writing text is synchronous; reading is
+// asynchronous (the clipboard may belong to another process). Import directly:
+//
+//   import "gtk/pasteboard" as pasteboard;
+
+#[link_name = "gtk_widget_get_clipboard"]
+extern fn gtk_widget_get_clipboard(widget: *u8) -> *u8;
+
+#[link_name = "gdk_clipboard_set_text"]
+extern fn gdk_clipboard_set_text(clipboard: *u8, text: *u8);
+
+// Async read: `callback` is a `GAsyncReadyCallback`
+// `fn(source: *u8, result: *u8, user_data: *u8)`; inside it call
+// `read_text_finish(result)`.
+#[link_name = "gdk_clipboard_read_text_async"]
+extern fn gdk_clipboard_read_text_async(clipboard: *u8, cancellable: *u8, callback: fn(*u8, *u8, *u8), data: *u8);
+
+// Returns a newly-allocated `char*` (free with `glib::free`) or null.
+#[link_name = "gdk_clipboard_read_text_finish"]
+extern fn gdk_clipboard_read_text_finish(clipboard: *u8, result: *u8, error: *u8) -> *u8;
+
+struct Clipboard {
+    opaque obj: *u8,
+}
+
+impl Clipboard {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Clipboard { return Clipboard { obj: obj }; }
+
+    // The clipboard for `widget`'s display (a borrowed singleton — no unref).
+    fn for_widget(widget: *u8) -> Clipboard {
+        return Clipboard { obj: { gtk_widget_get_clipboard(widget) } };
+    }
+
+    // Put a UTF-8 string on the clipboard (GTK copies it).
+    fn set_text(this, text: *u8) {
+        { gdk_clipboard_set_text(this.obj, text); };
+    }
+
+    // Begin an async read. The result lands in `callback`, where
+    // `read_text_finish(result)` yields the string.
+    fn read_text(this, callback: fn(*u8, *u8, *u8), data: *u8) {
+        { gdk_clipboard_read_text_async(this.obj, 0 as *u8, callback, data); };
+    }
+
+    // Complete an async read started by `read_text`. Pass `0 as *u8` for
+    // `error`. Returns an owned `char*` (free with `glib::free`) or null.
+    fn read_text_finish(this, result: *u8, error: *u8) -> *u8 {
+        return { gdk_clipboard_read_text_finish(this.obj, result, error) };
+    }
+}
