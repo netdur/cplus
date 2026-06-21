@@ -614,14 +614,15 @@ fn ctext(s: str) -> text::Text {
 // describe → the neutral node list. Converts AppKit's f64 `rt::Rect` frame to
 // the neutral `Rect`, reading each owned node through a pointer and cloning its
 // `Text`s (never moving them out of the Vec, which would double-free).
-fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
+fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[UiNode] = (*s).describe();
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
     var i: usize = 0 as usize;
     while i < local.len() {
         match local.at(i) {
             option::Option[*UiNode]::Some(n) => {
-                (*outv).push(mcpb::UiNode {
+                out.push(mcpb::UiNode {
                     id: ctext({ (*n).id }),
                     role: { (*n).role },
                     class_name: ctext({ (*n).class_name }),
@@ -641,7 +642,7 @@ fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
         }
         i = i +% (1 as usize);
     }
-    return;
+    return out;
 }
 
 fn mcp_click(p: *u8, id: str) -> surface::Outcome {

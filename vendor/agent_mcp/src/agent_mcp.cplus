@@ -177,11 +177,7 @@ fn dispatch(
     }
 
     if method == "describe_ui" {
-        // The vtable APPENDS into a caller-owned Vec via an out-pointer (it
-        // returns void, not an sret Vec — see backend::Backend for why).
-        var nodes: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
-        (vt.describe)(surf, { #addr_of(nodes) });
-        return ok_response(id, describe_to_json(nodes));
+        return ok_response(id, describe_to_json((vt.describe)(surf)));
     }
     if method == "click" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));

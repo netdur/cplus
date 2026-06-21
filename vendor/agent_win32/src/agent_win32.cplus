@@ -433,21 +433,22 @@ impl Surface {
 //
 // The backend-neutral `agent_core::backend::Backend` for the Win32 surface.
 // Each fn casts the erased `*u8` back to `*Surface`; `navigate` is focus (Win32
-// scrolls to a focused control automatically). `describe` APPENDS into the
-// caller's Vec via the out-pointer (no sret return through the fn-pointer).
+// scrolls to a focused control automatically). `describe` returns the neutral
+// node list (the integer Win32 rect widened to the f64 `Rect`).
 
 fn ctext(s: str) -> text::Text {
     return s.to_text();
 }
 
-fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
+fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[UiNode] = (*s).describe();
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
     var i: usize = 0 as usize;
     while i < local.len() {
         match local.at(i) {
             option::Option[*UiNode]::Some(n) => {
-                (*outv).push(mcpb::UiNode {
+                out.push(mcpb::UiNode {
                     id: ctext({ (*n).id }),
                     role: { (*n).role },
                     class_name: ctext({ (*n).class_name }),
@@ -467,7 +468,7 @@ fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
         }
         i = i +% (1 as usize);
     }
-    return;
+    return out;
 }
 
 fn mcp_click(p: *u8, id: str) -> surface::Outcome {

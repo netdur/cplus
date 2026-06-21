@@ -45,17 +45,14 @@ struct UiNode {
 // The backend vtable. Every fn takes the type-erased surface pointer as its
 // first argument (the implementor casts `*u8` back to its `Surface`). The
 // four operations the MCP protocol needs:
-//   describe  -> APPENDS the live snapshot into the caller's `*Vec[UiNode]`
-//                (an out-parameter, not an sret return — a fn-pointer that
-//                returns a Drop-carrying struct by value trips an sret-slot
-//                codegen bug; writing through the out-pointer sidesteps it)
+//   describe  -> the live snapshot (read path)
 //   click     -> authorized activation
 //   set_text  -> authorized, optimistic-concurrency text edit (mutating)
 //   navigate  -> bring a node into view (AppKit scrolls; Win32/GTK focus)
 // `Backend` is Copy (all fields are fn-pointers), so it passes by value
 // freely through the dispatch/serve call chain.
 struct Backend {
-    describe: fn(*u8, *vec::Vec[UiNode]),
+    describe: fn(*u8) -> vec::Vec[UiNode],
     click: fn(*u8, str) -> surface::Outcome,
     set_text: fn(*u8, str, str, u64) -> surface::Outcome,
     navigate: fn(*u8, str) -> surface::Outcome,
