@@ -12076,6 +12076,32 @@ impl<'a> FnState<'a> {
                 CAbiClass::Direct => {}
             }
         }
+        // Non-Copy aggregate return (Drop-carrying struct/enum, owned string,
+        // slice): sret on the def side REGARDLESS of size, so the indirect call
+        // must pass a hidden return slot too. The `ret_is_copy_struct` branch
+        // above only covers the *Copy* half of the C ABI; without this a non-Copy
+        // return falls through to a by-value `call <ty> %f(...)` that mismatches
+        // the callee's `void f(ptr sret(<ty>))`, so the callee writes through the
+        // absent sret register -> SIGBUS. Mirrors the direct-call / def-side
+        // predicate `return_passes_by_sret_widened`. (bugs/fnptr-drop-sret)
+        if !ret_is_copy_struct && return_passes_by_sret_widened(return_type, self.types) {
+            let (sz, al) = static_layout(return_type, self.types)
+                .expect("sret return type has layout");
+            let inner = self.lty(return_type);
+            let slot = self.alloca_anon(return_type.clone());
+            let sret_arg = format!(
+                "ptr sret({inner}) noalias nonnull noundef writable dereferenceable({sz}) align {al} {slot}"
+            );
+            let head = if arg_str.is_empty() {
+                sret_arg
+            } else {
+                format!("{sret_arg}, {arg_str}")
+            };
+            self.emit(&format!("call void {callee_val}({head})"));
+            let v = self.next_tmp();
+            self.gen_load(&v, return_type, &slot);
+            return Some((v, return_type.clone()));
+        }
         match return_type {
             Ty::Unit => {
                 self.emit(&format!("call void {callee_val}({arg_str})"));

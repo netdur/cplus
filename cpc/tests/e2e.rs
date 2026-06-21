@@ -15427,6 +15427,76 @@ fn issue11_spawn_local_plus_nested_await_no_crash() {
     );
 }
 
+/// Regression: calling a fn-pointer whose return type is a Drop-carrying
+/// (non-Copy) struct used to segfault. A non-Copy struct is returned via a
+/// hidden sret slot on the definition side regardless of size, but
+/// `gen_indirect_call` applied sret-return handling only to Copy structs, so a
+/// non-Copy return fell through to a by-value `call <ty> %f(...)` that
+/// mismatched the callee's `void f(ptr sret(<ty>))` — the callee wrote through
+/// the absent sret register and the program SIGBUS'd. The fix mirrors the
+/// direct-call predicate `return_passes_by_sret_widened`. See
+/// `bugs/fnptr-drop-sret/`. Builds and runs both normally and under `--asan`
+/// (the latter also guards drop-once / no double-free on the returned value).
+#[test]
+fn fnptr_returning_drop_struct_no_crash() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fpd\"\n\n[[bin]]\nname = \"fpd\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // A Drop-carrying (non-Copy) struct returned through a fn-pointer; the body
+    // also bumps a field so a wrong sret slot would corrupt the value, not just
+    // crash.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct R { a: i64, b: i64, c: i64 }\n\
+         impl R { fn drop(ref this) { return; } }\n\
+         fn make(n: i64) -> R { return R { a: n, b: n +% (1 as i64), c: n +% (2 as i64) }; }\n\
+         fn main() -> i32 {\n\
+             let f: fn(i64) -> R = make;\n\
+             let v: R = f(13 as i64);\n\
+             return (v.a +% v.b +% v.c) as i32;\n\
+         }\n",
+    )
+    .unwrap();
+
+    // normal: used to SIGBUS (exit 139); must now return 13+14+15 = 42.
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(st.success(), "fnptr-drop-sret build failed");
+    let run = Command::new(dir.join("target/debug/fpd"))
+        .status()
+        .expect("run fpd");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "fn-pointer returning a Drop struct must return 42, not crash"
+    );
+
+    // under --asan: guards the sret ABI + drop-once on the returned value.
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build --asan");
+    assert!(st.success(), "fnptr-drop-sret --asan build failed");
+    let run = Command::new(dir.join("target/debug/fpd"))
+        .status()
+        .expect("run fpd asan");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "fn-pointer returning a Drop struct must be clean under ASan"
+    );
+}
+
 /// v0.0.5 Phase 2B: `gen fn iter(self) -> T` on a user struct.
 /// Mirror of Phase 4's `gen fn` lowering, threaded through the method
 /// path (`check_method` + `gen_gen_method`). Verifies:
