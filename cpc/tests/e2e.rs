@@ -18666,6 +18666,254 @@ fn main() -> i32 {
     );
 }
 
+/// Stage the full `vendor/win32` binding (umbrella + every module) into a temp
+/// project. The native Windows GUI binding — the counterpart to `vendor/appkit`
+/// (Cocoa) and `vendor/gtk` (GTK 4) — needs nothing installed: user32 / gdi32 /
+/// comctl32 / comdlg32 ship with Windows and are on the linker's default search
+/// path.
+#[cfg(target_os = "windows")]
+fn stage_win32(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("vendor/win32/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/win32/Cplus.toml"),
+        include_str!("../../vendor/win32/Cplus.toml"),
+    )
+    .unwrap();
+    let files: &[(&str, &str)] = &[
+        ("win32.cplus", include_str!("../../vendor/win32/src/win32.cplus")),
+        ("core.cplus", include_str!("../../vendor/win32/src/core.cplus")),
+        ("window.cplus", include_str!("../../vendor/win32/src/window.cplus")),
+        ("controls.cplus", include_str!("../../vendor/win32/src/controls.cplus")),
+        ("menu.cplus", include_str!("../../vendor/win32/src/menu.cplus")),
+        ("dialogs.cplus", include_str!("../../vendor/win32/src/dialogs.cplus")),
+        ("graphics.cplus", include_str!("../../vendor/win32/src/graphics.cplus")),
+    ];
+    for (name, src) in files {
+        std::fs::write(dir.join("vendor/win32/src").join(name), src).unwrap();
+    }
+}
+
+/// v0.0.24: native Win32 GUI binding (`vendor/win32`) builds + runs end to end.
+/// Registers the window class, creates a top-level window with Label/Button/
+/// CheckBox/ComboBox/ProgressBar children (one of each control class, common
+/// controls included), shows it, and runs the message loop; the window
+/// self-closes via a timer so the test terminates headlessly. Exercises the
+/// full register→create→show→pump→destroy→quit cycle, the multi-module umbrella,
+/// and the `#[repr(C)]` WNDCLASSEXA with an `fn`-typed wndproc field.
+#[test]
+#[cfg(target_os = "windows")]
+fn win32_window_opens_and_message_loop_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"w32d\"\n\n[[bin]]\nname = \"w32d\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win32(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+
+fn main() -> i32 {
+    let win: win32::Window = win32::Window::new(#str_ptr("C+ on Win32\0"), 420 as i32, 320 as i32);
+    let _lbl: controls::Label = controls::Label::new(win.raw(), #str_ptr("Hello from C+ via native Win32\0"), 20 as i32, 16 as i32, 380 as i32, 22 as i32);
+    let _btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Press me\0"), 20 as i32, 48 as i32, 120 as i32, 30 as i32);
+    let _chk: controls::CheckBox = controls::CheckBox::new(win.raw(), #str_ptr("Toggle\0"), 20 as i32, 88 as i32, 120 as i32, 24 as i32);
+    let cb: controls::ComboBox = controls::ComboBox::new(win.raw(), 160 as i32, 88 as i32, 160 as i32, 120 as i32);
+    cb.add_item(#str_ptr("one\0"));
+    cb.add_item(#str_ptr("two\0"));
+    let pb: controls::ProgressBar = controls::ProgressBar::new(win.raw(), 20 as i32, 124 as i32, 300 as i32, 18 as i32);
+    pb.set_range(0 as i32, 100 as i32);
+    pb.set_value(60 as i32);
+    win.show();
+    win.close_after(200 as u32);
+    return win32::run();
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (win32 binding)");
+    let run = Command::new(dir.join("target/debug/w32d"))
+        .status()
+        .expect("run w32d");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected the Win32 window + message loop to run and self-close to exit 0"
+    );
+}
+
+/// v0.0.24: the win32 binding's event dispatch. A button's click is routed
+/// through Win32's WM_COMMAND to the window's dispatch table and into a plain
+/// C+ `fn` handler (the gtk `g_signal_connect` analogue). Synthesizing the
+/// click with BM_CLICK sends the WM_COMMAND synchronously, so the round-trip is
+/// deterministic and needs no message loop: the handler bumps a counter via its
+/// user-data pointer, and `main` returns it.
+#[test]
+#[cfg(target_os = "windows")]
+fn win32_command_dispatch_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"w32c\"\n\n[[bin]]\nname = \"w32c\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    stage_win32(&dir);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+import "win32/core" as core;
+
+extern fn malloc(n: usize) -> *u8;
+
+fn on_click(sender: *u8, user: *u8) {
+    let c: *i32 = { user as *i32 };
+    { *c = *c +% (7 as i32); }
+    return;
+}
+
+fn main() -> i32 {
+    let counter: *i32 = { malloc(4 as usize) as *i32 };
+    { *counter = 0 as i32; }
+    let win: win32::Window = win32::Window::new(#str_ptr("dispatch\0"), 300 as i32, 200 as i32);
+    let btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Go\0"), 20 as i32, 20 as i32, 100 as i32, 30 as i32);
+    btn.on_click(on_click, counter as *u8);
+    // BM_CLICK = 0x00F5: the button sends WM_COMMAND to the parent synchronously.
+    { core::send(btn.raw(), 0x00F5 as u32, 0 as u64, 0 as i64); }
+    return { *counter };
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (win32 dispatch)");
+    let run = Command::new(dir.join("target/debug/w32c"))
+        .status()
+        .expect("run w32c");
+    assert_eq!(
+        run.code(),
+        Some(7),
+        "expected the button click to route WM_COMMAND into the C+ handler (exit 7)"
+    );
+}
+
+/// Copy a vendor package (its `Cplus.toml` + every `src/*.cplus`) from the repo
+/// into a temp project's `vendor/`. Used by the agent-surface test, which spans
+/// several packages (win32 + agent_win32 + agent_core + stdlib) — copying the
+/// real sources keeps the fixture in sync without a giant `include_str!` list.
+#[cfg(target_os = "windows")]
+fn copy_vendor_pkg(dir: &std::path::Path, pkg: &str) {
+    let repo_vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor");
+    let dst = dir.join("vendor").join(pkg);
+    std::fs::create_dir_all(dst.join("src")).unwrap();
+    std::fs::copy(repo_vendor.join(pkg).join("Cplus.toml"), dst.join("Cplus.toml")).unwrap();
+    for entry in std::fs::read_dir(repo_vendor.join(pkg).join("src")).unwrap() {
+        let p = entry.unwrap().path();
+        if p.extension().map_or(false, |e| e == "cplus") {
+            std::fs::copy(&p, dst.join("src").join(p.file_name().unwrap())).unwrap();
+        }
+    }
+}
+
+/// v0.0.24: the `agent_win32` surface — the Windows counterpart to
+/// `agent_appkit`. Builds a real win32 window (Button/Label/Edit), tags the
+/// button + edit agent-exposed, then drives the bridge: `open` walks the HWND
+/// tree into agent-core's identity registry, `describe` snapshots it, and the
+/// gated write path runs — `click` authorizes + routes BM_CLICK into the C+
+/// handler, an unknown id is `NotFound`, and `set_text` authorizes + edits +
+/// bumps the optimistic-concurrency version. The encoded exit (30) confirms
+/// each step; `agent_core` is reused unchanged (platform-neutral).
+#[test]
+#[cfg(target_os = "windows")]
+fn agent_win32_describe_and_gated_actions() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ag32\"\n\n[[bin]]\nname = \"ag32\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\nagent_win32 = \"*\"\nagent_core = \"*\"\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    copy_vendor_pkg(&dir, "win32");
+    copy_vendor_pkg(&dir, "agent_win32");
+    copy_vendor_pkg(&dir, "agent_core");
+    copy_vendor_pkg(&dir, "stdlib");
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "win32/win32" as win32;
+import "win32/controls" as controls;
+import "agent_win32/agent_win32" as agent;
+import "agent_core/surface" as surface;
+import "stdlib/vec" as vec;
+
+extern fn malloc(n: usize) -> *u8;
+
+fn on_click(sender: *u8, user: *u8) {
+    let c: *i32 = { user as *i32 };
+    { *c = *c +% (5 as i32); }
+    return;
+}
+
+fn main() -> i32 {
+    let counter: *i32 = { malloc(4 as usize) as *i32 };
+    { *counter = 0 as i32; }
+    let win: win32::Window = win32::Window::new(#str_ptr("agent demo\0"), 400 as i32, 300 as i32);
+    let btn: controls::Button = controls::Button::new(win.raw(), #str_ptr("Go\0"), 20 as i32, 20 as i32, 100 as i32, 30 as i32);
+    btn.on_click(on_click, counter as *u8);
+    let _lbl: controls::Label = controls::Label::new(win.raw(), #str_ptr("label\0"), 20 as i32, 60 as i32, 200 as i32, 20 as i32);
+    let ed: controls::Edit = controls::Edit::new(win.raw(), #str_ptr("\0"), 20 as i32, 90 as i32, 200 as i32, 24 as i32);
+
+    agent::set_agent_id(btn.raw(), #str_ptr("btn_go\0"));
+    agent::set_agent_id(ed.raw(), #str_ptr("field\0"));
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::UiNode] = s.describe();
+
+    var r: i32 = 0;
+    if surface::outcome_eq({ s.click("btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
+    r = r +% { *counter };
+    if surface::outcome_eq({ s.click("ghost") }, surface::Outcome::NotFound) { r = r +% (2 as i32); }
+    if nodes.len() >= (4 as usize) { r = r +% (10 as i32); }
+    let v0: u64 = s.text_version("field");
+    if surface::outcome_eq({ s.set_text("field", "hi", v0) }, surface::Outcome::Allowed) { r = r +% (4 as i32); }
+    if s.text_version("field") > v0 { r = r +% (8 as i32); }
+    return r;
+}
+"#,
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (agent_win32)");
+    let run = Command::new(dir.join("target/debug/ag32"))
+        .status()
+        .expect("run ag32");
+    assert_eq!(
+        run.code(),
+        Some(30),
+        "expected describe + gated click/set_text round-trip (1+5+2+10+4+8=30); got {:?}",
+        run.code()
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn recipe_async_yield_demo_runs() {

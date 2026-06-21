@@ -1,0 +1,316 @@
+// win32/controls.cplus — child controls (the gtk `controls` analogue).
+//
+// Every control is a child window of its parent (passed as the parent HWND),
+// created with a unique command id so its WM_COMMAND notifications route to the
+// handler registered via `core::set_command`. Wrappers hold `{ hwnd, parent,
+// id }` and stay `opaque` with no `drop` (the parent owns the child).
+//
+// Coverage mirrors gtk's controls: Button, Label, Edit, CheckBox,
+// RadioButton, ComboBox, ListBox, ProgressBar, TrackBar (slider), GroupBox.
+
+import "./core" as core;
+
+// ---- predefined / common-control class names ----
+fn button_class() -> *u8 { return { #str_ptr("BUTTON\0") }; }
+fn static_class() -> *u8 { return { #str_ptr("STATIC\0") }; }
+fn edit_class() -> *u8 { return { #str_ptr("EDIT\0") }; }
+fn combo_class() -> *u8 { return { #str_ptr("COMBOBOX\0") }; }
+fn listbox_class() -> *u8 { return { #str_ptr("LISTBOX\0") }; }
+fn progress_class() -> *u8 { return { #str_ptr("msctls_progress32\0") }; }
+fn trackbar_class() -> *u8 { return { #str_ptr("msctls_trackbar32\0") }; }
+
+// ---- style / message constants ----
+fn bs_autocheckbox() -> u32 { return 0x03 as u32; }
+fn bs_autoradiobutton() -> u32 { return 0x09 as u32; }
+fn bs_groupbox() -> u32 { return 0x07 as u32; }
+fn es_autohscroll() -> u32 { return 0x80 as u32; }
+fn es_multiline() -> u32 { return 0x04 as u32; }
+fn es_autovscroll() -> u32 { return 0x40 as u32; }
+fn cbs_dropdownlist() -> u32 { return 0x0003 as u32; }
+fn lbs_notify() -> u32 { return 0x0001 as u32; }
+fn ws_vscroll() -> u32 { return 0x00200000 as u32; }
+
+fn bm_getcheck() -> u32 { return 0x00F0 as u32; }
+fn bm_setcheck() -> u32 { return 0x00F1 as u32; }
+fn cb_addstring() -> u32 { return 0x0143 as u32; }
+fn cb_resetcontent() -> u32 { return 0x014B as u32; }
+fn cb_getcursel() -> u32 { return 0x0147 as u32; }
+fn cb_setcursel() -> u32 { return 0x014E as u32; }
+fn lb_addstring() -> u32 { return 0x0180 as u32; }
+fn lb_resetcontent() -> u32 { return 0x0184 as u32; }
+fn lb_getcursel() -> u32 { return 0x0188 as u32; }
+fn lb_setcursel() -> u32 { return 0x0186 as u32; }
+fn pbm_setrange32() -> u32 { return 0x0406 as u32; }
+fn pbm_setpos() -> u32 { return 0x0402 as u32; }
+fn pbm_getpos() -> u32 { return 0x0408 as u32; }
+fn tbm_getpos() -> u32 { return 0x0400 as u32; }
+fn tbm_setpos() -> u32 { return 0x0405 as u32; }
+fn tbm_setrangemin() -> u32 { return 0x041E as u32; }
+fn tbm_setrangemax() -> u32 { return 0x041F as u32; }
+
+// Create a child control under `parent`, deriving the HINSTANCE from it.
+fn make_child(parent: *u8, class: *u8, text: *u8, style: u32,
+              x: i32, y: i32, w: i32, h: i32, id: u32) -> *u8 {
+    let hinst: *u8 = core::window_hinst(parent);
+    return core::create_window(hinst, class, text, style, x, y, w, h, parent, id as *u8);
+}
+
+// ---- Button ----
+struct Button {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl Button {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> Button {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop();
+        let hwnd: *u8 = make_child(parent, button_class(), text, style, x, y, w, h, id);
+        return Button { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn set_text(this, text: *u8) { core::set_text(this.hwnd, text); return; }
+    fn set_enabled(this, on: bool) { core::set_enabled(this.hwnd, on); return; }
+    fn on_click(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- Label (static text) ----
+struct Label {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+}
+impl Label {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> Label {
+        let hwnd: *u8 = make_child(parent, static_class(), text, core::ws_child_visible(), x, y, w, h, 0 as u32);
+        return Label { hwnd: hwnd, parent: parent };
+    }
+    fn set_text(this, text: *u8) { core::set_text(this.hwnd, text); return; }
+}
+
+// ---- Edit (single-line text field) ----
+struct Edit {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl Edit {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> Edit {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|core::ws_border()|es_autohscroll();
+        let hwnd: *u8 = make_child(parent, edit_class(), text, style, x, y, w, h, id);
+        return Edit { hwnd: hwnd, parent: parent, id: id };
+    }
+    // Multi-line variant (text area).
+    fn new_multiline(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> Edit {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|core::ws_border()
+            |es_multiline()|es_autovscroll();
+        let hwnd: *u8 = make_child(parent, edit_class(), text, style, x, y, w, h, id);
+        return Edit { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn set_text(this, text: *u8) { core::set_text(this.hwnd, text); return; }
+    // Copy the field's text into `buf` (up to `max` bytes incl. NUL). Returns
+    // the number of bytes copied (excluding the NUL).
+    fn get_text(this, buf: *u8, max: i32) -> i32 { return core::get_text_into(this.hwnd, buf, max); }
+    fn text_length(this) -> i32 { return core::text_length(this.hwnd); }
+    fn set_enabled(this, on: bool) { core::set_enabled(this.hwnd, on); return; }
+    // Fires on the field's notifications (EN_CHANGE among them).
+    fn on_change(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- CheckBox ----
+struct CheckBox {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl CheckBox {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> CheckBox {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|bs_autocheckbox();
+        let hwnd: *u8 = make_child(parent, button_class(), text, style, x, y, w, h, id);
+        return CheckBox { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn is_checked(this) -> bool {
+        return { core::send(this.hwnd, bm_getcheck(), 0 as u64, 0 as i64) } == (1 as i64);
+    }
+    fn set_checked(this, on: bool) {
+        var v: u64 = 0 as u64;
+        if on { v = 1 as u64; }
+        { core::send(this.hwnd, bm_setcheck(), v, 0 as i64); }
+        return;
+    }
+    fn on_toggle(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- RadioButton ----
+struct RadioButton {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl RadioButton {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> RadioButton {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|bs_autoradiobutton();
+        let hwnd: *u8 = make_child(parent, button_class(), text, style, x, y, w, h, id);
+        return RadioButton { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn is_checked(this) -> bool {
+        return { core::send(this.hwnd, bm_getcheck(), 0 as u64, 0 as i64) } == (1 as i64);
+    }
+    fn set_checked(this, on: bool) {
+        var v: u64 = 0 as u64;
+        if on { v = 1 as u64; }
+        { core::send(this.hwnd, bm_setcheck(), v, 0 as i64); }
+        return;
+    }
+    fn on_select(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- ComboBox (drop-down list) ----
+struct ComboBox {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl ComboBox {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, x: i32, y: i32, w: i32, h: i32) -> ComboBox {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|cbs_dropdownlist()|ws_vscroll();
+        let hwnd: *u8 = make_child(parent, combo_class(), { 0 as *u8 }, style, x, y, w, h, id);
+        return ComboBox { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn add_item(this, text: *u8) {
+        { core::send(this.hwnd, cb_addstring(), 0 as u64, text as i64); }
+        return;
+    }
+    fn clear(this) { { core::send(this.hwnd, cb_resetcontent(), 0 as u64, 0 as i64); } return; }
+    fn selected_index(this) -> i32 {
+        return { core::send(this.hwnd, cb_getcursel(), 0 as u64, 0 as i64) } as i32;
+    }
+    fn set_selected_index(this, i: i32) {
+        { core::send(this.hwnd, cb_setcursel(), i as u64, 0 as i64); }
+        return;
+    }
+    fn on_change(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- ListBox ----
+struct ListBox {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+    id: u32,
+}
+impl ListBox {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, x: i32, y: i32, w: i32, h: i32) -> ListBox {
+        let id: u32 = core::alloc_command_id(parent);
+        let style: u32 = core::ws_child_visible()|core::ws_tabstop()|core::ws_border()
+            |lbs_notify()|ws_vscroll();
+        let hwnd: *u8 = make_child(parent, listbox_class(), { 0 as *u8 }, style, x, y, w, h, id);
+        return ListBox { hwnd: hwnd, parent: parent, id: id };
+    }
+    fn add_item(this, text: *u8) {
+        { core::send(this.hwnd, lb_addstring(), 0 as u64, text as i64); }
+        return;
+    }
+    fn clear(this) { { core::send(this.hwnd, lb_resetcontent(), 0 as u64, 0 as i64); } return; }
+    fn selected_index(this) -> i32 {
+        return { core::send(this.hwnd, lb_getcursel(), 0 as u64, 0 as i64) } as i32;
+    }
+    fn set_selected_index(this, i: i32) {
+        { core::send(this.hwnd, lb_setcursel(), i as u64, 0 as i64); }
+        return;
+    }
+    fn on_select(this, handler: fn(*u8, *u8), user: *u8) {
+        core::set_command(this.parent, this.id, handler, user);
+        return;
+    }
+}
+
+// ---- ProgressBar ----
+struct ProgressBar {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+}
+impl ProgressBar {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, x: i32, y: i32, w: i32, h: i32) -> ProgressBar {
+        let hwnd: *u8 = make_child(parent, progress_class(), { 0 as *u8 }, core::ws_child_visible(), x, y, w, h, 0 as u32);
+        return ProgressBar { hwnd: hwnd, parent: parent };
+    }
+    fn set_range(this, min: i32, max: i32) {
+        { core::send(this.hwnd, pbm_setrange32(), min as u64, max as i64); }
+        return;
+    }
+    fn set_value(this, v: i32) {
+        { core::send(this.hwnd, pbm_setpos(), v as u64, 0 as i64); }
+        return;
+    }
+    fn value(this) -> i32 {
+        return { core::send(this.hwnd, pbm_getpos(), 0 as u64, 0 as i64) } as i32;
+    }
+}
+
+// ---- TrackBar (slider) ----
+// Notifications arrive as WM_HSCROLL to the parent (not WM_COMMAND), so this
+// exposes value get/set + range rather than a command callback.
+struct TrackBar {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+}
+impl TrackBar {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, x: i32, y: i32, w: i32, h: i32) -> TrackBar {
+        let hwnd: *u8 = make_child(parent, trackbar_class(), { 0 as *u8 }, core::ws_child_visible()|core::ws_tabstop(), x, y, w, h, 0 as u32);
+        return TrackBar { hwnd: hwnd, parent: parent };
+    }
+    fn set_range(this, min: i32, max: i32) {
+        { core::send(this.hwnd, tbm_setrangemin(), 1 as u64, min as i64); }
+        { core::send(this.hwnd, tbm_setrangemax(), 1 as u64, max as i64); }
+        return;
+    }
+    fn set_value(this, v: i32) {
+        { core::send(this.hwnd, tbm_setpos(), 1 as u64, v as i64); }
+        return;
+    }
+    fn value(this) -> i32 {
+        return { core::send(this.hwnd, tbm_getpos(), 0 as u64, 0 as i64) } as i32;
+    }
+}
+
+// ---- GroupBox (a titled frame around a set of controls) ----
+struct GroupBox {
+    opaque hwnd: *u8,
+    opaque parent: *u8,
+}
+impl GroupBox {
+    fn raw(this) -> *u8 { return this.hwnd; }
+    fn new(parent: *u8, text: *u8, x: i32, y: i32, w: i32, h: i32) -> GroupBox {
+        let style: u32 = core::ws_child_visible()|bs_groupbox();
+        let hwnd: *u8 = make_child(parent, button_class(), text, style, x, y, w, h, 0 as u32);
+        return GroupBox { hwnd: hwnd, parent: parent };
+    }
+    fn set_text(this, text: *u8) { core::set_text(this.hwnd, text); return; }
+}

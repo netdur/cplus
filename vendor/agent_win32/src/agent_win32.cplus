@@ -1,0 +1,429 @@
+// agent_win32 — the Win32 backend for the agent surface (the Windows
+// counterpart to vendor/agent_appkit).
+//
+// `open(window)` walks a live HWND hierarchy into a `Surface`: the agent-core
+// identity tree (ids / roles / enabled state / exposure) plus a NodeId->HWND
+// map and the text-version state. From a `Surface` you get:
+//
+//   - the READ path: `describe()` -> `Vec[UiNode]`, a live snapshot
+//     ({ id, role, class_name, frame, is_hidden, text, actionable, parent }) —
+//     how an agent sees the UI (describe_ui, not screenshots).
+//   - the WRITE path: `click` / `set_text` / `focus`, each gated through the
+//     framework-agnostic `agent_core::surface` authorization brain (exposure +
+//     affordance ceiling + optimistic-concurrency version); the real widget I/O
+//     (SendMessage BM_CLICK / SetWindowTextA / SetFocus) happens only when the
+//     core returns `Allowed`.
+//
+// The agent-visible/actionable surface is the *exposed* subset: a node is
+// exposed iff it was tagged with `set_agent_id` (the developer curates what the
+// agent can touch). Untagged windows are still walked for tree completeness but
+// are NotExposed, so actions on them are refused.
+//
+// The walk is a DFS (pre-order) over GetWindow(GW_CHILD/GW_HWNDNEXT); recursion
+// depth tracks the child-window depth, which is shallow in practice. Unlike the
+// AppKit backend, Win32 needs no main-thread marshaling helper: a cross-thread
+// SendMessage is delivered on the window's owning thread by the OS.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/events" as events;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+// ---- user32 window introspection + messaging ----
+#[link_name = "GetWindow"]
+extern fn GetWindow(hwnd: *u8, cmd: u32) -> *u8;
+#[link_name = "GetClassNameA"]
+extern fn GetClassNameA(hwnd: *u8, buf: *u8, max: i32) -> i32;
+#[link_name = "GetWindowTextA"]
+extern fn GetWindowTextA(hwnd: *u8, buf: *u8, max: i32) -> i32;
+#[link_name = "GetWindowTextLengthA"]
+extern fn GetWindowTextLengthA(hwnd: *u8) -> i32;
+#[link_name = "GetWindowRect"]
+extern fn GetWindowRect(hwnd: *u8, rect: *u8) -> i32;
+#[link_name = "IsWindowEnabled"]
+extern fn IsWindowEnabled(hwnd: *u8) -> i32;
+#[link_name = "IsWindowVisible"]
+extern fn IsWindowVisible(hwnd: *u8) -> i32;
+#[link_name = "GetWindowLongPtrA"]
+extern fn GetWindowLongPtrA(hwnd: *u8, idx: i32) -> i64;
+#[link_name = "SetPropA"]
+extern fn SetPropA(hwnd: *u8, name: *u8, data: *u8) -> i32;
+#[link_name = "GetPropA"]
+extern fn GetPropA(hwnd: *u8, name: *u8) -> *u8;
+#[link_name = "SendMessageA"]
+extern fn SendMessageA(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64;
+#[link_name = "SetWindowTextA"]
+extern fn SetWindowTextA(hwnd: *u8, text: *u8) -> i32;
+#[link_name = "SetFocus"]
+extern fn SetFocus(hwnd: *u8) -> *u8;
+
+fn gw_hwndnext() -> u32 { return 2 as u32; }
+fn gw_child() -> u32 { return 5 as u32; }
+fn gwl_style() -> i32 { return (0 as i32) -% (16 as i32); }
+fn bs_type_mask() -> i64 { return 0xF as i64; }
+fn bs_groupbox() -> i64 { return 7 as i64; }
+fn bm_click() -> u32 { return 0x00F5 as u32; }
+
+fn null() -> *u8 { return { 0 as *u8 }; }
+fn is_null(p: *u8) -> bool { return p == null(); }
+
+// ---- C-string helpers --------------------------------------------------------
+
+fn c_strlen(p: *u8) -> usize {
+    var n: usize = 0 as usize;
+    loop {
+        let b: u8 = { *(p + n) };
+        if b == (0 as u8) { break; }
+        n = n +% (1 as usize);
+    }
+    return n;
+}
+
+// A NUL-terminated C string -> owned Text ("" for null).
+fn cstr_to_text(p: *u8) -> text::Text {
+    if is_null(p) { return "".to_text(); }
+    let v: str = { #str_from_raw_parts(p, c_strlen(p)) };
+    return v.to_text();
+}
+
+// A NUL-terminated C string -> a `str` view (borrows `p`).
+fn cstr_to_str(p: *u8) -> str {
+    return { #str_from_raw_parts(p, c_strlen(p)) };
+}
+
+// Copy a `str` into a fresh NUL-terminated C buffer (caller frees).
+fn str_to_cstr(s: str) -> *u8 {
+    let n: usize = { #str_len(s) };
+    let buf: *u8 = { malloc(n +% (1 as usize)) };
+    { memcpy(buf, #str_ptr(s), n); }
+    { *(buf + n) = 0 as u8; }
+    return buf;
+}
+
+// ---- agent-id tagging --------------------------------------------------------
+
+// Window-prop name under which the developer-pinned agent-id is stored. The id
+// is a stable NUL-terminated C string (e.g. `#str_ptr("btn_login\0")`); only
+// its address is held, so pass a string literal (static lifetime).
+fn agent_prop() -> *u8 { return { #str_ptr("CplusAgentId\0") }; }
+
+// Pin a stable agent-id on a window/control. A tagged node becomes the node's
+// developer id (stable across re-walks) and is marked *exposed* — part of the
+// curated surface the agent may act on.
+fn set_agent_id(hwnd: *u8, id: *u8) {
+    { SetPropA(hwnd, agent_prop(), id); }
+    return;
+}
+
+// The pinned agent-id C string, or null if the window was never tagged.
+fn get_agent_id(hwnd: *u8) -> *u8 {
+    return { GetPropA(hwnd, agent_prop()) };
+}
+
+// ---- describe_ui node --------------------------------------------------------
+
+// A window rectangle in screen coordinates (x, y = top-left; w, h = size).
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+// One node of the describe_ui snapshot. `id` is the resolved agent-id; `role`
+// the curated role; `class_name` the Win32 class (e.g. "Button"); `frame` the
+// screen rect; `text` the live caption/content; `actionable` whether the agent
+// may act on it (exposed + enabled + not observe-only). `parent` indexes into
+// the returned `Vec[UiNode]` (None for the window root) so the flat list
+// reconstructs the tree.
+struct UiNode {
+    id: text::Text,
+    role: identity::Role,
+    class_name: text::Text,
+    frame: Rect,
+    is_hidden: bool,
+    text: text::Text,
+    actionable: bool,
+    parent: option::Option[usize],
+}
+
+// ---- role classification + live state ---------------------------------------
+
+// The Win32 class name of `hwnd` as a `str` view into `buf` (>= 256 bytes).
+fn class_name_view(hwnd: *u8, buf: *u8) -> str {
+    let n: i32 = { GetClassNameA(hwnd, buf, 256 as i32) };
+    return { #str_from_raw_parts(buf, n as usize) };
+}
+
+// Map a Win32 control to the curated agent-core role vocabulary. The single
+// "Button" class covers push buttons, checkboxes and radios (all Button) plus
+// group boxes (Group) — distinguished by the low nibble of the window style.
+fn classify_by_class(cls: str, hwnd: *u8) -> identity::Role {
+    if cls == "Button" {
+        let style: i64 = { GetWindowLongPtrA(hwnd, gwl_style()) };
+        if (style & bs_type_mask()) == bs_groupbox() {
+            return identity::Role::Group;
+        }
+        return identity::Role::Button;
+    }
+    if cls == "Edit" { return identity::Role::Input; }
+    if cls == "Static" { return identity::Role::Text; }
+    if cls == "ListBox" { return identity::Role::List; }
+    if cls == "ComboBox" { return identity::Role::List; }
+    return identity::Role::Group;
+}
+
+fn classify(hwnd: *u8) -> identity::Role {
+    let buf: *u8 = { malloc(256 as usize) };
+    let cls: str = class_name_view(hwnd, buf);
+    let role: identity::Role = classify_by_class(cls, hwnd);
+    { free(buf); }
+    return role;
+}
+
+fn class_name_text(hwnd: *u8) -> text::Text {
+    let buf: *u8 = { malloc(256 as usize) };
+    let n: i32 = { GetClassNameA(hwnd, buf, 256 as i32) };
+    let v: str = { #str_from_raw_parts(buf, n as usize) };
+    let t: text::Text = v.to_text();
+    { free(buf); }
+    return t;
+}
+
+// The live caption / content (button label, edit text, static text, window
+// title). GetWindowTextA covers them all; empty for controls without text.
+fn node_text(hwnd: *u8) -> text::Text {
+    let len: i32 = { GetWindowTextLengthA(hwnd) };
+    if len <= (0 as i32) { return "".to_text(); }
+    let buf: *u8 = { malloc((len +% (1 as i32)) as usize) };
+    { GetWindowTextA(hwnd, buf, len +% (1 as i32)); }
+    let v: str = { #str_from_raw_parts(buf, len as usize) };
+    let t: text::Text = v.to_text();
+    { free(buf); }
+    return t;
+}
+
+fn frame_of(hwnd: *u8) -> Rect {
+    let r: *u8 = { malloc(16 as usize) };
+    { GetWindowRect(hwnd, r); }
+    let left: i32 = { *(r as *i32) };
+    let top: i32 = { *((r + (4 as usize)) as *i32) };
+    let right: i32 = { *((r + (8 as usize)) as *i32) };
+    let bottom: i32 = { *((r + (12 as usize)) as *i32) };
+    { free(r); }
+    return Rect { x: left, y: top, w: right -% left, h: bottom -% top };
+}
+
+fn live_enabled(hwnd: *u8) -> bool {
+    return { IsWindowEnabled(hwnd) } != (0 as i32);
+}
+
+fn live_hidden(hwnd: *u8) -> bool {
+    return { IsWindowVisible(hwnd) } == (0 as i32);
+}
+
+// ---- the surface -------------------------------------------------------------
+
+// A NodeId->HWND map entry (index-aligned with the identity registry).
+struct HwndRef {
+    opaque p: *u8,
+}
+
+// The live surface of one window: the identity tree, the NodeId->HWND map
+// (index 0 is the synthetic app root, mapped to null), and the text-version
+// state for optimistic-concurrency edits.
+struct Surface {
+    reg: identity::Registry,
+    versions: surface::TextVersions,
+    refs: vec::Vec[HwndRef],
+}
+
+// Recursively register an HWND subtree: classify it, add it to the identity
+// tree (a pinned agent-id becomes the developer id, which also exposes the
+// node), reflect its live enabled state, map NodeId->HWND, then recurse into
+// its child windows in Z-order. `refs` stays index-aligned with the registry:
+// each `add_child` is paired with exactly one `refs.push`.
+fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], hwnd: *u8, parent_reg: usize) {
+    let role: identity::Role = classify(hwnd);
+    let pinned: *u8 = get_agent_id(hwnd);
+    let reg_node: usize = if is_null(pinned) {
+        reg.add_child(parent_reg, option::Option[str]::None, role)
+    } else {
+        reg.add_child(parent_reg, option::Option[str]::Some(cstr_to_str(pinned)), role)
+    };
+    reg.set_enabled(reg_node, live_enabled(hwnd));
+    refs.push(HwndRef { p: hwnd });
+
+    var child: *u8 = { GetWindow(hwnd, gw_child()) };
+    while !is_null(child) {
+        walk(reg, refs, child, reg_node);
+        child = { GetWindow(child, gw_hwndnext()) };
+    }
+    return;
+}
+
+// Walk a window's child hierarchy into a `Surface`. The window is the root node
+// (role Window) under the registry's app root; its child controls follow.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
+    // NodeId 0 is the synthetic app root — no backing window.
+    refs.push(HwndRef { p: null() });
+
+    if is_null(window) {
+        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+    }
+
+    let win_pinned: *u8 = get_agent_id(window);
+    let win_reg: usize = if is_null(win_pinned) {
+        reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
+    } else {
+        reg.add_child(reg.root(), option::Option[str]::Some(cstr_to_str(win_pinned)), identity::Role::Window)
+    };
+    refs.push(HwndRef { p: window });
+
+    var child: *u8 = { GetWindow(window, gw_child()) };
+    while !is_null(child) {
+        walk(reg, refs, child, win_reg);
+        child = { GetWindow(child, gw_hwndnext()) };
+    }
+
+    return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+}
+
+// Convenience: the read-only snapshot of a window in one call.
+fn describe(window: *u8) -> vec::Vec[UiNode] {
+    let s: Surface = open(window);
+    return s.describe();
+}
+
+impl Surface {
+    fn hwnd_of(this, node: usize) -> *u8 {
+        return match this.refs.at(node) {
+            option::Option[*HwndRef]::Some(r) => { (*r).p },
+            option::Option[*HwndRef]::None => null(),
+        };
+    }
+
+    // Live describe_ui snapshot. Reads each node's current frame / hidden / text
+    // from its window, so it reflects state *now* (e.g. after a `set_text`). The
+    // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
+    fn describe(this) -> vec::Vec[UiNode] {
+        var out: vec::Vec[UiNode] = vec::new::[UiNode]();
+        let total: usize = this.reg.len();
+        var node: usize = 1 as usize;
+        while node < total {
+            let hwnd: *u8 = this.hwnd_of(node);
+            let role: identity::Role = this.reg.role_of(node);
+            let parent: option::Option[usize] = match this.reg.parent_of(node) {
+                option::Option[usize]::Some(p) => {
+                    if p == (0 as usize) {
+                        option::Option[usize]::None
+                    } else {
+                        option::Option[usize]::Some(p -% (1 as usize))
+                    }
+                }
+                option::Option[usize]::None => option::Option[usize]::None,
+            };
+            out.push(UiNode {
+                id: this.reg.resolved_id(node).to_text(),
+                role: role,
+                class_name: class_name_text(hwnd),
+                frame: frame_of(hwnd),
+                is_hidden: live_hidden(hwnd),
+                text: node_text(hwnd),
+                actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
+                parent: parent,
+            });
+            node = node +% (1 as usize);
+        }
+        return out;
+    }
+
+    // The current text version of a node (for optimistic-concurrency edits).
+    fn text_version(this, id: str) -> u64 {
+        return match this.reg.lookup(id) {
+            option::Option[usize]::Some(n) => this.versions.version_of(n),
+            option::Option[usize]::None => 0 as u64,
+        };
+    }
+
+    // EVENTS: translate a fired widget into an agent event. Resolves the source
+    // agent-id to its NodeId and offers `{ source, verb }` to the subscriber.
+    // Returns false if the id is unknown.
+    fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+        match this.reg.lookup(source_id) {
+            option::Option[usize]::Some(node) => {
+                sub.offer(this.reg, events::event(node, verb));
+                return true;
+            }
+            option::Option[usize]::None => {}
+        }
+        return false;
+    }
+
+    // WRITE: click a control. Authorized via the core (exposed + actionable);
+    // on `Allowed`, sends BM_CLICK to the backing window (a cross-thread send is
+    // marshaled to the owning thread by the OS).
+    fn click(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(this.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                { SendMessageA(this.hwnd_of(node), bm_click(), 0 as u64, 0 as i64); }
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // WRITE: set a control's text with optimistic concurrency. `base_version` is
+    // the version the agent last read (`text_version`); a racing edit yields
+    // `VersionConflict`. On `Allowed`, sends SetWindowTextA then bumps.
+    fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome =
+                    surface::authorize_text_write(this.reg, this.versions, node, base_version);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                let c: *u8 = str_to_cstr(value);
+                { SetWindowTextA(this.hwnd_of(node), c); }
+                { free(c); }
+                this.versions.bump(node);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // NAV: move keyboard focus to a node (the Win32 analogue of scroll-to-visible
+    // — focusing a control scrolls it into view in a scrollable parent).
+    // Authorized via `authorize_read` (exposure required; the affordance ceiling
+    // does not apply to navigation).
+    fn focus(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                { SetFocus(this.hwnd_of(node)); }
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+}
