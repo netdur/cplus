@@ -14,7 +14,7 @@ This file is a standalone reference dropped into your project; the C+ repo (exam
 
 Systems language. LLVM backend. Manual memory, no GC. Ownership with a borrow checker (aliasing XOR mutability). One-way C ABI (cpc emits standard object files; `.c` doesn't compile). Designed for LLMs to write correctly: explicit beats clever, locality is paramount, the type system carries weight.
 
-**The language is feature-frozen.** The core takes bug fixes only — no new keywords, syntax, or type-system changes. New capability lives in **packages** (`vendor/`, §9) and tooling, never the language. Don't propose language features; propose a package.
+**The language surface is small and stable.** It changes only in deliberate, versioned releases; most new capability lives in **packages** (`vendor/`, §9) and tooling rather than the core language. Prefer expressing a need as a package or library over reaching for new language syntax.
 
 File extension `.cplus`. Compiler `cpc`. Project layout: `Cplus.toml` at root, sources in `src/`, deps in `vendor/`. Imports are explicit + aliased, no `.cplus` extension:
 

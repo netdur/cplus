@@ -18,10 +18,11 @@ Exact diagnostic wording lives in the compiler's diagnostic system; this
 document fixes the *categories* and the load-bearing error codes
 (§20).
 
-**Status: feature-frozen.** v0.0.22 is the last release to add language
-surface. The language now accepts bug fixes only; new capability lives
-in packages and tooling, never in the core language. This spec therefore
-describes a stable surface.
+**Status.** C+ keeps a small language surface on purpose, and changes to
+it are deliberate and ship as versioned, archived releases. v0.0.24
+realigned the core vocabulary; most new capability otherwise lives in
+packages and tooling rather than the core language. This document
+describes the surface as of v0.0.24.
 
 ### 0.1 Notation
 
