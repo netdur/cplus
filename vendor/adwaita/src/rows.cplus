@@ -1,0 +1,301 @@
+import "gtk/glib" as g;
+
+// Boxed-list rows and preferences — Adwaita's signature settings UI. Rows
+// (AdwActionRow, AdwEntryRow, AdwSwitchRow, AdwComboRow, AdwExpanderRow) live
+// inside a `gtk::ListBox` with the "boxed-list" CSS class, or inside an
+// AdwPreferencesGroup → AdwPreferencesPage → AdwPreferencesWindow hierarchy.
+// Row titles are set through the shared AdwPreferencesRow base.
+
+#[link_name = "adw_preferences_row_set_title"]
+extern fn adw_preferences_row_set_title(row: *u8, title: *u8);
+
+// Set a row's title (works for every `*Row` below — they share AdwPreferencesRow).
+fn set_row_title(row: *u8, title: *u8) {
+    { adw_preferences_row_set_title(row, title); };
+}
+
+// ---- AdwActionRow ----
+
+#[link_name = "adw_action_row_new"]
+extern fn adw_action_row_new() -> *u8;
+
+#[link_name = "adw_action_row_set_subtitle"]
+extern fn adw_action_row_set_subtitle(row: *u8, subtitle: *u8);
+
+#[link_name = "adw_action_row_add_prefix"]
+extern fn adw_action_row_add_prefix(row: *u8, widget: *u8);
+
+#[link_name = "adw_action_row_add_suffix"]
+extern fn adw_action_row_add_suffix(row: *u8, widget: *u8);
+
+struct ActionRow {
+    opaque obj: *u8,
+}
+
+impl ActionRow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ActionRow { return ActionRow { obj: obj }; }
+
+    fn new() -> ActionRow {
+        return ActionRow { obj: { adw_action_row_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_row_set_title(this.obj, title); };
+    }
+
+    fn set_subtitle(this, subtitle: *u8) {
+        { adw_action_row_set_subtitle(this.obj, subtitle); };
+    }
+
+    // A widget shown before the title (e.g. an icon).
+    fn add_prefix(this, widget: *u8) {
+        { adw_action_row_add_prefix(this.obj, widget); };
+    }
+
+    // A widget shown after the title (e.g. a `gtk::Switch` or chevron).
+    fn add_suffix(this, widget: *u8) {
+        { adw_action_row_add_suffix(this.obj, widget); };
+    }
+}
+
+// ---- AdwEntryRow (inline text entry) ----
+//
+// AdwEntryRow implements GtkEditable, so read/write its text with
+// `gtk::controls::Entry`-style editable calls via the raw pointer, or the
+// `gtk/convert` bridge.
+
+#[link_name = "adw_entry_row_new"]
+extern fn adw_entry_row_new() -> *u8;
+
+struct EntryRow {
+    opaque obj: *u8,
+}
+
+impl EntryRow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> EntryRow { return EntryRow { obj: obj }; }
+
+    fn new() -> EntryRow {
+        return EntryRow { obj: { adw_entry_row_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_row_set_title(this.obj, title); };
+    }
+}
+
+// ---- AdwSwitchRow ----
+
+#[link_name = "adw_switch_row_new"]
+extern fn adw_switch_row_new() -> *u8;
+
+#[link_name = "adw_switch_row_get_active"]
+extern fn adw_switch_row_get_active(row: *u8) -> i32;
+
+#[link_name = "adw_switch_row_set_active"]
+extern fn adw_switch_row_set_active(row: *u8, active: i32);
+
+struct SwitchRow {
+    opaque obj: *u8,
+}
+
+impl SwitchRow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> SwitchRow { return SwitchRow { obj: obj }; }
+
+    fn new() -> SwitchRow {
+        return SwitchRow { obj: { adw_switch_row_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_row_set_title(this.obj, title); };
+    }
+
+    fn set_active(this, active: i32) {
+        { adw_switch_row_set_active(this.obj, active); };
+    }
+
+    fn is_active(this) -> i32 {
+        return { adw_switch_row_get_active(this.obj) };
+    }
+
+    // Toggling fires "notify::active".
+    fn connect_active_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("notify::active\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- AdwComboRow ----
+
+#[link_name = "adw_combo_row_new"]
+extern fn adw_combo_row_new() -> *u8;
+
+#[link_name = "adw_combo_row_set_model"]
+extern fn adw_combo_row_set_model(row: *u8, model: *u8);
+
+#[link_name = "adw_combo_row_get_selected"]
+extern fn adw_combo_row_get_selected(row: *u8) -> u32;
+
+#[link_name = "adw_combo_row_set_selected"]
+extern fn adw_combo_row_set_selected(row: *u8, position: u32);
+
+struct ComboRow {
+    opaque obj: *u8,
+}
+
+impl ComboRow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ComboRow { return ComboRow { obj: obj }; }
+
+    fn new() -> ComboRow {
+        return ComboRow { obj: { adw_combo_row_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_row_set_title(this.obj, title); };
+    }
+
+    // A `GListModel` of choices (e.g. a `gtk::data::StringList`'s `raw()`).
+    fn set_model(this, model: *u8) {
+        { adw_combo_row_set_model(this.obj, model); };
+    }
+
+    fn selected(this) -> u32 {
+        return { adw_combo_row_get_selected(this.obj) };
+    }
+
+    fn set_selected(this, position: u32) {
+        { adw_combo_row_set_selected(this.obj, position); };
+    }
+}
+
+// ---- AdwExpanderRow ----
+
+#[link_name = "adw_expander_row_new"]
+extern fn adw_expander_row_new() -> *u8;
+
+#[link_name = "adw_expander_row_add_row"]
+extern fn adw_expander_row_add_row(row: *u8, child: *u8);
+
+struct ExpanderRow {
+    opaque obj: *u8,
+}
+
+impl ExpanderRow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ExpanderRow { return ExpanderRow { obj: obj }; }
+
+    fn new() -> ExpanderRow {
+        return ExpanderRow { obj: { adw_expander_row_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_row_set_title(this.obj, title); };
+    }
+
+    // Add a nested row revealed when the expander is open.
+    fn add_row(this, child: *u8) {
+        { adw_expander_row_add_row(this.obj, child); };
+    }
+}
+
+// ---- Preferences hierarchy ----
+
+#[link_name = "adw_preferences_group_new"]
+extern fn adw_preferences_group_new() -> *u8;
+
+#[link_name = "adw_preferences_group_add"]
+extern fn adw_preferences_group_add(group: *u8, child: *u8);
+
+#[link_name = "adw_preferences_group_set_title"]
+extern fn adw_preferences_group_set_title(group: *u8, title: *u8);
+
+#[link_name = "adw_preferences_group_set_description"]
+extern fn adw_preferences_group_set_description(group: *u8, description: *u8);
+
+struct PreferencesGroup {
+    opaque obj: *u8,
+}
+
+impl PreferencesGroup {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> PreferencesGroup { return PreferencesGroup { obj: obj }; }
+
+    fn new() -> PreferencesGroup {
+        return PreferencesGroup { obj: { adw_preferences_group_new() } };
+    }
+
+    // Add a row (`ActionRow`/`SwitchRow`/…) to the group's boxed list.
+    fn add(this, child: *u8) {
+        { adw_preferences_group_add(this.obj, child); };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_group_set_title(this.obj, title); };
+    }
+
+    fn set_description(this, description: *u8) {
+        { adw_preferences_group_set_description(this.obj, description); };
+    }
+}
+
+#[link_name = "adw_preferences_page_new"]
+extern fn adw_preferences_page_new() -> *u8;
+
+#[link_name = "adw_preferences_page_add"]
+extern fn adw_preferences_page_add(page: *u8, group: *u8);
+
+#[link_name = "adw_preferences_page_set_title"]
+extern fn adw_preferences_page_set_title(page: *u8, title: *u8);
+
+#[link_name = "adw_preferences_page_set_icon_name"]
+extern fn adw_preferences_page_set_icon_name(page: *u8, icon_name: *u8);
+
+struct PreferencesPage {
+    opaque obj: *u8,
+}
+
+impl PreferencesPage {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> PreferencesPage { return PreferencesPage { obj: obj }; }
+
+    fn new() -> PreferencesPage {
+        return PreferencesPage { obj: { adw_preferences_page_new() } };
+    }
+
+    fn add(this, group: *u8) {
+        { adw_preferences_page_add(this.obj, group); };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_preferences_page_set_title(this.obj, title); };
+    }
+
+    fn set_icon_name(this, icon_name: *u8) {
+        { adw_preferences_page_set_icon_name(this.obj, icon_name); };
+    }
+}
+
+#[link_name = "adw_preferences_window_new"]
+extern fn adw_preferences_window_new() -> *u8;
+
+#[link_name = "adw_preferences_window_add"]
+extern fn adw_preferences_window_add(window: *u8, page: *u8);
+
+struct PreferencesWindow {
+    opaque obj: *u8,
+}
+
+impl PreferencesWindow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> PreferencesWindow { return PreferencesWindow { obj: obj }; }
+
+    fn new() -> PreferencesWindow {
+        return PreferencesWindow { obj: { adw_preferences_window_new() } };
+    }
+
+    fn add(this, page: *u8) {
+        { adw_preferences_window_add(this.obj, page); };
+    }
+}

@@ -1,0 +1,126 @@
+import "gtk/glib" as g;
+
+// Assorted Adwaita widgets — AdwAvatar (a round user avatar with initials/image
+// fallback), AdwButtonContent (an icon+label pair for buttons, the GNOME
+// toolbar-button look), and AdwSplitButton (a button with an attached dropdown
+// menu).
+
+// ---- AdwAvatar ----
+
+#[link_name = "adw_avatar_new"]
+extern fn adw_avatar_new(size: i32, text: *u8, show_initials: i32) -> *u8;
+
+#[link_name = "adw_avatar_set_text"]
+extern fn adw_avatar_set_text(avatar: *u8, text: *u8);
+
+#[link_name = "adw_avatar_set_size"]
+extern fn adw_avatar_set_size(avatar: *u8, size: i32);
+
+#[link_name = "adw_avatar_set_show_initials"]
+extern fn adw_avatar_set_show_initials(avatar: *u8, show_initials: i32);
+
+struct Avatar {
+    opaque obj: *u8,
+}
+
+impl Avatar {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Avatar { return Avatar { obj: obj }; }
+
+    // `size` is the diameter in px; `text` drives the initials/color (pass
+    // `0 as *u8` for none); `show_initials` 1 to render initials from `text`.
+    fn new(size: i32, text: *u8, show_initials: i32) -> Avatar {
+        return Avatar { obj: { adw_avatar_new(size, text, show_initials) } };
+    }
+
+    fn set_text(this, text: *u8) {
+        { adw_avatar_set_text(this.obj, text); };
+    }
+
+    fn set_size(this, size: i32) {
+        { adw_avatar_set_size(this.obj, size); };
+    }
+
+    fn set_show_initials(this, show_initials: i32) {
+        { adw_avatar_set_show_initials(this.obj, show_initials); };
+    }
+}
+
+// ---- AdwButtonContent ----
+
+#[link_name = "adw_button_content_new"]
+extern fn adw_button_content_new() -> *u8;
+
+#[link_name = "adw_button_content_set_label"]
+extern fn adw_button_content_set_label(content: *u8, label: *u8);
+
+#[link_name = "adw_button_content_set_icon_name"]
+extern fn adw_button_content_set_icon_name(content: *u8, icon_name: *u8);
+
+struct ButtonContent {
+    opaque obj: *u8,
+}
+
+impl ButtonContent {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ButtonContent { return ButtonContent { obj: obj }; }
+
+    // Build it, then set it as a `gtk::Button`'s child (`set_child`) for the
+    // GNOME icon+label button look.
+    fn new() -> ButtonContent {
+        return ButtonContent { obj: { adw_button_content_new() } };
+    }
+
+    fn set_label(this, label: *u8) {
+        { adw_button_content_set_label(this.obj, label); };
+    }
+
+    fn set_icon_name(this, icon_name: *u8) {
+        { adw_button_content_set_icon_name(this.obj, icon_name); };
+    }
+}
+
+// ---- AdwSplitButton ----
+
+#[link_name = "adw_split_button_new"]
+extern fn adw_split_button_new() -> *u8;
+
+#[link_name = "adw_split_button_set_label"]
+extern fn adw_split_button_set_label(button: *u8, label: *u8);
+
+#[link_name = "adw_split_button_set_icon_name"]
+extern fn adw_split_button_set_icon_name(button: *u8, icon_name: *u8);
+
+#[link_name = "adw_split_button_set_menu_model"]
+extern fn adw_split_button_set_menu_model(button: *u8, menu_model: *u8);
+
+struct SplitButton {
+    opaque obj: *u8,
+}
+
+impl SplitButton {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> SplitButton { return SplitButton { obj: obj }; }
+
+    fn new() -> SplitButton {
+        return SplitButton { obj: { adw_split_button_new() } };
+    }
+
+    fn set_label(this, label: *u8) {
+        { adw_split_button_set_label(this.obj, label); };
+    }
+
+    fn set_icon_name(this, icon_name: *u8) {
+        { adw_split_button_set_icon_name(this.obj, icon_name); };
+    }
+
+    // The dropdown half opens this `gtk::Menu` model.
+    fn set_menu_model(this, menu_model: *u8) {
+        { adw_split_button_set_menu_model(this.obj, menu_model); };
+    }
+
+    // The main half emits "clicked".
+    fn connect_clicked(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("clicked\0"), handler, 0 as *u8);
+    }
+}

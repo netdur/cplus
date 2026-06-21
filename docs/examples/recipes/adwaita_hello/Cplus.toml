@@ -1,0 +1,12 @@
+[package]
+name    = "adwaita_hello"
+version = "0.0.1"
+
+[[bin]]
+name = "adwaita_hello"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib  = "*"
+gtk     = "*"
+adwaita = "*"
