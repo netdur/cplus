@@ -2547,6 +2547,73 @@ fn hfa_members(ty: &Ty, types: &TypeTable) -> Option<(&'static str, u64)> {
     None
 }
 
+/// x86_64 System V: coerce a ≤16-byte aggregate by classifying each of its
+/// (one or two) eightbytes as SSE or INTEGER. An eightbyte is SSE only when
+/// every real field overlapping it is a float/double; a single integer field
+/// demotes the whole eightbyte to INTEGER (the SysV `SSE + INTEGER → INTEGER`
+/// merge rule). SSE eightbytes pass/return in XMM registers — modeled as
+/// `double`; INTEGER eightbytes in GPRs — modeled as `i64`. Without this a
+/// `{ f64, f64 }` coerces to `{ i64, i64 }` and lands in rax:rdx instead of
+/// xmm0:xmm1 (garbage; the HFA-on-SysV ABI bug).
+fn sysv_eightbyte_coerce(ty: &Ty, types: &TypeTable, size: u64) -> String {
+    fn align_up(off: u64, al: u64) -> u64 {
+        (off + al - 1) & !(al - 1)
+    }
+    // Flatten to scalar leaves: (byte offset, byte size, is_float).
+    fn leaves(ty: &Ty, types: &TypeTable, base: u64, out: &mut Vec<(u64, u64, bool)>) {
+        match ty {
+            Ty::F32 => out.push((base, 4, true)),
+            Ty::F64 => out.push((base, 8, true)),
+            Ty::Struct(id) => {
+                let info = &types.struct_defs[id.0 as usize];
+                let mut off = 0u64;
+                for (_, fty) in &info.fields {
+                    if let Some((sz, al)) = static_layout(fty, types) {
+                        off = align_up(off, al);
+                        leaves(fty, types, base + off, out);
+                        off += sz;
+                    }
+                }
+            }
+            Ty::Array(inner, n) => {
+                if let Some((sz, _)) = static_layout(inner, types) {
+                    for i in 0..*n {
+                        leaves(inner, types, base + i as u64 * sz, out);
+                    }
+                }
+            }
+            other => {
+                if let Some((sz, _)) = static_layout(other, types) {
+                    out.push((base, sz, false));
+                }
+            }
+        }
+    }
+    let mut ls = Vec::new();
+    leaves(ty, types, 0, &mut ls);
+    let n_eight = (((size + 7) / 8).max(1)) as usize;
+    // Each eightbyte is SSE until an integer field proves otherwise. An
+    // eightbyte with no field at all (trailing padding) stays SSE — it never
+    // carries a value the callee reads.
+    let mut is_sse = vec![true; n_eight];
+    for (off, sz, is_float) in ls {
+        if is_float {
+            continue;
+        }
+        let first = (off / 8) as usize;
+        let last = ((off + sz.saturating_sub(1)) / 8) as usize;
+        for e in first..=last.min(n_eight - 1) {
+            is_sse[e] = false;
+        }
+    }
+    let part = |sse: bool| if sse { "double" } else { "i64" };
+    if n_eight == 1 {
+        part(is_sse[0]).to_string()
+    } else {
+        format!("{{ {}, {} }}", part(is_sse[0]), part(is_sse[1]))
+    }
+}
+
 fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     classify_c_abi_for(ty, types, &active_target())
 }
@@ -2670,6 +2737,18 @@ fn classify_c_abi_impl(
             4 => coerce("i32", 4),
             8 => coerce("i64", 8),
             _ => CAbiClass::Indirect,
+        };
+    }
+    // x86_64 System V: classify each eightbyte as SSE (all-float → XMM) or
+    // INTEGER (→ GPR). This subsumes the integer-only `{i64,i64}` coercion for
+    // mixed/integer aggregates while routing all-float eightbytes (e.g. a
+    // `{ f64, f64 }` returned in xmm0:xmm1) to their FP registers. >16 bytes
+    // still go indirect (handled by the generic tail below).
+    if target.arch == TargetArch::X86_64 && size <= 16 {
+        return CAbiClass::Coerce {
+            llvm_ty: sysv_eightbyte_coerce(ty, types, size),
+            size: if size <= 8 { 8 } else { 16 },
+            align: 8,
         };
     }
     // v0.0.3 Slice 3F: pick the per-platform coercion shape for 9..16-byte
@@ -5370,9 +5449,21 @@ fn gen_function(
             // Classify each param too — symmetric with the export path.
             // For Indirect, the C ABI passes by pointer; for Coerce, an
             // integer-class type packs the aggregate; Direct passes the
-            // type unchanged.
+            // type unchanged. x86_64-sysv passes MEMORY-class aggregates on the
+            // stack via `byval` — a bare pointer-in-register mismatches the
+            // clang-compiled callee (the headline import bug). aarch64-darwin
+            // (and the empirical Xtensa import convention) share the layout
+            // through a bare pointer.
             match classify_c_abi(pty, types) {
-                CAbiClass::Indirect => out.push_str("ptr"),
+                CAbiClass::Indirect => {
+                    if active_target().arch == TargetArch::X86_64 {
+                        let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
+                        let inner = llvm_ty(pty, types);
+                        out.push_str(&format!("ptr byval({inner}) align {al}"));
+                    } else {
+                        out.push_str("ptr");
+                    }
+                }
                 CAbiClass::Coerce { llvm_ty, .. } => out.push_str(&llvm_ty),
                 CAbiClass::Direct => out.push_str(&llvm_ty(pty, types)),
             }
@@ -11875,7 +11966,16 @@ impl<'a> FnState<'a> {
                             static_layout(pty, self.types).expect("indirect arg has layout");
                         let slot = self.alloca_anon(pty.clone());
                         self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
-                        arg_vals.push((slot, "ptr".to_string()));
+                        // x86_64-sysv passes MEMORY-class aggregates on the
+                        // stack via `byval`; aarch64-darwin (and the Xtensa
+                        // import convention) share the slot through a bare
+                        // pointer.
+                        let ty_str = if active_target().arch == TargetArch::X86_64 {
+                            format!("ptr byval({pty_lty}) align {al}")
+                        } else {
+                            "ptr".to_string()
+                        };
+                        arg_vals.push((slot, ty_str));
                         continue;
                     }
                     CAbiClass::Direct => {}
@@ -12144,11 +12244,18 @@ impl<'a> FnState<'a> {
                                 static_layout(pty, self.types).expect("indirect arg has layout");
                             let slot = self.alloca_anon(pty.clone());
                             self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
-                            // aarch64-darwin doesn't use `byval` here (the
-                            // caller-allocated slot is implicitly shared);
-                            // x86_64-sysv would — matching the import-decl
-                            // side which mirrors the same convention.
-                            arg_vals.push((slot, "ptr".to_string()));
+                            // aarch64-darwin (and the Xtensa import convention)
+                            // share the caller-allocated slot through a bare
+                            // pointer; x86_64-sysv passes MEMORY-class aggregates
+                            // on the stack via `byval` — matching the import-decl
+                            // side and the clang callee.
+                            let ty_str = if active_target().arch == TargetArch::X86_64 {
+                                let inner = self.lty(pty);
+                                format!("ptr byval({inner}) align {al}")
+                            } else {
+                                "ptr".to_string()
+                            };
+                            arg_vals.push((slot, ty_str));
                             if *move_flag {
                                 if let ExprKind::Ident(name) = &a.kind {
                                     self.mark_moved(name);
@@ -19311,9 +19418,10 @@ mod tests {
 
     #[test]
     fn extern_fn_taking_large_struct_passes_indirect_g034() {
-        // v0.0.12 G-034: >16B struct → indirect (bare ptr) on both
-        // aarch64-darwin and x86_64-sysv. The call site allocates the
-        // struct on the caller's frame and passes its address.
+        // v0.0.12 G-034: a >16B struct passes indirectly. aarch64-darwin
+        // shares the caller's slot through a bare pointer; x86_64-sysv passes
+        // the MEMORY-class aggregate on the stack via `byval`. The call site
+        // allocates the struct on the caller's frame and passes its address.
         let ir = gen_src(
             "#[repr(C)] struct S24 { a: i64, b: i64, c: i64 }\n\
              extern fn take_s24(s: S24) -> i64;\n\
@@ -19323,13 +19431,21 @@ mod tests {
                  return 0;\n\
              }",
         );
+        let (want_decl, want_call) = if active_target().arch == TargetArch::X86_64 {
+            (
+                "declare i64 @take_s24(ptr byval(%S24) align 8)",
+                "= call i64 @take_s24(ptr byval(%S24) align 8 ",
+            )
+        } else {
+            ("declare i64 @take_s24(ptr)", "= call i64 @take_s24(ptr ")
+        };
         assert!(
-            ir.contains("declare i64 @take_s24(ptr)"),
-            ">16B struct param must declare as ptr (indirect), got:\n{ir}"
+            ir.contains(want_decl),
+            ">16B struct param must declare as indirect ({want_decl}), got:\n{ir}"
         );
         assert!(
-            ir.contains("= call i64 @take_s24(ptr "),
-            ">16B struct call site must pass ptr to caller-alloca'd slot, got:\n{ir}"
+            ir.contains(want_call),
+            ">16B struct call site must pass ptr to caller-alloca'd slot ({want_call}), got:\n{ir}"
         );
     }
 
