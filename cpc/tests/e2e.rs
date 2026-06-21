@@ -15324,6 +15324,109 @@ fn phase1d_async_runs_clean_under_asan() {
     );
 }
 
+/// Regression for issue #11: a `spawn_local`'d task PLUS a nested `await`
+/// of an `async fn` in the driving future used to segfault.
+///
+/// Async fns run their body eagerly to the first suspend point at the
+/// call site (no initial_suspend), so the spawned `timed(20)` had already
+/// registered its one-shot timer and parked BEFORE `spawn_local` saw it.
+/// `spawn_local` then enqueued the already-parked handle, `block_on`'s
+/// `drain_pending` resumed it to completion while its timer stayed armed,
+/// and when that timer fired `poll_one_event` resumed the now-completed
+/// coroutine (its resume pointer nulled at final suspend) → jump through
+/// null → SEGV. The fix: `spawn_local` no longer enqueues a task that is
+/// already tracked by the reactor/pending/awaiter machinery.
+///
+/// Build + run both normally and under `--asan`; expect exit 9, clean.
+/// macOS-gated (kqueue timer reactor); the fix is in platform-neutral
+/// codegen, so this guards every target.
+#[test]
+#[cfg(target_os = "macos")]
+fn issue11_spawn_local_plus_nested_await_no_crash() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"i11\"\n\n[[bin]]\nname = \"i11\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/future.cplus"),
+        include_str!("../../vendor/stdlib/src/future.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/executor.cplus"),
+        include_str!("../../vendor/stdlib/src/executor.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         async fn timed(ms: u64) -> i32 {\n\
+             { #reactor_wait_timer(ms); }\n\
+             return 0 as i32;\n\
+         }\n\
+         async fn outer() -> i32 {\n\
+             let f: future::Future[i32] = timed(20 as u64);\n\
+             executor::spawn_local::[i32](f);\n\
+             await timed(40 as u64);\n\
+             return 9 as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             return executor::block_on::[i32](outer());\n\
+         }\n",
+    )
+    .unwrap();
+
+    // (1) normal build + run: used to SEGV (exit 139); must now exit 9.
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(st.success(), "issue #11 repro build failed");
+    let run = Command::new(dir.join("target/debug/i11"))
+        .status()
+        .expect("run i11");
+    assert_eq!(
+        run.code(),
+        Some(9),
+        "spawn_local + nested await must return 9, not crash"
+    );
+
+    // (2) under --asan: the bug was a resume-after-complete coroutine UB,
+    // so ASan is the definitive guard — a regression reappears as a
+    // DEADLYSIGNAL rather than a clean exit 9.
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build --asan");
+    assert!(st.success(), "issue #11 repro --asan build failed");
+    let run = Command::new(dir.join("target/debug/i11"))
+        .status()
+        .expect("run i11 asan");
+    assert_eq!(
+        run.code(),
+        Some(9),
+        "spawn_local + nested await must be clean under ASan"
+    );
+}
+
 /// v0.0.5 Phase 2B: `gen fn iter(self) -> T` on a user struct.
 /// Mirror of Phase 4's `gen fn` lowering, threaded through the method
 /// path (`check_method` + `gen_gen_method`). Verifies:
