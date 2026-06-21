@@ -1,0 +1,12 @@
+[package]
+name    = "gtk_hello"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "gtk_hello"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+gtk    = "*"

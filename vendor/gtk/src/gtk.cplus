@@ -1,0 +1,79 @@
+// Umbrella facade for the GTK 4 bindings — import this for the flat type
+// surface (`gtk::Window`, `gtk::Button`, …), or import the narrower modules
+// directly (`import "gtk/controls" as controls;`). Mirrors appkit's
+// `appkit.cplus`.
+
+import "./glib" as glib;
+import "./application" as application;
+import "./window" as window;
+import "./widget" as widget;
+import "./controls" as controls;
+import "./containers" as containers;
+import "./text" as text;
+import "./dialogs" as dialogs;
+import "./graphics" as graphics;
+import "./cairo" as cairo;
+import "./menu" as menu;
+import "./actions" as actions;
+
+type Application = application::Application;
+
+type Window = window::Window;
+
+type Widget = widget::Widget;
+
+type Button = controls::Button;
+type Label = controls::Label;
+type Entry = controls::Entry;
+type CheckButton = controls::CheckButton;
+type Switch = controls::Switch;
+type Scale = controls::Scale;
+type SpinButton = controls::SpinButton;
+type ProgressBar = controls::ProgressBar;
+type ToggleButton = controls::ToggleButton;
+type DropDown = controls::DropDown;
+
+type Box = containers::Box;
+type Grid = containers::Grid;
+type Stack = containers::Stack;
+type StackSwitcher = containers::StackSwitcher;
+type Notebook = containers::Notebook;
+type Paned = containers::Paned;
+type ScrolledWindow = containers::ScrolledWindow;
+type Frame = containers::Frame;
+type CenterBox = containers::CenterBox;
+type ListBox = containers::ListBox;
+type HeaderBar = containers::HeaderBar;
+
+type TextView = text::TextView;
+type TextBuffer = text::TextBuffer;
+type SearchEntry = text::SearchEntry;
+type PasswordEntry = text::PasswordEntry;
+
+type AlertDialog = dialogs::AlertDialog;
+type FileDialog = dialogs::FileDialog;
+
+type Image = graphics::Image;
+type Picture = graphics::Picture;
+type DrawingArea = graphics::DrawingArea;
+type Color = graphics::Color;
+
+type Menu = menu::Menu;
+type MenuButton = menu::MenuButton;
+type PopoverMenu = menu::PopoverMenu;
+
+type Action = actions::Action;
+
+// ---- re-exported orientation / alignment constants ----
+
+fn orientation_horizontal() -> i32 { return glib::orientation_horizontal(); }
+fn orientation_vertical() -> i32 { return glib::orientation_vertical(); }
+
+fn align_fill() -> i32 { return glib::align_fill(); }
+fn align_start() -> i32 { return glib::align_start(); }
+fn align_end() -> i32 { return glib::align_end(); }
+fn align_center() -> i32 { return glib::align_center(); }
+
+// gboolean helpers — GTK setters take a C `int`.
+fn true_() -> i32 { return 1; }
+fn false_() -> i32 { return 0; }

@@ -1,0 +1,167 @@
+import "./glib" as g;
+
+// Rich / specialized text widgets — the GTK analog of appkit's `text`:
+// TextView (multi-line, backed by a TextBuffer), SearchEntry, PasswordEntry.
+// (Single-line `Entry` lives in `controls`.)
+
+// ---- TextView + TextBuffer ----
+
+#[link_name = "gtk_text_view_new"]
+extern fn gtk_text_view_new() -> *u8;
+
+#[link_name = "gtk_text_view_get_buffer"]
+extern fn gtk_text_view_get_buffer(text_view: *u8) -> *u8;
+
+#[link_name = "gtk_text_view_set_editable"]
+extern fn gtk_text_view_set_editable(text_view: *u8, editable: i32);
+
+#[link_name = "gtk_text_view_set_monospace"]
+extern fn gtk_text_view_set_monospace(text_view: *u8, monospace: i32);
+
+#[link_name = "gtk_text_view_set_wrap_mode"]
+extern fn gtk_text_view_set_wrap_mode(text_view: *u8, wrap_mode: i32);
+
+#[link_name = "gtk_text_buffer_set_text"]
+extern fn gtk_text_buffer_set_text(buffer: *u8, text: *u8, len: i32);
+
+#[link_name = "gtk_text_buffer_insert_at_cursor"]
+extern fn gtk_text_buffer_insert_at_cursor(buffer: *u8, text: *u8, len: i32);
+
+#[link_name = "gtk_text_buffer_get_char_count"]
+extern fn gtk_text_buffer_get_char_count(buffer: *u8) -> i32;
+
+// GtkWrapMode constants for `TextView::set_wrap_mode`.
+fn wrap_none() -> i32 { return 0; }
+fn wrap_char() -> i32 { return 1; }
+fn wrap_word() -> i32 { return 2; }
+fn wrap_word_char() -> i32 { return 3; }
+
+struct TextBuffer {
+    opaque obj: *u8,
+}
+
+impl TextBuffer {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> TextBuffer { return TextBuffer { obj: obj }; }
+
+    // Replace the whole buffer. Pass -1 for `len` to use the C string's
+    // NUL-terminated length.
+    fn set_text(this, text: *u8, len: i32) {
+        { gtk_text_buffer_set_text(this.obj, text, len); };
+    }
+
+    fn insert_at_cursor(this, text: *u8, len: i32) {
+        { gtk_text_buffer_insert_at_cursor(this.obj, text, len); };
+    }
+
+    fn char_count(this) -> i32 {
+        return { gtk_text_buffer_get_char_count(this.obj) };
+    }
+
+    // The "changed" signal — fired on every edit.
+    fn connect_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("changed\0"), handler, 0 as *u8);
+    }
+}
+
+struct TextView {
+    opaque obj: *u8,
+}
+
+impl TextView {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> TextView { return TextView { obj: obj }; }
+
+    fn new() -> TextView {
+        return TextView { obj: { gtk_text_view_new() } };
+    }
+
+    // The TextView's backing buffer (owned by the view — do not unref).
+    fn buffer(this) -> TextBuffer {
+        return TextBuffer { obj: { gtk_text_view_get_buffer(this.obj) } };
+    }
+
+    fn set_editable(this, editable: i32) {
+        { gtk_text_view_set_editable(this.obj, editable); };
+    }
+
+    fn set_monospace(this, monospace: i32) {
+        { gtk_text_view_set_monospace(this.obj, monospace); };
+    }
+
+    // Pass a `wrap_*` value.
+    fn set_wrap_mode(this, wrap_mode: i32) {
+        { gtk_text_view_set_wrap_mode(this.obj, wrap_mode); };
+    }
+}
+
+// ---- SearchEntry ----
+
+#[link_name = "gtk_search_entry_new"]
+extern fn gtk_search_entry_new() -> *u8;
+
+#[link_name = "gtk_editable_get_text"]
+extern fn gtk_editable_get_text_se(editable: *u8) -> *u8;
+
+struct SearchEntry {
+    opaque obj: *u8,
+}
+
+impl SearchEntry {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> SearchEntry { return SearchEntry { obj: obj }; }
+
+    fn new() -> SearchEntry {
+        return SearchEntry { obj: { gtk_search_entry_new() } };
+    }
+
+    // Borrow the current query text (`const char*`, owned by GTK).
+    fn text(this) -> *u8 {
+        return { gtk_editable_get_text_se(this.obj) };
+    }
+
+    // The "search-changed" signal — fired after a short debounce.
+    fn connect_search_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("search-changed\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- PasswordEntry ----
+
+#[link_name = "gtk_password_entry_new"]
+extern fn gtk_password_entry_new() -> *u8;
+
+#[link_name = "gtk_password_entry_set_show_peek_icon"]
+extern fn gtk_password_entry_set_show_peek_icon(entry: *u8, show: i32);
+
+#[link_name = "gtk_editable_get_text"]
+extern fn gtk_editable_get_text_pe(editable: *u8) -> *u8;
+
+#[link_name = "gtk_editable_set_text"]
+extern fn gtk_editable_set_text_pe(editable: *u8, text: *u8);
+
+struct PasswordEntry {
+    opaque obj: *u8,
+}
+
+impl PasswordEntry {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> PasswordEntry { return PasswordEntry { obj: obj }; }
+
+    fn new() -> PasswordEntry {
+        return PasswordEntry { obj: { gtk_password_entry_new() } };
+    }
+
+    fn text(this) -> *u8 {
+        return { gtk_editable_get_text_pe(this.obj) };
+    }
+
+    fn set_text(this, text: *u8) {
+        { gtk_editable_set_text_pe(this.obj, text); };
+    }
+
+    // Show the eye icon that reveals the password while pressed.
+    fn set_show_peek_icon(this, show: i32) {
+        { gtk_password_entry_set_show_peek_icon(this.obj, show); };
+    }
+}

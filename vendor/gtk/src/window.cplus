@@ -1,0 +1,148 @@
+import "./glib" as g;
+
+// GtkWindow / GtkApplicationWindow — a top-level window. Mirrors appkit's
+// `Window`. Prefer `for_application(app)` from the "activate" handler: an
+// application window is owned by its GtkApplication (it appears in the window
+// list and keeps the app alive while shown), so the wrapper stays `opaque`
+// with no `drop`.
+
+#[link_name = "gtk_application_window_new"]
+extern fn gtk_application_window_new(app: *u8) -> *u8;
+
+#[link_name = "gtk_window_new"]
+extern fn gtk_window_new() -> *u8;
+
+#[link_name = "gtk_window_set_title"]
+extern fn gtk_window_set_title(window: *u8, title: *u8);
+
+#[link_name = "gtk_window_set_default_size"]
+extern fn gtk_window_set_default_size(window: *u8, width: i32, height: i32);
+
+#[link_name = "gtk_window_set_child"]
+extern fn gtk_window_set_child(window: *u8, child: *u8);
+
+#[link_name = "gtk_window_get_child"]
+extern fn gtk_window_get_child(window: *u8) -> *u8;
+
+#[link_name = "gtk_window_set_titlebar"]
+extern fn gtk_window_set_titlebar(window: *u8, titlebar: *u8);
+
+#[link_name = "gtk_window_set_resizable"]
+extern fn gtk_window_set_resizable(window: *u8, resizable: i32);
+
+#[link_name = "gtk_window_set_decorated"]
+extern fn gtk_window_set_decorated(window: *u8, decorated: i32);
+
+#[link_name = "gtk_window_set_modal"]
+extern fn gtk_window_set_modal(window: *u8, modal: i32);
+
+#[link_name = "gtk_window_set_transient_for"]
+extern fn gtk_window_set_transient_for(window: *u8, parent: *u8);
+
+#[link_name = "gtk_window_present"]
+extern fn gtk_window_present(window: *u8);
+
+#[link_name = "gtk_window_close"]
+extern fn gtk_window_close(window: *u8);
+
+#[link_name = "gtk_window_minimize"]
+extern fn gtk_window_minimize(window: *u8);
+
+#[link_name = "gtk_window_maximize"]
+extern fn gtk_window_maximize(window: *u8);
+
+#[link_name = "gtk_window_fullscreen"]
+extern fn gtk_window_fullscreen(window: *u8);
+
+#[link_name = "gtk_window_unfullscreen"]
+extern fn gtk_window_unfullscreen(window: *u8);
+
+struct Window {
+    opaque obj: *u8,
+}
+
+impl Window {
+    fn raw(this) -> *u8 { return this.obj; }
+
+    fn from_raw(obj: *u8) -> Window {
+        return Window { obj: obj };
+    }
+
+    // The recommended constructor: a window bound to `app` (the pointer the
+    // "activate" handler receives). Shown with `present()`.
+    fn for_application(app: *u8) -> Window {
+        return Window { obj: { gtk_application_window_new(app) } };
+    }
+
+    // A bare top-level window not tied to a GtkApplication. You are then
+    // responsible for keeping the process alive while it is shown.
+    fn new() -> Window {
+        return Window { obj: { gtk_window_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { gtk_window_set_title(this.obj, title); };
+    }
+
+    fn set_default_size(this, width: i32, height: i32) {
+        { gtk_window_set_default_size(this.obj, width, height); };
+    }
+
+    // Set the single child widget (GTK 4 windows hold one child — use a
+    // `containers::Box`/`Grid` to host many). Pass a child's `raw()`.
+    fn set_child(this, child: *u8) {
+        { gtk_window_set_child(this.obj, child); };
+    }
+
+    fn child(this) -> *u8 {
+        return { gtk_window_get_child(this.obj) };
+    }
+
+    // Replace the default title bar with a custom widget (e.g. a
+    // `containers::HeaderBar`).
+    fn set_titlebar(this, titlebar: *u8) {
+        { gtk_window_set_titlebar(this.obj, titlebar); };
+    }
+
+    fn set_resizable(this, resizable: i32) {
+        { gtk_window_set_resizable(this.obj, resizable); };
+    }
+
+    fn set_decorated(this, decorated: i32) {
+        { gtk_window_set_decorated(this.obj, decorated); };
+    }
+
+    fn set_modal(this, modal: i32) {
+        { gtk_window_set_modal(this.obj, modal); };
+    }
+
+    fn set_transient_for(this, parent: *u8) {
+        { gtk_window_set_transient_for(this.obj, parent); };
+    }
+
+    // Show the window and bring it to the front (GTK 4's replacement for the
+    // old `show`/`show_all`).
+    fn present(this) {
+        { gtk_window_present(this.obj); };
+    }
+
+    fn close(this) {
+        { gtk_window_close(this.obj); };
+    }
+
+    fn minimize(this) {
+        { gtk_window_minimize(this.obj); };
+    }
+
+    fn maximize(this) {
+        { gtk_window_maximize(this.obj); };
+    }
+
+    fn fullscreen(this) {
+        { gtk_window_fullscreen(this.obj); };
+    }
+
+    fn unfullscreen(this) {
+        { gtk_window_unfullscreen(this.obj); };
+    }
+}

@@ -1,0 +1,481 @@
+import "./glib" as g;
+
+// Interactive controls — the GTK analog of appkit's `controls`: Button, Label,
+// Entry, CheckButton, Switch, Scale (slider), SpinButton, ProgressBar,
+// ToggleButton, DropDown. Each wraps a widget pointer (`opaque`, floating-ref
+// model — a parent container sinks the ref on append), exposes `raw()` for
+// packing into containers, and connects its primary signal through `glib`.
+
+// ---- Button ----
+
+#[link_name = "gtk_button_new_with_label"]
+extern fn gtk_button_new_with_label(label: *u8) -> *u8;
+
+#[link_name = "gtk_button_new_from_icon_name"]
+extern fn gtk_button_new_from_icon_name(icon_name: *u8) -> *u8;
+
+#[link_name = "gtk_button_set_label"]
+extern fn gtk_button_set_label(button: *u8, label: *u8);
+
+#[link_name = "gtk_button_get_label"]
+extern fn gtk_button_get_label(button: *u8) -> *u8;
+
+struct Button {
+    opaque obj: *u8,
+}
+
+impl Button {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Button { return Button { obj: obj }; }
+
+    fn new(label: *u8) -> Button {
+        return Button { obj: { gtk_button_new_with_label(label) } };
+    }
+
+    fn from_icon_name(icon_name: *u8) -> Button {
+        return Button { obj: { gtk_button_new_from_icon_name(icon_name) } };
+    }
+
+    fn set_label(this, label: *u8) {
+        { gtk_button_set_label(this.obj, label); };
+    }
+
+    fn label(this) -> *u8 {
+        return { gtk_button_get_label(this.obj) };
+    }
+
+    // The "clicked" signal: `fn(button: *u8, user_data: *u8)`.
+    fn connect_clicked(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("clicked\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- Label ----
+
+#[link_name = "gtk_label_new"]
+extern fn gtk_label_new(text: *u8) -> *u8;
+
+#[link_name = "gtk_label_set_text"]
+extern fn gtk_label_set_text(label: *u8, text: *u8);
+
+#[link_name = "gtk_label_get_text"]
+extern fn gtk_label_get_text(label: *u8) -> *u8;
+
+#[link_name = "gtk_label_set_markup"]
+extern fn gtk_label_set_markup(label: *u8, markup: *u8);
+
+#[link_name = "gtk_label_set_xalign"]
+extern fn gtk_label_set_xalign(label: *u8, xalign: f32);
+
+#[link_name = "gtk_label_set_wrap"]
+extern fn gtk_label_set_wrap(label: *u8, wrap: i32);
+
+#[link_name = "gtk_label_set_selectable"]
+extern fn gtk_label_set_selectable(label: *u8, selectable: i32);
+
+struct Label {
+    opaque obj: *u8,
+}
+
+impl Label {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Label { return Label { obj: obj }; }
+
+    fn new(text: *u8) -> Label {
+        return Label { obj: { gtk_label_new(text) } };
+    }
+
+    fn set_text(this, text: *u8) {
+        { gtk_label_set_text(this.obj, text); };
+    }
+
+    fn text(this) -> *u8 {
+        return { gtk_label_get_text(this.obj) };
+    }
+
+    // Set Pango-markup text (`<b>`, `<i>`, `<span>`…).
+    fn set_markup(this, markup: *u8) {
+        { gtk_label_set_markup(this.obj, markup); };
+    }
+
+    // Horizontal alignment of the text within the label, 0.0 (left) … 1.0 (right).
+    fn set_xalign(this, xalign: f32) {
+        { gtk_label_set_xalign(this.obj, xalign); };
+    }
+
+    fn set_wrap(this, wrap: i32) {
+        { gtk_label_set_wrap(this.obj, wrap); };
+    }
+
+    fn set_selectable(this, selectable: i32) {
+        { gtk_label_set_selectable(this.obj, selectable); };
+    }
+}
+
+// ---- Entry (single-line text input) ----
+//
+// `GtkEntry` implements `GtkEditable`, so its text getter/setter are the
+// `gtk_editable_*` calls and its text-change signal is "changed".
+
+#[link_name = "gtk_entry_new"]
+extern fn gtk_entry_new() -> *u8;
+
+#[link_name = "gtk_editable_set_text"]
+extern fn gtk_editable_set_text(editable: *u8, text: *u8);
+
+#[link_name = "gtk_editable_get_text"]
+extern fn gtk_editable_get_text(editable: *u8) -> *u8;
+
+#[link_name = "gtk_entry_set_placeholder_text"]
+extern fn gtk_entry_set_placeholder_text(entry: *u8, text: *u8);
+
+#[link_name = "gtk_entry_set_visibility"]
+extern fn gtk_entry_set_visibility(entry: *u8, visible: i32);
+
+#[link_name = "gtk_editable_set_editable"]
+extern fn gtk_editable_set_editable(editable: *u8, editable: i32);
+
+struct Entry {
+    opaque obj: *u8,
+}
+
+impl Entry {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Entry { return Entry { obj: obj }; }
+
+    fn new() -> Entry {
+        return Entry { obj: { gtk_entry_new() } };
+    }
+
+    fn set_text(this, text: *u8) {
+        { gtk_editable_set_text(this.obj, text); };
+    }
+
+    // Borrow the current text as a `const char*` (owned by GTK — copy it before
+    // the entry changes; do not free).
+    fn text(this) -> *u8 {
+        return { gtk_editable_get_text(this.obj) };
+    }
+
+    fn set_placeholder_text(this, text: *u8) {
+        { gtk_entry_set_placeholder_text(this.obj, text); };
+    }
+
+    // Set 0 to mask input (a basic password field); 1 shows characters.
+    fn set_visibility(this, visible: i32) {
+        { gtk_entry_set_visibility(this.obj, visible); };
+    }
+
+    fn set_editable(this, editable: i32) {
+        { gtk_editable_set_editable(this.obj, editable); };
+    }
+
+    // The "changed" signal: fired on every edit. `fn(entry: *u8, user_data: *u8)`.
+    fn connect_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("changed\0"), handler, 0 as *u8);
+    }
+
+    // The "activate" signal: fired when the user presses Enter.
+    fn connect_activate(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("activate\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- CheckButton ----
+
+#[link_name = "gtk_check_button_new_with_label"]
+extern fn gtk_check_button_new_with_label(label: *u8) -> *u8;
+
+#[link_name = "gtk_check_button_set_active"]
+extern fn gtk_check_button_set_active(button: *u8, active: i32);
+
+#[link_name = "gtk_check_button_get_active"]
+extern fn gtk_check_button_get_active(button: *u8) -> i32;
+
+struct CheckButton {
+    opaque obj: *u8,
+}
+
+impl CheckButton {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> CheckButton { return CheckButton { obj: obj }; }
+
+    fn new(label: *u8) -> CheckButton {
+        return CheckButton { obj: { gtk_check_button_new_with_label(label) } };
+    }
+
+    fn set_active(this, active: i32) {
+        { gtk_check_button_set_active(this.obj, active); };
+    }
+
+    fn is_active(this) -> i32 {
+        return { gtk_check_button_get_active(this.obj) };
+    }
+
+    // The "toggled" signal: `fn(button: *u8, user_data: *u8)`.
+    fn connect_toggled(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("toggled\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- Switch ----
+
+#[link_name = "gtk_switch_new"]
+extern fn gtk_switch_new() -> *u8;
+
+#[link_name = "gtk_switch_set_active"]
+extern fn gtk_switch_set_active(sw: *u8, active: i32);
+
+#[link_name = "gtk_switch_get_active"]
+extern fn gtk_switch_get_active(sw: *u8) -> i32;
+
+struct Switch {
+    opaque obj: *u8,
+}
+
+impl Switch {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Switch { return Switch { obj: obj }; }
+
+    fn new() -> Switch {
+        return Switch { obj: { gtk_switch_new() } };
+    }
+
+    fn set_active(this, active: i32) {
+        { gtk_switch_set_active(this.obj, active); };
+    }
+
+    fn is_active(this) -> i32 {
+        return { gtk_switch_get_active(this.obj) };
+    }
+
+    // The "state-set" signal: `fn(sw, state: i32, user_data) -> i32`. Return 1
+    // to suppress GTK's default state update (you own the state), 0 to accept it.
+    fn connect_state_set(this, handler: fn(*u8, i32, *u8) -> i32) {
+        let _id: u64 = g::signal_connect_state(this.obj, #str_ptr("state-set\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- Scale (slider) ----
+//
+// A `GtkScale` is a `GtkRange`, so value access is via `gtk_range_*` and the
+// change signal is "value-changed".
+
+#[link_name = "gtk_scale_new_with_range"]
+extern fn gtk_scale_new_with_range(orientation: i32, min: f64, max: f64, step: f64) -> *u8;
+
+#[link_name = "gtk_range_get_value"]
+extern fn gtk_range_get_value(range: *u8) -> f64;
+
+#[link_name = "gtk_range_set_value"]
+extern fn gtk_range_set_value(range: *u8, value: f64);
+
+#[link_name = "gtk_scale_set_draw_value"]
+extern fn gtk_scale_set_draw_value(scale: *u8, draw_value: i32);
+
+struct Scale {
+    opaque obj: *u8,
+}
+
+impl Scale {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Scale { return Scale { obj: obj }; }
+
+    // `orientation` is a `glib::orientation_*` value.
+    fn new(orientation: i32, min: f64, max: f64, step: f64) -> Scale {
+        return Scale { obj: { gtk_scale_new_with_range(orientation, min, max, step) } };
+    }
+
+    fn value(this) -> f64 {
+        return { gtk_range_get_value(this.obj) };
+    }
+
+    fn set_value(this, value: f64) {
+        { gtk_range_set_value(this.obj, value); };
+    }
+
+    // Whether the current value is drawn next to the slider.
+    fn set_draw_value(this, draw_value: i32) {
+        { gtk_scale_set_draw_value(this.obj, draw_value); };
+    }
+
+    fn connect_value_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("value-changed\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- SpinButton ----
+
+#[link_name = "gtk_spin_button_new_with_range"]
+extern fn gtk_spin_button_new_with_range(min: f64, max: f64, step: f64) -> *u8;
+
+#[link_name = "gtk_spin_button_get_value"]
+extern fn gtk_spin_button_get_value(spin: *u8) -> f64;
+
+#[link_name = "gtk_spin_button_set_value"]
+extern fn gtk_spin_button_set_value(spin: *u8, value: f64);
+
+#[link_name = "gtk_spin_button_set_digits"]
+extern fn gtk_spin_button_set_digits(spin: *u8, digits: u32);
+
+struct SpinButton {
+    opaque obj: *u8,
+}
+
+impl SpinButton {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> SpinButton { return SpinButton { obj: obj }; }
+
+    fn new(min: f64, max: f64, step: f64) -> SpinButton {
+        return SpinButton { obj: { gtk_spin_button_new_with_range(min, max, step) } };
+    }
+
+    fn value(this) -> f64 {
+        return { gtk_spin_button_get_value(this.obj) };
+    }
+
+    fn set_value(this, value: f64) {
+        { gtk_spin_button_set_value(this.obj, value); };
+    }
+
+    // Number of decimal places shown.
+    fn set_digits(this, digits: u32) {
+        { gtk_spin_button_set_digits(this.obj, digits); };
+    }
+
+    fn connect_value_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("value-changed\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- ProgressBar ----
+
+#[link_name = "gtk_progress_bar_new"]
+extern fn gtk_progress_bar_new() -> *u8;
+
+#[link_name = "gtk_progress_bar_set_fraction"]
+extern fn gtk_progress_bar_set_fraction(bar: *u8, fraction: f64);
+
+#[link_name = "gtk_progress_bar_get_fraction"]
+extern fn gtk_progress_bar_get_fraction(bar: *u8) -> f64;
+
+#[link_name = "gtk_progress_bar_pulse"]
+extern fn gtk_progress_bar_pulse(bar: *u8);
+
+#[link_name = "gtk_progress_bar_set_text"]
+extern fn gtk_progress_bar_set_text(bar: *u8, text: *u8);
+
+#[link_name = "gtk_progress_bar_set_show_text"]
+extern fn gtk_progress_bar_set_show_text(bar: *u8, show_text: i32);
+
+struct ProgressBar {
+    opaque obj: *u8,
+}
+
+impl ProgressBar {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ProgressBar { return ProgressBar { obj: obj }; }
+
+    fn new() -> ProgressBar {
+        return ProgressBar { obj: { gtk_progress_bar_new() } };
+    }
+
+    // Fill fraction, 0.0 … 1.0.
+    fn set_fraction(this, fraction: f64) {
+        { gtk_progress_bar_set_fraction(this.obj, fraction); };
+    }
+
+    fn fraction(this) -> f64 {
+        return { gtk_progress_bar_get_fraction(this.obj) };
+    }
+
+    // Bump the "activity" block for indeterminate progress.
+    fn pulse(this) {
+        { gtk_progress_bar_pulse(this.obj); };
+    }
+
+    fn set_text(this, text: *u8) {
+        { gtk_progress_bar_set_text(this.obj, text); };
+    }
+
+    fn set_show_text(this, show_text: i32) {
+        { gtk_progress_bar_set_show_text(this.obj, show_text); };
+    }
+}
+
+// ---- ToggleButton ----
+
+#[link_name = "gtk_toggle_button_new_with_label"]
+extern fn gtk_toggle_button_new_with_label(label: *u8) -> *u8;
+
+#[link_name = "gtk_toggle_button_set_active"]
+extern fn gtk_toggle_button_set_active(button: *u8, active: i32);
+
+#[link_name = "gtk_toggle_button_get_active"]
+extern fn gtk_toggle_button_get_active(button: *u8) -> i32;
+
+struct ToggleButton {
+    opaque obj: *u8,
+}
+
+impl ToggleButton {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ToggleButton { return ToggleButton { obj: obj }; }
+
+    fn new(label: *u8) -> ToggleButton {
+        return ToggleButton { obj: { gtk_toggle_button_new_with_label(label) } };
+    }
+
+    fn set_active(this, active: i32) {
+        { gtk_toggle_button_set_active(this.obj, active); };
+    }
+
+    fn is_active(this) -> i32 {
+        return { gtk_toggle_button_get_active(this.obj) };
+    }
+
+    fn connect_toggled(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("toggled\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- DropDown ----
+
+// `strings` is a `const char * const *` — a pointer to a NULL-terminated array
+// of C string pointers. Build it as a local `[N+1 x *u8]` ending in `0 as *u8`
+// and pass its address.
+#[link_name = "gtk_drop_down_new_from_strings"]
+extern fn gtk_drop_down_new_from_strings(strings: *u8) -> *u8;
+
+#[link_name = "gtk_drop_down_get_selected"]
+extern fn gtk_drop_down_get_selected(dropdown: *u8) -> u32;
+
+#[link_name = "gtk_drop_down_set_selected"]
+extern fn gtk_drop_down_set_selected(dropdown: *u8, position: u32);
+
+struct DropDown {
+    opaque obj: *u8,
+}
+
+impl DropDown {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> DropDown { return DropDown { obj: obj }; }
+
+    fn from_strings(strings: *u8) -> DropDown {
+        return DropDown { obj: { gtk_drop_down_new_from_strings(strings) } };
+    }
+
+    // Index of the selected item (GTK_INVALID_LIST_POSITION = 0xffffffff if none).
+    fn selected(this) -> u32 {
+        return { gtk_drop_down_get_selected(this.obj) };
+    }
+
+    fn set_selected(this, position: u32) {
+        { gtk_drop_down_set_selected(this.obj, position); };
+    }
+
+    // Selection changes fire "notify::selected".
+    fn connect_selected_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("notify::selected\0"), handler, 0 as *u8);
+    }
+}

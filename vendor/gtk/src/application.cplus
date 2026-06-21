@@ -1,0 +1,98 @@
+import "./glib" as g;
+
+// GtkApplication — the app object that owns the GTK main loop, the
+// session/D-Bus registration, and the window list. Mirrors appkit's
+// `Application`. The canonical shape:
+//
+//   fn on_activate(app: *u8, _data: *u8) {
+//       let win = window::Window::for_application(app);
+//       win.set_title(#str_ptr("Hello\0"));
+//       win.present();
+//   }
+//   fn main() -> i32 {
+//       let app = application::Application::new(#str_ptr("org.example.Hello\0"));
+//       app.connect_activate(on_activate);
+//       let status = app.run();
+//       app.unref();
+//       return status;
+//   }
+
+#[link_name = "gtk_application_new"]
+extern fn gtk_application_new(app_id: *u8, flags: u32) -> *u8;
+
+#[link_name = "g_application_run"]
+extern fn g_application_run(app: *u8, argc: i32, argv: *u8) -> i32;
+
+#[link_name = "g_application_quit"]
+extern fn g_application_quit(app: *u8);
+
+#[link_name = "gtk_application_get_active_window"]
+extern fn gtk_application_get_active_window(app: *u8) -> *u8;
+
+#[link_name = "gtk_application_add_window"]
+extern fn gtk_application_add_window(app: *u8, window: *u8);
+
+#[link_name = "gtk_application_set_menubar"]
+extern fn gtk_application_set_menubar(app: *u8, menu_model: *u8);
+
+#[link_name = "g_action_map_add_action"]
+extern fn g_action_map_add_action(action_map: *u8, action: *u8);
+
+struct Application {
+    opaque obj: *u8,
+}
+
+impl Application {
+    fn raw(this) -> *u8 { return this.obj; }
+
+    fn from_raw(obj: *u8) -> Application {
+        return Application { obj: obj };
+    }
+
+    // Create a GtkApplication with the given reverse-DNS application id (e.g.
+    // `"org.example.App\0"`). Holds one owned reference — call `unref()` after
+    // `run()` returns.
+    fn new(app_id: *u8) -> Application {
+        return Application { obj: { gtk_application_new(app_id, g::application_default_flags()) } };
+    }
+
+    // Connect the "activate" signal — fired when the app is launched with no
+    // files/URIs to open. Build your first window here.
+    fn connect_activate(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("activate\0"), handler, 0 as *u8);
+    }
+
+    // Run the main loop; returns the process exit status. Blocks until the
+    // last window closes (or `quit()`).
+    fn run(this) -> i32 {
+        return { g_application_run(this.obj, 0 as i32, 0 as *u8) };
+    }
+
+    fn quit(this) {
+        { g_application_quit(this.obj); };
+    }
+
+    fn active_window(this) -> *u8 {
+        return { gtk_application_get_active_window(this.obj) };
+    }
+
+    fn add_window(this, window: *u8) {
+        { gtk_application_add_window(this.obj, window); };
+    }
+
+    // Install a GMenu model (see `menu`) as the application menubar.
+    fn set_menubar(this, menu_model: *u8) {
+        { gtk_application_set_menubar(this.obj, menu_model); };
+    }
+
+    // Register a `GSimpleAction` (see `actions`) on the application's action
+    // map so menu/`"app.<name>"` items can invoke it.
+    fn add_action(this, action: *u8) {
+        { g_action_map_add_action(this.obj, action); };
+    }
+
+    // Release the owned reference. Call once after `run()` returns.
+    fn unref(this) {
+        g::unref(this.obj);
+    }
+}
