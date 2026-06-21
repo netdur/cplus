@@ -4897,6 +4897,15 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             }
             Some(format!("{{ {} }}", parts.join(", ")))
         }
+        // A pointer-typed static initialized from an integer literal — either
+        // directly or (the common case) via a `0 as *u8` cast that recurses
+        // here with the pointer `ty`. LLVM pointer constants are `null` for 0
+        // and `inttoptr (iN V to ptr)` otherwise; a bare integer operand on a
+        // `ptr` global fails to assemble ("integer constant must have integer
+        // type").
+        ExprKind::IntLit(v, _) if matches!(ty, Ty::RawPtr(_) | Ty::FnPtr { .. }) => {
+            Some(render_static_pointer_int(*v))
+        }
         ExprKind::IntLit(v, _) => Some(v.to_string()),
         ExprKind::BoolLit(b) => Some(if *b {
             "true".to_string()
@@ -4955,6 +4964,19 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             Some("zeroinitializer".to_string())
         }
         _ => None,
+    }
+}
+
+/// Render an integer literal as an LLVM pointer constant for a static
+/// initializer. `0` is the null pointer (`null`); any other value is an
+/// address built with `inttoptr` at pointer width (matching the runtime
+/// `<int> as *T` cast). Used for `static p: *u8 = 0 as *u8;` and friends —
+/// without it the global emits `ptr 0`, which LLVM rejects.
+fn render_static_pointer_int(v: u64) -> String {
+    if v == 0 {
+        "null".to_string()
+    } else {
+        format!("inttoptr ({} {v} to ptr)", usize_llvm_ty())
     }
 }
 

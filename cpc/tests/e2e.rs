@@ -113,6 +113,40 @@ fn static_narrowing_literal_cast_runs() {
     assert_eq!(run.code(), Some(8), "got {:?}", run.code());
 }
 
+#[test]
+fn static_pointer_init_runs() {
+    // A pointer-typed `static` initialized from an integer literal must emit an
+    // LLVM pointer constant — `null` for 0, `inttoptr` otherwise — not a bare
+    // `ptr 0` (which fails to assemble: "integer constant must have integer
+    // type"). Regression for the `static p: *u8 = 0 as *u8;` codegen bug.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("statptr.cplus");
+    std::fs::write(
+        &src,
+        "static NULLP: *u8 = 0 as *u8;\n\
+         static ADDR: *u8 = 4096 as *u8;\n\
+         fn main() -> i32 {\n\
+             var r: i32 = 0;\n\
+             if NULLP == { 0 as *u8 } { r = r + 1; }\n\
+             if ADDR == { 4096 as *u8 } { r = r + 2; }\n\
+             return r;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("statptr");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "pointer-typed static program must compile");
+    let run = Command::new(&bin).status().expect("run statptr");
+    // Both branches taken: 1 + 2 = 3.
+    assert_eq!(run.code(), Some(3), "got {:?}", run.code());
+}
+
 /// A `match` consumes its owned scrutinee, so it must tear it down exactly once
 /// regardless of arm shape. Catch-all (`x =>`) and wildcard (`_ =>`) arms used
 /// to leak the consumed enum (and its Drop payload); a *temporary* scrutinee
