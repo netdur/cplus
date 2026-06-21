@@ -1,0 +1,70 @@
+import "gtk/glib" as g;
+
+// AdwViewStack + AdwViewSwitcher — the Adwaita way to present several pages with
+// a switcher (the GNOME pattern of a pill/segmented switcher in the header on
+// wide screens, falling back to a bottom bar on narrow ones). The stack holds
+// the pages; the switcher (pointed at the stack) renders the tabs.
+
+#[link_name = "adw_view_stack_new"]
+extern fn adw_view_stack_new() -> *u8;
+
+#[link_name = "adw_view_stack_add_titled"]
+extern fn adw_view_stack_add_titled(stack: *u8, child: *u8, name: *u8, title: *u8) -> *u8;
+
+#[link_name = "adw_view_stack_set_visible_child_name"]
+extern fn adw_view_stack_set_visible_child_name(stack: *u8, name: *u8);
+
+struct ViewStack {
+    opaque obj: *u8,
+}
+
+impl ViewStack {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ViewStack { return ViewStack { obj: obj }; }
+
+    fn new() -> ViewStack {
+        return ViewStack { obj: { adw_view_stack_new() } };
+    }
+
+    // Add a page identified by `name`, labelled `title` in the switcher.
+    fn add_titled(this, child: *u8, name: *u8, title: *u8) {
+        let _page: *u8 = { adw_view_stack_add_titled(this.obj, child, name, title) };
+    }
+
+    fn set_visible_child_name(this, name: *u8) {
+        { adw_view_stack_set_visible_child_name(this.obj, name); };
+    }
+}
+
+#[link_name = "adw_view_switcher_new"]
+extern fn adw_view_switcher_new() -> *u8;
+
+#[link_name = "adw_view_switcher_set_stack"]
+extern fn adw_view_switcher_set_stack(switcher: *u8, stack: *u8);
+
+// AdwViewSwitcherPolicy for `set_policy` (narrow=0, wide=1).
+#[link_name = "adw_view_switcher_set_policy"]
+extern fn adw_view_switcher_set_policy(switcher: *u8, policy: i32);
+
+struct ViewSwitcher {
+    opaque obj: *u8,
+}
+
+impl ViewSwitcher {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ViewSwitcher { return ViewSwitcher { obj: obj }; }
+
+    fn new() -> ViewSwitcher {
+        return ViewSwitcher { obj: { adw_view_switcher_new() } };
+    }
+
+    // Point the switcher at a `ViewStack` (its `raw()`); commonly placed in a
+    // `header::HeaderBar` title slot.
+    fn set_stack(this, stack: *u8) {
+        { adw_view_switcher_set_stack(this.obj, stack); };
+    }
+
+    fn set_policy(this, policy: i32) {
+        { adw_view_switcher_set_policy(this.obj, policy); };
+    }
+}

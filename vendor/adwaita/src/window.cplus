@@ -1,0 +1,90 @@
+import "gtk/glib" as g;
+import "gtk/window" as gtkwin;
+
+// AdwApplicationWindow / AdwWindow — top-level windows that host their own
+// title bar inside the content (so an `AdwHeaderBar` can be flush with the
+// window edge and the window can be free-form / rounded). Unlike a GtkWindow,
+// the single child slot is `set_content`, not `set_child`; you typically set a
+// `view::ToolbarView` (header bars + content) there.
+//
+// Window geometry/lifecycle (`set_default_size`, `present`, `close`, …) lives
+// on the GtkWindow base, reached via the shared raw pointer (use
+// `gtk::Window::from_raw(win.raw())` for the full set).
+
+#[link_name = "adw_application_window_new"]
+extern fn adw_application_window_new(app: *u8) -> *u8;
+
+#[link_name = "adw_application_window_set_content"]
+extern fn adw_application_window_set_content(window: *u8, content: *u8);
+
+#[link_name = "adw_window_new"]
+extern fn adw_window_new() -> *u8;
+
+#[link_name = "adw_window_set_content"]
+extern fn adw_window_set_content(window: *u8, content: *u8);
+
+struct Window {
+    opaque obj: *u8,
+}
+
+impl Window {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> Window { return Window { obj: obj }; }
+
+    // An application window bound to `app` (the "activate" pointer). Owned by
+    // the AdwApplication.
+    fn for_application(app: *u8) -> Window {
+        return Window { obj: { adw_application_window_new(app) } };
+    }
+
+    // A free-standing Adwaita window.
+    fn new() -> Window {
+        return Window { obj: { adw_window_new() } };
+    }
+
+    // The single content widget (commonly a `view::ToolbarView`).
+    fn set_content(this, content: *u8) {
+        { adw_application_window_set_content(this.obj, content); };
+    }
+
+    // ---- GtkWindow base conveniences (delegated via the raw pointer) ----
+
+    fn set_title(this, title: *u8) {
+        gtkwin::Window::from_raw(this.obj).set_title(title);
+    }
+
+    fn set_default_size(this, width: i32, height: i32) {
+        gtkwin::Window::from_raw(this.obj).set_default_size(width, height);
+    }
+
+    fn present(this) {
+        gtkwin::Window::from_raw(this.obj).present();
+    }
+
+    fn close(this) {
+        gtkwin::Window::from_raw(this.obj).close();
+    }
+}
+
+// A plain (non-application) AdwWindow with `set_content`. Use when you need an
+// auxiliary window not tied to the AdwApplication.
+struct PlainWindow {
+    opaque obj: *u8,
+}
+
+impl PlainWindow {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> PlainWindow { return PlainWindow { obj: obj }; }
+
+    fn new() -> PlainWindow {
+        return PlainWindow { obj: { adw_window_new() } };
+    }
+
+    fn set_content(this, content: *u8) {
+        { adw_window_set_content(this.obj, content); };
+    }
+
+    fn present(this) {
+        gtkwin::Window::from_raw(this.obj).present();
+    }
+}

@@ -1,0 +1,93 @@
+// adwaita_hello — a GNOME-styled app via vendor/adwaita (on top of vendor/gtk).
+//
+// An AdwApplicationWindow with an AdwToolbarView (header bar + content), a
+// clamped AdwPreferencesGroup of rows (an AdwActionRow with an avatar, an
+// AdwSwitchRow), a "Notify" button that raises an AdwToast, and a dark-mode
+// toggle via AdwStyleManager. Demonstrates how Adwaita widgets compose with
+// plain GTK widgets (gtk::Button, gtk::Box) through raw pointers.
+
+import "gtk/gtk" as gtk;
+import "gtk/glib" as glib;
+import "adwaita/adwaita" as adw;
+import "adwaita/style" as style;
+
+// The toast overlay is passed to the button handler as user_data so it can
+// raise a toast without globals.
+fn on_notify(button: *u8, overlay_ptr: *u8) {
+    let overlay = adw::ToastOverlay::from_raw(overlay_ptr);
+    let t = adw::Toast::new(#str_ptr("Button pressed!\0"));
+    t.set_timeout(2 as u32);
+    overlay.add_toast(t.raw());
+}
+
+// The dark switch is wired through its own "notify::active"; we reach the style
+// manager freshly each time (it is the app-wide singleton).
+fn on_dark_toggled(row: *u8, data: *u8) {
+    let sw = adw::SwitchRow::from_raw(row);
+    let mgr = style::StyleManager::default_manager();
+    if sw.is_active() == 1 as i32 {
+        mgr.set_color_scheme(style::color_scheme_force_dark());
+    } else {
+        mgr.set_color_scheme(style::color_scheme_force_light());
+    }
+    return;
+}
+
+fn on_activate(app: *u8, data: *u8) {
+    let win = adw::Window::for_application(app);
+    win.set_title(#str_ptr("Adwaita Hello\0"));
+    win.set_default_size(440 as i32, 400 as i32);
+
+    let tv = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    let title = adw::WindowTitle::new(#str_ptr("Adwaita Hello\0"), #str_ptr("C+ + libadwaita\0"));
+    header.set_title_widget(title.raw());
+    tv.add_top_bar(header.raw());
+
+    // Content: a toast overlay wrapping a clamped vertical box.
+    let overlay = adw::ToastOverlay::new();
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(400 as i32);
+
+    let vbox = gtk::Box::new(glib::orientation_vertical(), 18 as i32);
+    gtk::Widget::from_raw(vbox.raw()).set_margin(18 as i32);
+
+    // A boxed-list preferences group.
+    let group = adw::PreferencesGroup::new();
+    group.set_title(#str_ptr("Account\0"));
+
+    let arow = adw::ActionRow::new();
+    arow.set_title(#str_ptr("Ada Lovelace\0"));
+    arow.set_subtitle(#str_ptr("ada@analytical.engine\0"));
+    let avatar = adw::Avatar::new(36 as i32, #str_ptr("Ada Lovelace\0"), 1 as i32);
+    arow.add_prefix(avatar.raw());
+    group.add(arow.raw());
+
+    let dark = adw::SwitchRow::new();
+    dark.set_title(#str_ptr("Dark mode\0"));
+    dark.connect_active_changed(on_dark_toggled);
+    group.add(dark.raw());
+
+    vbox.append(group.raw());
+
+    // A plain GTK button driving an Adwaita toast.
+    let btn = gtk::Button::new(#str_ptr("Notify\0"));
+    gtk::Widget::from_raw(btn.raw()).add_css_class(#str_ptr("pill\0"));
+    gtk::Widget::from_raw(btn.raw()).set_halign(glib::align_center());
+    let _id: u64 = glib::signal_connect(btn.raw(), #str_ptr("clicked\0"), on_notify, overlay.raw());
+    vbox.append(btn.raw());
+
+    clamp.set_child(vbox.raw());
+    overlay.set_child(clamp.raw());
+    tv.set_content(overlay.raw());
+    win.set_content(tv.raw());
+    win.present();
+}
+
+fn main() -> i32 {
+    let app = adw::Application::new(#str_ptr("org.cplus.AdwaitaHello\0"));
+    app.connect_activate(on_activate);
+    let status = app.run();
+    app.unref();
+    return status;
+}
