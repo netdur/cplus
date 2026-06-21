@@ -1,0 +1,108 @@
+import "./glib" as g;
+
+// Drag-and-drop — the GTK analog of appkit's `drag`. A `DropTarget` makes a
+// widget accept dropped data (the common "accept dropped text/files" case); a
+// `DragSource` lets a widget start a drag. Both are event controllers attached
+// with `events::add_controller` (or `gtk_widget_add_controller`). Import
+// directly:
+//
+//   import "gtk/drag" as drag;
+
+// ---- GType / GdkDragAction constants ----
+//
+// GObject fundamental type ids are ABI-stable (`G_TYPE_*` macros). A drop
+// target is typed by the GType it accepts.
+fn gtype_string() -> usize { return 64 as usize; }  // G_TYPE_STRING
+fn gtype_object() -> usize { return 80 as usize; }  // G_TYPE_OBJECT
+
+// GdkDragAction bit flags.
+fn action_copy() -> u32 { return 1 as u32; }  // 1 << 0
+fn action_move() -> u32 { return 2 as u32; }  // 1 << 1
+fn action_link() -> u32 { return 4 as u32; }  // 1 << 2
+
+// ---- DropTarget ----
+
+#[link_name = "gtk_drop_target_new"]
+extern fn gtk_drop_target_new(gtype: usize, actions: u32) -> *u8;
+
+#[link_name = "gtk_drop_target_set_gtypes"]
+extern fn gtk_drop_target_set_gtypes(target: *u8, types: *u8, n_types: usize);
+
+#[link_name = "gtk_drop_target_set_actions"]
+extern fn gtk_drop_target_set_actions(target: *u8, actions: u32);
+
+// "drop": `gboolean (target, const GValue *value, double x, double y, gpointer)`.
+#[link_name = "g_signal_connect_data"]
+extern fn connect_drop(instance: *u8, signal: *u8, handler: fn(*u8, *u8, f64, f64, *u8) -> i32, data: *u8, destroy: *u8, flags: u32) -> u64;
+
+// Extract a string from the dropped `GValue*` (valid when the target's GType is
+// `gtype_string`). Borrowed — copy via `convert::cstr_to_text` to keep it.
+#[link_name = "g_value_get_string"]
+extern fn g_value_get_string(value: *u8) -> *u8;
+
+struct DropTarget {
+    opaque obj: *u8,
+}
+
+impl DropTarget {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> DropTarget { return DropTarget { obj: obj }; }
+
+    // Accept drops of `gtype` (e.g. `gtype_string()`) for the given action bits
+    // (e.g. `action_copy()`).
+    fn new(gtype: usize, actions: u32) -> DropTarget {
+        return DropTarget { obj: { gtk_drop_target_new(gtype, actions) } };
+    }
+
+    fn set_actions(this, actions: u32) {
+        { gtk_drop_target_set_actions(this.obj, actions); };
+    }
+
+    // "drop": `fn(target, value: *u8, x: f64, y: f64, user_data) -> i32`. Return
+    // 1 to accept the drop. Read a string payload with `string_from_value`.
+    fn connect_drop(this, handler: fn(*u8, *u8, f64, f64, *u8) -> i32) {
+        let _id: u64 = { connect_drop(this.obj, #str_ptr("drop\0"), handler, 0 as *u8, 0 as *u8, 0 as u32) };
+    }
+
+    // Read the dropped text from the handler's `GValue*` (when typed string).
+    fn string_from_value(value: *u8) -> *u8 {
+        return { g_value_get_string(value) };
+    }
+}
+
+// ---- DragSource ----
+
+#[link_name = "gtk_drag_source_new"]
+extern fn gtk_drag_source_new() -> *u8;
+
+#[link_name = "gtk_drag_source_set_actions"]
+extern fn gtk_drag_source_set_actions(source: *u8, actions: u32);
+
+// "prepare": `GdkContentProvider* (source, double x, double y, gpointer)` —
+// return a content provider describing what is being dragged
+// (`gdk_content_provider_new_for_value`, built app-side).
+#[link_name = "g_signal_connect_data"]
+extern fn connect_prepare(instance: *u8, signal: *u8, handler: fn(*u8, f64, f64, *u8) -> *u8, data: *u8, destroy: *u8, flags: u32) -> u64;
+
+struct DragSource {
+    opaque obj: *u8,
+}
+
+impl DragSource {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> DragSource { return DragSource { obj: obj }; }
+
+    fn new() -> DragSource {
+        return DragSource { obj: { gtk_drag_source_new() } };
+    }
+
+    fn set_actions(this, actions: u32) {
+        { gtk_drag_source_set_actions(this.obj, actions); };
+    }
+
+    // "prepare": `fn(source, x: f64, y: f64, user_data) -> *u8` returning a
+    // `GdkContentProvider*` (or null to cancel).
+    fn connect_prepare(this, handler: fn(*u8, f64, f64, *u8) -> *u8) {
+        let _id: u64 = { connect_prepare(this.obj, #str_ptr("prepare\0"), handler, 0 as *u8, 0 as *u8, 0 as u32) };
+    }
+}

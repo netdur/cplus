@@ -1,0 +1,246 @@
+import "./glib" as g;
+
+// Model-backed list & table views — the GTK analog of appkit's `data`. GTK 4
+// separates the *model* (a `GListModel` such as `StringList`), the *selection*
+// (`SingleSelection`), and the *view* (`ListView` / `ColumnView`) whose items
+// are produced by a `SignalListItemFactory` — a `setup` callback builds each
+// row's widget, a `bind` callback fills it from the row's model item. Re-exported
+// from the `gtk` umbrella.
+
+// ---- StringList (the simplest GListModel) ----
+
+#[link_name = "gtk_string_list_new"]
+extern fn gtk_string_list_new(strings: *u8) -> *u8;
+
+#[link_name = "gtk_string_list_append"]
+extern fn gtk_string_list_append(list: *u8, string: *u8);
+
+#[link_name = "gtk_string_list_remove"]
+extern fn gtk_string_list_remove(list: *u8, position: u32);
+
+#[link_name = "gtk_string_object_get_string"]
+extern fn gtk_string_object_get_string(string_object: *u8) -> *u8;
+
+struct StringList {
+    opaque obj: *u8,
+}
+
+impl StringList {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> StringList { return StringList { obj: obj }; }
+
+    // Empty list (pass `0 as *u8`); append items with `append`.
+    fn new() -> StringList {
+        return StringList { obj: { gtk_string_list_new(0 as *u8) } };
+    }
+
+    fn append(this, string: *u8) {
+        { gtk_string_list_append(this.obj, string); };
+    }
+
+    fn remove(this, position: u32) {
+        { gtk_string_list_remove(this.obj, position); };
+    }
+
+    // The string of a `GtkStringObject` item (e.g. from
+    // `ListItem::item`) as a borrowed `const char*`.
+    fn object_text(string_object: *u8) -> *u8 {
+        return { gtk_string_object_get_string(string_object) };
+    }
+}
+
+// ---- SingleSelection ----
+
+#[link_name = "gtk_single_selection_new"]
+extern fn gtk_single_selection_new(model: *u8) -> *u8;
+
+#[link_name = "gtk_single_selection_get_selected"]
+extern fn gtk_single_selection_get_selected(selection: *u8) -> u32;
+
+#[link_name = "gtk_single_selection_set_selected"]
+extern fn gtk_single_selection_set_selected(selection: *u8, position: u32);
+
+#[link_name = "gtk_single_selection_get_selected_item"]
+extern fn gtk_single_selection_get_selected_item(selection: *u8) -> *u8;
+
+struct SingleSelection {
+    opaque obj: *u8,
+}
+
+impl SingleSelection {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> SingleSelection { return SingleSelection { obj: obj }; }
+
+    // Wrap a `GListModel` (e.g. a `StringList`'s `raw()`). Takes ownership of
+    // the model.
+    fn new(model: *u8) -> SingleSelection {
+        return SingleSelection { obj: { gtk_single_selection_new(model) } };
+    }
+
+    fn selected(this) -> u32 {
+        return { gtk_single_selection_get_selected(this.obj) };
+    }
+
+    fn set_selected(this, position: u32) {
+        { gtk_single_selection_set_selected(this.obj, position); };
+    }
+
+    // The selected model object (or null).
+    fn selected_item(this) -> *u8 {
+        return { gtk_single_selection_get_selected_item(this.obj) };
+    }
+
+    // Selection changes fire "notify::selected".
+    fn connect_selection_changed(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("notify::selected\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- ListItem (the per-row container passed to factory callbacks) ----
+
+#[link_name = "gtk_list_item_set_child"]
+extern fn gtk_list_item_set_child(list_item: *u8, child: *u8);
+
+#[link_name = "gtk_list_item_get_child"]
+extern fn gtk_list_item_get_child(list_item: *u8) -> *u8;
+
+#[link_name = "gtk_list_item_get_item"]
+extern fn gtk_list_item_get_item(list_item: *u8) -> *u8;
+
+#[link_name = "gtk_list_item_get_position"]
+extern fn gtk_list_item_get_position(list_item: *u8) -> u32;
+
+struct ListItem {
+    opaque obj: *u8,
+}
+
+impl ListItem {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ListItem { return ListItem { obj: obj }; }
+
+    // In `setup`, attach the row widget; in `bind`, fetch it back with `child`.
+    fn set_child(this, child: *u8) {
+        { gtk_list_item_set_child(this.obj, child); };
+    }
+
+    fn child(this) -> *u8 {
+        return { gtk_list_item_get_child(this.obj) };
+    }
+
+    // The model object backing this row (e.g. a `GtkStringObject*`).
+    fn item(this) -> *u8 {
+        return { gtk_list_item_get_item(this.obj) };
+    }
+
+    fn position(this) -> u32 {
+        return { gtk_list_item_get_position(this.obj) };
+    }
+}
+
+// ---- SignalListItemFactory ----
+
+#[link_name = "gtk_signal_list_item_factory_new"]
+extern fn gtk_signal_list_item_factory_new() -> *u8;
+
+struct ListItemFactory {
+    opaque obj: *u8,
+}
+
+impl ListItemFactory {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ListItemFactory { return ListItemFactory { obj: obj }; }
+
+    fn new() -> ListItemFactory {
+        return ListItemFactory { obj: { gtk_signal_list_item_factory_new() } };
+    }
+
+    // "setup": `fn(factory, list_item: *u8, user_data)` — create the row widget
+    // and `ListItem::from_raw(list_item).set_child(...)`.
+    fn connect_setup(this, handler: fn(*u8, *u8, *u8)) {
+        let _id: u64 = g::signal_connect3(this.obj, #str_ptr("setup\0"), handler, 0 as *u8);
+    }
+
+    // "bind": `fn(factory, list_item: *u8, user_data)` — read
+    // `ListItem::item(...)` and write it into the row widget from `child(...)`.
+    fn connect_bind(this, handler: fn(*u8, *u8, *u8)) {
+        let _id: u64 = g::signal_connect3(this.obj, #str_ptr("bind\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- ListView ----
+
+#[link_name = "gtk_list_view_new"]
+extern fn gtk_list_view_new(model: *u8, factory: *u8) -> *u8;
+
+struct ListView {
+    opaque obj: *u8,
+}
+
+impl ListView {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ListView { return ListView { obj: obj }; }
+
+    // `model` is a selection model (`SingleSelection::raw()`); `factory` a
+    // `ListItemFactory::raw()`. Takes ownership of both. Wrap in a
+    // `containers::ScrolledWindow` for scrolling.
+    fn new(model: *u8, factory: *u8) -> ListView {
+        return ListView { obj: { gtk_list_view_new(model, factory) } };
+    }
+
+    // "activate": `fn(list_view, position: ... , user_data)` — a row was
+    // double-clicked / Enter-pressed. (Position rides the second slot.)
+    fn connect_activate(this, handler: fn(*u8, *u8)) {
+        let _id: u64 = g::signal_connect(this.obj, #str_ptr("activate\0"), handler, 0 as *u8);
+    }
+}
+
+// ---- ColumnView (multi-column table) ----
+
+#[link_name = "gtk_column_view_new"]
+extern fn gtk_column_view_new(model: *u8) -> *u8;
+
+#[link_name = "gtk_column_view_column_new"]
+extern fn gtk_column_view_column_new(title: *u8, factory: *u8) -> *u8;
+
+#[link_name = "gtk_column_view_append_column"]
+extern fn gtk_column_view_append_column(column_view: *u8, column: *u8);
+
+#[link_name = "gtk_column_view_column_set_expand"]
+extern fn gtk_column_view_column_set_expand(column: *u8, expand: i32);
+
+struct ColumnViewColumn {
+    opaque obj: *u8,
+}
+
+impl ColumnViewColumn {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ColumnViewColumn { return ColumnViewColumn { obj: obj }; }
+
+    // A column titled `title`, its cells produced by `factory`
+    // (`ListItemFactory::raw()`).
+    fn new(title: *u8, factory: *u8) -> ColumnViewColumn {
+        return ColumnViewColumn { obj: { gtk_column_view_column_new(title, factory) } };
+    }
+
+    fn set_expand(this, expand: i32) {
+        { gtk_column_view_column_set_expand(this.obj, expand); };
+    }
+}
+
+struct ColumnView {
+    opaque obj: *u8,
+}
+
+impl ColumnView {
+    fn raw(this) -> *u8 { return this.obj; }
+    fn from_raw(obj: *u8) -> ColumnView { return ColumnView { obj: obj }; }
+
+    // `model` is a selection model. Takes ownership of it.
+    fn new(model: *u8) -> ColumnView {
+        return ColumnView { obj: { gtk_column_view_new(model) } };
+    }
+
+    fn append_column(this, column: *u8) {
+        { gtk_column_view_append_column(this.obj, column); };
+    }
+}

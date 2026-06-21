@@ -15,6 +15,7 @@ import "./graphics" as graphics;
 import "./cairo" as cairo;
 import "./menu" as menu;
 import "./actions" as actions;
+import "./data" as data;
 
 type Application = application::Application;
 
@@ -63,6 +64,14 @@ type MenuButton = menu::MenuButton;
 type PopoverMenu = menu::PopoverMenu;
 
 type Action = actions::Action;
+
+type StringList = data::StringList;
+type SingleSelection = data::SingleSelection;
+type ListItem = data::ListItem;
+type ListItemFactory = data::ListItemFactory;
+type ListView = data::ListView;
+type ColumnView = data::ColumnView;
+type ColumnViewColumn = data::ColumnViewColumn;
 
 // ---- re-exported orientation / alignment constants ----
 

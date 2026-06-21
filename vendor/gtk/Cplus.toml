@@ -16,4 +16,8 @@ edition = "2026"
 [link]
 libs = ["gtk-4", "gobject-2.0", "gio-2.0", "glib-2.0", "cairo"]
 
+# stdlib backs the `convert` and `data` modules (text::Text / vec::Vec). The
+# widget modules themselves are stdlib-free, so apps that never import those two
+# pull nothing extra.
 [dependencies]
+stdlib = "*"

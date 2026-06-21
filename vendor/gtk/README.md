@@ -60,6 +60,13 @@ import "gtk/graphics" as graphics;
 import "gtk/cairo" as cairo;
 import "gtk/menu" as menu;
 import "gtk/actions" as actions;
+import "gtk/data" as data;
+// import-directly modules (no umbrella re-export):
+import "gtk/convert" as bridge;
+import "gtk/events" as events;
+import "gtk/pasteboard" as pasteboard;
+import "gtk/drag" as drag;
+import "gtk/notifications" as notifications;
 ```
 
 ## Modules
@@ -92,6 +99,28 @@ import "gtk/actions" as actions;
 - `menu`: `Menu` (a `GMenu` model), `MenuButton`, `PopoverMenu`. GTK 4 menus are
   data that reference actions by name.
 - `actions`: `Action` (GSimpleAction) — the named commands menu items invoke.
+- `data`: model-backed list/table views (appkit's `data` analog) — `StringList`
+  (a `GListModel`), `SingleSelection`, `ListItem`, `ListItemFactory`
+  (`SignalListItemFactory` with `setup`/`bind` callbacks), `ListView`, and
+  `ColumnView` (+ `ColumnViewColumn`). Re-exported from the umbrella.
+
+The cross-cutting modules below are **import-directly** (no umbrella re-export),
+matching appkit's `convert`/`events`/`drag` convention:
+
+- `convert`: C+ ↔ C string/data bridges — `cstr_to_str_unsafe` / `cstr_to_text`
+  / `str_to_cstring` (NUL-terminated copy for any `const char*` param),
+  `string_object_text`, and `GBytes` ↔ `vec::Vec[u8]`. Requires `stdlib`.
+- `events`: input event controllers (appkit's `events` analog) — `ClickGesture`
+  (`pressed`/`released`), `KeyController` (`key-pressed` + GDK keysym
+  constants), `MotionController` (`motion`/`enter`). Attach with
+  `events::add_controller(widget, controller)`.
+- `pasteboard`: `Clipboard` (GdkClipboard) — `for_widget`, `set_text`, and the
+  async `read_text` / `read_text_finish`.
+- `drag`: drag-and-drop — `DropTarget` (accept dropped text/values, with
+  `string_from_value`) and `DragSource`, plus the `gtype_*` / `action_*`
+  constants.
+- `notifications`: `Notification` (GNotification) — desktop notifications sent
+  through the application (`notifications::send(app, id, n)`).
 
 ## Signals & callbacks
 
