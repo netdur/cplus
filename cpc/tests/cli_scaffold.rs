@@ -64,7 +64,12 @@ fn init_scaffolds_a_named_project() {
     assert!(manifest.contains("name    = \"myapp\""), "manifest: {manifest}");
     assert!(manifest.contains("[[bin]]"));
     assert!(manifest.contains("path = \"src/main.cplus\""));
-    assert!(manifest.contains("stdlib = \"*\""));
+    // stdlib is the Go-style path@version source, pinned to this toolchain.
+    assert!(manifest.contains("vendor/stdlib@"), "stdlib should use path@version: {manifest}");
+    assert!(
+        manifest.contains(&format!("@{}\"", env!("CARGO_PKG_VERSION"))),
+        "stdlib should be pinned to the cpc version: {manifest}"
+    );
 
     let main = read(&proj.join("src/main.cplus"));
     assert!(main.contains("fn main() -> i32"));

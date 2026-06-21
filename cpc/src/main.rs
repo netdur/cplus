@@ -4553,10 +4553,17 @@ fn run_init(args: &[OsString]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // The stdlib dependency is the Go-style `path@version` source, pinned to the
+    // version of *this* `cpc` — official packages track the toolchain, so the
+    // scaffolded project always pulls the stdlib that matches its compiler.
+    let stdlib_dep = format!(
+        "https://github.com/netdur/cplus/tree/main/vendor/stdlib@{}",
+        env!("CARGO_PKG_VERSION")
+    );
     let manifest_toml = format!(
         "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
          [[bin]]\nname = \"{proj_name}\"\npath = \"src/main.cplus\"\n\n\
-         [dependencies]\nstdlib = \"*\"\n"
+         [dependencies]\nstdlib = \"{stdlib_dep}\"\n"
     );
     let main_cplus = "import \"stdlib/io\" as io;\n\n\
          fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";
@@ -4590,8 +4597,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
     }
     println!("  cpc build            # compile and link");
     println!();
-    println!("note: src/main.cplus imports `stdlib/io`; vendor the stdlib package into");
-    println!("      vendor/stdlib before building — from");
-    println!("      https://github.com/netdur/cplus/tree/main/vendor/stdlib");
+    println!(
+        "note: Cplus.toml pins stdlib to this toolchain (v{}); vendor it into",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!("      vendor/stdlib before building.");
     ExitCode::SUCCESS
 }
