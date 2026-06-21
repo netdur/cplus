@@ -3834,6 +3834,14 @@ fn run_clang(
     if cfg!(all(unix, not(target_os = "macos"))) {
         cmd.arg("-lm");
     }
+    // On Windows the async reactor (reactor_windows.cplus) and the socket
+    // stack (netsys_windows.cplus / net.cplus) call into Winsock — WSAPoll,
+    // WSAStartup, recv/send/closesocket/ioctlsocket. ws2_32 is not auto-
+    // linked by the MSVC driver, so request it here. Harmless (an import
+    // table entry) for programs that don't touch sockets.
+    if cfg!(windows) {
+        cmd.arg("-lws2_32");
+    }
     let status = cmd.arg("-o").arg(out).status();
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,

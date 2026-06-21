@@ -30,3 +30,51 @@ fn so_reuseaddr() -> i32 { return 0x4 as i32; }
 // (16 for sockaddr_in) and byte1 = AF_INET (2).
 fn sa_family_byte0() -> u8 { return 16 as u8; }
 fn sa_family_byte1() -> u8 { return 2 as u8; }
+
+// POSIX raw-syscall shims used by net.cplus. Splitting these behind netsys
+// keeps net.cplus platform-neutral: the Windows variant routes them to
+// Winsock (recv/send/closesocket/ioctlsocket) instead.
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+// fcntl is variadic in libc — the third arg is read from the variadic area,
+// not a fixed register. Declaring it fixed-arity silently breaks `F_SETFL`
+// on AArch64-darwin where varargs come from the stack.
+extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+
+fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { read(fd, buf, count) };
+}
+
+fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { write(fd, buf, count) };
+}
+
+fn close_fd(fd: i32) -> i32 {
+    return { close(fd) };
+}
+
+// F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
+fn f_getfl() -> i32 { return 3 as i32; }
+fn f_setfl() -> i32 { return 4 as i32; }
+
+// Flip O_NONBLOCK on fd via fcntl. Returns 0 on success, -1 on error.
+// Idempotent — safe to call repeatedly on the same fd.
+fn set_nonblocking(fd: i32) -> i32 {
+    let flags: i32 = { fcntl(fd, f_getfl(), 0 as i32) };
+    if flags < (0 as i32) {
+        return 0 -% 1 as i32;
+    }
+    let new_flags: i32 = flags|o_nonblock();
+    if new_flags == flags {
+        return 0 as i32;
+    }
+    let rc: i32 = { fcntl(fd, f_setfl(), new_flags) };
+    if rc < (0 as i32) {
+        return 0 -% 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Socket subsystem init — a no-op on POSIX (matches Winsock's WSAStartup).
+fn startup() -> i32 { return 0 as i32; }
