@@ -13156,18 +13156,34 @@ impl<'a> FnState<'a> {
     }
 
     /// v0.0.4 Phase 3 Slice 3A.2: `#reactor_spawn_local(fut)` —
-    /// push a Future's coroutine handle onto the reactor's task queue.
-    /// The Future is consumed (its handle propagates to the reactor).
-    /// Returns Unit.
+    /// take ownership of a Future and let the reactor drive it to
+    /// completion in the background. Returns Unit.
+    ///
+    /// Issue #11 fix: spawn_local must NOT push the handle onto the
+    /// pending queue. Async fns run their body EAGERLY to the first
+    /// suspend point at the call site — there is no initial_suspend (see
+    /// `gen_block_on`) — so by the time spawn_local sees the future its
+    /// task has ALREADY parked itself and is already tracked: registered
+    /// with the reactor (`wait_timer` / `wait_read|write`), self-enqueued
+    /// on the pending queue (`yield_now`), registered as an awaiter
+    /// (`await`), or run to completion. `block_on`'s drain/poll loop
+    /// drives it from there.
+    ///
+    /// Enqueuing it anyway makes `drain_pending` resume a task that is
+    /// parked on a *one-shot* reactor source, running it to completion
+    /// while that source stays armed. When the source later fires,
+    /// `poll_one_event` resumes the now-completed coroutine (its resume
+    /// pointer nulled at final suspend) and the program jumps through
+    /// null → SEGV. So we consume the future (keeping its frame alive —
+    /// `Future` has no destroying drop glue) without enqueuing.
     fn gen_reactor_spawn_local(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
         let (fut_val, fut_ty) = self.gen_expr(&args[0]).expect("spawn_local future arg");
-        // Future[T] is `{ ptr }`. Extract the handle and enqueue.
+        // Extract the handle to consume the moved-in Future; the task is
+        // already tracked by the reactor/pending/awaiter machinery, so we
+        // deliberately do not enqueue it (see the doc comment above).
         let fut_llvm = self.lty(&fut_ty);
         let hdl = self.next_tmp();
         self.emit(&format!("{hdl} = extractvalue {fut_llvm} {fut_val}, 0"));
-        self.emit(&format!(
-            "call void @stdlib_reactor_enqueue_pending_v1(ptr {hdl})"
-        ));
         None
     }
 
