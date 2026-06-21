@@ -3,14 +3,15 @@ name    = "agent_mcp"
 version = "0.0.1"
 edition = "2026"
 
-# The MCP bridge for the agent surface (Theme B, plan.agent-mcp.md): exposes a
-# live agent_appkit `Surface` over a JSON-RPC protocol (describe_ui / actions /
-# events), gated by the agent_core consent `AuthGate`. This crate is the
-# protocol + serialization core; the UDS-by-PID transport is layered on top.
+# The backend-neutral MCP bridge for the agent surface (Theme B): exposes a
+# live UI `Surface` over a JSON-RPC protocol (describe_ui / actions / events),
+# gated by the agent_core consent `AuthGate`. The bridge names no backend — it
+# drives any agent_appkit / agent_win32 / agent_gtk surface through the
+# `agent_core::backend::Backend` fn-pointer vtable (each backend supplies one
+# via its `mcp_backend()`). This crate is the protocol + serialization core;
+# the UDS-by-PID transport is layered on top.
 
 [dependencies]
 stdlib     = "*"
 json       = "*"
-appkit     = "*"
 agent_core = "*"
-agent_appkit = "*"

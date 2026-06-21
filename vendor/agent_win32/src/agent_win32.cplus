@@ -30,6 +30,7 @@ import "stdlib/text" as text;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/events" as events;
+import "agent_core/backend" as mcpb;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -426,4 +427,69 @@ impl Surface {
         }
         return surface::Outcome::NotFound;
     }
+}
+
+// ---- MCP backend vtable -----------------------------------------------------
+//
+// The backend-neutral `agent_core::backend::Backend` for the Win32 surface.
+// Each fn casts the erased `*u8` back to `*Surface`; `navigate` is focus (Win32
+// scrolls to a focused control automatically). `describe` APPENDS into the
+// caller's Vec via the out-pointer (no sret return through the fn-pointer).
+
+fn ctext(s: str) -> text::Text {
+    return s.to_text();
+}
+
+fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
+    let s: *Surface = { p as *Surface };
+    let local: vec::Vec[UiNode] = (*s).describe();
+    var i: usize = 0 as usize;
+    while i < local.len() {
+        match local.at(i) {
+            option::Option[*UiNode]::Some(n) => {
+                (*outv).push(mcpb::UiNode {
+                    id: ctext({ (*n).id }),
+                    role: { (*n).role },
+                    class_name: ctext({ (*n).class_name }),
+                    frame: mcpb::Rect {
+                        x: { (*n).frame.x } as f64,
+                        y: { (*n).frame.y } as f64,
+                        w: { (*n).frame.w } as f64,
+                        h: { (*n).frame.h } as f64,
+                    },
+                    is_hidden: { (*n).is_hidden },
+                    text: ctext({ (*n).text }),
+                    actionable: { (*n).actionable },
+                    parent: { (*n).parent },
+                });
+            }
+            option::Option[*UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn mcp_click(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).click(id);
+}
+
+fn mcp_set_text(p: *u8, id: str, value: str, base: u64) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).set_text(id, value, base);
+}
+
+fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).focus(id);
+}
+
+fn mcp_backend() -> mcpb::Backend {
+    return mcpb::Backend {
+        describe: mcp_describe,
+        click: mcp_click,
+        set_text: mcp_set_text,
+        navigate: mcp_navigate,
+    };
 }

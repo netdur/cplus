@@ -19983,25 +19983,25 @@ fn main() -> i32 {
     var surf: ui::Surface = ui::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
-    let d: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
+    let d: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
     if !d.contains("save-btn") { return 1; }
     if !d.contains("\"role\":\"button\"") { return 2; }
 
-    let c: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}");
+    let c: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}");
     if { outcome_of(c) } != "allowed" { return 3; }
 
-    let c2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"ghost\"},\"id\":3}");
+    let c2: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"ghost\"},\"id\":3}");
     if { outcome_of(c2) } != "not_found" { return 4; }
 
-    let s1: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"hi\",\"base_version\":0},\"id\":4}");
+    let s1: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"hi\",\"base_version\":0},\"id\":4}");
     if { outcome_of(s1) } != "allowed" { return 5; }
-    let s2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"x\",\"base_version\":0},\"id\":5}");
+    let s2: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"x\",\"base_version\":0},\"id\":5}");
     if { outcome_of(s2) } != "version_conflict" { return 6; }
 
-    let denied: text::Text = mcp::handle_request(surf, sub, auth::deny_all(), "{\"method\":\"describe_ui\",\"params\":{},\"id\":6}");
+    let denied: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::deny_all(), "{\"method\":\"describe_ui\",\"params\":{},\"id\":6}");
     if !has_error(denied) { return 7; }
 
-    let bad: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"frobnicate\",\"params\":{},\"id\":7}");
+    let bad: text::Text = mcp::handle_request({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub,auth::serve(allow_all), "{\"method\":\"frobnicate\",\"params\":{},\"id\":7}");
     if !has_error(bad) { return 8; }
 
     pool.drain();
@@ -20062,7 +20062,7 @@ fn main() -> i32 {
     { write(client, #str_ptr(req), #str_len(req)); }
     { shutdown(client, 1 as i32); }
 
-    mcp::serve_fd(surf, sub, allow_all, server);
+    mcp::serve_fd({ #addr_of(surf) as *u8 }, ui::mcp_backend(), sub, allow_all, server);
 
     var rbuf: [u8; 4096] = [0 as u8; 4096];
     let n: i64 = { read(client, #addr_of(rbuf[0]), 4096 as usize) };

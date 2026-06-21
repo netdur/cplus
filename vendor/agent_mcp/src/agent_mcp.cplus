@@ -17,7 +17,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "json/json" as json;
-import "agent_appkit/agent_appkit" as ui;
+import "agent_core/backend" as backend;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/events" as events;
@@ -87,12 +87,12 @@ fn verb_to_str(v: events::Verb) -> str {
 // are Copy) — never moving the non-Copy `UiNode` out of the Vec, which would
 // double-free its owned `Text`s. `parent` is the index into the node array, or
 // JSON null for the window root.
-fn node_to_json(p: *ui::UiNode) -> json::Value {
+fn node_to_json(p: *backend::UiNode) -> json::Value {
     var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
-    frame.push(member("x", jnum({ (*p).frame.origin.x })));
-    frame.push(member("y", jnum({ (*p).frame.origin.y })));
-    frame.push(member("w", jnum({ (*p).frame.size.width })));
-    frame.push(member("h", jnum({ (*p).frame.size.height })));
+    frame.push(member("x", jnum({ (*p).frame.x })));
+    frame.push(member("y", jnum({ (*p).frame.y })));
+    frame.push(member("w", jnum({ (*p).frame.w })));
+    frame.push(member("h", jnum({ (*p).frame.h })));
 
     let parent_val: json::Value = match { (*p).parent } {
         option::Option[usize]::Some(pi) => jnum(pi as f64),
@@ -112,15 +112,15 @@ fn node_to_json(p: *ui::UiNode) -> json::Value {
 }
 
 // The whole describe_ui snapshot as a JSON array of node objects.
-fn describe_to_json(nodes: vec::Vec[ui::UiNode]) -> json::Value {
+fn describe_to_json(nodes: vec::Vec[backend::UiNode]) -> json::Value {
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
     var i: usize = 0 as usize;
     while i < nodes.len() {
         match nodes.at(i) {
-            option::Option[*ui::UiNode]::Some(p) => {
+            option::Option[*backend::UiNode]::Some(p) => {
                 arr.push(node_to_json(p));
             }
-            option::Option[*ui::UiNode]::None => {}
+            option::Option[*backend::UiNode]::None => {}
         }
         i = i +% (1 as usize);
     }
@@ -164,7 +164,8 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
 // gated on the External consent channel first — a rejected gate yields a
 // consent-denied error and never touches the surface.
 fn dispatch(
-    ref surf: ui::Surface,
+    surf: *u8,
+    vt: backend::Backend,
     ref sub: events::Subscriber,
     gate: auth::AuthGate,
     method: str,
@@ -176,23 +177,27 @@ fn dispatch(
     }
 
     if method == "describe_ui" {
-        return ok_response(id, describe_to_json(surf.describe()));
+        // The vtable APPENDS into a caller-owned Vec via an out-pointer (it
+        // returns void, not an sret Vec — see backend::Backend for why).
+        var nodes: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+        (vt.describe)(surf, { #addr_of(nodes) });
+        return ok_response(id, describe_to_json(nodes));
     }
     if method == "click" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.click({ target });
+        let o: surface::Outcome = (vt.click)(surf, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "scroll_to" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.scroll_to({ target });
+        let o: surface::Outcome = (vt.navigate)(surf, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "set_text" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
         let value: text::Text = json::as_str(json::object_get(params, "value"));
         let base: u64 = json::as_number(json::object_get(params, "base_version")) as u64;
-        let o: surface::Outcome = surf.set_text({ target }, { value }, base);
+        let o: surface::Outcome = (vt.set_text)(surf, { target }, { value }, base);
         return ok_response(id, outcome_result(o));
     }
     if method == "poll_event" {
@@ -216,7 +221,8 @@ fn dispatch(
 // or missing method yields a JSON-RPC error envelope. This is the unit the
 // transport reads/writes per line.
 fn handle_request(
-    ref surf: ui::Surface,
+    surf: *u8,
+    vt: backend::Backend,
     ref sub: events::Subscriber,
     gate: auth::AuthGate,
     line: str,
@@ -226,7 +232,7 @@ fn handle_request(
             let method_t: text::Text = json::as_str(json::object_get(req, "method"));
             let id: f64 = json::as_number(json::object_get(req, "id"));
             let params: json::Value = json::object_get(req, "params");
-            let resp: json::Value = dispatch(surf, sub, gate, { method_t }, params, id);
+            let resp: json::Value = dispatch(surf, vt, sub, gate, { method_t }, params, id);
             resp.to_text()
         }
         result::Result[json::Value, json::ParseError]::Err(_e) => {
@@ -304,7 +310,8 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
 // (re-arming a fresh gate from `policy` per request), and write the response
 // line, until the peer closes (EOF). The connection fd is the caller's to close.
 fn serve_fd(
-    ref surf: ui::Surface,
+    surf: *u8,
+    vt: backend::Backend,
     ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,
     fd: i32,
@@ -316,7 +323,7 @@ fn serve_fd(
             break;
         }
         let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
-        let resp: text::Text = handle_request(surf, sub, auth::serve(policy), line);
+        let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
         let rs: str = { resp };
         write_all(fd, #str_ptr(rs), #str_len(rs));
         let nl: u8 = '\n' as u8;
@@ -330,7 +337,8 @@ fn serve_fd(
 // negative code on a setup error (socket/bind/listen). `path` must be ≤ 100
 // bytes (sun_path limit). Removes the socket file on entry (stale) and exit.
 fn serve_uds(
-    ref surf: ui::Surface,
+    surf: *u8,
+    vt: backend::Backend,
     ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,
     path: str,
@@ -368,7 +376,7 @@ fn serve_uds(
         if conn < (0 as i32) {
             break;
         }
-        serve_fd(surf, sub, policy, conn);
+        serve_fd(surf, vt, sub, policy, conn);
         { close(conn); }
     }
     { close(fd); }

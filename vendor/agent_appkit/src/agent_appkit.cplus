@@ -30,6 +30,7 @@ import "appkit/convert" as convert;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/events" as events;
+import "agent_core/backend" as mcpb;
 
 fn null() -> *u8 {
     return { 0 as *u8 };
@@ -594,4 +595,78 @@ impl Surface {
         }
         return surface::Outcome::NotFound;
     }
+}
+
+// ---- MCP backend vtable -----------------------------------------------------
+//
+// The backend-neutral `agent_core::backend::Backend` that lets the
+// backend-agnostic `agent_mcp` bridge drive an AppKit `Surface`. Each fn casts
+// the type-erased `*u8` back to `*Surface` and calls the real method (C+ has no
+// generic method dispatch on user types — a fn-pointer vtable is how runtime
+// polymorphism is done; calling the mutating `set_text` through the erased
+// pointer relies on the raw-pointer-deref-is-a-writable-place rule).
+
+// Clone a borrowed `Text` field (via its `str` view) into a fresh owned `Text`.
+fn ctext(s: str) -> text::Text {
+    return s.to_text();
+}
+
+// describe → the neutral node list. Converts AppKit's f64 `rt::Rect` frame to
+// the neutral `Rect`, reading each owned node through a pointer and cloning its
+// `Text`s (never moving them out of the Vec, which would double-free).
+fn mcp_describe(p: *u8, outv: *vec::Vec[mcpb::UiNode]) {
+    let s: *Surface = { p as *Surface };
+    let local: vec::Vec[UiNode] = (*s).describe();
+    var i: usize = 0 as usize;
+    while i < local.len() {
+        match local.at(i) {
+            option::Option[*UiNode]::Some(n) => {
+                (*outv).push(mcpb::UiNode {
+                    id: ctext({ (*n).id }),
+                    role: { (*n).role },
+                    class_name: ctext({ (*n).class_name }),
+                    frame: mcpb::Rect {
+                        x: { (*n).frame.origin.x },
+                        y: { (*n).frame.origin.y },
+                        w: { (*n).frame.size.width },
+                        h: { (*n).frame.size.height },
+                    },
+                    is_hidden: { (*n).is_hidden },
+                    text: ctext({ (*n).text }),
+                    actionable: { (*n).actionable },
+                    parent: { (*n).parent },
+                });
+            }
+            option::Option[*UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn mcp_click(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).click(id);
+}
+
+fn mcp_set_text(p: *u8, id: str, value: str, base: u64) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).set_text(id, value, base);
+}
+
+// AppKit's navigate is scroll-into-view (Win32/GTK focus instead).
+fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).scroll_to(id);
+}
+
+// The vtable agent_mcp drives an AppKit surface through. Pass the surface as
+// `{ #addr_of(surf) as *u8 }` alongside this to `agent_mcp::serve_uds` / etc.
+fn mcp_backend() -> mcpb::Backend {
+    return mcpb::Backend {
+        describe: mcp_describe,
+        click: mcp_click,
+        set_text: mcp_set_text,
+        navigate: mcp_navigate,
+    };
 }
