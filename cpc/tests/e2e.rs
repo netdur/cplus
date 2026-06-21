@@ -16805,17 +16805,27 @@ fn export_ref_param_writes_back_through_c() {
     )
     .unwrap();
     let bin = dir.join("c_user");
+    let libdir = dir.join("target/debug");
     let st = Command::new("clang")
         .arg(&c_src)
         .arg("-L")
-        .arg(dir.join("target/debug"))
+        .arg(&libdir)
         .arg("-lreflib")
+        // `crate-type = "both"` emits both `.a` and `.so`; the linker prefers
+        // the `.so`, so embed an rpath to the lib dir so the loader resolves
+        // `libreflib.so` at runtime on Linux (matching macOS's @rpath dylib).
+        .arg(format!("-Wl,-rpath,{}", libdir.display()))
         .arg("-o")
         .arg(&bin)
         .status()
         .expect("clang link");
     assert!(st.success(), "C link against the C+ lib failed");
-    let run = Command::new(&bin).status().expect("run c_user");
+    // Belt-and-suspenders for loaders that ignore rpath: also point
+    // LD_LIBRARY_PATH at the lib dir.
+    let run = Command::new(&bin)
+        .env("LD_LIBRARY_PATH", &libdir)
+        .status()
+        .expect("run c_user");
     assert_eq!(
         run.code(),
         Some(0),
