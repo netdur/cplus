@@ -2778,6 +2778,21 @@ fn classify_c_abi_impl(
     }
 }
 
+/// Whether an `Indirect`-class aggregate argument is lowered via LLVM `byval`
+/// (the x86_64-SysV / Xtensa "MEMORY-class, materialized on the caller's stack"
+/// convention) rather than as a plain `ptr` to a caller-allocated copy.
+///
+/// Microsoft x64 passes every aggregate whose size is not 1/2/4/8 bytes *by
+/// reference* — a pointer to a caller copy lives in a GPR (rcx/rdx/r8/r9), and
+/// clang lowers it to a bare `declare …(ptr)` / `call …(ptr %copy)`, never
+/// `byval`. Emitting `byval` on Win64 lays the struct out on the stack where a
+/// clang-compiled callee expects a pointer in a register — a silent ABI break
+/// on the first field access. So Win64 routes to the same bare-`ptr` path as
+/// aarch64-darwin. Xtensa is unaffected (there is no Windows/Xtensa target).
+fn x86_64_indirect_uses_byval() -> bool {
+    active_target().arch == TargetArch::X86_64 && active_target().os != TargetOs::Windows
+}
+
 fn return_passes_by_sret(ty: &Ty) -> bool {
     matches!(ty, Ty::String)
 }
@@ -5486,11 +5501,12 @@ fn gen_function(
             // through a bare pointer.
             match classify_c_abi(pty, types) {
                 CAbiClass::Indirect => {
-                    if active_target().arch == TargetArch::X86_64 {
+                    if x86_64_indirect_uses_byval() {
                         let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                         let inner = llvm_ty(pty, types);
                         out.push_str(&format!("ptr byval({inner}) align {al}"));
                     } else {
+                        // Win64 (and aarch64-darwin): plain `ptr` to a caller copy.
                         out.push_str("ptr");
                     }
                 }
@@ -5671,14 +5687,12 @@ fn gen_function(
                 // doesn't use byval — caller and callee implicitly share
                 // the layout via the bare pointer. Xtensa (per the esp-clang
                 // probe) passes >24-byte aggregates `byval` like sysv.
-                if matches!(
-                    active_target().arch,
-                    TargetArch::X86_64 | TargetArch::Xtensa
-                ) {
+                if x86_64_indirect_uses_byval() || active_target().arch == TargetArch::Xtensa {
                     let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                     let inner = llvm_ty(pty, types);
                     write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
                 } else {
+                    // Win64 (and aarch64-darwin): plain `ptr` to a caller copy.
                     write!(out, "ptr %{}", llvm_idx).unwrap();
                 }
             }
@@ -12048,9 +12062,10 @@ impl<'a> FnState<'a> {
                         // stack via `byval`; aarch64-darwin (and the Xtensa
                         // import convention) share the slot through a bare
                         // pointer.
-                        let ty_str = if active_target().arch == TargetArch::X86_64 {
+                        let ty_str = if x86_64_indirect_uses_byval() {
                             format!("ptr byval({pty_lty}) align {al}")
                         } else {
+                            // Win64 (and aarch64-darwin): plain `ptr` to the copy.
                             "ptr".to_string()
                         };
                         arg_vals.push((slot, ty_str));
@@ -12353,10 +12368,11 @@ impl<'a> FnState<'a> {
                             // pointer; x86_64-sysv passes MEMORY-class aggregates
                             // on the stack via `byval` — matching the import-decl
                             // side and the clang callee.
-                            let ty_str = if active_target().arch == TargetArch::X86_64 {
+                            let ty_str = if x86_64_indirect_uses_byval() {
                                 let inner = self.lty(pty);
                                 format!("ptr byval({inner}) align {al}")
                             } else {
+                                // Win64 (and aarch64-darwin): plain `ptr` to the copy.
                                 "ptr".to_string()
                             };
                             arg_vals.push((slot, ty_str));
@@ -18680,10 +18696,20 @@ mod tests {
             .lines()
             .find(|l| l.contains("i32 @use_p("))
             .expect("@use_p must be emitted");
-        assert!(
-            line.contains("i64"),
-            "expected C-ABI-coerced i64 param: {line}"
-        );
+        // Microsoft x64 coerces a by-value aggregate to an integer of its
+        // *exact* size (a 4-byte struct → `i32`), where SysV/aarch64-darwin
+        // widen the eightbyte to `i64`. Either way it's a plain scalar param.
+        if cfg!(all(target_arch = "x86_64", windows)) {
+            assert!(
+                line.contains("(i32") && !line.contains("i64"),
+                "win64: 4-byte struct param coerces to exact-size i32: {line}"
+            );
+        } else {
+            assert!(
+                line.contains("i64"),
+                "expected C-ABI-coerced i64 param: {line}"
+            );
+        }
         assert!(
             !line.contains("noundef"),
             "coerced scalar param must not carry noundef: {line}"
@@ -19551,7 +19577,11 @@ mod tests {
                  return 0;\n\
              }",
         );
-        let (want_decl, want_call) = if active_target().arch == TargetArch::X86_64 {
+        // x86_64-SysV passes the MEMORY-class aggregate on the stack via
+        // `byval`; aarch64-darwin AND Microsoft x64 pass a bare `ptr` to the
+        // caller's copy (Win64 by-reference in a GPR — see
+        // `x86_64_indirect_uses_byval`).
+        let (want_decl, want_call) = if x86_64_indirect_uses_byval() {
             (
                 "declare i64 @take_s24(ptr byval(%S24) align 8)",
                 "= call i64 @take_s24(ptr byval(%S24) align 8 ",
@@ -20538,7 +20568,8 @@ mod tests {
         );
         // 16-byte two-eightbyte param coerces to the target's register-pair
         // type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }` on x86_64-sysv.
-        // On Windows (Microsoft x64) it is passed indirectly (`ptr` byval).
+        // On Windows (Microsoft x64) it is passed indirectly — a bare `ptr`
+        // to the caller's copy (by reference, no byval).
         let expected = if cfg!(all(target_arch = "x86_64", windows)) {
             "define i64 @sum(ptr"
         } else if cfg!(target_arch = "x86_64") {
