@@ -70,7 +70,7 @@ jobs:
           extern fn printf(fmt: *u8, ...) -> i32;
           fn main() -> i32 {
               let msg: str = "hello from C+ on Windows\n";
-              unsafe { printf(#str_ptr(msg)); }
+              { printf(#str_ptr(msg)); }
               return 42;
           }
           '@ | Set-Content -Encoding ascii $src
