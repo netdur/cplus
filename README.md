@@ -52,7 +52,7 @@ xcode-select --install
 
 The front-end-only commands (`cpc check`, `cpc --emit-ll`, `cpc lsp`, `cpc graph`, `cpc query`, `cpc mcp`, `cpc fmt`, `cpc doc`) are self-contained and need no external tools.
 
-C+ is developed and tested on macOS / Apple Silicon (`aarch64-apple-darwin`) against **Apple clang 21.0.0** — the configuration the test suite runs against. Other clang versions and targets may work but are not yet part of the tested matrix.
+C+ is developed and tested on macOS / Apple Silicon (`aarch64-apple-darwin`) against **Apple clang 21.0.0** — the configuration the test suite runs against. As of v0.0.25 there are working **Linux** (`x86_64`, GTK 4 / libadwaita) and **Windows** (`x86_64-pc-windows-msvc`, Win32) ports; those targets and other clang versions may work but are not yet part of the tested matrix.
 
 ### Language Tools
 

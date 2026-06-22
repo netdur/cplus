@@ -3,6 +3,59 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.25 — 2026-06-22
+
+> A platforms-and-UI release. It also breaks the language feature freeze: the
+> freeze held through the v0.0.23 hardening and the v0.0.24 vocabulary release,
+> but building real cross-platform UI needed a new binding form — struct
+> destructuring — so the freeze did not hold and that feature is added here.
+> Otherwise: Linux (GTK 4 / libadwaita) and Windows (Win32) join macOS, the
+> x86_64 System V C ABI is completed, and the `facet` UI framework and the agent
+> surface span all three platforms.
+
+### Platforms
+- **Linux**: GTK 4 bindings (`vendor/gtk`) and libadwaita 1 (`vendor/adwaita`).
+- **Windows** (`x86_64-pc-windows-msvc`): a native Win32 GUI binding
+  (`vendor/win32`) and async socket I/O via a WSAPoll readiness reactor.
+- The **x86_64 System V C ABI** is completed for fn-pointer and extern-import
+  calls (struct args and returns), so non-macOS targets pass the C-ABI suite.
+
+### UI & the agent surface
+- **`facet`** + **`facet_appkit`**: a cross-platform native UI framework. UI is
+  written declaratively in `@facet { ... }` builder blocks (`label` / `button` /
+  `stack` + an `.on_click` modifier) and rendered to native AppKit widgets
+  (FACET.1, AppKit-only so far).
+- The **agent surface** gains Windows (`agent_win32`) and GTK (`agent_gtk`)
+  backends alongside AppKit — describe-UI and authorized actions over a live
+  native widget tree, reusing `agent_core` unchanged.
+- **`agent_mcp` is backend-neutral**: one MCP (JSON-RPC) bridge drives any
+  AppKit / Win32 / GTK surface through a fn-pointer vtable.
+
+### Language
+- **Struct destructuring** in `let` / `var`: `let TYPE { f1, f2 } = expr;` moves
+  each named field into its own binding (mutable with `var`). Sound where a bare
+  field move is rejected. The field list must be exhaustive, and a struct with
+  an explicit `drop` cannot be destructured (E0509). This is the feature that
+  broke the freeze.
+
+### Soundness & correctness
+- Indirect (fn-pointer) calls now apply the sret return ABI to non-Copy
+  aggregate returns — a fn-pointer that returned a `drop`-carrying struct by
+  value crashed (SIGBUS); it now returns correctly.
+- A raw-pointer deref `*p` is a writable place for `ref` receivers and `ref`
+  arguments, matching the existing `(*p).field = v` rule — `(*p).mut_method()`
+  and `f(*p)` no longer raise a spurious E0328.
+- The executor no longer re-enqueues an already-parked `spawn_local`'d task — a
+  spawned task plus a nested `await`, both suspended on reactor sources, could
+  resume a completed coroutine and segfault (#11).
+- Pointer-typed `static` initializers emit as `null` / `inttoptr` instead of an
+  invalid aggregate.
+
+### Tooling
+- `cpc init` / `cpc pm` / `cpc skill` — project scaffolding and package DX;
+  `cpc init` pins the scaffolded stdlib dependency to the toolchain version.
+- A WASM browser-playground backend runs C+ client-side (scalar core).
+
 ## v0.0.24 — 2026-06-20
 
 > A vocabulary release: the keyword surface was revised for clarity and for
