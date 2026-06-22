@@ -94,6 +94,9 @@ jobs:
             target/release/cpc-lsp.exe
             target/release/cpc-bindgen.exe
           if-no-files-found: error
+          # Cap accumulation against the account storage quota — this per-run
+          # binary upload was the main churn (one ~3.7 MB artifact every run).
+          retention-days: 14
 
       - name: Attach binaries to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
