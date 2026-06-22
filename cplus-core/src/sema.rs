@@ -3899,6 +3899,9 @@ impl SemaCx<'_> {
                 self.walk_expr_for_param_compare(e, param_idents)
             }
             StmtKind::Let { init: None, .. } => {}
+            StmtKind::LetDestructure { init, .. } => {
+                self.walk_expr_for_param_compare(init, param_idents)
+            }
             StmtKind::Expr(e)
             | StmtKind::Return(Some(e))
             | StmtKind::Defer(e)
@@ -5329,6 +5332,118 @@ impl SemaCx<'_> {
 
     fn check_stmt(&mut self, s: &Stmt) {
         match &s.kind {
+            StmtKind::LetDestructure {
+                mutable,
+                type_name,
+                fields,
+                init,
+            } => {
+                let init_ty = self.check_expr(init, None);
+                // Resolve the struct from the VALUE's type (struct_by_name is
+                // keyed by mangled names); the annotation just has to agree.
+                let resolved = match &init_ty {
+                    Ty::Struct(id) => Some(*id),
+                    Ty::Error => None,
+                    other => {
+                        self.err(
+                            "E0308",
+                            format!(
+                                "cannot destructure a value of non-struct type `{}`",
+                                other.name()
+                            ),
+                            init.span,
+                        );
+                        None
+                    }
+                };
+                if let Some(sid) = resolved {
+                    // The annotation must name the struct being destructured.
+                    // The stored name is module-qualified (`src.main.R`); compare
+                    // on the trailing segment against the source-level name.
+                    let sdef_name = self.structs[sid.0 as usize].name.clone();
+                    let bare = sdef_name.rsplit('.').next().unwrap_or(sdef_name.as_str());
+                    if bare != type_name.name {
+                        self.err(
+                            "E0308",
+                            format!(
+                                "destructuring pattern is `{}`, but the value has type `{}`",
+                                type_name.name, sdef_name
+                            ),
+                            type_name.span,
+                        );
+                    }
+                    // Restriction: a struct with an explicit `fn drop` cannot be
+                    // destructured — its destructor must run as a unit, not be
+                    // bypassed by decomposing the value.
+                    if self.structs[sid.0 as usize].is_drop {
+                        self.err(
+                            "E0509",
+                            format!(
+                                "cannot destructure `{}`: it has an explicit `drop` (its destructor must run as a unit — bind the whole value instead)",
+                                type_name.name
+                            ),
+                            type_name.span,
+                        );
+                    }
+                    // The destructure consumes the WHOLE value (not a partial
+                    // field move) — so it is sound where a bare field move is
+                    // E0509-rejected. Mark the source moved.
+                    self.mark_moved_through_wrappers(init, &init_ty);
+                    let struct_fields = self.structs[sid.0 as usize].fields.clone();
+                    // Bind each named field; reject unknown names + same-scope clashes.
+                    for binding in fields {
+                        match struct_fields.iter().find(|(n, _, _)| n == &binding.name) {
+                            Some((_, fty, _)) => {
+                                if self.scopes.last().unwrap().contains_key(&binding.name) {
+                                    self.err(
+                                        "E0363",
+                                        format!(
+                                            "`{}` is already declared in this scope; pick a new name (same-block shadowing is not allowed)",
+                                            binding.name
+                                        ),
+                                        binding.span,
+                                    );
+                                }
+                                let fty = fty.clone();
+                                self.scopes.last_mut().unwrap().insert(
+                                    binding.name.clone(),
+                                    LocalInfo {
+                                        ty: fty,
+                                        mutable: *mutable,
+                                        moved: false,
+                                        assigned: true,
+                                        borrow_roots: BTreeSet::new(),
+                                        owns_value: true,
+                                    },
+                                );
+                            }
+                            None => {
+                                self.err(
+                                    "E0320",
+                                    format!(
+                                        "struct `{}` has no field `{}`",
+                                        type_name.name, binding.name
+                                    ),
+                                    binding.span,
+                                );
+                            }
+                        }
+                    }
+                    // Exhaustive: every field must be bound (no `..` in the MVP).
+                    for (fname, _, _) in &struct_fields {
+                        if !fields.iter().any(|b| &b.name == fname) {
+                            self.err(
+                                "E0321",
+                                format!(
+                                    "non-exhaustive destructure of `{}`: field `{}` is not bound (every field must be named)",
+                                    type_name.name, fname
+                                ),
+                                s.span,
+                            );
+                        }
+                    }
+                }
+            }
             StmtKind::Let {
                 mutable,
                 name,
@@ -14446,6 +14561,7 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
         match &stmt.kind {
             StmtKind::Let { init: Some(e), .. } => walk_variant_patterns_in_expr(e, f),
             StmtKind::Let { init: None, .. } => {}
+            StmtKind::LetDestructure { init, .. } => walk_variant_patterns_in_expr(init, f),
             StmtKind::Expr(e) => walk_variant_patterns_in_expr(e, f),
             StmtKind::Return(Some(e)) => walk_variant_patterns_in_expr(e, f),
             StmtKind::Return(None) => {}
@@ -15828,6 +15944,7 @@ fn collect_effects_stmt(stmt: &Stmt, out: &mut BodyEffects) {
                 collect_effects_expr(e, out);
             }
         }
+        StmtKind::LetDestructure { init, .. } => collect_effects_expr(init, out),
         StmtKind::Return(Some(e)) => collect_effects_expr(e, out),
         StmtKind::Return(None) => {}
         StmtKind::While { cond, body, .. } => {
@@ -16124,6 +16241,7 @@ fn stmt_can_break(s: &Stmt) -> bool {
         | StmtKind::WhileLet { .. } => false,
         StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => expr_can_break(e),
         StmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_can_break),
+        StmtKind::LetDestructure { init, .. } => expr_can_break(init),
         StmtKind::IfLet {
             scrutinee,
             body,
@@ -18590,6 +18708,48 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert!(
             !codes.contains(&"E0328"),
             "spurious E0328 on `ref` arg `(*ptr)`: {codes:?}"
+        );
+    }
+
+    // Struct destructuring: `let TYPE { fields } = expr;` binds the fields by
+    // moving them out (sound where a bare field move is E0509-rejected).
+    #[test]
+    fn destructure_binds_fields_clean() {
+        let codes = errors(
+            "struct Pair { a: i32, b: i32 }\n\
+             fn f(take p: Pair) -> i32 { let Pair { a, b } = p; return a + b; }",
+        );
+        assert!(
+            codes.is_empty(),
+            "plain destructure should be clean: {codes:?}"
+        );
+    }
+
+    // A struct with an explicit `fn drop` cannot be destructured (its destructor
+    // must run as a unit) — E0509.
+    #[test]
+    fn destructure_explicit_drop_e0509() {
+        let codes = errors(
+            "struct R { x: i32 }\n\
+             impl R { fn drop(ref this) { return; } }\n\
+             fn f(take r: R) -> i32 { let R { x } = r; return x; }",
+        );
+        assert!(
+            codes.contains(&"E0509"),
+            "destructuring an explicit-drop struct should be E0509: {codes:?}"
+        );
+    }
+
+    // Every field must be bound (no `..` in the MVP) — E0321.
+    #[test]
+    fn destructure_non_exhaustive_e0321() {
+        let codes = errors(
+            "struct Pair { a: i32, b: i32 }\n\
+             fn f(take p: Pair) -> i32 { let Pair { a } = p; return a; }",
+        );
+        assert!(
+            codes.contains(&"E0321"),
+            "non-exhaustive destructure should be E0321: {codes:?}"
         );
     }
 

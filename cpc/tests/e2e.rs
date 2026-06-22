@@ -15497,6 +15497,73 @@ fn fnptr_returning_drop_struct_no_crash() {
     );
 }
 
+/// Struct destructuring (`let TYPE { fields } = expr;`) — the builder-pattern
+/// extract that a bare field move (E0509) rejects. Destructures a `Vec`-owning
+/// (auto-`drop`) struct, moves the `Vec` out, and uses it. Built under `--asan`:
+/// the destructure must move the `Vec` exactly once (no double-free), so a wrong
+/// drop would surface as a DEADLYSIGNAL rather than a clean exit 42.
+#[test]
+fn struct_destructure_moves_vec_out_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"d\"\n\n[[bin]]\nname = \"d\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for (m, src) in [
+        ("vec", include_str!("../../vendor/stdlib/src/vec.cplus")),
+        ("option", include_str!("../../vendor/stdlib/src/option.cplus")),
+        ("iterator", include_str!("../../vendor/stdlib/src/iterator.cplus")),
+    ] {
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{m}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/option\" as option;\n\
+         struct Builder { children: vec::Vec[i64] }\n\
+         fn take_inner(take b: Builder) -> vec::Vec[i64] {\n\
+             let Builder { children } = b;\n\
+             return children;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var b: Builder = Builder { children: vec::new::[i64]() };\n\
+             b.children.push(40 as i64); b.children.push(2 as i64);\n\
+             let v: vec::Vec[i64] = take_inner(b);\n\
+             var s: i64 = 0 as i64; var i: usize = 0 as usize;\n\
+             while i < v.len() {\n\
+                 match v.at(i) { option::Option[*i64]::Some(p) => { s = s +% { *p }; } option::Option[*i64]::None => {} }\n\
+                 i = i +% (1 as usize);\n\
+             }\n\
+             return s as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build --asan");
+    assert!(st.success(), "struct-destructure build failed");
+    let run = Command::new(dir.join("target/debug/d"))
+        .status()
+        .expect("run d");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "destructure must move the Vec out exactly once (40+2), ASan-clean"
+    );
+}
+
 /// v0.0.5 Phase 2B: `gen fn iter(self) -> T` on a user struct.
 /// Mirror of Phase 4's `gen fn` lowering, threaded through the method
 /// path (`check_method` + `gen_gen_method`). Verifies:

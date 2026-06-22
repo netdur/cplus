@@ -1081,6 +1081,7 @@ fn visit_ident_calls_in_block(
         match &stmt.kind {
             StmtKind::Let { init: Some(e), .. } => visit_ident_calls(e, f),
             StmtKind::Let { init: None, .. } => {}
+            StmtKind::LetDestructure { init, .. } => visit_ident_calls(init, f),
             StmtKind::Expr(e) => visit_ident_calls(e, f),
             StmtKind::Return(e) => {
                 if let Some(e) = e {
@@ -1707,6 +1708,25 @@ fn rewrite_stmt(
                     struct_lookup,
                 )
             }),
+        },
+        StmtKind::LetDestructure {
+            mutable,
+            type_name,
+            fields,
+            init,
+        } => StmtKind::LetDestructure {
+            mutable: *mutable,
+            type_name: type_name.clone(),
+            fields: fields.clone(),
+            init: rewrite_expr(
+                init,
+                subst,
+                generic_names,
+                inst_lookup,
+                mono,
+                type_name_of,
+                struct_lookup,
+            ),
         },
         StmtKind::Return(opt) => StmtKind::Return(opt.as_ref().map(|e| {
             rewrite_expr(
@@ -2871,6 +2891,7 @@ fn rewrite_alias_stmt(s: &mut Stmt, aliases: &std::collections::BTreeMap<String,
                 rewrite_alias_expr(e, aliases);
             }
         }
+        StmtKind::LetDestructure { init, .. } => rewrite_alias_expr(init, aliases),
         StmtKind::Return(opt) => {
             if let Some(e) = opt {
                 rewrite_alias_expr(e, aliases);

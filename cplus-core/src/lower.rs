@@ -204,6 +204,7 @@ impl Lower {
                     self.lower_expr(e);
                 }
             }
+            StmtKind::LetDestructure { init, .. } => self.lower_expr(init),
             StmtKind::Return(opt) => {
                 if let Some(e) = opt {
                     self.lower_expr(e);
@@ -980,6 +981,7 @@ impl Lower {
                     self.resolve_lens_in_expr(e, consts);
                 }
             }
+            StmtKind::LetDestructure { init, .. } => self.resolve_lens_in_expr(init, consts),
             StmtKind::Return(opt) => {
                 if let Some(e) = opt {
                     self.resolve_lens_in_expr(e, consts);
@@ -1282,6 +1284,7 @@ fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Ty
                 subst_expr(e, consts);
             }
         }
+        StmtKind::LetDestructure { init, .. } => subst_expr(init, consts),
         StmtKind::Return(opt) => {
             if let Some(e) = opt {
                 subst_expr(e, consts);

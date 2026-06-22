@@ -1967,6 +1967,10 @@ impl Parser {
                 span: tok.span,
             });
         }
+        // `let TYPE { ... } = e;` — struct destructuring.
+        if self.at_destructure_binding() {
+            return self.parse_let_destructure(false, start);
+        }
         let mutable = false;
         // `let _ = expr;` — a discard binding: evaluate `expr` (for its effect /
         // to consume a must-use result) and drop it at scope exit. Synthesize a
@@ -2018,6 +2022,10 @@ impl Parser {
     /// hard switch.
     fn parse_var_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.bump().span; // consume the `var` identifier
+        // `var TYPE { ... } = e;` — struct destructuring.
+        if self.at_destructure_binding() {
+            return self.parse_let_destructure(true, start);
+        }
         let name = if self.at(&TokenKind::Underscore) {
             let tok = self.expect(&TokenKind::Underscore, "`_`")?;
             Ident {
@@ -2044,6 +2052,53 @@ impl Parser {
                 mutable: true,
                 name,
                 ty,
+                init,
+            },
+            span: start.merge(end),
+        })
+    }
+
+    /// True when the current position starts a struct-destructuring binding:
+    /// `TYPE {` — a (simple-name) type path immediately followed by `{`. Lets
+    /// `let`/`var` dispatch to [`Self::parse_let_destructure`] vs an ordinary
+    /// `let NAME ...` binding (where the name is followed by `:`/`=`/`;`).
+    fn at_destructure_binding(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Ident(_))
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                Some(&TokenKind::LBrace)
+            )
+    }
+
+    /// Parse `let`/`var` struct destructuring: `TYPE { f1, f2, ... } = INIT;`.
+    /// `mutable` (let=false / var=true) applies to every bound field. The field
+    /// list is exhaustive — sema checks it covers exactly TYPE's fields; there
+    /// is no `..` and TYPE must be a simple name (MVP).
+    fn parse_let_destructure(
+        &mut self,
+        mutable: bool,
+        start: Span,
+    ) -> Result<Stmt, ParseError> {
+        let type_name = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace, "`{`")?;
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            let f = self.expect_ident()?;
+            self.reject_reserved_binding_name(&f)?;
+            fields.push(f);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace, "`}`")?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let init = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt {
+            kind: StmtKind::LetDestructure {
+                mutable,
+                type_name,
+                fields,
                 init,
             },
             span: start.merge(end),

@@ -1012,6 +1012,9 @@ fn check_stmt_returns_e3(
             Some(e) => check_expr_returns_e3(e, param_names, roots, found),
             None => true,
         },
+        StmtKind::LetDestructure { init, .. } => {
+            check_expr_returns_e3(init, param_names, roots, found)
+        }
         StmtKind::While { cond, body, .. } => {
             check_expr_returns_e3(cond, param_names, roots, found)
                 && check_block_returns_e3(body, param_names, roots, found)
@@ -1212,6 +1215,7 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
             Some(e) => check_expr_returns(e, root, found),
             None => true,
         },
+        StmtKind::LetDestructure { init, .. } => check_expr_returns(init, root, found),
         StmtKind::While { cond, body, .. } => {
             check_expr_returns(cond, root, found) && check_block_returns(body, root, found)
         }
@@ -2067,6 +2071,7 @@ fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
         StmtKind::Let { init, .. } => init
             .as_ref()
             .is_some_and(|e| any_return_rooted_in_expr(e, param_names)),
+        StmtKind::LetDestructure { init, .. } => any_return_rooted_in_expr(init, param_names),
         StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
             any_return_rooted_in_expr(e, param_names)
         }
@@ -2283,6 +2288,18 @@ impl Analyzer<'_> {
                         borrow_flavor,
                         state,
                     );
+                }
+            }
+            StmtKind::LetDestructure { fields, init, .. } => {
+                // Destructuring consumes `init` wholly and re-owns each field as
+                // a new binding. Walk the init for its sub-expression
+                // transitions, then mark every field binding Owned. (Fields are
+                // moved-out owned values, never borrows — no borrow-acquire.)
+                self.apply_expr(init, state);
+                for f in fields {
+                    self.binding_types
+                        .insert(f.name.clone(), BindingType::Unknown);
+                    state.insert(Place::root(&f.name), PlaceState::Owned);
                 }
             }
             StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
@@ -3310,6 +3327,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
 fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
     match &s.kind {
         StmtKind::Let { init, .. } => init.as_ref().is_some_and(|e| expr_reads_ident(e, name)),
+        StmtKind::LetDestructure { init, .. } => expr_reads_ident(init, name),
         StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
             expr_reads_ident(e, name)
         }

@@ -371,6 +371,7 @@ impl Ctx {
             | StmtKind::Return(Some(e))
             | StmtKind::Defer(e)
             | StmtKind::Assert(e) => self.walk_expr_for_loop_attrs(e),
+            StmtKind::LetDestructure { init, .. } => self.walk_expr_for_loop_attrs(init),
             StmtKind::Let { init: None, .. }
             | StmtKind::Return(None)
             | StmtKind::Break

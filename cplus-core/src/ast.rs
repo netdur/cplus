@@ -550,6 +550,23 @@ pub enum StmtKind {
         /// without an initializer.
         init: Option<Expr>,
     },
+    /// `let TYPE { f1, f2, ... } = INIT;` (and the `var` form) — struct
+    /// destructuring. Consumes `init` as a whole and moves each named field
+    /// into its own binding; `mutable` (from `let` vs `var`) applies to ALL
+    /// bound fields (no per-field mutability — matches the let/var model).
+    ///
+    /// Sound where a bare field move (E0509) is not: the whole value is
+    /// decomposed at one point (`init`'s source is marked moved, each field is
+    /// re-owned by a binding), so each field drops exactly once and the
+    /// struct's own whole-value drop never runs. The field list must be
+    /// exhaustive (every field of `TYPE` named, in any order); a struct with an
+    /// explicit `fn drop` is rejected (its destructor must run as a unit).
+    LetDestructure {
+        mutable: bool,
+        type_name: Ident,
+        fields: Vec<Ident>,
+        init: Expr,
+    },
     Return(Option<Expr>),
     While {
         cond: Expr,

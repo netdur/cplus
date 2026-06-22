@@ -2050,6 +2050,12 @@ fn rewrite_stmt(
             }
             scope.insert(name.name.clone());
         }
+        StmtKind::LetDestructure { fields, init, .. } => {
+            rewrite_expr(init, ctx, scope)?;
+            for f in fields {
+                scope.insert(f.name.clone());
+            }
+        }
         StmtKind::Return(opt) => {
             if let Some(e) = opt {
                 rewrite_expr(e, ctx, scope)?;

@@ -3107,6 +3107,14 @@ fn scan_moves_in_stmt(
                 scan_moves_in_expr(e, sigs, types, set);
             }
         }
+        StmtKind::LetDestructure { init, .. } => {
+            // Destructuring consumes its source wholly; pre-register the moved
+            // source ident so codegen's mark_moved has a drop flag to flip.
+            if let ExprKind::Ident(n) = &init.kind {
+                set.insert(n.clone());
+            }
+            scan_moves_in_expr(init, sigs, types, set);
+        }
         StmtKind::Return(Some(e)) => {
             // v0.0.3 drop-tracking: `return <ident>;` for a non-Copy
             // binding moves the value out. Pre-mark so the runtime
@@ -8547,6 +8555,54 @@ impl<'a> FnState<'a> {
         // safe model is to drop the field-read memo at every entry.
         self.invalidate_field_load_cache();
         match &s.kind {
+            StmtKind::LetDestructure { fields, init, .. } => {
+                // Evaluate the init into a temp struct slot, then move each
+                // named field into its own owned binding. The source is marked
+                // moved (its scope-exit drop is suppressed) and the temp struct
+                // is NOT drop-registered, so each field ends up owned by exactly
+                // one binding — no double-free. This is the whole-value consume
+                // that a bare field move (E0509) rejects.
+                let (val, struct_ty) = self
+                    .gen_expr(init)
+                    .expect("destructure init produces a value");
+                let llvm_struct = self.lty(&struct_ty);
+                let src_slot = self.alloca_named("destructure.src", struct_ty.clone());
+                self.emit(&format!("store {llvm_struct} {val}, ptr {src_slot}"));
+                // Consume the source binding (suppress its scope-exit drop).
+                if let ExprKind::Ident(src) = &init.kind {
+                    self.mark_moved(src);
+                }
+                let Ty::Struct(id) = &struct_ty else {
+                    unreachable!("sema guarantees the destructured init is a struct");
+                };
+                let struct_fields: Vec<(String, Ty)> = self.types.struct_defs[id.0 as usize]
+                    .fields
+                    .iter()
+                    .map(|f| (f.0.clone(), f.1.clone()))
+                    .collect();
+                for binding in fields {
+                    let idx = struct_fields
+                        .iter()
+                        .position(|(n, _)| n == &binding.name)
+                        .expect("sema verified the field name");
+                    let fty = struct_fields[idx].1.clone();
+                    let fllvm = self.lty(&fty);
+                    let fp = self.next_tmp();
+                    self.emit(&format!(
+                        "{fp} = getelementptr inbounds {llvm_struct}, ptr {src_slot}, i32 0, i32 {idx}"
+                    ));
+                    let bind_slot = self.alloca_named(&binding.name, fty.clone());
+                    let fval = self.next_tmp();
+                    self.emit(&format!("{fval} = load {fllvm}, ptr {fp}"));
+                    self.emit(&format!("store {fllvm} {fval}, ptr {bind_slot}"));
+                    if !is_copy_ty(&fty, self.types) {
+                        self.noalias_local_slots.push(bind_slot.clone());
+                    }
+                    self.register_value_drop(&binding.name, &bind_slot, &fty, true);
+                    self.bind(&binding.name, bind_slot, fty);
+                }
+                return;
+            }
             StmtKind::Let { name, ty, init, .. } => {
                 // Resolve declared type up front (always present for the
                 // uninitialized case — sema enforced that).

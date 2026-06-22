@@ -1460,6 +1460,7 @@ impl<'a> Resolver<'a> {
                     self.walk_expr(e);
                 }
             }
+            StmtKind::LetDestructure { init, .. } => self.walk_expr(init),
             StmtKind::Return(Some(e))
             | StmtKind::Expr(e)
             | StmtKind::Defer(e)
