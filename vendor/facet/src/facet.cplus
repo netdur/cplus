@@ -1,0 +1,89 @@
+// facet — platform-free UI description + the `@facet { }` builder context.
+//
+// A `@facet { ... }` block (the shipped contextual-builder DSL) desugars to
+// `facet::Builder::new()` + `.add(item)` per element + `.finish()`. Bare leaf
+// names resolve against this package (`label` -> `facet::label`), a bare
+// container `stack { ... }` calls `facet::stack(builder)`, and a leading-dot
+// line like `.on_click(h)` calls the method on the just-built node.
+//
+// The result is a `Node` tree — pure data, no native types — that a renderer
+// (facet_appkit) walks. FACET.1 discovery scope: label, button, vstack.
+//
+// The leaf/container value IS a `Node` (no `Item` wrapper): the DSL's `add`
+// moves a whole owned value into the accumulator. `finish`/`stack` hand the
+// accumulated `Vec` back out by DESTRUCTURING the `Builder`
+// (`let Builder { children } = this;`) — a zero-copy whole-value move, sound
+// where a bare field move is E0509-rejected. (The first FACET.1 spike had to
+// deep-clone here; struct destructuring was added to the language to remove it.)
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+
+fn kind_label() -> u32 { return 0 as u32; }
+fn kind_button() -> u32 { return 1 as u32; }
+fn kind_stack() -> u32 { return 2 as u32; }
+
+// Default click handler — a no-op, so `click` is never a null fn-pointer.
+fn noop(_w: *u8) { return; }
+
+// One node of the view tree. `text` is the label/title; `click` fires for a
+// button; `children` holds a stack's elements (empty for leaves). The leaf/
+// container constructors return `Node` directly — it doubles as the DSL "item".
+struct Node {
+    kind: u32,
+    text: text::Text,
+    click: fn(*u8),
+    children: vec::Vec[Node],
+}
+
+impl Node {
+    // Modifier: `button("Save").on_click(save)`.
+    fn on_click(ref this, cb: fn(*u8)) {
+        this.click = cb;
+        return;
+    }
+}
+
+// ---- the DSL builder contract -----------------------------------------------
+
+struct Builder {
+    children: vec::Vec[Node],
+}
+
+impl Builder {
+    fn new() -> Builder {
+        return Builder { children: vec::new::[Node]() };
+    }
+
+    // Whole-node move into the accumulator. `take` consumes the node (a bare
+    // param would only borrow it); pushing then moves the owned value in.
+    fn add(ref this, take item: Node) {
+        this.children.push(item);
+        return;
+    }
+
+    // The block's value: an implicit vertical stack of its top-level items.
+    // Destructure to move the accumulated children out of the Builder (no copy).
+    fn finish(take this) -> Node {
+        let Builder { children } = this;
+        return Node { kind: kind_stack(), text: "".to_text(), click: noop, children: children };
+    }
+}
+
+// ---- leaves -----------------------------------------------------------------
+
+fn label(s: str) -> Node {
+    return Node { kind: kind_label(), text: s.to_text(), click: noop, children: vec::new::[Node]() };
+}
+
+fn button(s: str) -> Node {
+    return Node { kind: kind_button(), text: s.to_text(), click: noop, children: vec::new::[Node]() };
+}
+
+// ---- containers -------------------------------------------------------------
+
+// Bare `stack { ... }` inside a `@facet` block: a vertical stack of `b`'s items.
+fn stack(take b: Builder) -> Node {
+    let Builder { children } = b;
+    return Node { kind: kind_stack(), text: "".to_text(), click: noop, children: children };
+}

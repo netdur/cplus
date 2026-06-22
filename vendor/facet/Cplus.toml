@@ -1,0 +1,12 @@
+[package]
+name    = "facet"
+version = "0.0.1"
+edition = "2026"
+
+# facet — the platform-free UI description + the `@facet { }` builder context.
+# A `Node` tree is built declaratively via the shipped contextual-builder DSL;
+# a per-platform renderer (facet_appkit, ...) turns it into native widgets.
+# FACET.1 discovery spike: label / button / stack + an `.on_click` modifier.
+
+[dependencies]
+stdlib = "*"
