@@ -17003,6 +17003,13 @@ fn ref_param_writes_back_native() {
 }
 
 #[test]
+// POSIX-only link harness: drives clang with `-L`/`-lreflib`, `-Wl,-rpath`, and
+// `LD_LIBRARY_PATH`. On Windows/MSVC `-lreflib` makes lld-link look for
+// `reflib.lib`, which cpc's Windows `build` doesn't yet emit (MSVC static/import
+// -lib export is an untested port path) — mirrors `c_consumer_links_static_and_
+// dynamic`, which is macOS-gated. The platform-neutral `ref`→`T*` lowering this
+// checks is also covered in-process by tests that pass on Windows.
+#[cfg(not(windows))]
 fn export_ref_param_writes_back_through_c() {
     // #9 stage 3c-copy, the C-ABI half: `export fn bump(ref n: i32)` is a C
     // out-parameter `void bump(int32_t*)`. A clang-compiled C caller passing
