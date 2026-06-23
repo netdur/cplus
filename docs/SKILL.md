@@ -35,7 +35,7 @@ io::println("hi");
 Compiler:  cpc            (on PATH, or $CPLUS/target/release/cpc)
 LSP:       cpc-lsp
 Stdlib:    symlink $CPLUS/vendor/stdlib into your project's vendor/stdlib
-Vendor:    $CPLUS/vendor/{appkit,accelerate,metal,simd,arena,clap,json,log,uuid,static-arena,jni,rt,rt_darwin}
+Vendor:    $CPLUS/vendor/{appkit,accelerate,metal,simd,arena,json,log,uuid,static-arena,jni,rt,rt_darwin}
 Examples:  https://github.com/netdur/cplus/tree/main/docs/examples   (online — not in your project)
 ```
 
@@ -536,7 +536,6 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `accelerate` | BLAS + vDSP via Apple Accelerate.framework | `cblas::sdot(n, x_ptr, 1, y_ptr, 1)` |
 | `appkit` | Cocoa/AppKit bindings, 15+ sub-modules | `application::Application::shared().run()` |
 | `arena` | Growable bump-pointer arena | `var a = arena::Arena::new(4096 as usize);` |
-| `clap` | Fluent argparse | `App::new("x").arg(Arg::new("v").short("v").flag())` |
 | `json` | Typed-enum JSON parser + serializer | `json::parse(s) -> Result[Value, ParseError]` |
 | `log` | Leveled stderr logger, zero malloc per call | `log::info("started")` |
 | `metal` + `metal/mps` | Metal compute + MPS gemm/conv/FFT | `mps::MatrixMultiplication::new(dev, ...)` |

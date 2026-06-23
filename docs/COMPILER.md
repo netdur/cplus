@@ -620,7 +620,7 @@ Three layers:
 
 - **Unit tests** colocated in each `cplus-core/src/*.rs` file (`#[cfg(test)] mod tests { ... }`). 1035 of these. Cover sema rules, parser edge cases, codegen helpers.
 - **End-to-end tests** in [`cpc/tests/e2e.rs`](../cpc/tests/e2e.rs). 399 of these. Each invokes the `cpc` binary on a fixture, asserts on diagnostics or runs the produced binary and checks output.
-- **In-package vendor tests** — 66 `#[test]` fns across `vendor/{arena, clap, json, log, metal, uuid}`. Run via `cd vendor/<pkg> && cpc test`.
+- **In-package vendor tests** — 57 `#[test]` fns across `vendor/{arena, json, log, metal, uuid}`. Run via `cd vendor/<pkg> && cpc test`.
 
 Every new feature ships with at least:
 1. Positive — program compiles and runs.
