@@ -15,7 +15,7 @@ C+ provides the necessary primitives for low-level systems programming:
 - **Multi-target**: `--target` cross-compiles for iOS (`ios-arm64`), Android (`android-arm64`, via the NDK's clang), and ESP32 (`esp32-xtensa`, 32-bit, via Espressif's esp-clang). cpc emits the object or static library; the platform's build system (Xcode, Gradle/NDK, ESP-IDF) owns the final link. Compiler-checked `#[realtime]` code runs on a $4 microcontroller.
 - **Built for tools and LLMs**: a deliberately small, unambiguous surface, plus a resolved, typed **code-knowledge graph** the compiler exposes to editors and agents (`cpc query` / `cpc mcp`, and the LSP) — so navigation is by *symbol and type*, not text search.
 
-Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit` for macOS, `uikit` for iOS, `espidf` for ESP32 firmware) are implemented as regular packages, keeping the compiler focused and fast.
+Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit` for macOS, `uikit` for iOS, `gtk`/`adwaita` for Linux, `espidf` for ESP32 firmware) are implemented as regular packages, keeping the compiler focused and fast.
 
 - [Getting Started](#getting-started)
   - [Installing](#installing)
@@ -37,6 +37,11 @@ brew install netdur/cplus/cplus
 ```
 
 This installs prebuilt `cpc` (compiler), `cpc-lsp` (language server), and `cpc-bindgen` (FFI generator) binaries — **no build step, installed in seconds**. Update later with `brew upgrade cplus`.
+
+On Linux (`x86_64`, Debian/Ubuntu) and Windows (`x86_64`), prebuilt binaries are attached to each [GitHub release](https://github.com/netdur/cplus/releases/latest). These ports work but are not yet part of the tested matrix (see [Requirements](#requirements)):
+
+- **Linux**: download the `.deb` and `sudo apt install ./cplus_*_amd64.deb` (this resolves the clang ≥ 19 dependency).
+- **Windows**: download `cplus-x86_64-pc-windows-msvc.zip` and put `cpc.exe`, `cpc-lsp.exe`, and `cpc-bindgen.exe` on your `PATH`.
 
 To build from source instead, see [Building from Source](#building-from-source).
 
@@ -114,4 +119,4 @@ To be a truly great community, C+ needs to welcome developers from all walks of 
 
 - Read [`docs/SPEC.md`](docs/SPEC.md) — the normative language specification (syntax, semantics, ownership model, the builder-block DSL, error-code catalog).
 - Check the [`docs/`](docs/) directory — runnable [`docs/examples/`](docs/examples/), design deep-dives in [`docs/design/`](docs/design/), and [`docs/SKILL.md`](docs/SKILL.md) (a dense reference for LLMs writing C+).
-- See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, JNI) are implemented purely through the package system.
+- See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, GTK, JNI) are implemented purely through the package system.
