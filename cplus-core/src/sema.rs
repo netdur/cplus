@@ -394,19 +394,6 @@ pub fn is_private_name(name: &str) -> bool {
     name.starts_with('_')
 }
 
-/// Raw-pointer fields and custom destructors make public field mutation a
-/// soundness boundary. For non-exported, non-`repr(C)` implementation structs,
-/// treat every field as module-private regardless of spelling.
-pub fn struct_fields_are_invariant_private(def: &StructDef) -> bool {
-    !def.is_pub
-        && !def.is_repr_c
-        && (def.is_drop
-            || def
-                .fields
-                .iter()
-                .any(|(_, ty, _)| matches!(ty, Ty::RawPtr(_))))
-}
-
 #[derive(Debug, Clone)]
 pub struct FnSig {
     pub params: Vec<ParamSig>,
@@ -796,6 +783,7 @@ fn check_with_files_inner<'a>(
         assoc_free_fn_dispatches: HashMap::new(),
         assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
+        struct_template_origins: HashMap::new(),
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
         enum_instantiations: std::collections::BTreeMap::new(),
@@ -1196,6 +1184,11 @@ struct SemaCx<'a> {
     /// field types. Templates are NOT in `struct_by_name` — concrete
     /// instantiations are.
     struct_generic_templates: HashMap<String, StructDecl>,
+    /// v0.0.24 #10: each generic struct template's declaring file, captured at
+    /// name-collection time. A lazily-synthesized instantiation (`Vec[i32]`)
+    /// inherits this as its `origin_file` so cross-file `_`-field privacy fires
+    /// for generic types exactly as it does for concrete ones.
+    struct_template_origins: HashMap<String, Option<String>>,
     /// Slice 7GEN.5c: per-instantiation dedup. Keys are
     /// `(generic_name, [concrete_args])`; values are the StructId of
     /// the synthesized concrete struct. Ensures repeated references to
@@ -1541,6 +1534,8 @@ impl SemaCx<'_> {
                     if !s.generic_params.is_empty() {
                         self.struct_generic_templates
                             .insert(s.name.name.clone(), s.clone());
+                        self.struct_template_origins
+                            .insert(s.name.name.clone(), self.current_file.clone());
                         continue;
                     }
                     let id = StructId(self.structs.len() as u32);
@@ -8129,7 +8124,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let declared: Vec<(String, Ty, bool)> = self.structs[id.0 as usize].fields.clone();
         let struct_name = self.structs[id.0 as usize].name.clone();
         let struct_origin = self.structs[id.0 as usize].origin_file.clone();
-        let invariant_private = struct_fields_are_invariant_private(&self.structs[id.0 as usize]);
 
         // Detect duplicate-in-literal and unknown-field; type-check each provided value.
         let mut provided: HashMap<String, ()> = HashMap::new();
@@ -8150,12 +8144,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let declared_field = declared.iter().find(|(n, _, _)| n == &lit_field.name.name);
             match declared_field {
                 Some((_, t, _is_pub)) => {
-                    // v0.0.24 #10: visibility is name-based for ordinary
-                    // fields. Additionally, raw-pointer/custom-Drop
-                    // implementation structs keep all fields module-private
-                    // because external mutation can corrupt invariants.
-                    // Same-file construction always sees private fields.
-                    if (is_private_name(&lit_field.name.name) || invariant_private)
+                    // v0.0.24 #10: field visibility is name-based only. A field
+                    // whose name starts with `_` is module-private; every other
+                    // field is public. The language does not infer privacy from a
+                    // struct's `drop`/raw-pointer shape — the author marks what
+                    // they want hidden with `_`. Same-file access always sees
+                    // private fields.
+                    if is_private_name(&lit_field.name.name)
                         && self.is_cross_file_access(&struct_origin)
                     {
                         self.err(
@@ -8229,15 +8224,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let def = &self.structs[id.0 as usize];
         let struct_name = def.name.clone();
         let struct_origin = def.origin_file.clone();
-        let invariant_private = struct_fields_are_invariant_private(def);
         match def.field_with_pub(&name.name) {
             Some((_, ty, _is_pub)) => {
-                // v0.0.24 #10: name-based privacy for `_` fields, plus
-                // invariant privacy for raw-pointer/custom-Drop implementation
-                // structs.
-                if (is_private_name(&name.name) || invariant_private)
-                    && self.is_cross_file_access(&struct_origin)
-                {
+                // v0.0.24 #10: name-based privacy only — a `_`-prefixed field is
+                // module-private; everything else is public. Privacy is never
+                // inferred from the struct's shape (`drop`/raw-pointer); the
+                // author opts in per field with `_`.
+                if is_private_name(&name.name) && self.is_cross_file_access(&struct_origin) {
                     self.err(
                         "E0403",
                         format!("field `{}` of struct `{}` is private (its leading `_` marks it module-private; drop the `_` to expose)", name.name, struct_name),
@@ -13579,7 +13572,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             is_drop: false,
             is_repr_c: false, // generic instantiations don't inherit repr(C); revisit when use case appears
             is_pub: template.is_pub,
-            origin_file: None,
+            // Inherit the template's declaring file so cross-file `_`-field
+            // privacy (E0403) fires on generic instantiations just like concrete
+            // structs. Without this, `Vec[i32]._ptr` would be reachable anywhere.
+            origin_file: self
+                .struct_template_origins
+                .get(name)
+                .cloned()
+                .flatten(),
             generic_origin: Some((name.to_string(), arg_tys.clone())),
         });
         self.struct_by_name.insert(mangled.clone(), id);
@@ -16464,7 +16464,10 @@ mod tests {
     }
 
     #[test]
-    fn raw_ptr_struct_field_read_cross_file_is_private_e0403() {
+    fn raw_ptr_struct_nonunderscore_field_is_public_cross_file() {
+        // v0.0.24 #10: the language does NOT infer privacy from a struct's
+        // raw-pointer/`drop` shape. A raw-ptr field that is not `_`-prefixed is
+        // public; reading it cross-file is clean.
         let diags = check_multifile_src(
             "main",
             &[
@@ -16480,26 +16483,97 @@ mod tests {
             ],
         );
         let codes = error_codes(diags);
-        assert!(codes.contains(&"E0403"), "expected E0403, got {codes:?}");
+        assert!(
+            !codes.contains(&"E0403"),
+            "non-`_` field on a raw-ptr struct is public now; expected no E0403, got {codes:?}"
+        );
     }
 
     #[test]
-    fn raw_ptr_struct_literal_cross_file_is_private_e0403() {
+    fn underscore_field_read_cross_file_is_private_e0403() {
+        // The `_` prefix is the only field-privacy mechanism. A `_`-named field
+        // is module-private even on a raw-ptr struct; reading it cross-file is
+        // E0403.
         let diags = check_multifile_src(
             "main",
             &[
                 (
                     "handles",
-                    "struct Handle { opaque ptr: *u8, len: usize }\n",
+                    "struct Handle { opaque ptr: *u8, _len: usize }\n\
+                     impl Handle { fn new() -> Handle { return Handle { ptr: { 0 as *u8 }, _len: 4 as usize }; } }\n",
                 ),
                 (
                     "main",
-                    "fn main() -> i32 { let h: Handle = Handle { ptr: { 0 as *u8 }, len: 4 as usize }; return 0; }\n",
+                    "fn main() -> i32 { let h: Handle = Handle::new(); let n: usize = h._len; return n as i32; }\n",
                 ),
             ],
         );
         let codes = error_codes(diags);
-        assert!(codes.contains(&"E0403"), "expected E0403, got {codes:?}");
+        assert!(codes.contains(&"E0403"), "expected E0403 on `_len`, got {codes:?}");
+    }
+
+    #[test]
+    fn underscore_field_literal_cross_file_is_private_e0403() {
+        // Naming a `_`-private field in a cross-file struct literal is rejected;
+        // the public (`ptr`) field alongside it is fine.
+        let diags = check_multifile_src(
+            "main",
+            &[
+                ("handles", "struct Handle { opaque ptr: *u8, _len: usize }\n"),
+                (
+                    "main",
+                    "fn main() -> i32 { let h: Handle = Handle { ptr: { 0 as *u8 }, _len: 4 as usize }; return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(codes.contains(&"E0403"), "expected E0403 on `_len` literal, got {codes:?}");
+    }
+
+    #[test]
+    fn underscore_field_on_generic_struct_cross_file_is_private_e0403() {
+        // v0.0.24 #10: name-based privacy must fire on GENERIC instantiations
+        // too. A lazily-synthesized `Box[i32]` inherits its template's origin
+        // file, so reading `_p` cross-file is E0403 — the same as a concrete
+        // struct. (Regression: instantiations used to be born with no
+        // origin_file, so privacy silently never fired for Vec/Box/Arc/...)
+        let diags = check_multifile_src(
+            "main",
+            &[
+                (
+                    "boxes",
+                    "struct Box[T] { _p: T }\n\
+                     impl Box[T] { fn of(take v: T) -> Box[T] { return Box[T] { _p: v }; } }\n",
+                ),
+                (
+                    "main",
+                    "fn main() -> i32 { let b: Box[i32] = Box[i32]::of(7); return b._p; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(codes.contains(&"E0403"), "expected E0403 on generic `_p`, got {codes:?}");
+    }
+
+    #[test]
+    fn public_field_on_generic_struct_cross_file_clean() {
+        // The non-`_` field of a generic instantiation stays public cross-file.
+        let diags = check_multifile_src(
+            "main",
+            &[
+                (
+                    "boxes",
+                    "struct Box[T] { v: T }\n\
+                     impl Box[T] { fn of(take v: T) -> Box[T] { return Box[T] { v: v }; } }\n",
+                ),
+                (
+                    "main",
+                    "fn main() -> i32 { let b: Box[i32] = Box[i32]::of(7); return b.v; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(!codes.contains(&"E0403"), "public generic field should be reachable, got {codes:?}");
     }
 
     #[test]
@@ -16519,7 +16593,9 @@ mod tests {
     }
 
     #[test]
-    fn raw_ptr_struct_field_privacy_export_and_repr_c_exempt() {
+    fn raw_ptr_struct_nonunderscore_fields_public_export_and_repr_c() {
+        // Non-`_` fields are public on every struct shape — `export`, `#[repr(C)]`,
+        // or plain. Cross-file reads of `ptr`/`len` here are clean.
         let diags = check_multifile_src(
             "main",
             &[
