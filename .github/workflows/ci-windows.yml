@@ -13,13 +13,15 @@ name: Windows CI
 # clang_rt.asan_dynamic at run time.
 
 on:
-  # DISABLED 2026-06-20: Windows CI is paused for now. The release-tag trigger
-  # is commented out so a `v*` tag won't run this workflow; re-enable by
-  # uncommenting the `push:` block below. `workflow_dispatch` is kept so it
-  # can still be run manually from the Actions tab.
-  # push:
-  #   tags:
-  #     - "v*"
+  # RE-ENABLED 2026-06-23: Windows CI is green (the Win64 indirect-arg byval fix
+  # f8f4cf6 landed), so it runs on a vX.Y.Z release tag again — building and
+  # attaching the binaries .zip to the GitHub Release, matching ci-linux.yml /
+  # release.yml. `workflow_dispatch` is kept for manual runs from the Actions
+  # tab. (Windows CI is a separate workflow, so a red run can't block the
+  # macOS/Linux release jobs — it just means no Windows asset that tag.)
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:

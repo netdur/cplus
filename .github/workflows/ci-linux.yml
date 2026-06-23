@@ -15,8 +15,8 @@ name: Linux CI
 on:
   # RE-ENABLED 2026-06-22: Linux CI is green, so it runs on a vX.Y.Z release tag
   # again (builds the .deb and attaches it to the GitHub Release), plus manual
-  # dispatch. (ci-windows.yml stays tag-disabled until its Win64 ABI gaps clear,
-  # so a red Windows job can't block a release tag.)
+  # dispatch. (ci-windows.yml is now tag-enabled too, as of 2026-06-23, after
+  # its Win64 ABI gaps cleared.)
   push:
     tags:
       - "v*"
