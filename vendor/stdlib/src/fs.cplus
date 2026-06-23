@@ -63,6 +63,9 @@ impl File {
         }
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = { malloc(chunk_size) };
+        if chunk.is_null() {
+            return result::io_err::[vec::Vec[u8]](result::IoError::Other);
+        }
         loop {
             let n: isize = { read(this.fd, chunk, chunk_size) };
             if n < (0 as isize) {
@@ -136,6 +139,9 @@ impl File {
         var carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = { malloc(chunk_size) };
+        if chunk.is_null() {
+            return;   // cannot allocate the scan buffer; yield no lines
+        }
         loop {
             let n: isize = { read(this.fd, chunk, chunk_size) };
             if n <= (0 as isize) {

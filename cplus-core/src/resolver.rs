@@ -2426,6 +2426,7 @@ fn rewrite_expr(
             callee,
             args,
             type_args,
+            arg_labels: _,
         } => {
             rewrite_expr(callee, ctx, scope)?;
             for a in args {

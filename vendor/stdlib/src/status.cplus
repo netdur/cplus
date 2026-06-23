@@ -1,0 +1,41 @@
+// stdlib/status.cplus — the outcome of a fallible operation that recovers.
+//
+// C+ libraries do not trap. A mutating operation that can fail returns a
+// `Status` instead of crashing: `Ok` on success, or an error variant naming
+// what went wrong. On any error the operation leaves its receiver in a valid,
+// usable state and drops any value it could not store — so the caller is free
+// to inspect the status or ignore it and keep going. The program never aborts
+// on a trivial error.
+//
+//     var err: Status = buf.push(value);
+//     if err != Status::Ok {
+//         io::println("push failed");   // optional — buf is still valid
+//     }
+//     // ... program continues either way ...
+//
+// `Status` is a payload-free enum, so it is `Copy` (ignoring the return leaks
+// nothing) and compares with `==` / `!=`.
+
+enum Status {
+    Ok,
+    // An allocation (malloc/realloc) failed, or a size computation overflowed.
+    // The operation made no change; the receiver is unchanged and valid.
+    OutOfMemory,
+    // An index or range was past the end. No change.
+    OutOfBounds,
+    // Arguments could not form a valid operation (e.g. an interior NUL where a
+    // C string is required). No change.
+    InvalidInput,
+}
+
+impl Status {
+    // True when the operation succeeded.
+    fn is_ok(this) -> bool {
+        return this == Status::Ok;
+    }
+
+    // True when the operation failed (and recovered).
+    fn is_err(this) -> bool {
+        return this != Status::Ok;
+    }
+}

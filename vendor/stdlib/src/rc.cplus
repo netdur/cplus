@@ -13,6 +13,8 @@
 // Inherits the v0.0.4 stdlib limitations: no `make_mut`, inner T's
 // Drop on last reference is not invoked automatically.
 
+import "stdlib/option" as option;
+
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
@@ -20,17 +22,22 @@ struct Rc[T] {
     ctrl: *u8,
 }
 
-// Header is `u64 refcount`. Value lives at `ctrl + 8`.
-fn new[T](take v: T) -> Rc[T] {
+// Header is `u64 refcount`. Value lives at `ctrl + 8`. An `Rc` is always a live
+// heap slot, so on allocation failure `new` returns `None` (and `v` drops as the
+// function returns) rather than trapping.
+fn new[T](take v: T) -> option::Option[Rc[T]] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
     let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Rc[T]]::None;
+    }
     let refct: *u64 = { raw as *u64 };
     { *refct = 1 as u64; }
     let value_ptr: *T = { (raw + header) as *T };
     { *value_ptr = v; }
-    return Rc[T] { ctrl: raw };
+    return option::Option[Rc[T]]::Some(Rc[T] { ctrl: raw });
 }
 
 impl Rc[T] {

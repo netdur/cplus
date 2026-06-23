@@ -12,6 +12,7 @@
 
 import "./option" as option;
 import "./iterator" as iterator;
+import "./status" as status;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -28,23 +29,38 @@ fn max_usize() -> usize {
     return (0 as usize) -% (1 as usize);
 }
 
-fn checked_bytes[T](count: usize) -> usize {
+// Bytes needed for `count` elements of `T`, or None if the multiplication would
+// overflow `usize` — a request too large to ever satisfy. A zero count or a
+// zero-size element needs zero bytes. Callers treat None as "out of memory" and
+// recover, rather than trapping on the overflow.
+fn checked_bytes[T](count: usize) -> option::Option[usize] {
     if count == (0 as usize) {
-        return 0 as usize;
+        return option::Option[usize]::Some(0 as usize);
     }
     let elem: usize = #size_of::[T]();
-    assert elem != (0 as usize);
-    assert count <= (max_usize() / elem);
-    return count *% elem;
+    if elem == (0 as usize) {
+        return option::Option[usize]::Some(0 as usize);
+    }
+    if count > (max_usize() / elem) {
+        return option::Option[usize]::None;
+    }
+    return option::Option[usize]::Some(count *% elem);
 }
 
-fn required_len(len: usize, additional: usize) -> usize {
-    assert additional <= (max_usize() -% len);
-    return len +% additional;
+// `len + additional`, or None if it would overflow `usize`.
+fn required_len(len: usize, additional: usize) -> option::Option[usize] {
+    if additional > (max_usize() -% len) {
+        return option::Option[usize]::None;
+    }
+    return option::Option[usize]::Some(len +% additional);
 }
 
+// Next capacity at least `required`, doubling from `current`. If `required` is
+// already within `current` there is nothing to grow, so `current` is returned.
 fn next_capacity(current: usize, required: usize) -> usize {
-    assert required > current;
+    if required <= current {
+        return current;
+    }
     var out: usize = current;
     if out == (0 as usize) {
         out = 1 as usize;
@@ -67,29 +83,51 @@ fn new[T]() -> Vec[T] {
     };
 }
 
+// Pre-allocate room for `n` elements. A value producer, so it recovers rather
+// than reports: if the request overflows or the allocation fails, it returns a
+// valid empty vec (capacity 0) instead of trapping. A later `push` will try to
+// allocate again and surface the failure as a `Status` then.
 fn with_capacity[T](n: usize) -> Vec[T] {
     if n == (0 as usize) {
         return new::[T]();
     }
-    let bytes: usize = checked_bytes::[T](n);
+    var bytes: usize = 0 as usize;
+    match checked_bytes::[T](n) {
+        option::Option[usize]::Some(b) => { bytes = b; }
+        option::Option[usize]::None => { return new::[T](); }
+    }
     let raw: *u8 = { malloc(bytes) };
-    assert raw.is_not_null();
-    return Vec[T] {
-        ptr: { raw as *T },
-        len: 0 as usize,
-        cap: n,
-    };
+    if raw.is_not_null() {
+        return Vec[T] {
+            ptr: { raw as *T },
+            len: 0 as usize,
+            cap: n,
+        };
+    }
+    return new::[T]();
 }
 
 impl Vec[T] {
-    fn grow_to(ref this, new_cap: usize) {
-        assert new_cap > this.cap;
-        let bytes: usize = checked_bytes::[T](new_cap);
+    // Grow the backing allocation to hold at least `new_cap` elements. Returns
+    // `OutOfMemory` (leaving the vec unchanged and valid) if the size overflows
+    // or `realloc` fails; `Ok` otherwise. A `new_cap` already within capacity is
+    // a no-op `Ok`.
+    fn grow_to(ref this, new_cap: usize) -> status::Status {
+        if new_cap <= this.cap {
+            return status::Status::Ok;
+        }
+        var bytes: usize = 0 as usize;
+        match checked_bytes::[T](new_cap) {
+            option::Option[usize]::Some(b) => { bytes = b; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
         let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
-        assert raw.is_not_null();
-        this.ptr = { raw as *T };
-        this.cap = new_cap;
-        return;
+        if raw.is_not_null() {
+            this.ptr = { raw as *T };
+            this.cap = new_cap;
+            return status::Status::Ok;
+        }
+        return status::Status::OutOfMemory;
     }
 
     fn len(this) -> usize {
@@ -104,24 +142,41 @@ impl Vec[T] {
         return this.len == (0 as usize);
     }
 
-    fn reserve(ref this, additional: usize) {
-        let required: usize = required_len(this.len, additional);
-        if required <= this.cap {
-            return;
+    // Ensure room for `additional` more elements. Returns `OutOfMemory` (vec
+    // unchanged) if the new length overflows or the allocation fails.
+    fn reserve(ref this, additional: usize) -> status::Status {
+        var required: usize = 0 as usize;
+        match required_len(this.len, additional) {
+            option::Option[usize]::Some(r) => { required = r; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        this.grow_to(next_capacity(this.cap, required));
-        return;
+        if required <= this.cap {
+            return status::Status::Ok;
+        }
+        return this.grow_to(next_capacity(this.cap, required));
     }
 
-    fn push(ref this, take value: T) {
-        let required: usize = required_len(this.len, 1 as usize);
+    // Append `value`. On success returns `Ok`. If the vec cannot grow (length
+    // overflow or allocation failure) it returns `OutOfMemory`, leaving the vec
+    // unchanged; `value` is dropped as the function returns, so nothing leaks
+    // and there is no partial state. The caller may check the status or ignore
+    // it — either way the vec stays valid.
+    fn push(ref this, take value: T) -> status::Status {
+        var required: usize = 0 as usize;
+        match required_len(this.len, 1 as usize) {
+            option::Option[usize]::Some(r) => { required = r; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
         if required > this.cap {
-            this.grow_to(next_capacity(this.cap, required));
+            let st: status::Status = this.grow_to(next_capacity(this.cap, required));
+            if st != status::Status::Ok {
+                return st;
+            }
         }
         let slot: *T = { this.ptr + this.len };
         { *slot = value; }
         this.len = required;
-        return;
+        return status::Status::Ok;
     }
 
     fn pop(ref this) -> option::Option[T] {
@@ -175,9 +230,12 @@ impl Vec[T] {
         return;
     }
 
-    fn shrink_to_fit(ref this) {
+    // Release unused capacity. If the shrinking `realloc` fails, the larger
+    // buffer is kept (the data is intact) and `OutOfMemory` is returned; `Ok`
+    // otherwise. Never traps.
+    fn shrink_to_fit(ref this) -> status::Status {
         if this.len == this.cap {
-            return;
+            return status::Status::Ok;
         }
         if this.len == (0 as usize) {
             if this.ptr.is_not_null() {
@@ -185,14 +243,20 @@ impl Vec[T] {
             }
             this.ptr = { 0 as *T };
             this.cap = 0 as usize;
-            return;
+            return status::Status::Ok;
         }
-        let bytes: usize = checked_bytes::[T](this.len);
+        var bytes: usize = 0 as usize;
+        match checked_bytes::[T](this.len) {
+            option::Option[usize]::Some(b) => { bytes = b; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
         let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
-        assert raw.is_not_null();
-        this.ptr = { raw as *T };
-        this.cap = this.len;
-        return;
+        if raw.is_not_null() {
+            this.ptr = { raw as *T };
+            this.cap = this.len;
+            return status::Status::Ok;
+        }
+        return status::Status::OutOfMemory;
     }
 
     fn as_slice(this) -> T[] {
@@ -219,16 +283,20 @@ impl Vec[T] {
         return option::Option[*T]::Some({ this.ptr + i });
     }
 
-    // Replace element `i` with `value`, dropping the element previously there.
-    // Asserts the index is in bounds. Works for any `T`: the old element's Drop
-    // runs (freeing e.g. a `string`'s buffer) before the new value is moved in,
-    // so there is no leak and no double free.
-    fn set(ref this, i: usize, take value: T) {
-        assert i < this.len;
+    // Replace element `i` with `value`. Out of bounds is reported, not trapped:
+    // returns `OutOfBounds` when `i >= len` — `value` is dropped as the function
+    // returns, the vec is left unchanged, nothing leaks — and `Ok` on success.
+    // On success the previous element's Drop runs before the new value is moved
+    // in, so there is no leak and no double free. The caller may check the
+    // status or ignore it; the vec stays valid either way.
+    fn set(ref this, i: usize, take value: T) -> status::Status {
+        if i >= this.len {
+            return status::Status::OutOfBounds;
+        }
         let slot: *T = { this.ptr + i };
         { #drop_in_place::[T](slot); }
         { *slot = value; }
-        return;
+        return status::Status::Ok;
     }
 
     // Yield each element by value, in order, as an `Iterator[T]` (drives for-in
@@ -253,19 +321,30 @@ impl Vec[T] {
     // responsible for `T` being bit-copyable, or for the source relinquishing
     // ownership; this runs no element clone or drop. Mirrors the old vec.cplus
     // method so byte-stream consumers (fs, appkit/convert) port unchanged.
-    fn extend_from_raw(ref this, src: *T, count: usize) {
+    fn extend_from_raw(ref this, src: *T, count: usize) -> status::Status {
         if count == (0 as usize) {
-            return;
+            return status::Status::Ok;
         }
-        let required: usize = required_len(this.len, count);
+        var required: usize = 0 as usize;
+        match required_len(this.len, count) {
+            option::Option[usize]::Some(r) => { required = r; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
         if required > this.cap {
-            this.grow_to(next_capacity(this.cap, required));
+            let st: status::Status = this.grow_to(next_capacity(this.cap, required));
+            if st != status::Status::Ok {
+                return st;
+            }
         }
         let dest: *T = { this.ptr + this.len };
-        let bytes: usize = checked_bytes::[T](count);
+        var bytes: usize = 0 as usize;
+        match checked_bytes::[T](count) {
+            option::Option[usize]::Some(b) => { bytes = b; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
         { memcpy(dest as *u8, src as *u8, bytes); }
         this.len = required;
-        return;
+        return status::Status::Ok;
     }
 
     fn drop(ref this) {
@@ -300,21 +379,32 @@ fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
     return { *slot };
 }
 
-fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
+fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) -> status::Status {
     let count: usize = #slice_len(s);
     if count == (0 as usize) {
-        return;
+        return status::Status::Ok;
     }
-    let required: usize = required_len(v.len, count);
+    var required: usize = 0 as usize;
+    match required_len(v.len, count) {
+        option::Option[usize]::Some(r) => { required = r; }
+        option::Option[usize]::None => { return status::Status::OutOfMemory; }
+    }
     if required > v.cap {
-        v.grow_to(next_capacity(v.cap, required));
+        let st: status::Status = v.grow_to(next_capacity(v.cap, required));
+        if st != status::Status::Ok {
+            return st;
+        }
     }
     let dest: *T = { v.ptr + v.len };
     let src: *T = { #slice_ptr(s) };
-    let bytes: usize = checked_bytes::[T](count);
+    var bytes: usize = 0 as usize;
+    match checked_bytes::[T](count) {
+        option::Option[usize]::Some(b) => { bytes = b; }
+        option::Option[usize]::None => { return status::Status::OutOfMemory; }
+    }
     { memcpy(dest as *u8, src as *u8, bytes); }
     v.len = required;
-    return;
+    return status::Status::Ok;
 }
 
 fn collect[T](take source: iterator::Iterator[T]) -> Vec[T] {

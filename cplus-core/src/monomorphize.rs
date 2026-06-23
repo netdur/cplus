@@ -761,6 +761,7 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
             callee,
             args,
             type_args,
+            arg_labels: _,
         } => ExprKind::Call {
             callee: Box::new(rewrite_expr_self(callee, mangled_name)),
             args: args
@@ -771,6 +772,7 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
                 .iter()
                 .map(|t| rewrite_self_in_type(t, mangled_name))
                 .collect(),
+            arg_labels: Vec::new(),
         },
         ExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
             op: *op,
@@ -988,6 +990,7 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
             callee,
             args,
             type_args,
+            arg_labels: _,
         } => {
             if let ExprKind::Ident(name) = &callee.kind {
                 f(name, type_args, expr.span);
@@ -1364,6 +1367,9 @@ fn synthesize_fn(
                 move_: p.move_,
                 restrict: p.restrict,
                 borrow_: p.borrow_,
+                // Defaults are already spliced into every call site by `lower`
+                // (which runs before mono), so the signature default is vestigial.
+                default: None,
                 span: p.span,
             })
             .collect(),
@@ -2015,6 +2021,7 @@ fn rewrite_expr(
             callee,
             args,
             type_args,
+            arg_labels: _,
         } => {
             // Inspect the callee for a generic-fn / generic-method
             // dispatch and rewrite to the mangled name where applicable.
@@ -2196,6 +2203,7 @@ fn rewrite_expr(
                 callee: Box::new(new_callee),
                 args: new_args,
                 type_args: new_type_args,
+                arg_labels: Vec::new(),
             }
         }
         ExprKind::Block(b) => ExprKind::Block(rewrite_block(
@@ -2525,6 +2533,7 @@ fn rewrite_expr(
                     callee: Box::new(callee_expr),
                     args: new_args,
                     type_args: Vec::new(),
+                    arg_labels: Vec::new(),
                 }
             } else {
                 let arg_names: Vec<String> =
@@ -2598,6 +2607,7 @@ fn rewrite_expr(
                         callee: Box::new(path_expr),
                         args: new_args,
                         type_args: Vec::new(),
+                        arg_labels: Vec::new(),
                     }
                 }
             }
@@ -2968,6 +2978,7 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
             callee,
             args,
             type_args,
+            arg_labels: _,
         } => {
             rewrite_alias_expr(callee, aliases);
             for a in args {

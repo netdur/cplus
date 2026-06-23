@@ -137,6 +137,13 @@ fn ensure() -> *u8 {
     let cur: *u8 = { #reactor_get_state() };
     let null_p: *u8 = { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
+    // NOTE — error-handling convention (docs/design/error-handling.md): the
+    // reactor's allocations (this state block and the realloc-grown waiter
+    // tables below) are NOT yet null-checked, so an allocation failure crashes
+    // instead of recovering. The reactor is internal async plumbing driven by
+    // the executor, not a user-facing surface; threading OutOfMemory back
+    // through the await machinery is a tracked follow-up. Left unchecked here
+    // deliberately.
     let state: *u8 = { malloc(header_bytes()) };
     let kqfd: i32 = { kqueue() };
     let kqfd_slot: *i32 = { (state + off_kqfd()) as *i32 };

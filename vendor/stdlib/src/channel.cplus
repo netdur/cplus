@@ -30,6 +30,8 @@
 // non-ring. A ring-buffer variant is a future polish.
 
 import "stdlib/atomic" as atomic;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -81,9 +83,15 @@ fn off_buffer() -> usize { return 160 as usize; }
 fn off_closed() -> usize { return 168 as usize; }
 fn header_bytes() -> usize { return 176 as usize; }
 
-fn new[T]() -> Channel[T] {
+// A `Channel` is always a live heap block, so on allocation failure `new`
+// returns `None` rather than trapping. If the header allocates but the element
+// buffer does not, the half-built channel is torn back down before returning.
+fn new[T]() -> option::Option[Channel[T]] {
     let total: usize = header_bytes();
     let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Channel[T]]::None;
+    }
     // refcount = 1
     let refct: *u64 = { raw as *u64 };
     { *refct = 1 as u64; }
@@ -105,9 +113,16 @@ fn new[T]() -> Channel[T] {
     let elem_bytes: usize = #size_of::[T]();
     let buf_bytes: usize = initial_capacity() *% elem_bytes;
     let buf_raw: *u8 = { malloc(buf_bytes) };
+    if buf_raw.is_null() {
+        // Roll back the header allocation — the channel never came to exist.
+        let _d1: i32 = { pthread_cond_destroy(cond_ptr) };
+        let _d2: i32 = { pthread_mutex_destroy(mutex_ptr) };
+        { free(raw); }
+        return option::Option[Channel[T]]::None;
+    }
     let buf_ptr_slot: **u8 = { (raw + off_buffer()) as **u8 };
     { *buf_ptr_slot = buf_raw; }
-    return Channel[T] { ctrl: raw };
+    return option::Option[Channel[T]]::Some(Channel[T] { ctrl: raw });
 }
 
 impl Channel[T] {
@@ -120,8 +135,10 @@ impl Channel[T] {
         return Channel[T] { ctrl: this.ctrl };
     }
 
-    // Push a value. Never blocks (buffer grows).
-    fn send(this, take v: T) {
+    // Push a value. Never blocks (the buffer grows). Returns `Ok`, or
+    // `OutOfMemory` if the buffer cannot grow — in which case the value is
+    // dropped, the existing buffer is left intact, and the lock is released.
+    fn send(this, take v: T) -> status::Status {
         let mutex_ptr: *u8 = { this.ctrl + off_mutex() };
         let cond_ptr: *u8 = { this.ctrl + off_cond() };
         let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
@@ -150,7 +167,14 @@ impl Channel[T] {
                 // Grow 2x.
                 let new_cap: usize = cap *% (2 as usize);
                 let new_bytes: usize = new_cap *% elem_bytes;
-                buf = { realloc(buf, new_bytes) };
+                let new_buf: *u8 = { realloc(buf, new_bytes) };
+                if new_buf.is_null() {
+                    // Grow failed: the old buffer is still intact and referenced
+                    // by buf_ptr_slot. Release the lock and report; `v` drops.
+                    let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                    return status::Status::OutOfMemory;
+                }
+                buf = new_buf;
                 { *buf_ptr_slot = buf; }
                 cap = new_cap;
                 { *cap_ptr = cap; }
@@ -162,7 +186,7 @@ impl Channel[T] {
         { *tail_ptr = tail; }
         let _e2: i32 = { pthread_cond_signal(cond_ptr) };
         let _e3: i32 = { pthread_mutex_unlock(mutex_ptr) };
-        return;
+        return status::Status::Ok;
     }
 
     // Blocking receive. Returns Value(v) on a pop, Closed when the

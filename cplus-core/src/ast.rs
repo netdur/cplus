@@ -436,6 +436,12 @@ pub struct Param {
     /// now rejects a Rust-habit `borrow` with a hint at the bare form).
     /// The field is kept to avoid churning every AST-construction site.
     pub borrow_: bool,
+    /// Optional default value: `name: T = EXPR`. Spliced in at call sites that
+    /// omit this argument (`lower` does the splice; see
+    /// docs/design/named-params-and-defaults.md). `None` for a required
+    /// parameter. Only valid on C+ functions (never `extern fn`), and a
+    /// defaulted parameter must not be followed by a required one.
+    pub default: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -734,6 +740,14 @@ pub enum ExprKind {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        /// Named-argument labels, parallel to `args`. INVARIANT: either empty
+        /// (every argument is positional — the common case and what every
+        /// synthetic call site produces) or exactly `args.len()` long, with
+        /// `None` for a positional slot and `Some(name)` for `name: value`.
+        /// The parser fills this; sema's call checker desugars labels into
+        /// positional order (and splices defaults), then clears it — so no
+        /// pass after sema's argument-matching ever sees a label.
+        arg_labels: Vec<Option<Ident>>,
         /// Slice 7GEN.5b: explicit `::[T1, T2]` turbofish at a generic-fn
         /// call site. Empty when the call is to a non-generic fn or when
         /// type-args are inferred (slice 7GEN.5a's path). When non-empty,

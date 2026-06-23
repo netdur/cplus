@@ -5280,6 +5280,8 @@ fn text_coercion_end_to_end() {
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10007,6 +10009,8 @@ fn stdlib_io_end_to_end() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10108,6 +10112,8 @@ fn stdlib_env_var_into() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10351,6 +10357,8 @@ fn stdlib_hash_map_str_int() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10416,6 +10424,8 @@ fn stdlib_hash_map_generic_k_v() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10503,6 +10513,8 @@ fn stdlib_hash_map_noncopy_value_rejected_e0502() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10563,6 +10575,8 @@ fn stdlib_net_tcp_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10683,6 +10697,8 @@ fn cross_module_vec_in_result_no_double_free() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10757,6 +10773,8 @@ fn stdlib_fs_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10853,6 +10871,8 @@ fn stdlib_cross_module_turbofish_with_qualified_type_arg() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10900,6 +10920,8 @@ fn stdlib_cross_module_generic_method_propagation() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -10974,6 +10996,8 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11050,6 +11074,8 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11111,6 +11137,8 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11166,6 +11194,8 @@ fn stdlib_thread_spawn_join_non_copy_string() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11241,6 +11271,8 @@ fn async_fn_returning_string_through_block_on() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11339,6 +11371,8 @@ fn stdlib_thread_spawn_join_raw_pointer_o() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11395,6 +11429,8 @@ fn stdlib_thread_spawn_join_fn_pointer_o() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11454,6 +11490,8 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11541,6 +11579,8 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11562,14 +11602,16 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
         dir.join("src/main.cplus"),
         "import \"stdlib/box\" as box;\n\
          import \"stdlib/text\" as text;\n\
+         import \"stdlib/option\" as option;\n\
          fn main() -> i32 {\n\
-             var b = box::new::[i32](7);\n\
+             guard let option::Option[box::Box[i32]]::Some(btmp) = box::new::[i32](7) else { return 10; };\n\
+             var b: box::Box[i32] = btmp;\n\
              if b.get() != 7 { return 1; }\n\
              b.set(100);\n\
              if b.get() != 100 { return 2; }\n\
              if b.unwrap() != 100 { return 3; }\n\
              let s = text::from_str(\"boxed-string\");\n\
-             let b2 = box::new::[text::Text](s);\n\
+             guard let option::Option[box::Box[text::Text]]::Some(b2) = box::new::[text::Text](s) else { return 11; };\n\
              let recovered: text::Text = b2.unwrap();\n\
              if recovered.len() != (12 as usize) { return 4; }\n\
              return 0;\n\
@@ -11601,6 +11643,8 @@ fn stdlib_arc_cross_thread_share() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11616,11 +11660,12 @@ fn stdlib_arc_cross_thread_share() {
         dir.join("src/main.cplus"),
         "import \"stdlib/arc\" as arc;\n\
          import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/option\" as option;\n\
          fn worker(take handle: arc::Arc[i32]) -> i32 {\n\
              return handle.get();\n\
          }\n\
          fn main() -> i32 {\n\
-             let root = arc::new::[i32](7);\n\
+             guard let option::Option[arc::Arc[i32]]::Some(root) = arc::new::[i32](7) else { return 9; };\n\
              let c1 = root.clone();\n\
              let c2 = root.clone();\n\
              let h1: thread::JoinHandle[i32] = thread::spawn_with::[arc::Arc[i32], i32](c1, worker);\n\
@@ -11668,6 +11713,8 @@ fn stdlib_rc_clone_chain_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11678,8 +11725,9 @@ fn stdlib_rc_clone_chain_round_trip() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/rc\" as rc;\n\
+         import \"stdlib/option\" as option;\n\
          fn main() -> i32 {\n\
-             let a = rc::new::[i32](42);\n\
+             guard let option::Option[rc::Rc[i32]]::Some(a) = rc::new::[i32](42) else { return 9; };\n\
              if a.get() != 42 { return 1; }\n\
              if a.strong_count() != (1 as u64) { return 2; }\n\
              let b = a.clone();\n\
@@ -11717,6 +11765,8 @@ fn stdlib_mutex_cross_thread_increment() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11732,6 +11782,7 @@ fn stdlib_mutex_cross_thread_increment() {
         dir.join("src/main.cplus"),
         "import \"stdlib/mutex\" as mutex;\n\
          import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/option\" as option;\n\
          fn worker(take m: mutex::Mutex[i32]) -> i32 {\n\
              var g = m.lock();\n\
              let cur: i32 = g.get();\n\
@@ -11739,7 +11790,7 @@ fn stdlib_mutex_cross_thread_increment() {
              return 0;\n\
          }\n\
          fn main() -> i32 {\n\
-             let root = mutex::new::[i32](10);\n\
+             guard let option::Option[mutex::Mutex[i32]]::Some(root) = mutex::new::[i32](10) else { return 9; };\n\
              let c1 = root.clone();\n\
              let c2 = root.clone();\n\
              let h1: thread::JoinHandle[i32] = thread::spawn_with::[mutex::Mutex[i32], i32](c1, worker);\n\
@@ -11793,6 +11844,8 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11811,17 +11864,19 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/mutex\" as mutex;\n\
+         import \"stdlib/option\" as option;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          static FREES: i32 = 0;\n\
          struct Res { p: *u8 }\n\
          impl Res { fn drop(ref this) { { FREES = FREES +% 1; free(this.p); } return; } }\n\
-         fn make_locked() -> mutex::MutexGuard[Res] {\n\
-             let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: { malloc(8 as usize) } });\n\
-             return m.lock();\n\
+         fn make_locked() -> option::Option[mutex::MutexGuard[Res]] {\n\
+             let r: Res = Res { p: { malloc(8 as usize) } };\n\
+             guard let option::Option[mutex::Mutex[Res]]::Some(m) = mutex::new::[Res](r) else { return option::Option[mutex::MutexGuard[Res]]::None; };\n\
+             return option::Option[mutex::MutexGuard[Res]]::Some(m.lock());\n\
          }\n\
          fn main() -> i32 {\n\
-             { let _g: mutex::MutexGuard[Res] = make_locked(); }\n\
+             { guard let option::Option[mutex::MutexGuard[Res]]::Some(_g) = make_locked() else { return 2; }; }\n\
              return { FREES };\n\
          }\n",
     )
@@ -11867,6 +11922,8 @@ fn stdlib_box_set_drops_old_value() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11880,6 +11937,7 @@ fn stdlib_box_set_drops_old_value() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/box\" as box;\n\
+         import \"stdlib/option\" as option;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          static A: i32 = 0;\n\
@@ -11888,7 +11946,7 @@ fn stdlib_box_set_drops_old_value() {
          impl R { fn drop(ref this) { { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { { A = A +% 1; } return R { p: { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
-             { var b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
+             { guard let option::Option[box::Box[R]]::Some(btmp) = box::new::[R](mk()) else { return 5; }; var b: box::Box[R] = btmp; b.set(mk()); }\n\
              return { A -% F };\n\
          }\n",
     )
@@ -11934,6 +11992,8 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -11947,13 +12007,14 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/box\" as box;\n\
+         import \"stdlib/option\" as option;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct R { p: *u8 }\n\
          impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
          fn mk() -> R { return R { p: { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
-             let b: box::Box[R] = box::new::[R](mk());\n\
+             guard let option::Option[box::Box[R]]::Some(b) = box::new::[R](mk()) else { return 1; };\n\
              let _r: R = b.get();\n\
              return 0;\n\
          }\n",
@@ -11992,6 +12053,8 @@ fn stdlib_text_reassign_str_literal_coerces() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12067,6 +12130,8 @@ fn stdlib_vec_assoc_new_with_struct_element() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12143,6 +12208,8 @@ fn stdlib_for_in_break_does_not_crash() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12222,6 +12289,8 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12308,6 +12377,8 @@ fn stdlib_block_on_infers_type_arg_no_turbofish() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12376,6 +12447,8 @@ fn stdlib_channel_mpmc_stress() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12391,6 +12464,7 @@ fn stdlib_channel_mpmc_stress() {
         dir.join("src/main.cplus"),
         "import \"stdlib/channel\" as channel;\n\
          import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/option\" as option;\n\
          fn producer(take ch: channel::Channel[i32]) -> i32 {\n\
              var i: i32 = 0;\n\
              while i < 100 {\n\
@@ -12411,7 +12485,7 @@ fn stdlib_channel_mpmc_stress() {
              return count;\n\
          }\n\
          fn main() -> i32 {\n\
-             let root = channel::new::[i32]();\n\
+             guard let option::Option[channel::Channel[i32]]::Some(root) = channel::new::[i32]() else { return 9; };\n\
              let p1 = root.clone();\n\
              let p2 = root.clone();\n\
              let c1 = root.clone();\n\
@@ -12465,6 +12539,8 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12536,6 +12612,8 @@ fn stdlib_thread_drop_is_non_blocking() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12632,6 +12710,8 @@ fn phase4_gen_fn_for_in_round_trips() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12702,6 +12782,8 @@ fn stdlib_executor_yield_now_round_trips() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12772,6 +12854,8 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12872,6 +12956,8 @@ fn stdlib_fs_file_lines_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -12986,6 +13072,8 @@ fn stdlib_fs_file_read_async_compiles() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -13181,6 +13269,8 @@ fn phase4f_concurrent_n_sleeps_stress() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -13300,6 +13390,8 @@ fn async_method_on_user_struct_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -13435,6 +13527,8 @@ fn stdlib_time_sleep_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -13531,6 +13625,8 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -13652,6 +13748,8 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15155,6 +15253,8 @@ fn phase1c_container_inner_drop_runs_without_crash() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15180,7 +15280,8 @@ fn phase1c_container_inner_drop_runs_without_crash() {
          import \"stdlib/rc\" as rc;\n\
          import \"stdlib/hash_map\" as hm;\n\
          import \"stdlib/text\" as text;\n\
-         fn box_scope() { let _b: box::Box[text::Text] = box::new::[text::Text](text::from_str(\"hello\")); return; }\n\
+         import \"stdlib/option\" as option;\n\
+         fn box_scope() { guard let option::Option[box::Box[text::Text]]::Some(_b) = box::new::[text::Text](text::from_str(\"hello\")) else { return; }; return; }\n\
          fn vec_scope() {\n\
              var v: vec::Vec[text::Text] = vec::new::[text::Text]();\n\
              v.push(text::from_str(\"one\"));\n\
@@ -15189,12 +15290,12 @@ fn phase1c_container_inner_drop_runs_without_crash() {
              return;\n\
          }\n\
          fn arc_scope() {\n\
-             let a: arc::Arc[text::Text] = arc::new::[text::Text](text::from_str(\"arc-value\"));\n\
+             guard let option::Option[arc::Arc[text::Text]]::Some(a) = arc::new::[text::Text](text::from_str(\"arc-value\")) else { return; };\n\
              let _c: u64 = a.strong_count();\n\
              return;\n\
          }\n\
          fn rc_scope() {\n\
-             let r: rc::Rc[text::Text] = rc::new::[text::Text](text::from_str(\"rc-value\"));\n\
+             guard let option::Option[rc::Rc[text::Text]]::Some(r) = rc::new::[text::Text](text::from_str(\"rc-value\")) else { return; };\n\
              let _c: u64 = r.strong_count();\n\
              return;\n\
          }\n\
@@ -15252,6 +15353,8 @@ fn phase1d_async_runs_clean_under_asan() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15351,6 +15454,8 @@ fn issue11_spawn_local_plus_nested_await_no_crash() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15513,6 +15618,8 @@ fn struct_destructure_moves_vec_out_clean() {
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15581,6 +15688,8 @@ fn phase2b_gen_method_on_struct() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15723,6 +15832,8 @@ fn stdlib_vec_push_and_get() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15783,6 +15894,8 @@ fn stdlib_vec_iter_for_in() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15899,6 +16012,8 @@ fn stdlib_vec_collect_drains_iterator() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -15970,6 +16085,8 @@ fn stdlib_iterator_adapters_filter_take_map() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16050,6 +16167,8 @@ fn stdlib_vec_extend_from_slice_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16130,6 +16249,8 @@ fn stdlib_atomic_round_trips() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16207,6 +16328,8 @@ fn stdlib_atomic_ir_contains_every_ordering() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16269,6 +16392,8 @@ fn stdlib_thread_spawn_join_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16339,6 +16464,8 @@ fn stdlib_thread_spawn_with_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16422,6 +16549,8 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16503,6 +16632,8 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -16578,6 +16709,8 @@ fn stdlib_thread_drop_detaches_unjoined_handle() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -18430,6 +18563,8 @@ fn recipe_concurrent_counter_runs() {
     let dir = copy_recipe_to_tempdir("concurrent_counter");
     // Vendor-link both stdlib modules the recipe imports.
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -18475,6 +18610,8 @@ fn recipe_concurrent_counter_tsan_and_asan_clean() {
     for san in ["--tsan", "--asan"] {
         let dir = copy_recipe_to_tempdir("concurrent_counter");
         std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
         std::fs::write(
             dir.join("vendor/stdlib/Cplus.toml"),
             "[package]\nname = \"stdlib\"\n",
@@ -18532,6 +18669,8 @@ fn racy_counter_provokes_tsan_warning() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -18614,6 +18753,8 @@ fn recipe_async_fetch_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("async_fetch");
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -18710,6 +18851,8 @@ fn recipe_async_fetch_runs() {
 #[cfg(target_os = "windows")]
 fn stage_win_async_stdlib(dir: &std::path::Path) {
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -19170,6 +19313,8 @@ fn recipe_async_yield_demo_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("async_yield_demo");
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -19219,6 +19364,8 @@ fn recipe_async_compute_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("async_compute");
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -19280,6 +19427,8 @@ fn recipe_parallel_sum_runs() {
     // tempdir before building. (`copy_recipe_to_tempdir` only ships
     // the recipe's own src + manifest.)
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -22256,6 +22405,8 @@ fn vec_element_drop_runs_per_element_by_count() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -22411,6 +22562,8 @@ fn enum_move_into_method_arg_no_double_free() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -22514,6 +22667,8 @@ fn enum_conditional_branch_tail_move_no_double_free() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -24788,6 +24943,8 @@ fn setup_text_project(dir: &std::path::Path, main_src: &str) {
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/status.cplus"), include_str!("../../vendor/stdlib/src/status.cplus")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), include_str!("../../vendor/stdlib/src/option.cplus")).unwrap();
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
@@ -27612,5 +27769,205 @@ fn builder_block_parse_negatives() {
     assert!(
         stderr.contains("expected expression"),
         "leading dot outside a builder block is a plain parse error: {stderr}"
+    );
+}
+
+/// Named arguments: a free-function call may pass arguments as `label: value` in
+/// any order (and mix leading positional args with trailing named ones). The
+/// parser records labels; `lower` reorders them into parameter order and clears
+/// them, so codegen sees a plain positional call. An order-sensitive `sub`
+/// proves the reorder is correct — a wrong binding would change the result.
+#[test]
+fn named_arguments_reorder_and_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "fn sub(n1: i32, n2: i32) -> i32 { return n1 -% n2; }\n\
+         fn main() -> i32 {\n\
+             var score: i32 = 0;\n\
+             if sub(10, 3) == 7 { score = score +% 1; }\n\
+             if sub(n1: 10, n2: 3) == 7 { score = score +% 1; }\n\
+             if sub(n2: 3, n1: 10) == 7 { score = score +% 1; }\n\
+             if sub(10, n2: 3) == 7 { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc failed to compile named-arg program");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(4),
+        "positional / named / reordered / mixed calls must all bind correctly"
+    );
+}
+
+/// Named-argument diagnostics: a positional argument after a named one (E1004),
+/// an unknown label (E1005), and a duplicated argument (E1006).
+#[test]
+fn named_arguments_diagnostics() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let check = |body: &str| -> String {
+        let src = dir.join("d.cplus");
+        std::fs::write(
+            &src,
+            format!(
+                "fn sub(n1: i32, n2: i32) -> i32 {{ return n1 -% n2; }}\n\
+                 fn main() -> i32 {{ return {body}; }}\n"
+            ),
+        )
+        .unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("run cpc check");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    assert!(
+        check("sub(n1: 1, 2)").contains("E1004"),
+        "positional argument after a named argument should be E1004"
+    );
+    assert!(
+        check("sub(bogus: 1, n2: 2)").contains("E1005"),
+        "unknown label should be E1005"
+    );
+    assert!(
+        check("sub(n1: 1, n1: 2)").contains("E1006"),
+        "duplicate argument should be E1006"
+    );
+}
+
+/// Named arguments on method calls. `lower` has no type information, but it
+/// resolves the call by matching the labels against every method of that name —
+/// the labels single out the right overload. Proved here with two types whose
+/// `m` methods take differently-named params: `a.m(value:, at:)` can only be
+/// `A::m`, `b.m(key:, val:)` can only be `B::m`. The order-sensitive bodies
+/// prove the reorder binds correctly.
+#[test]
+fn named_arguments_on_methods() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "struct A { x: i32 }\n\
+         struct B { x: i32 }\n\
+         impl A { fn m(this, value: i32, at: i32) -> i32 { return value -% at; } }\n\
+         impl B { fn m(this, key: i32, val: i32) -> i32 { return key +% val; } }\n\
+         fn main() -> i32 {\n\
+             var a: A = A { x: 0 };\n\
+             var b: B = B { x: 0 };\n\
+             var score: i32 = 0;\n\
+             if a.m(10, 3) == 7 { score = score +% 1; }\n\
+             if a.m(at: 3, value: 10) == 7 { score = score +% 1; }\n\
+             if a.m(10, at: 3) == 7 { score = score +% 1; }\n\
+             if b.m(val: 5, key: 2) == 7 { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc failed to compile method named-arg program");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(4),
+        "method positional / reordered / mixed / overload-disambiguated calls must all bind correctly"
+    );
+}
+
+/// Default parameter values: an omitted trailing argument is filled from the
+/// parameter's `= EXPR` default at the call site — for free functions and
+/// methods, whether the explicit args are positional or labeled. Order-sensitive
+/// bodies (`-%`) prove the fill lands in the right position.
+#[test]
+fn default_values_splice_and_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "fn sub(n1: i32, n2: i32 = 4) -> i32 { return n1 -% n2; }\n\
+         struct C { z: i32 }\n\
+         impl C { fn shift(this, base: i32, by: i32 = 1) -> i32 { return base -% by; } }\n\
+         fn main() -> i32 {\n\
+             var c: C = C { z: 0 };\n\
+             var s: i32 = 0;\n\
+             if sub(10) == 6 { s = s +% 1; }\n\
+             if sub(10, 3) == 7 { s = s +% 1; }\n\
+             if sub(10, n2: 3) == 7 { s = s +% 1; }\n\
+             if sub(n2: 3, n1: 10) == 7 { s = s +% 1; }\n\
+             if c.shift(9) == 8 { s = s +% 1; }\n\
+             if c.shift(9, by: 2) == 7 { s = s +% 1; }\n\
+             return s;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc failed to compile default-value program");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(6),
+        "omitted / positional / labeled defaults must fill correctly for fns and methods"
+    );
+}
+
+/// Default-value declaration errors: a required parameter after a defaulted one
+/// (E1007), and a default on an `extern fn` parameter (E1008).
+#[test]
+fn default_value_diagnostics() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let check = |body: &str| -> String {
+        let src = dir.join("d.cplus");
+        std::fs::write(&src, body).unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("run cpc check");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    assert!(
+        check("fn f(a: i32 = 0, b: i32) -> i32 { return a +% b; }\nfn main() -> i32 { return f(1, 2); }\n")
+            .contains("E1007"),
+        "required parameter after a defaulted one should be E1007"
+    );
+    assert!(
+        check("extern fn g(x: i32 = 0) -> i32;\nfn main() -> i32 { return 0; }\n")
+            .contains("E1008"),
+        "default on an extern fn parameter should be E1008"
     );
 }

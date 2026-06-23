@@ -32,6 +32,7 @@
 // code works on both platforms.
 
 import "stdlib/atomic" as atomic;
+import "stdlib/option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -71,12 +72,17 @@ struct MutexGuard[T] {
 //   mutex:    ctrl + 8    (64 bytes — pthread_mutex_t)
 //   value:    ctrl + 72   (T)
 
-fn new[T](take v: T) -> Mutex[T] {
+// A `Mutex` is always a live heap block, so on allocation failure `new` returns
+// `None` (and `v` drops as the function returns) rather than trapping.
+fn new[T](take v: T) -> option::Option[Mutex[T]] {
     let refct_bytes: usize = 8 as usize;
     let mutex_bytes: usize = 64 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = refct_bytes +% mutex_bytes +% value_size;
     let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Mutex[T]]::None;
+    }
     let refct: *u64 = { raw as *u64 };
     { *refct = 1 as u64; }
     let mutex_ptr: *u8 = { raw + refct_bytes };
@@ -84,7 +90,7 @@ fn new[T](take v: T) -> Mutex[T] {
     let value_off: usize = refct_bytes +% mutex_bytes;
     let value_ptr: *T = { (raw + value_off) as *T };
     { *value_ptr = v; }
-    return Mutex[T] { ctrl: raw };
+    return option::Option[Mutex[T]]::Some(Mutex[T] { ctrl: raw });
 }
 
 impl Mutex[T] {

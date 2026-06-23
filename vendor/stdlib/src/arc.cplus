@@ -24,6 +24,7 @@
 // per-T glue is invokable from generic body context.
 
 import "stdlib/atomic" as atomic;
+import "stdlib/option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -44,16 +45,19 @@ impl Arc[T: Send + Sync]: Sync {}
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
 // over-aligned T motivates it).
-fn new[T](take v: T) -> Arc[T] {
+fn new[T](take v: T) -> option::Option[Arc[T]] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
     let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Arc[T]]::None;   // v drops here -> recovered
+    }
     let refct: *u64 = { raw as *u64 };
     { *refct = 1 as u64; }
     let value_ptr: *T = { (raw + header) as *T };
     { *value_ptr = v; }
-    return Arc[T] { ctrl: raw };
+    return option::Option[Arc[T]]::Some(Arc[T] { ctrl: raw });
 }
 
 impl Arc[T] {

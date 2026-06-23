@@ -67,6 +67,10 @@ fn close_fd(fd: i32) -> i32 {
 // Flip the socket to non-blocking via ioctlsocket(FIONBIO, 1). FIONBIO is
 // _IOW('f', 126, u_long) = 0x8004667E. Returns 0 on success, -1 on error.
 fn set_nonblocking(fd: i32) -> i32 {
+    // NOTE — error-handling convention (docs/design/error-handling.md): the
+    // small allocations in this file are not yet null-checked; OOM crashes
+    // rather than recovering. Windows-only path, not exercised by the macOS
+    // test suite — tracked follow-up.
     let arg: *u32 = { malloc(4 as usize) as *u32 };
     { *arg = 1 as u32; }
     let cmd: i32 = { (0x8004667E as u32) as i32 };

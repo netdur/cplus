@@ -102,6 +102,11 @@ fn ensure() -> *u8 {
     let cur: *u8 = { #reactor_get_state() };
     let null_p: *u8 = { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
+    // NOTE — error-handling convention (docs/design/error-handling.md): the
+    // reactor's allocations (this state block and the realloc-grown waiter
+    // tables below) are NOT yet null-checked, so OOM crashes instead of
+    // recovering. Linux-only async plumbing, not exercised by the macOS test
+    // suite; converting it per the convention is a tracked follow-up.
     let state: *u8 = { malloc(header_bytes()) };
     let epfd: i32 = { epoll_create1(0 as i32) };
     let kqfd_slot: *i32 = { (state + off_kqfd()) as *i32 };

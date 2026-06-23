@@ -2618,3 +2618,118 @@ path = "src/main.cplus"
 libs = ["boguslib"]
 # -> W0003 `[link] libs` on a `[[bin]]` package is ignored when building the binary
 '''
+
+[[code]]
+id = "E1002"
+title = "Named arguments not supported yet"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/sema.rs"
+cause = "A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position."
+fix = "Pass the arguments positionally for now: `f(value)`."
+example = '''
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(v: 1);  // -> E1002 on a method/other call form
+}
+'''
+
+[[code]]
+id = "E1003"
+title = "Named arguments on an indirect (fn-pointer) call"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/sema.rs"
+cause = "A call through a function pointer used a named argument. A fn-pointer type records only parameter types, not names, so there are no labels to match against."
+fix = "Pass the arguments positionally."
+
+[[code]]
+id = "E1004"
+title = "Positional argument after a named argument"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/lower.rs"
+cause = "A positional argument followed a named one. Positional arguments must all come before any named argument so the call has a single readable shape."
+fix = "Move the positional argument before the first named argument, or give it a label."
+example = '''
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(n1: 1, 2);  // -> E1004 positional argument after a named argument
+}
+'''
+
+[[code]]
+id = "E1005"
+title = "Unknown argument label"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/lower.rs"
+cause = "A named argument used a label that is not a parameter of the called function."
+fix = "Use a parameter name from the function's signature."
+example = '''
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(bogus: 1, n2: 2);  // -> E1005 unknown argument label `bogus`
+}
+'''
+
+[[code]]
+id = "E1006"
+title = "Argument provided more than once"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/lower.rs"
+cause = "The same parameter was given a value more than once — by position and by label, or by two labels."
+fix = "Provide each argument exactly once."
+example = '''
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(n1: 1, n1: 2);  // -> E1006 argument `n1` is provided more than once
+}
+'''
+
+[[code]]
+id = "E1007"
+title = "Required parameter after a defaulted one"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/lower.rs"
+cause = "A parameter without a default value follows one that has a default. Defaults must be trailing so a positional call can omit them unambiguously."
+fix = "Move the defaulted parameters to the end, or give the later ones defaults too."
+example = '''
+fn f(a: i32 = 0, b: i32) -> i32 { return a +% b; }
+//                ^ -> E1007 required parameter `b` cannot follow a defaulted one
+'''
+
+[[code]]
+id = "E1008"
+title = "Default value on an extern fn parameter"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/lower.rs"
+cause = "An `extern fn` parameter declared a default value. The C ABI has no notion of default arguments, and `extern fn` declarations are call-shapes for a foreign symbol."
+fix = "Remove the default; pass the argument explicitly at every call."
+example = '''
+extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a default
+'''

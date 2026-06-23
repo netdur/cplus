@@ -54,6 +54,7 @@
 // new_str_int_map() -> HashMap[str, i32]` constructs the same shape.
 
 import "./result" as result;
+import "./status" as status;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -67,6 +68,10 @@ struct HashMap[K: Copy, V: Copy] {
     occupied: *u8,
     cap: usize,
     len: usize,
+}
+
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
 }
 
 // Empty map; first insert allocates. The `K: Copy` / `V: Copy` bounds are
@@ -97,13 +102,19 @@ impl HashMap[K, V] {
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
-    fn insert(ref this, take k: K, take v: V) {
+    fn insert(ref this, take k: K, take v: V) -> status::Status {
         if this.cap == (0 as usize) {
-            this.grow_to(16 as usize);
+            let st: status::Status = this.grow_to(16 as usize);
+            if st != status::Status::Ok {
+                return st;          // could not allocate; map unchanged (k, v are Copy)
+            }
         }
         // Grow at 0.75 load factor.
         if (this.len *% (4 as usize)) >= (this.cap *% (3 as usize)) {
-            this.grow_to(this.cap *% (2 as usize));
+            let st: status::Status = this.grow_to(this.cap *% (2 as usize));
+            if st != status::Status::Ok {
+                return st;          // grow failed; map still valid at old capacity
+            }
         }
         let h: u64 = k.hash();
         let start: usize = (h as usize) % this.cap;
@@ -115,15 +126,15 @@ impl HashMap[K, V] {
                 { this.vals[slot] = v; }
                 { this.occupied[slot] = 1 as u8; }
                 this.len = this.len +% (1 as usize);
-                return;
+                return status::Status::Ok;
             }
             let existing: K = { this.keys[slot] };
             if existing.eq(k) {
                 { this.vals[slot] = v; }
-                return;
+                return status::Status::Ok;
             }
             slot = (slot +% (1 as usize)) % this.cap;
-            if slot == start { return; } // table full; cannot happen post-grow
+            if slot == start { return status::Status::OutOfMemory; } // full; cannot happen post-grow
         }
     }
 
@@ -163,18 +174,42 @@ impl HashMap[K, V] {
     // Grow capacity to at least `new_cap`. Re-inserts every live entry
     // (open-addressing positions depend on cap, so a memcpy-resize won't
     // work). Internal helper; not in the public surface.
-    fn grow_to(ref this, new_cap: usize) {
+    fn grow_to(ref this, new_cap: usize) -> status::Status {
         let old_keys: *K = this.keys;
         let old_vals: *V = this.vals;
         let old_occ: *u8 = this.occupied;
         let old_cap: usize = this.cap;
 
-        let keys_bytes: usize = new_cap *% #size_of::[K]();
-        let vals_bytes: usize = new_cap *% #size_of::[V]();
+        // Overflow-checked byte sizes; on overflow leave the map unchanged.
+        let kelem: usize = #size_of::[K]();
+        let velem: usize = #size_of::[V]();
+        if kelem != (0 as usize) && new_cap > (max_usize() / kelem) {
+            return status::Status::OutOfMemory;
+        }
+        if velem != (0 as usize) && new_cap > (max_usize() / velem) {
+            return status::Status::OutOfMemory;
+        }
+        let keys_bytes: usize = new_cap *% kelem;
+        let vals_bytes: usize = new_cap *% velem;
         let occ_bytes: usize = new_cap;
+
+        // Allocate all three arrays. If any fails, free what we already got and
+        // leave the map exactly as it was — still valid at its old capacity.
         let nk_raw: *u8 = { malloc(keys_bytes) };
+        if nk_raw.is_null() {
+            return status::Status::OutOfMemory;
+        }
         let nv_raw: *u8 = { malloc(vals_bytes) };
+        if nv_raw.is_null() {
+            { free(nk_raw); }
+            return status::Status::OutOfMemory;
+        }
         let no_raw: *u8 = { malloc(occ_bytes) };
+        if no_raw.is_null() {
+            { free(nk_raw); }
+            { free(nv_raw); }
+            return status::Status::OutOfMemory;
+        }
         // Zero the occupied buffer so empty-slot detection is correct.
         { memset(no_raw, 0 as i32, occ_bytes); }
         this.keys = { nk_raw as *K };
@@ -213,7 +248,7 @@ impl HashMap[K, V] {
             { free(old_vals as *u8); }
             { free(old_occ); }
         }
-        return;
+        return status::Status::Ok;
     }
 
     fn drop(ref this) {

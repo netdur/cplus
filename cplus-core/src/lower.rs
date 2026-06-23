@@ -69,6 +69,10 @@ pub fn lower_multi(
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
     let const_values = cx.collect_consts_and_validate_inits(prog);
+    // Collect free-fn / method parameters (names + defaults) up front so named
+    // arguments can be reordered and omitted defaults spliced during the
+    // per-item expression walk.
+    cx.collect_call_params(prog);
     for it in &mut prog.items {
         cx.set_current_file(it.origin_file.as_deref());
         cx.lower_item(it);
@@ -86,6 +90,30 @@ pub fn lower_multi(
     cx.diags
 }
 
+/// One parameter as seen by the named-argument / default-value lowering: its
+/// name (the label) and its default value expression, if any.
+#[derive(Clone)]
+struct ParamInfo {
+    name: String,
+    default: Option<Expr>,
+}
+
+/// Where a lowered call's argument in one parameter position comes from.
+#[derive(Clone, PartialEq)]
+enum ArgSlot {
+    /// The argument originally at this index in the (written-order) call.
+    Arg(usize),
+    /// The parameter's default value (spliced in because the call omitted it).
+    Default,
+}
+
+fn param_info(p: &Param) -> ParamInfo {
+    ParamInfo {
+        name: p.name.name.clone(),
+        default: p.default.as_deref().cloned(),
+    }
+}
+
 struct Lower {
     entry_file: PathBuf,
     entry_src: String,
@@ -95,6 +123,15 @@ struct Lower {
     /// The file the item currently being lowered came from, if tagged.
     current_file: Option<String>,
     diags: Vec<Diagnostic>,
+    /// Parameters (name + default) per non-extern free function, keyed by fn
+    /// name. Collected up front (across all files) and used to lower named
+    /// arguments into positional order and to splice omitted defaults. Extern
+    /// fns are absent.
+    fn_params: std::collections::HashMap<String, Vec<ParamInfo>>,
+    /// Parameters (receiver excluded) for every `impl` method, keyed by method
+    /// name. A name may map to several overloads across types; for a `v.m(..)`
+    /// call the labels / arity usually single one out (lower has no type info).
+    method_params: std::collections::HashMap<String, Vec<Vec<ParamInfo>>>,
 }
 
 impl Lower {
@@ -116,7 +153,245 @@ impl Lower {
             files: compiled,
             current_file: None,
             diags: vec![],
+            fn_params: std::collections::HashMap::new(),
+            method_params: std::collections::HashMap::new(),
         }
+    }
+
+    /// Collect, across the whole (merged) program, the parameters (name +
+    /// default) that named arguments are matched against and that omitted
+    /// defaults are spliced from: every non-extern free function (by name) and
+    /// every `impl` method (by name, receiver excluded — a name may have several
+    /// overloads). Also validates default placement (trailing-only) and that
+    /// `extern fn`s have none. Done up front so the per-item expression walk can
+    /// lower `f(b: .., a: ..)` / `v.m(b:)` and fill omitted defaults.
+    fn collect_call_params(&mut self, prog: &Program) {
+        for it in &prog.items {
+            match &it.kind {
+                ItemKind::Function(f) => {
+                    self.validate_param_defaults(&f.params, f.is_extern);
+                    if !f.is_extern {
+                        self.fn_params
+                            .insert(f.name.name.clone(), f.params.iter().map(param_info).collect());
+                    }
+                }
+                ItemKind::Impl(b) => {
+                    for m in &b.methods {
+                        self.validate_param_defaults(&m.params, false);
+                        self.method_params
+                            .entry(m.name.name.clone())
+                            .or_default()
+                            .push(m.params.iter().map(param_info).collect());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A default value must be trailing (no required parameter after one with a
+    /// default), and an `extern fn` may not have defaults at all.
+    fn validate_param_defaults(&mut self, params: &[Param], is_extern: bool) {
+        let mut seen_default = false;
+        for p in params {
+            if p.default.is_some() {
+                if is_extern {
+                    self.err(
+                        "E1008",
+                        "an `extern fn` parameter cannot have a default value".to_string(),
+                        p.span,
+                    );
+                }
+                seen_default = true;
+            } else if seen_default {
+                self.err(
+                    "E1007",
+                    format!(
+                        "required parameter `{}` cannot follow a parameter with a default value",
+                        p.name.name
+                    ),
+                    p.span,
+                );
+            }
+        }
+    }
+
+    /// True if a call to `callee` with `n_args` positional args might need a
+    /// default spliced in — i.e. the callee is a known free fn / method with
+    /// more parameters than arguments given. Used to gate the lowering so that
+    /// exact-arity positional calls are left untouched.
+    fn call_may_need_defaults(&self, callee: &Expr, n_args: usize) -> bool {
+        match &callee.kind {
+            ExprKind::Ident(name) => self.fn_params.get(name).is_some_and(|p| p.len() > n_args),
+            ExprKind::Field { name, .. } => self
+                .method_params
+                .get(&name.name)
+                .is_some_and(|cs| cs.iter().any(|p| p.len() > n_args)),
+            _ => false,
+        }
+    }
+
+    /// Lower a call that uses named arguments and/or omits defaulted ones into a
+    /// plain positional call. The callee resolves to one or more candidate
+    /// parameter lists (a free fn has one; a method may have several overloads).
+    /// For each candidate the args/labels are matched to positions and omitted
+    /// parameters take their defaults; if exactly one *distinct* successful
+    /// arrangement results, the args are rebuilt into it and the labels cleared
+    /// (so every later pass — and codegen — sees an ordinary positional call;
+    /// evaluation order follows the lowered positional order). If none accept
+    /// the call, the first concrete mismatch is reported. If several accept it
+    /// *differently*, it is ambiguous without type info — the labels are left
+    /// for sema's E1002.
+    fn lower_named_call(
+        &mut self,
+        callee: &Expr,
+        args: &mut Vec<Expr>,
+        arg_labels: &mut Vec<Option<Ident>>,
+        call_span: Span,
+    ) {
+        let candidates: Vec<Vec<ParamInfo>> = match &callee.kind {
+            ExprKind::Ident(name) => match self.fn_params.get(name) {
+                Some(p) => vec![p.clone()],
+                None => return, // unknown free fn / fn-pointer local — sema handles
+            },
+            ExprKind::Field { name, .. } => match self.method_params.get(&name.name) {
+                Some(c) => c.clone(),
+                None => return, // unknown method — sema handles
+            },
+            _ => return, // assoc (Path) etc. — sema's E1002 guard reports it
+        };
+        let mut results: Vec<(usize, Vec<ArgSlot>)> = Vec::new();
+        let mut first_err: Option<(&'static str, String, Span)> = None;
+        for (ci, params) in candidates.iter().enumerate() {
+            match Self::match_call(params, args, arg_labels, call_span) {
+                Ok(slots) => {
+                    if !results.iter().any(|(_, s)| *s == slots) {
+                        results.push((ci, slots));
+                    }
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        if results.len() == 1 {
+            let (ci, slots) = &results[0];
+            Self::apply_slots(&candidates[*ci], args, arg_labels, slots);
+        } else if results.is_empty() {
+            if let Some((code, msg, span)) = first_err {
+                self.err(code, msg, span);
+            }
+            // Consumed (errored): clear labels so sema doesn't double-report.
+            arg_labels.clear();
+        }
+        // results.len() > 1: ambiguous without types — leave labels for sema E1002.
+    }
+
+    /// Match a call's `args`/`labels` against one parameter list. Returns, per
+    /// parameter position, where its value comes from (`Arg(i)` or `Default`),
+    /// or `Err((code, msg, span))` on a mismatch. `labels` is either empty (all
+    /// positional) or the same length as `args`.
+    fn match_call(
+        params: &[ParamInfo],
+        args: &[Expr],
+        labels: &[Option<Ident>],
+        call_span: Span,
+    ) -> Result<Vec<ArgSlot>, (&'static str, String, Span)> {
+        let n = params.len();
+        let mut slots: Vec<Option<usize>> = vec![None; n];
+        let mut seen_named = false;
+        let mut next_pos = 0usize;
+        for arg_idx in 0..args.len() {
+            match labels.get(arg_idx).and_then(|l| l.as_ref()) {
+                None => {
+                    if seen_named {
+                        return Err((
+                            "E1004",
+                            "a positional argument cannot follow a named argument".to_string(),
+                            args[arg_idx].span,
+                        ));
+                    }
+                    if next_pos >= n {
+                        return Err((
+                            "E0308",
+                            format!("too many arguments: this call expects {n}"),
+                            args[arg_idx].span,
+                        ));
+                    }
+                    slots[next_pos] = Some(arg_idx);
+                    next_pos += 1;
+                }
+                Some(lbl) => {
+                    seen_named = true;
+                    match params.iter().position(|p| p.name == lbl.name) {
+                        None => {
+                            return Err((
+                                "E1005",
+                                format!("unknown argument label `{}`", lbl.name),
+                                lbl.span,
+                            ))
+                        }
+                        Some(pos) => {
+                            if slots[pos].is_some() {
+                                return Err((
+                                    "E1006",
+                                    format!("argument `{}` is provided more than once", lbl.name),
+                                    lbl.span,
+                                ));
+                            }
+                            slots[pos] = Some(arg_idx);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(n);
+        for (pos, slot) in slots.into_iter().enumerate() {
+            match slot {
+                Some(ai) => out.push(ArgSlot::Arg(ai)),
+                None => {
+                    if params[pos].default.is_some() {
+                        out.push(ArgSlot::Default);
+                    } else {
+                        return Err((
+                            "E0308",
+                            format!("missing argument for parameter `{}`", params[pos].name),
+                            call_span,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Rebuild `args` from `slots` (each position takes an original arg or the
+    /// parameter's default) and clear the labels.
+    fn apply_slots(
+        params: &[ParamInfo],
+        args: &mut Vec<Expr>,
+        arg_labels: &mut Vec<Option<Ident>>,
+        slots: &[ArgSlot],
+    ) {
+        let mut taken: Vec<Option<Expr>> = std::mem::take(args).into_iter().map(Some).collect();
+        let mut out: Vec<Expr> = Vec::with_capacity(slots.len());
+        for (pos, slot) in slots.iter().enumerate() {
+            match slot {
+                ArgSlot::Arg(ai) => {
+                    out.push(taken[*ai].take().expect("each arg is used at most once"))
+                }
+                ArgSlot::Default => out.push(
+                    params[pos]
+                        .default
+                        .clone()
+                        .expect("Default slot only for a parameter that has one"),
+                ),
+            }
+        }
+        *args = out;
+        arg_labels.clear();
     }
 
     fn set_current_file(&mut self, id: Option<&str>) {
@@ -324,6 +599,7 @@ impl Lower {
             self.lower_expr(e);
             return;
         }
+        let espan = e.span;
         match &mut e.kind {
             ExprKind::IntLit(..)
             | ExprKind::FloatLit(..)
@@ -365,10 +641,23 @@ impl Lower {
                     self.lower_expr(eb);
                 }
             }
-            ExprKind::Call { callee, args, .. } => {
+            ExprKind::Call {
+                callee,
+                args,
+                arg_labels,
+                ..
+            } => {
                 self.lower_expr(callee);
-                for a in args {
+                for a in args.iter_mut() {
                     self.lower_expr(a);
+                }
+                // Lower a call that uses named arguments and/or omits defaulted
+                // parameters into a plain positional call. Exact-arity, unlabeled
+                // calls are left untouched. Genuinely-ambiguous method overloads
+                // keep their labels and are reported by sema (E1002).
+                let labeled = arg_labels.iter().any(|l| l.is_some());
+                if labeled || self.call_may_need_defaults(callee, args.len()) {
+                    self.lower_named_call(callee, args, arg_labels, espan);
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
@@ -1073,6 +1362,7 @@ impl Lower {
                 callee,
                 args,
                 type_args,
+                arg_labels: _,
             } => {
                 self.resolve_lens_in_expr(callee, consts);
                 for a in args {
@@ -1585,6 +1875,7 @@ pub fn desugar_builder_block(e: &mut Expr) {
                     }),
                     args: Vec::new(),
                     type_args: Vec::new(),
+                    arg_labels: Vec::new(),
                 },
                 span: ctx_span,
             }),
@@ -1613,6 +1904,7 @@ pub fn desugar_builder_block(e: &mut Expr) {
                         span: block_span,
                     }],
                     type_args: Vec::new(),
+                    arg_labels: Vec::new(),
                 },
                 span: block_span,
             }
@@ -1673,6 +1965,7 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                             callee: Box::new(place),
                             args,
                             type_args: Vec::new(),
+                            arg_labels: Vec::new(),
                         },
                         span: m.span,
                     },
@@ -1780,6 +2073,7 @@ fn method_call(recv: &str, method: &str, args: Vec<Expr>, span: Span) -> Expr {
             }),
             args,
             type_args: Vec::new(),
+            arg_labels: Vec::new(),
         },
         span,
     }

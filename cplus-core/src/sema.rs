@@ -6001,7 +6001,8 @@ impl SemaCx<'_> {
                 callee,
                 args,
                 type_args,
-            } => self.check_call(callee, args, type_args, e.span),
+                arg_labels,
+            } => self.check_call(callee, args, type_args, arg_labels, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expected, e.span),
             ExprKind::Assign { op, target, value } => self.check_assign(*op, target, value, e.span),
@@ -8553,8 +8554,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         callee: &Expr,
         args: &[Expr],
         type_args: &[Type],
+        arg_labels: &[Option<Ident>],
         call_span: ByteSpan,
     ) -> Ty {
+        // Named arguments (`f(name: value)`) parse into `arg_labels` but the
+        // matching pass that reorders them into positional order (and splices
+        // defaults) is not wired yet — see docs/design/named-params-and-defaults.md.
+        // Until then, reject a labeled call cleanly rather than binding by
+        // position (which would silently misbind a reordered call). Checking
+        // continues positionally so the rest of the call still type-checks.
+        if arg_labels.iter().any(|l| l.is_some()) {
+            self.err(
+                "E1002",
+                "named arguments are not supported yet (parsing has landed; \
+                 argument matching is the next step)"
+                    .to_string(),
+                call_span,
+            );
+        }
         // Slice 11.FN_PTR: when the callee is an Ident bound to a local
         // of FnPtr type, this is an indirect call. Validate args against
         // the pointer's param types, return the pointer's return type.

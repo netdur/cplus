@@ -16,6 +16,8 @@
 // at Box's Drop. Free-fn `unwrap(move this)` is the safe way to recover
 // the inner T before scope-exit Drop runs.
 
+import "./option" as option;
+
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
@@ -27,12 +29,18 @@ struct Box[T] {
 // `move v` is the explicit ownership-transfer marker — required for
 // non-Copy T (string, Vec[U], owned structs) so the caller's binding
 // is properly marked moved. Copy T's behave as if move were absent.
-fn new[T](take v: T) -> Box[T] {
+// Heap-allocate a slot for `v`. A `Box` is always a live heap slot, so it has
+// no valid-empty form: on allocation failure `new` returns `None` (and `v` drops
+// as the function returns — no leak) rather than trapping.
+fn new[T](take v: T) -> option::Option[Box[T]] {
     let bytes: usize = #size_of::[T]();
     let raw: *u8 = { malloc(bytes) };
+    if raw.is_null() {
+        return option::Option[Box[T]]::None;
+    }
     let p: *T = { raw as *T };
     { *p = v; }
-    return Box[T] { p: p };
+    return option::Option[Box[T]]::Some(Box[T] { p: p });
 }
 
 // `get` reads the boxed value by bitwise copy without consuming the box, so it

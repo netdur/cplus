@@ -189,6 +189,42 @@ impl Parser {
         }
     }
 
+    /// Parse a `( ... )` call argument list — the caller has already consumed
+    /// the `(`; this consumes up to (not including) the `)`. Each argument is
+    /// either `EXPR` (positional) or `IDENT : EXPR` (a named argument; the label
+    /// is the parameter's name). Returns the value expressions and a parallel
+    /// label vector. Per the `ExprKind::Call` invariant the label vector is
+    /// EMPTY when every argument is positional (the common case), otherwise it
+    /// is `args.len()` long with `None` for positional slots. Disambiguation is
+    /// a two-token lookahead: an `Ident` immediately followed by `:` (not `::`,
+    /// which is a path) begins a named argument.
+    fn parse_call_args(&mut self) -> Result<(Vec<Expr>, Vec<Option<Ident>>), ParseError> {
+        let mut args: Vec<Expr> = Vec::new();
+        let mut labels: Vec<Option<Ident>> = Vec::new();
+        let mut any_label = false;
+        while !self.at(&TokenKind::RParen) {
+            let label = if matches!(self.peek_kind(), TokenKind::Ident(_))
+                && self.peek_kind_n(1) == &TokenKind::Colon
+            {
+                let name = self.expect_ident()?;
+                self.bump(); // `:`
+                any_label = true;
+                Some(name)
+            } else {
+                None
+            };
+            args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
+            labels.push(label);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        if !any_label {
+            labels.clear();
+        }
+        Ok((args, labels))
+    }
+
     fn err_at_peek(&self, expected: &'static str) -> ParseError {
         let t = self.peek();
         if matches!(t.kind, TokenKind::Eof) {
@@ -1508,6 +1544,13 @@ impl Parser {
         self.reject_reserved_binding_name(&name)?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type()?;
+        // Optional default value: `name: T = EXPR`. Spliced at call sites that
+        // omit this argument (see docs/design/named-params-and-defaults.md).
+        let default = if self.eat(&TokenKind::Eq) {
+            Some(Box::new(self.parse_expr()?))
+        } else {
+            None
+        };
         let span = start.merge(ty.span);
         Ok(Param {
             name,
@@ -1516,6 +1559,7 @@ impl Parser {
             move_,
             restrict,
             borrow_,
+            default,
             span,
         })
     }
@@ -2819,19 +2863,14 @@ impl Parser {
                 self.expect(&TokenKind::RBracket, "`]`")?;
                 // After the turbofish, a `(args)` is required.
                 self.expect(&TokenKind::LParen, "`(` after `::[...]` turbofish")?;
-                let mut args = Vec::new();
-                while !self.at(&TokenKind::RParen) {
-                    args.push(self.parse_expr()?);
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
-                    }
-                }
+                let (args, arg_labels) = self.parse_call_args()?;
                 let end = self.expect(&TokenKind::RParen, "`)`")?.span;
                 let span = e.span.merge(end);
                 e = Expr {
                     kind: ExprKind::Call {
                         callee: Box::new(e),
                         args,
+                        arg_labels,
                         type_args,
                     },
                     span,
@@ -2841,19 +2880,14 @@ impl Parser {
             match self.peek_kind() {
                 TokenKind::LParen => {
                     self.bump();
-                    let mut args = Vec::new();
-                    while !self.at(&TokenKind::RParen) {
-                        args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
-                        if !self.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
+                    let (args, arg_labels) = self.parse_call_args()?;
                     let end = self.expect(&TokenKind::RParen, "`)`")?.span;
                     let span = e.span.merge(end);
                     e = Expr {
                         kind: ExprKind::Call {
                             callee: Box::new(e),
                             args,
+                            arg_labels,
                             type_args: Vec::new(),
                         },
                         span,

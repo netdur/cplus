@@ -9762,6 +9762,7 @@ impl<'a> FnState<'a> {
                 callee,
                 args,
                 type_args,
+                arg_labels: _,
             } => self.gen_call(callee, args, type_args),
 
             ExprKind::Binary { op, lhs, rhs } => Some(self.gen_binary(*op, lhs, rhs)),
