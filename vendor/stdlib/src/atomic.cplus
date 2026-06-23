@@ -1,7 +1,7 @@
 // stdlib/atomic.cplus — atomic memory operations on raw pointers.
 //
 // v0.0.3 Phase 5 Slice 5A. The compiler exposes per-(op, type, ordering)
-// intrinsics named `__cplus_atomic_<op>_<ty>_<ord>`; this module wraps
+// intrinsics named `__cplus_atomic_<op>_<ty>_<ordering>`; this module wraps
 // them behind ergonomic free functions that take a runtime `Ordering`.
 //
 // **Why free fns on raw pointers, not an `Atomic[T]` struct.** A struct
@@ -30,9 +30,9 @@ enum Ordering {
 // i32
 // ============================================================
 
-fn atomic_load_i32(p: *i32, ord: Ordering) -> i32 {
+fn load_i32(p: *i32, ordering: Ordering) -> i32 {
     // Release / AcqRel are invalid for loads in LLVM; upgrade to SeqCst.
-    return match ord {
+    return match ordering {
         Ordering::Relaxed => { #atomic_load_i32_relaxed(p) },
         Ordering::Acquire => { #atomic_load_i32_acquire(p) },
         Ordering::Release => { #atomic_load_i32_seqcst(p) },
@@ -41,9 +41,9 @@ fn atomic_load_i32(p: *i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_store_i32(p: *i32, val: i32, ord: Ordering) {
+fn store_i32(p: *i32, val: i32, ordering: Ordering) {
     // Acquire / AcqRel are invalid for stores in LLVM; upgrade to SeqCst.
-    match ord {
+    match ordering {
         Ordering::Relaxed => { #atomic_store_i32_relaxed(p, val); },
         Ordering::Acquire => { #atomic_store_i32_seqcst(p, val); },
         Ordering::Release => { #atomic_store_i32_release(p, val); },
@@ -53,8 +53,8 @@ fn atomic_store_i32(p: *i32, val: i32, ord: Ordering) {
     return;
 }
 
-fn atomic_swap_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn swap_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_xchg_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_xchg_i32_acquire(p, val) },
         Ordering::Release => { #atomic_xchg_i32_release(p, val) },
@@ -63,8 +63,8 @@ fn atomic_swap_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_fetch_add_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn fetch_add_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_add_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_add_i32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_add_i32_release(p, val) },
@@ -73,8 +73,8 @@ fn atomic_fetch_add_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_fetch_sub_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn fetch_sub_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_sub_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_sub_i32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_sub_i32_release(p, val) },
@@ -83,8 +83,8 @@ fn atomic_fetch_sub_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_fetch_and_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn fetch_and_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_and_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_and_i32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_and_i32_release(p, val) },
@@ -93,8 +93,8 @@ fn atomic_fetch_and_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_fetch_or_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn fetch_or_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_or_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_or_i32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_or_i32_release(p, val) },
@@ -103,8 +103,8 @@ fn atomic_fetch_or_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
     };
 }
 
-fn atomic_fetch_xor_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
-    return match ord {
+fn fetch_xor_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_xor_i32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_xor_i32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_xor_i32_release(p, val) },
@@ -116,9 +116,9 @@ fn atomic_fetch_xor_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
 // Returns the previous value at `*p`. Compare against `expected` to
 // detect success. Uses a single ordering for both success and failure
 // (the compiler lowers `release` → success=release, failure=monotonic,
-// etc., to satisfy LLVM's "failure-ord ≤ success-ord" constraint).
-fn atomic_compare_exchange_i32(p: *i32, expected: i32, desired: i32, ord: Ordering) -> i32 {
-    return match ord {
+// etc., to satisfy LLVM's "failure-ordering ≤ success-ordering" constraint).
+fn compare_exchange_i32(p: *i32, expected: i32, desired: i32, ordering: Ordering) -> i32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_cmpxchg_i32_relaxed(p, expected, desired) },
         Ordering::Acquire => { #atomic_cmpxchg_i32_acquire(p, expected, desired) },
         Ordering::Release => { #atomic_cmpxchg_i32_release(p, expected, desired) },
@@ -131,8 +131,8 @@ fn atomic_compare_exchange_i32(p: *i32, expected: i32, desired: i32, ord: Orderi
 // i64
 // ============================================================
 
-fn atomic_load_i64(p: *i64, ord: Ordering) -> i64 {
-    return match ord {
+fn load_i64(p: *i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_load_i64_relaxed(p) },
         Ordering::Acquire => { #atomic_load_i64_acquire(p) },
         Ordering::Release => { #atomic_load_i64_seqcst(p) },
@@ -141,8 +141,8 @@ fn atomic_load_i64(p: *i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_store_i64(p: *i64, val: i64, ord: Ordering) {
-    match ord {
+fn store_i64(p: *i64, val: i64, ordering: Ordering) {
+    match ordering {
         Ordering::Relaxed => { #atomic_store_i64_relaxed(p, val); },
         Ordering::Acquire => { #atomic_store_i64_seqcst(p, val); },
         Ordering::Release => { #atomic_store_i64_release(p, val); },
@@ -152,8 +152,8 @@ fn atomic_store_i64(p: *i64, val: i64, ord: Ordering) {
     return;
 }
 
-fn atomic_swap_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn swap_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_xchg_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_xchg_i64_acquire(p, val) },
         Ordering::Release => { #atomic_xchg_i64_release(p, val) },
@@ -162,8 +162,8 @@ fn atomic_swap_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_fetch_add_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn fetch_add_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_add_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_add_i64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_add_i64_release(p, val) },
@@ -172,8 +172,8 @@ fn atomic_fetch_add_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_fetch_sub_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn fetch_sub_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_sub_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_sub_i64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_sub_i64_release(p, val) },
@@ -182,8 +182,8 @@ fn atomic_fetch_sub_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_fetch_and_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn fetch_and_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_and_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_and_i64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_and_i64_release(p, val) },
@@ -192,8 +192,8 @@ fn atomic_fetch_and_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_fetch_or_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn fetch_or_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_or_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_or_i64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_or_i64_release(p, val) },
@@ -202,8 +202,8 @@ fn atomic_fetch_or_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_fetch_xor_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn fetch_xor_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_xor_i64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_xor_i64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_xor_i64_release(p, val) },
@@ -212,8 +212,8 @@ fn atomic_fetch_xor_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
     };
 }
 
-fn atomic_compare_exchange_i64(p: *i64, expected: i64, desired: i64, ord: Ordering) -> i64 {
-    return match ord {
+fn compare_exchange_i64(p: *i64, expected: i64, desired: i64, ordering: Ordering) -> i64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_cmpxchg_i64_relaxed(p, expected, desired) },
         Ordering::Acquire => { #atomic_cmpxchg_i64_acquire(p, expected, desired) },
         Ordering::Release => { #atomic_cmpxchg_i64_release(p, expected, desired) },
@@ -226,8 +226,8 @@ fn atomic_compare_exchange_i64(p: *i64, expected: i64, desired: i64, ord: Orderi
 // u32
 // ============================================================
 
-fn atomic_load_u32(p: *u32, ord: Ordering) -> u32 {
-    return match ord {
+fn load_u32(p: *u32, ordering: Ordering) -> u32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_load_u32_relaxed(p) },
         Ordering::Acquire => { #atomic_load_u32_acquire(p) },
         Ordering::Release => { #atomic_load_u32_seqcst(p) },
@@ -236,8 +236,8 @@ fn atomic_load_u32(p: *u32, ord: Ordering) -> u32 {
     };
 }
 
-fn atomic_store_u32(p: *u32, val: u32, ord: Ordering) {
-    match ord {
+fn store_u32(p: *u32, val: u32, ordering: Ordering) {
+    match ordering {
         Ordering::Relaxed => { #atomic_store_u32_relaxed(p, val); },
         Ordering::Acquire => { #atomic_store_u32_seqcst(p, val); },
         Ordering::Release => { #atomic_store_u32_release(p, val); },
@@ -247,8 +247,8 @@ fn atomic_store_u32(p: *u32, val: u32, ord: Ordering) {
     return;
 }
 
-fn atomic_fetch_add_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
-    return match ord {
+fn fetch_add_u32(p: *u32, val: u32, ordering: Ordering) -> u32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_add_u32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_add_u32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_add_u32_release(p, val) },
@@ -257,8 +257,8 @@ fn atomic_fetch_add_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
     };
 }
 
-fn atomic_fetch_sub_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
-    return match ord {
+fn fetch_sub_u32(p: *u32, val: u32, ordering: Ordering) -> u32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_sub_u32_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_sub_u32_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_sub_u32_release(p, val) },
@@ -267,8 +267,8 @@ fn atomic_fetch_sub_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
     };
 }
 
-fn atomic_compare_exchange_u32(p: *u32, expected: u32, desired: u32, ord: Ordering) -> u32 {
-    return match ord {
+fn compare_exchange_u32(p: *u32, expected: u32, desired: u32, ordering: Ordering) -> u32 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_cmpxchg_u32_relaxed(p, expected, desired) },
         Ordering::Acquire => { #atomic_cmpxchg_u32_acquire(p, expected, desired) },
         Ordering::Release => { #atomic_cmpxchg_u32_release(p, expected, desired) },
@@ -282,8 +282,8 @@ fn atomic_compare_exchange_u32(p: *u32, expected: u32, desired: u32, ord: Orderi
 // ============================================================
 
 #[no_alloc] #[no_block]
-fn atomic_load_u64(p: *u64, ord: Ordering) -> u64 {
-    return match ord {
+fn load_u64(p: *u64, ordering: Ordering) -> u64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_load_u64_relaxed(p) },
         Ordering::Acquire => { #atomic_load_u64_acquire(p) },
         Ordering::Release => { #atomic_load_u64_seqcst(p) },
@@ -293,8 +293,8 @@ fn atomic_load_u64(p: *u64, ord: Ordering) -> u64 {
 }
 
 #[no_alloc] #[no_block]
-fn atomic_store_u64(p: *u64, val: u64, ord: Ordering) {
-    match ord {
+fn store_u64(p: *u64, val: u64, ordering: Ordering) {
+    match ordering {
         Ordering::Relaxed => { #atomic_store_u64_relaxed(p, val); },
         Ordering::Acquire => { #atomic_store_u64_seqcst(p, val); },
         Ordering::Release => { #atomic_store_u64_release(p, val); },
@@ -305,8 +305,8 @@ fn atomic_store_u64(p: *u64, val: u64, ord: Ordering) {
 }
 
 #[no_alloc] #[no_block]
-fn atomic_fetch_add_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
-    return match ord {
+fn fetch_add_u64(p: *u64, val: u64, ordering: Ordering) -> u64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_add_u64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_add_u64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_add_u64_release(p, val) },
@@ -316,8 +316,8 @@ fn atomic_fetch_add_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
 }
 
 #[no_alloc] #[no_block]
-fn atomic_fetch_sub_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
-    return match ord {
+fn fetch_sub_u64(p: *u64, val: u64, ordering: Ordering) -> u64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_fetch_sub_u64_relaxed(p, val) },
         Ordering::Acquire => { #atomic_fetch_sub_u64_acquire(p, val) },
         Ordering::Release => { #atomic_fetch_sub_u64_release(p, val) },
@@ -327,8 +327,8 @@ fn atomic_fetch_sub_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
 }
 
 #[no_alloc] #[no_block]
-fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Ordering) -> u64 {
-    return match ord {
+fn compare_exchange_u64(p: *u64, expected: u64, desired: u64, ordering: Ordering) -> u64 {
+    return match ordering {
         Ordering::Relaxed => { #atomic_cmpxchg_u64_relaxed(p, expected, desired) },
         Ordering::Acquire => { #atomic_cmpxchg_u64_acquire(p, expected, desired) },
         Ordering::Release => { #atomic_cmpxchg_u64_release(p, expected, desired) },
@@ -345,8 +345,8 @@ fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Orderi
 // publishing store has already happened on another path and we need
 // to seal the happens-before edge with a separate fence.
 #[no_alloc] #[no_block]
-fn atomic_thread_fence(ord: Ordering) {
-    match ord {
+fn fence(ordering: Ordering) {
+    match ordering {
         Ordering::Relaxed => { { #atomic_fence_relaxed(); } }
         Ordering::Acquire => { { #atomic_fence_acquire(); } }
         Ordering::Release => { { #atomic_fence_release(); } }
@@ -354,4 +354,27 @@ fn atomic_thread_fence(ord: Ordering) {
         Ordering::SeqCst => { { #atomic_fence_seqcst(); } }
     };
     return;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn load_store_u64() {
+    var n: u64 = 0 as u64;
+    let p: *u64 = #addr_of(n);
+    { store_u64(p, 42 as u64, Ordering::SeqCst); }
+    let v: u64 = { load_u64(p, Ordering::SeqCst) };
+    assert v == (42 as u64);
+}
+
+#[test]
+fn fetch_add_sub_u64() {
+    var n: u64 = 10 as u64;
+    let p: *u64 = #addr_of(n);
+    let prev: u64 = { fetch_add_u64(p, 5 as u64, Ordering::SeqCst) };
+    assert prev == (10 as u64);
+    assert n == (15 as u64);
+    let prev2: u64 = { fetch_sub_u64(p, 3 as u64, Ordering::SeqCst) };
+    assert prev2 == (15 as u64);
+    assert n == (12 as u64);
 }

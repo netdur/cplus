@@ -22,7 +22,7 @@
 import "./option" as option;
 
 struct Iterator[T] {
-    opaque handle: *u8,
+    opaque _handle: *u8,
 }
 
 // v0.0.5 Phase 3 Slice 3C: iterator adapters. Each adapter is a
@@ -51,10 +51,11 @@ impl Iterator[T] {
         }
     }
 
-    // Yield at most `n` elements, then stop.
-    gen fn take(this, n: usize) -> T {
+    // Yield at most the first `count` elements, then stop (Swift's
+    // `prefix(_:)`).
+    gen fn prefix(this, count: usize) -> T {
         var k: usize = 0 as usize;
-        while k < n {
+        while k < count {
             match this.next() {
                 option::Option[T]::Some(v) => { yield v; }
                 option::Option[T]::None => { return; }
@@ -74,4 +75,69 @@ gen fn map[T, U](source: Iterator[T], f: fn(T) -> U) -> U {
             option::Option[T]::None => { return; }
         }
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+// A source `Iterator[i32]` for the adapter tests. Local to avoid importing
+// `range` (which imports this module — that would be a cycle).
+gen fn _ints_below(n: i32) -> i32 {
+    var i: i32 = 0;
+    while i < n {
+        yield i;
+        i = i +% (1 as i32);
+    }
+    return;
+}
+
+fn _is_even(x: i32) -> bool {
+    return (x % (2 as i32)) == (0 as i32);
+}
+
+fn _double(x: i32) -> i32 {
+    return x *% (2 as i32);
+}
+
+#[test]
+fn iterator_next_yields_in_order() {
+    var it: Iterator[i32] = _ints_below(2);
+    match it.next() {
+        option::Option[i32]::Some(x) => { assert x == 0; }
+        option::Option[i32]::None => { assert false; }
+    }
+    match it.next() {
+        option::Option[i32]::Some(x) => { assert x == 1; }
+        option::Option[i32]::None => { assert false; }
+    }
+    match it.next() {
+        option::Option[i32]::Some(x) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn iterator_filter_keeps_matching() {
+    var sum: i32 = 0;
+    for x in _ints_below(6).filter(_is_even) {
+        sum = sum +% x;
+    }
+    assert sum == 6; // 0 + 2 + 4
+}
+
+#[test]
+fn iterator_prefix_limits_count() {
+    var n: i32 = 0;
+    for x in _ints_below(100).prefix(3 as usize) {
+        n = n +% (1 as i32);
+    }
+    assert n == 3;
+}
+
+#[test]
+fn iterator_map_transforms() {
+    var sum: i32 = 0;
+    for x in map::[i32, i32](_ints_below(4), _double) {
+        sum = sum +% x;
+    }
+    assert sum == 12; // 0 + 2 + 4 + 6
 }

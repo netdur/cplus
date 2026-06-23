@@ -8,22 +8,58 @@
 
 import "./iterator" as iterator;
 
-// Exclusive-end: `range(0, 3)` yields 0, 1, 2.
-gen fn range(start: i32, end: i32) -> i32 {
-    var i: i32 = start;
-    while i < end {
+// Exclusive end: `range(from: 0, to: 3)` yields 0, 1, 2.
+gen fn range(from: i32, to: i32) -> i32 {
+    var i: i32 = from;
+    while i < to {
         yield i;
         i = i +% (1 as i32);
     }
     return;
 }
 
-// Inclusive-end: `range_inclusive(0, 3)` yields 0, 1, 2, 3.
-gen fn range_inclusive(start: i32, end: i32) -> i32 {
-    var i: i32 = start;
-    while i <= end {
+// Inclusive end (Swift's `...` / `stride(from:through:)`):
+// `range_inclusive(from: 0, through: 3)` yields 0, 1, 2, 3.
+gen fn range_inclusive(from: i32, through: i32) -> i32 {
+    var i: i32 = from;
+    while i <= through {
         yield i;
         i = i +% (1 as i32);
     }
     return;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn range_exclusive_end() {
+    var sum: i32 = 0;
+    var n: i32 = 0;
+    for x in range(from: 0, to: 4) {
+        sum = sum +% x;
+        n = n +% (1 as i32);
+    }
+    assert sum == 6; // 0+1+2+3
+    assert n == 4;
+}
+
+#[test]
+fn range_empty_when_from_ge_to() {
+    var n: i32 = 0;
+    for x in range(from: 5, to: 5) {
+        n = n +% (1 as i32);
+    }
+    assert n == 0;
+}
+
+#[test]
+fn range_inclusive_includes_end() {
+    var sum: i32 = 0;
+    var n: i32 = 0;
+    for x in range_inclusive(from: 0, through: 3) {
+        sum = sum +% x;
+        n = n +% (1 as i32);
+    }
+    assert sum == 6; // 0+1+2+3
+    assert n == 4;
 }

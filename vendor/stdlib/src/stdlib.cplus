@@ -1,0 +1,35 @@
+// stdlib.cplus — umbrella entry for `cpc test`.
+//
+// stdlib is a library package with no bin target, so `cpc test` falls back to
+// `src/<package-name>.cplus` (this file) as the entry. Importing a module
+// compiles it and makes its `#[test]` functions discoverable. Grow this list as
+// each module gains its own test coverage.
+//
+// Run the whole stdlib unit suite, standalone (no e2e), with:
+//     cd vendor/stdlib && cpc test
+
+import "./status" as status;
+import "./option" as option;
+import "./result" as result;
+import "./io" as io;
+import "./vec" as vec;
+import "./text" as text;
+import "./range" as range;
+import "./iterator" as iterator;
+import "./cow" as cow;
+import "./env" as env;
+import "./box" as box;
+import "./rc" as rc;
+import "./arc" as arc;
+import "./hash_map" as hash_map;
+import "./atomic" as atomic;
+import "./thread" as thread;
+import "./channel" as channel;
+import "./mutex" as mutex;
+import "./future" as future;
+import "./reactor" as reactor;
+import "./executor" as executor;
+import "./time" as time;
+import "./fs" as fs;
+import "./netsys" as netsys;
+import "./net" as net;

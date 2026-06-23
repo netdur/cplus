@@ -36,24 +36,24 @@
 // **Layout** (parallel arrays — separate K, V, and occupancy buffers,
 // avoids per-entry padding that a `{K, V, bool}` slot struct would pay):
 //
-//   keys:     *K       — cap slots
-//   vals:     *V       — cap slots
-//   occupied: *u8      — cap slots; 0 = empty, 1 = occupied
-//   cap, len: usize
+//   _keys:     *K       — cap slots
+//   _vals:     *V       — cap slots
+//   _occupied: *u8      — cap slots; 0 = empty, 1 = occupied
+//   _cap, _len: usize
 //
 // **API.**
 //
 //   hash_map::new::[K, V]() -> HashMap[K, V]
-//   HashMap[K, V]::len(this) -> usize
+//   HashMap[K, V]::count(this) -> usize
 //   HashMap[K, V]::capacity(this) -> usize
-//   HashMap[K, V]::insert(mut this, k: K, v: V)
-//   HashMap[K, V]::get(this, k: K) -> result::Result[V, result::IoError]
+//   HashMap[K, V]::insert(ref this, k: K, v: V) -> status::Status
+//   HashMap[K, V]::get(this, k: K) -> option::Option[V]
 //   HashMap[K, V]::contains_key(this, k: K) -> bool
 //
 // `StrIntMap` from v0.0.3 is retained as a thin alias: `pub fn
 // new_str_int_map() -> HashMap[str, i32]` constructs the same shape.
 
-import "./result" as result;
+import "./option" as option;
 import "./status" as status;
 
 extern fn malloc(n: usize) -> *u8;
@@ -63,11 +63,11 @@ extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
 struct HashMap[K: Copy, V: Copy] {
-    keys: *K,
-    vals: *V,
-    occupied: *u8,
-    cap: usize,
-    len: usize,
+    _keys: *K,
+    _vals: *V,
+    _occupied: *u8,
+    _cap: usize,
+    _len: usize,
 }
 
 fn max_usize() -> usize {
@@ -83,91 +83,92 @@ fn max_usize() -> usize {
 // keys/values are a separate feature, not a soundness patch.
 fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
     return HashMap[K, V] {
-        keys: { 0 as *K },
-        vals: { 0 as *V },
-        occupied: { 0 as *u8 },
-        cap: 0 as usize,
-        len: 0 as usize,
+        _keys: { 0 as *K },
+        _vals: { 0 as *V },
+        _occupied: { 0 as *u8 },
+        _cap: 0 as usize,
+        _len: 0 as usize,
     };
 }
 
 impl HashMap[K, V] {
-    fn len(this) -> usize {
-        return this.len;
+    fn count(this) -> usize {
+        return this._len;
     }
 
     fn capacity(this) -> usize {
-        return this.cap;
+        return this._cap;
     }
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
     fn insert(ref this, take k: K, take v: V) -> status::Status {
-        if this.cap == (0 as usize) {
+        if this._cap == (0 as usize) {
             let st: status::Status = this.grow_to(16 as usize);
             if st != status::Status::Ok {
                 return st;          // could not allocate; map unchanged (k, v are Copy)
             }
         }
         // Grow at 0.75 load factor.
-        if (this.len *% (4 as usize)) >= (this.cap *% (3 as usize)) {
-            let st: status::Status = this.grow_to(this.cap *% (2 as usize));
+        if (this._len *% (4 as usize)) >= (this._cap *% (3 as usize)) {
+            let st: status::Status = this.grow_to(this._cap *% (2 as usize));
             if st != status::Status::Ok {
                 return st;          // grow failed; map still valid at old capacity
             }
         }
         let h: u64 = k.hash();
-        let start: usize = (h as usize) % this.cap;
+        let start: usize = (h as usize) % this._cap;
         var slot: usize = start;
         loop {
-            let occ: u8 = { this.occupied[slot] };
+            let occ: u8 = { this._occupied[slot] };
             if occ == (0 as u8) {
-                { this.keys[slot] = k; }
-                { this.vals[slot] = v; }
-                { this.occupied[slot] = 1 as u8; }
-                this.len = this.len +% (1 as usize);
+                { this._keys[slot] = k; }
+                { this._vals[slot] = v; }
+                { this._occupied[slot] = 1 as u8; }
+                this._len = this._len +% (1 as usize);
                 return status::Status::Ok;
             }
-            let existing: K = { this.keys[slot] };
+            let existing: K = { this._keys[slot] };
             if existing.eq(k) {
-                { this.vals[slot] = v; }
+                { this._vals[slot] = v; }
                 return status::Status::Ok;
             }
-            slot = (slot +% (1 as usize)) % this.cap;
+            slot = (slot +% (1 as usize)) % this._cap;
             if slot == start { return status::Status::OutOfMemory; } // full; cannot happen post-grow
         }
     }
 
-    // Look up `k`. Returns Ok(v) on hit, Err(NotFound) on miss.
-    fn get(this, k: K) -> result::Result[V, result::IoError] {
-        if this.cap == (0 as usize) {
-            return result::io_err::[V](result::IoError::NotFound);
+    // Look up `k`. Returns `Some(v)` on hit, `None` on miss — Swift's
+    // `dict[key] -> V?`. A miss is the absence of a value, not an error.
+    fn get(this, k: K) -> option::Option[V] {
+        if this._cap == (0 as usize) {
+            return option::Option[V]::None;
         }
         let h: u64 = k.hash();
-        let start: usize = (h as usize) % this.cap;
+        let start: usize = (h as usize) % this._cap;
         var slot: usize = start;
         loop {
-            let occ: u8 = { this.occupied[slot] };
+            let occ: u8 = { this._occupied[slot] };
             if occ == (0 as u8) {
-                return result::io_err::[V](result::IoError::NotFound);
+                return option::Option[V]::None;
             }
-            let existing: K = { this.keys[slot] };
+            let existing: K = { this._keys[slot] };
             if existing.eq(k) {
-                let v: V = { this.vals[slot] };
-                return result::io_ok::[V](v);
+                let v: V = { this._vals[slot] };
+                return option::Option[V]::Some(v);
             }
-            slot = (slot +% (1 as usize)) % this.cap;
+            slot = (slot +% (1 as usize)) % this._cap;
             if slot == start {
-                return result::io_err::[V](result::IoError::NotFound);
+                return option::Option[V]::None;
             }
         }
-        return result::io_err::[V](result::IoError::NotFound);  // unreachable
+        return option::Option[V]::None;  // unreachable
     }
 
     fn contains_key(this, k: K) -> bool {
         return match this.get(k) {
-            result::Result[V, result::IoError]::Ok(_) => true,
-            result::Result[V, result::IoError]::Err(_) => false,
+            option::Option[V]::Some(_) => true,
+            option::Option[V]::None => false,
         };
     }
 
@@ -175,10 +176,10 @@ impl HashMap[K, V] {
     // (open-addressing positions depend on cap, so a memcpy-resize won't
     // work). Internal helper; not in the public surface.
     fn grow_to(ref this, new_cap: usize) -> status::Status {
-        let old_keys: *K = this.keys;
-        let old_vals: *V = this.vals;
-        let old_occ: *u8 = this.occupied;
-        let old_cap: usize = this.cap;
+        let old_keys: *K = this._keys;
+        let old_vals: *V = this._vals;
+        let old_occ: *u8 = this._occupied;
+        let old_cap: usize = this._cap;
 
         // Overflow-checked byte sizes; on overflow leave the map unchanged.
         let kelem: usize = #size_of::[K]();
@@ -212,11 +213,11 @@ impl HashMap[K, V] {
         }
         // Zero the occupied buffer so empty-slot detection is correct.
         { memset(no_raw, 0 as i32, occ_bytes); }
-        this.keys = { nk_raw as *K };
-        this.vals = { nv_raw as *V };
-        this.occupied = { no_raw as *u8 };
-        this.cap = new_cap;
-        this.len = 0 as usize;
+        this._keys = { nk_raw as *K };
+        this._vals = { nv_raw as *V };
+        this._occupied = { no_raw as *u8 };
+        this._cap = new_cap;
+        this._len = 0 as usize;
 
         // Re-insert every old live entry.
         var j: usize = 0 as usize;
@@ -226,18 +227,18 @@ impl HashMap[K, V] {
                 let k: K = { old_keys[j] };
                 let v: V = { old_vals[j] };
                 let h: u64 = k.hash();
-                let start: usize = (h as usize) % this.cap;
+                let start: usize = (h as usize) % this._cap;
                 var slot: usize = start;
                 loop {
-                    let cur: u8 = { this.occupied[slot] };
+                    let cur: u8 = { this._occupied[slot] };
                     if cur == (0 as u8) {
-                        { this.keys[slot] = k; }
-                        { this.vals[slot] = v; }
-                        { this.occupied[slot] = 1 as u8; }
-                        this.len = this.len +% (1 as usize);
+                        { this._keys[slot] = k; }
+                        { this._vals[slot] = v; }
+                        { this._occupied[slot] = 1 as u8; }
+                        this._len = this._len +% (1 as usize);
                         break;
                     }
-                    slot = (slot +% (1 as usize)) % this.cap;
+                    slot = (slot +% (1 as usize)) % this._cap;
                     if slot == start { break; }
                 }
             }
@@ -252,25 +253,25 @@ impl HashMap[K, V] {
     }
 
     fn drop(ref this) {
-        if this.cap == (0 as usize) { return; }
+        if this._cap == (0 as usize) { return; }
         // v0.0.5 Phase 1C: invoke per-entry Drop for each live (K, V)
         // pair before freeing the parallel storage arrays. Closes the
         // v0.0.4 leak where `HashMap[str, string]` leaked every value
         // and (for non-static) every key.
         var i: usize = 0 as usize;
-        while i < this.cap {
-            let occ: u8 = { this.occupied[i] };
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
             if occ != (0 as u8) {
-                let k_ptr: *K = { this.keys + i };
-                let v_ptr: *V = { this.vals + i };
+                let k_ptr: *K = { this._keys + i };
+                let v_ptr: *V = { this._vals + i };
                 { #drop_in_place::[K](k_ptr); }
                 { #drop_in_place::[V](v_ptr); }
             }
             i = i +% (1 as usize);
         }
-        { free(this.keys as *u8); }
-        { free(this.vals as *u8); }
-        { free(this.occupied); }
+        { free(this._keys as *u8); }
+        { free(this._vals as *u8); }
+        { free(this._occupied); }
         return;
     }
 }
@@ -280,4 +281,85 @@ impl HashMap[K, V] {
 // switch to `hash_map::new::[str, i32]()` directly when convenient.
 fn new_str_int_map() -> HashMap[str, i32] {
     return new::[str, i32]();
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn hashmap_new_is_empty() {
+    let m: HashMap[i32, i32] = new::[i32, i32]();
+    assert m.count() == (0 as usize);
+}
+
+#[test]
+fn hashmap_insert_and_get() {
+    var m: HashMap[i32, i32] = new::[i32, i32]();
+    assert m.insert(1, 100) == status::Status::Ok;
+    assert m.insert(2, 200) == status::Status::Ok;
+    assert m.count() == (2 as usize);
+    match m.get(1) {
+        option::Option[i32]::Some(v) => { assert v == 100; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn hashmap_get_missing_is_none() {
+    var m: HashMap[i32, i32] = new::[i32, i32]();
+    m.insert(1, 100);
+    match m.get(999) {
+        option::Option[i32]::Some(v) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn hashmap_overwrite_updates_value() {
+    var m: HashMap[i32, i32] = new::[i32, i32]();
+    m.insert(1, 100);
+    m.insert(1, 999);
+    assert m.count() == (1 as usize);
+    match m.get(1) {
+        option::Option[i32]::Some(v) => { assert v == 999; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn hashmap_contains_key() {
+    var m: HashMap[i32, i32] = new::[i32, i32]();
+    m.insert(5, 50);
+    assert m.contains_key(5);
+    assert m.contains_key(6) == false;
+}
+
+#[test]
+fn hashmap_grows_past_load_factor() {
+    var m: HashMap[i32, i32] = new::[i32, i32]();
+    var i: i32 = 0;
+    while i < 100 {
+        m.insert(i, i *% (10 as i32));
+        i = i +% 1;
+    }
+    assert m.count() == (100 as usize);
+    match m.get(50) {
+        option::Option[i32]::Some(v) => { assert v == 500; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn hashmap_str_keys() {
+    var m: HashMap[str, i32] = new::[str, i32]();
+    m.insert("apple", 1);
+    m.insert("banana", 2);
+    match m.get("banana") {
+        option::Option[i32]::Some(v) => { assert v == 2; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
 }

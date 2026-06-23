@@ -1,9 +1,9 @@
 // stdlib/channel.cplus — unbounded message-passing queue between threads.
 //
 // `Channel[T]` is a typed FIFO with multiple-producer / multiple-consumer
-// semantics: any clone of a channel can `send` or `recv`. `send` never
-// blocks (unbounded buffer); `recv` blocks until a value is available or
-// the channel is closed. Close-on-empty causes `recv` to return None.
+// semantics: any clone of a channel can `send` or `receive`. `send` never
+// blocks (unbounded buffer); `receive` blocks until a value is available or
+// the channel is closed. Close-on-empty causes `receive` to return None.
 //
 // **Why Channel is internally refcounted (same shape as Mutex).** C+
 // has no `&T` references, so a literal `Arc[Channel[T]]` would bitwise-
@@ -29,9 +29,9 @@
 // live elements to index 0; otherwise we realloc 2x. Simple, correct,
 // non-ring. A ring-buffer variant is a future polish.
 
-import "stdlib/atomic" as atomic;
-import "stdlib/option" as option;
-import "stdlib/status" as status;
+import "./atomic" as atomic;
+import "./option" as option;
+import "./status" as status;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -50,20 +50,20 @@ extern fn pthread_cond_signal(c: *u8) -> i32;
 extern fn pthread_cond_broadcast(c: *u8) -> i32;
 
 struct Channel[T] {
-    ctrl: *u8,
+    _ctrl: *u8,
 }
 
 // The channel guards its buffer with an internal mutex, so transferring a
 // `Channel[T]` handle to another thread (the producer/consumer split) and
 // sharing it are sound when the elements themselves are `Send`. The raw
-// `ctrl` pointer makes the structural rule reject it by default; this vouches
+// `_ctrl` pointer makes the structural rule reject it by default; this vouches
 // for the internal synchronization.
 impl Channel[T: Send]: Send {}
 impl Channel[T: Send]: Sync {}
 
-// Outcome of a recv: Value carries a popped element; Closed signals the
+// Outcome of a receive: Value carries a popped element; Closed signals the
 // channel was closed and the buffer drained.
-enum RecvResult[T] {
+enum ReceiveResult[T] {
     Value(T),
     Closed,
 }
@@ -122,30 +122,30 @@ fn new[T]() -> option::Option[Channel[T]] {
     }
     let buf_ptr_slot: **u8 = { (raw + off_buffer()) as **u8 };
     { *buf_ptr_slot = buf_raw; }
-    return option::Option[Channel[T]]::Some(Channel[T] { ctrl: raw });
+    return option::Option[Channel[T]]::Some(Channel[T] { _ctrl: raw });
 }
 
 impl Channel[T] {
     // Atomic refcount inc; share the heap block.
     fn clone(this) -> Channel[T] {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let _prev: u64 = {
-            atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+            atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        return Channel[T] { ctrl: this.ctrl };
+        return Channel[T] { _ctrl: this._ctrl };
     }
 
     // Push a value. Never blocks (the buffer grows). Returns `Ok`, or
     // `OutOfMemory` if the buffer cannot grow — in which case the value is
     // dropped, the existing buffer is left intact, and the lock is released.
     fn send(this, take v: T) -> status::Status {
-        let mutex_ptr: *u8 = { this.ctrl + off_mutex() };
-        let cond_ptr: *u8 = { this.ctrl + off_cond() };
+        let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
+        let cond_ptr: *u8 = { this._ctrl + off_cond() };
         let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
-        let head_ptr: *usize = { (this.ctrl + off_head()) as *usize };
-        let tail_ptr: *usize = { (this.ctrl + off_tail()) as *usize };
-        let cap_ptr: *usize = { (this.ctrl + off_capacity()) as *usize };
-        let buf_ptr_slot: **u8 = { (this.ctrl + off_buffer()) as **u8 };
+        let head_ptr: *usize = { (this._ctrl + off_head()) as *usize };
+        let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
+        let cap_ptr: *usize = { (this._ctrl + off_capacity()) as *usize };
+        let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
         var head: usize = { *head_ptr };
         var tail: usize = { *tail_ptr };
         var cap: usize = { *cap_ptr };
@@ -191,13 +191,13 @@ impl Channel[T] {
 
     // Blocking receive. Returns Value(v) on a pop, Closed when the
     // channel is closed AND the buffer is empty.
-    fn recv(this) -> RecvResult[T] {
-        let mutex_ptr: *u8 = { this.ctrl + off_mutex() };
-        let cond_ptr: *u8 = { this.ctrl + off_cond() };
-        let head_ptr: *usize = { (this.ctrl + off_head()) as *usize };
-        let tail_ptr: *usize = { (this.ctrl + off_tail()) as *usize };
-        let buf_ptr_slot: **u8 = { (this.ctrl + off_buffer()) as **u8 };
-        let closed_ptr: *u64 = { (this.ctrl + off_closed()) as *u64 };
+    fn receive(this) -> ReceiveResult[T] {
+        let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
+        let cond_ptr: *u8 = { this._ctrl + off_cond() };
+        let head_ptr: *usize = { (this._ctrl + off_head()) as *usize };
+        let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
+        let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
+        let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
         let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
         loop {
             let head: usize = { *head_ptr };
@@ -209,12 +209,12 @@ impl Channel[T] {
                 let v: T = { *slot };
                 { *head_ptr = head +% (1 as usize); }
                 let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
-                return RecvResult[T]::Value(v);
+                return ReceiveResult[T]::Value(v);
             }
             let closed: u64 = { *closed_ptr };
             if closed != (0 as u64) {
                 let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
-                return RecvResult[T]::Closed;
+                return ReceiveResult[T]::Closed;
             }
             let _ew: i32 = { pthread_cond_wait(cond_ptr, mutex_ptr) };
         }
@@ -224,9 +224,9 @@ impl Channel[T] {
     // can still call `send` after close — that's the caller's bug
     // (no enforcement in v0.0.4).
     fn close(this) {
-        let mutex_ptr: *u8 = { this.ctrl + off_mutex() };
-        let cond_ptr: *u8 = { this.ctrl + off_cond() };
-        let closed_ptr: *u64 = { (this.ctrl + off_closed()) as *u64 };
+        let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
+        let cond_ptr: *u8 = { this._ctrl + off_cond() };
+        let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
         let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
         { *closed_ptr = 1 as u64; }
         let _e2: i32 = { pthread_cond_broadcast(cond_ptr) };
@@ -236,27 +236,27 @@ impl Channel[T] {
 
     // Snapshot of refcount. Racy except in single-threaded use.
     fn strong_count(this) -> u64 {
-        let refct: *u64 = { this.ctrl as *u64 };
-        return { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
+        let refct: *u64 = { this._ctrl as *u64 };
+        return { atomic::load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
     // Destructor: atomic dec; the last reference destroys both pthread
     // primitives and frees both the header and the element buffer.
     fn drop(ref this) {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let prev: u64 = {
-            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+            atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            let mutex_ptr: *u8 = { this.ctrl + off_mutex() };
-            let cond_ptr: *u8 = { this.ctrl + off_cond() };
-            let buf_ptr_slot: **u8 = { (this.ctrl + off_buffer()) as **u8 };
+            let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
+            let cond_ptr: *u8 = { this._ctrl + off_cond() };
+            let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
             let buf: *u8 = { *buf_ptr_slot };
             // v0.0.5 Phase 1C: drop every buffered element (live range
             // [head, tail) in the shift-on-grow buffer) before freeing
             // the element storage.
-            let head_ptr: *usize = { (this.ctrl + off_head()) as *usize };
-            let tail_ptr: *usize = { (this.ctrl + off_tail()) as *usize };
+            let head_ptr: *usize = { (this._ctrl + off_head()) as *usize };
+            let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
             let head: usize = { *head_ptr };
             let tail: usize = { *tail_ptr };
             let typed_buf: *T = { buf as *T };
@@ -269,8 +269,40 @@ impl Channel[T] {
             let _e1: i32 = { pthread_cond_destroy(cond_ptr) };
             let _e2: i32 = { pthread_mutex_destroy(mutex_ptr) };
             { free(buf); }
-            { free(this.ctrl); }
+            { free(this._ctrl); }
         }
         return;
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn channel_send_then_recv() {
+    match new::[i32]() {
+        option::Option[Channel[i32]]::Some(ch) => {
+            assert ch.send(7) == status::Status::Ok;
+            match ch.receive() {
+                ReceiveResult[i32]::Value(v) => { assert v == 7; }
+                ReceiveResult[i32]::Closed => { assert false; }
+            }
+        }
+        option::Option[Channel[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn channel_close_then_recv_is_closed() {
+    match new::[i32]() {
+        option::Option[Channel[i32]]::Some(ch) => {
+            ch.close();
+            match ch.receive() {
+                ReceiveResult[i32]::Value(v) => { assert false; }
+                ReceiveResult[i32]::Closed => { assert true; }
+            }
+        }
+        option::Option[Channel[i32]]::None => { assert false; }
+    }
+    return;
 }

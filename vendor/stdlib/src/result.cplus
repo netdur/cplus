@@ -41,3 +41,40 @@ fn io_ok[T](take v: T) -> Result[T, IoError] {
 fn io_err[T](e: IoError) -> Result[T, IoError] {
     return Result[T, IoError]::Err(e);
 }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn result_io_ok() {
+    let r: Result[i32, IoError] = io_ok::[i32](7);
+    match r {
+        Result[i32, IoError]::Ok(x) => { assert x == 7; }
+        Result[i32, IoError]::Err(e) => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn result_io_err() {
+    let r: Result[i32, IoError] = io_err::[i32](IoError::NotFound);
+    match r {
+        Result[i32, IoError]::Ok(x) => { assert false; }
+        Result[i32, IoError]::Err(e) => { assert e == IoError::NotFound; }
+    }
+    return;
+}
+
+#[test]
+fn result_generic_ok_err() {
+    let a: Result[i32, bool] = ok::[i32, bool](1);
+    let b: Result[i32, bool] = err::[i32, bool](true);
+    match a {
+        Result[i32, bool]::Ok(x) => { assert x == 1; }
+        Result[i32, bool]::Err(e) => { assert false; }
+    }
+    match b {
+        Result[i32, bool]::Ok(x) => { assert false; }
+        Result[i32, bool]::Err(e) => { assert e; }
+    }
+    return;
+}

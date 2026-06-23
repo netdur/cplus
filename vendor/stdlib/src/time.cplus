@@ -7,21 +7,37 @@
 // who pull in `time` automatically get the timer machinery linked.
 import "./future" as future;
 import "./reactor" as reactor;
+import "./executor" as executor;
 
 //
-// v0.0.5 Phase 4 Slice 4A: `sleep(ms)` suspends the current async task
+// v0.0.5 Phase 4 Slice 4A: `sleep(milliseconds)` suspends the current async task
 // for the given number of milliseconds via the reactor's `EVFILT_TIMER`
 // path. Multiple `sleep`s issued from different `spawn_local`'d tasks
 // run concurrently — the reactor's kqueue dispatch reaps timers in
 // fire-order, not registration-order, so total wall-clock time is
 // `max(durations)` not `sum(durations)`.
 //
-// The intrinsic `#reactor_wait_timer(ms)` is a compiler-blessed
+// The intrinsic `#reactor_wait_timer(milliseconds)` is a compiler-blessed
 // suspend point — it can't be expressed in surface C+ because it needs
 // raw access to the enclosing coroutine handle (`%.coro.hdl`). The
 // stdlib's job here is just to give it a friendly `async fn` face.
 
-async fn sleep(ms: u64) {
-    { #reactor_wait_timer(ms); }
+async fn sleep(milliseconds: u64) {
+    { #reactor_wait_timer(milliseconds); }
     return;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+async fn _sleep_then_value() -> i32 {
+    await sleep(milliseconds: 1 as u64);
+    return 7;
+}
+
+#[test]
+fn sleep_completes_via_block_on() {
+    // Drives the reactor's EVFILT_TIMER path: block_on polls -> sleep registers
+    // a 1ms timer -> Pending -> reactor fires -> resume -> Ready(7).
+    let v: i32 = executor::block_on::[i32](_sleep_then_value());
+    assert v == 7;
 }

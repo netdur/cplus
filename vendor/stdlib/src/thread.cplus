@@ -35,15 +35,15 @@
 // transition frees the ctx. pthread_detach tells the OS to reclaim
 // the thread's kernel resources whenever it exits.
 
-import "stdlib/atomic" as atomic;
+import "./atomic" as atomic;
 
 extern fn pthread_join(tid: u64, retval: *u8) -> i32;
 extern fn pthread_detach(tid: u64) -> i32;
 extern fn free(p: *u8);
 
 struct JoinHandle[O] {
-    tid: u64,
-    ctx: *u8,
+    _tid: u64,
+    _ctx: *u8,
 }
 
 // Spawn a fresh OS thread that will run `f`. Returns a handle whose
@@ -99,14 +99,36 @@ impl JoinHandle[O] {
     // worker would race the worker's result-store. With the refcount
     // both sides safely cooperate on lifetime.
     fn drop(ref this) {
-        { pthread_detach(this.tid); }
-        let refct: *u64 = { this.ctx as *u64 };
+        { pthread_detach(this._tid); }
+        let refct: *u64 = { this._ctx as *u64 };
         let prev: u64 = {
-            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+            atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            { free(this.ctx); }
+            { free(this._ctx); }
         }
         return;
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+fn _ret_42() -> i32 {
+    return 42;
+}
+
+fn _double_it(take x: i32) -> i32 {
+    return x *% (2 as i32);
+}
+
+#[test]
+fn thread_spawn_join_returns_value() {
+    let h: JoinHandle[i32] = spawn::[i32](_ret_42);
+    assert h.join() == 42;
+}
+
+#[test]
+fn thread_spawn_with_moves_input() {
+    let h: JoinHandle[i32] = spawn_with::[i32, i32](21, _double_it);
+    assert h.join() == 42;
 }

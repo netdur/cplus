@@ -22,7 +22,7 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 struct Box[T] {
-    p: *T,
+    _p: *T,
 }
 
 // Heap-allocate a new T-sized slot, initialize it with `v`, return Box.
@@ -40,7 +40,7 @@ fn new[T](take v: T) -> option::Option[Box[T]] {
     }
     let p: *T = { raw as *T };
     { *p = v; }
-    return option::Option[Box[T]]::Some(Box[T] { p: p });
+    return option::Option[Box[T]]::Some(Box[T] { _p: p });
 }
 
 // `get` reads the boxed value by bitwise copy without consuming the box, so it
@@ -51,8 +51,8 @@ fn new[T](take v: T) -> option::Option[Box[T]] {
 // / `unwrap` / Drop below.)
 impl Box[T: Copy] {
     // Read the boxed value (does not consume the box; the pointer stays valid).
-    fn get(this) -> T {
-        return { *this.p };
+    fn value(this) -> T {
+        return { *this._p };
     }
 }
 
@@ -64,8 +64,8 @@ impl Box[T] {
     // elides; for a Drop T it frees the old value's resources before the new
     // value moves in, so there is no leak and no double-free.
     fn set(ref this, take v: T) {
-        { #drop_in_place::[T](this.p); }
-        { *this.p = v; }
+        { #drop_in_place::[T](this._p); }
+        { *this._p = v; }
         return;
     }
 
@@ -74,7 +74,7 @@ impl Box[T] {
     // callee) frees the heap slot — no manual free here, or we'd
     // double-free.
     fn unwrap(take this) -> T {
-        // Read the inner value out, then null `this.p` so the
+        // Read the inner value out, then null `this._p` so the
         // function-exit Drop (v0.0.5 Phase 1C invokes inner-T Drop
         // via `__cplus_drop_in_place`) treats the box as "already
         // emptied" and skips both inner Drop and the outer free.
@@ -82,27 +82,60 @@ impl Box[T] {
         // cleanup. Without this nulling, the v0.0.5 inner-T Drop
         // would double-free the inner value while it's also live in
         // the caller's binding.
-        let v: T = { *this.p };
-        let free_p: *u8 = { this.p as *u8 };
-        { this.p = 0 as *T; }
+        let v: T = { *this._p };
+        let free_p: *u8 = { this._p as *u8 };
+        { this._p = 0 as *T; }
         { free(free_p); }
         return v;
     }
 
     // Destructor: invoke inner-T Drop, then free the heap slot.
-    // Short-circuits on null `this.p` so the `unwrap` consumer path
+    // Short-circuits on null `this._p` so the `unwrap` consumer path
     // (which nulls `p` after taking ownership of the inner T) doesn't
     // double-free.
     fn drop(ref this) {
         let null_p: *T = { 0 as *T };
-        if this.p == null_p { return; }
+        if this._p == null_p { return; }
         // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's
         // heap slot. For Copy T this is a no-op the optimizer elides;
         // for `T = string` / `T = Vec[U]` / user struct with Drop, this
         // tears down the contained value's resources first so the
         // following `free` only releases the box's outer slot.
-        { #drop_in_place::[T](this.p); }
-        { free(this.p as *u8); }
+        { #drop_in_place::[T](this._p); }
+        { free(this._p as *u8); }
         return;
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn box_new_and_get() {
+    match new::[i32](42) {
+        option::Option[Box[i32]]::Some(b) => { assert b.value() == 42; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_set_overwrites() {
+    match new::[i32](1) {
+        option::Option[Box[i32]]::Some(b) => {
+            var bb: Box[i32] = b;
+            bb.set(99);
+            assert bb.value() == 99;
+        }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_unwrap_recovers_value() {
+    match new::[i32](7) {
+        option::Option[Box[i32]]::Some(b) => { assert b.unwrap() == 7; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
 }

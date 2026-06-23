@@ -1,17 +1,23 @@
 // stdlib/text.cplus — owned, growable string.
 //
 // `Text` owns a heap buffer (malloc'd) and frees it on drop. It is the owned
-// string type: build it incrementally with `push_str`, read it by lending a
+// string type: build it incrementally with `append`, read it by lending a
 // `str` view. A `Text` coerces to `str` (its `{ptr,len}` prefix) wherever a
 // `str` is expected — an argument, a binding, a return. Reads that search the
-// contents (`find`/`contains`/`starts_with`/`ends_with`) take a `str` needle
+// contents (`find`/`contains`/`has_prefix`/`has_suffix`) take a `str` needle
 // so any source — a literal, a slice, or another Text's view — works without
 // allocating.
 //
 // The coerced `str` is a view into this Text's buffer with no lifetime tie back
-// to it. If the Text drops, or reallocates on a later `push_str`, the view
+// to it. If the Text drops, or reallocates on a later `append`, the view
 // dangles. Returning the view of a *local* Text is rejected (E0513); returning
 // a view of a parameter is the caller's promise that the Text outlives it.
+//
+// API (Swift-flavored): count, capacity, is_empty; append, reserve, remove_all,
+// truncate(count:); clone, byte_at(index:), slice(from:to:); has_prefix,
+// has_suffix, contains, find, rfind; trim/trim_start/trim_end, lowercased,
+// uppercased, split(separator:); c_str. Free fns: new, with_capacity(minimum:),
+// from_str, repeating(_, count:).
 //
 // Bytes are stored as-is (UTF-8 when the inputs are UTF-8). Indices returned by
 // `find` are byte offsets. This is the owned half of the `Text` plan; the
@@ -33,9 +39,9 @@ extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
 // The field order/shape below is load-bearing for that lowering.
 #[lang("string")]
 struct Text {
-    ptr: *u8,
-    len: usize,
-    cap: usize,
+    _ptr: *u8,
+    _len: usize,
+    _cap: usize,
 }
 
 fn max_usize() -> usize {
@@ -77,25 +83,26 @@ fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
 
 fn new() -> Text {
     return Text {
-        ptr: { 0 as *u8 },
-        len: 0 as usize,
-        cap: 0 as usize,
+        _ptr: { 0 as *u8 },
+        _len: 0 as usize,
+        _cap: 0 as usize,
     };
 }
 
-// Pre-allocate `n` bytes. A value producer, so it recovers rather than reports:
-// if the allocation fails it returns a valid empty Text (capacity 0) instead of
-// trapping. A later `push_str` will retry and surface the failure as a `Status`.
-fn with_capacity(n: usize) -> Text {
-    if n == (0 as usize) {
+// Pre-allocate room for at least `minimum` bytes. A value producer, so it
+// recovers rather than reports: if the allocation fails it returns a valid empty
+// Text (capacity 0) instead of trapping. A later `append` retries and surfaces
+// the failure as a `Status`.
+fn with_capacity(minimum: usize) -> Text {
+    if minimum == (0 as usize) {
         return new();
     }
-    let raw: *u8 = { malloc(n) };
+    let raw: *u8 = { malloc(minimum) };
     if raw.is_not_null() {
         return Text {
-            ptr: raw,
-            len: 0 as usize,
-            cap: n,
+            _ptr: raw,
+            _len: 0 as usize,
+            _cap: minimum,
         };
     }
     return new();
@@ -104,7 +111,18 @@ fn with_capacity(n: usize) -> Text {
 fn from_str(s: str) -> Text {
     let n: usize = #str_len(s);
     var t: Text = with_capacity(n);
-    t.push_str(s);
+    t.append(s);
+    return t;
+}
+
+// A new Text made of `s` repeated `count` times (Swift's String(repeating:count:)).
+fn repeating(s: str, count: usize) -> Text {
+    var t: Text = new();
+    var i: usize = 0 as usize;
+    while i < count {
+        t.append(s);
+        i = i +% (1 as usize);
+    }
     return t;
 }
 
@@ -112,48 +130,48 @@ impl Text {
     // Grow the buffer to at least `new_cap` bytes. Returns `OutOfMemory` (Text
     // unchanged and valid) if `realloc` fails, `Ok` otherwise.
     fn grow_to(ref this, new_cap: usize) -> status::Status {
-        if new_cap <= this.cap {
+        if new_cap <= this._cap {
             return status::Status::Ok;
         }
-        let raw: *u8 = { realloc(this.ptr, new_cap) };
+        let raw: *u8 = { realloc(this._ptr, new_cap) };
         if raw.is_not_null() {
-            this.ptr = raw;
-            this.cap = new_cap;
+            this._ptr = raw;
+            this._cap = new_cap;
             return status::Status::Ok;
         }
         return status::Status::OutOfMemory;
     }
 
-    fn len(this) -> usize {
-        return this.len;
+    fn count(this) -> usize {
+        return this._len;
     }
 
     fn capacity(this) -> usize {
-        return this.cap;
+        return this._cap;
     }
 
     fn is_empty(this) -> bool {
-        return this.len == (0 as usize);
+        return this._len == (0 as usize);
     }
 
     // Ensure room for `additional` more bytes. Returns `OutOfMemory` (Text
     // unchanged) if the new length would overflow `usize` or the allocation
     // fails, `Ok` otherwise.
     fn reserve(ref this, additional: usize) -> status::Status {
-        if additional > (max_usize() -% this.len) {
+        if additional > (max_usize() -% this._len) {
             return status::Status::OutOfMemory;
         }
-        let required: usize = this.len +% additional;
-        if required <= this.cap {
+        let required: usize = this._len +% additional;
+        if required <= this._cap {
             return status::Status::Ok;
         }
-        return this.grow_to(next_capacity(this.cap, required));
+        return this.grow_to(next_capacity(this._cap, required));
     }
 
     // Append `s` to the end. Returns `Ok` on success. If the buffer cannot grow
     // it returns `OutOfMemory` and leaves the Text exactly as it was (the append
     // is all-or-nothing). The caller may check the status or ignore it.
-    fn push_str(ref this, s: str) -> status::Status {
+    fn append(ref this, s: str) -> status::Status {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return status::Status::Ok;
@@ -163,50 +181,50 @@ impl Text {
             return st;
         }
         let src: *u8 = #str_ptr(s);
-        let dest: *u8 = { this.ptr + this.len };
+        let dest: *u8 = { this._ptr + this._len };
         { memcpy(dest, src, n); }
-        this.len = this.len +% n;
+        this._len = this._len +% n;
         return status::Status::Ok;
     }
 
-    fn clear(ref this) {
-        this.len = 0 as usize;
+    fn remove_all(ref this) {
+        this._len = 0 as usize;
         return;
     }
 
-    fn truncate(ref this, new_len: usize) {
-        if new_len < this.len {
-            this.len = new_len;
+    fn truncate(ref this, count: usize) {
+        if count < this._len {
+            this._len = count;
         }
         return;
     }
 
     // Owned deep copy. If the allocation fails the copy is empty (best effort);
-    // the `t.cap >= this.len` guard keeps the memcpy from writing through the
+    // the `t._cap >= this._len` guard keeps the memcpy from writing through the
     // null buffer that `with_capacity` hands back on failure.
     fn clone(this) -> Text {
-        var t: Text = with_capacity(this.len);
-        if this.len != (0 as usize) && t.cap >= this.len {
-            { memcpy(t.ptr, this.ptr, this.len); }
-            t.len = this.len;
+        var t: Text = with_capacity(this._len);
+        if this._len != (0 as usize) && t._cap >= this._len {
+            { memcpy(t._ptr, this._ptr, this._len); }
+            t._len = this._len;
         }
         return t;
     }
 
-    fn starts_with(this, prefix: str) -> bool {
+    fn has_prefix(this, prefix: str) -> bool {
         let n: usize = #str_len(prefix);
-        if n > this.len {
+        if n > this._len {
             return false;
         }
-        return region_matches(this.ptr, 0 as usize, #str_ptr(prefix), n);
+        return region_matches(this._ptr, 0 as usize, #str_ptr(prefix), n);
     }
 
-    fn ends_with(this, suffix: str) -> bool {
+    fn has_suffix(this, suffix: str) -> bool {
         let n: usize = #str_len(suffix);
-        if n > this.len {
+        if n > this._len {
             return false;
         }
-        return region_matches(this.ptr, this.len -% n, #str_ptr(suffix), n);
+        return region_matches(this._ptr, this._len -% n, #str_ptr(suffix), n);
     }
 
     // Byte offset of the first occurrence of `needle`, or None. An empty
@@ -216,14 +234,14 @@ impl Text {
         if n == (0 as usize) {
             return option::Option[usize]::Some(0 as usize);
         }
-        if n > this.len {
+        if n > this._len {
             return option::Option[usize]::None;
         }
         let p: *u8 = #str_ptr(needle);
-        let last: usize = this.len -% n; // inclusive last start index
+        let last: usize = this._len -% n; // inclusive last start index
         var i: usize = 0 as usize;
         while i <= last {
-            if region_matches(this.ptr, i, p, n) {
+            if region_matches(this._ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
             }
             i = i +% (1 as usize);
@@ -245,15 +263,15 @@ impl Text {
     fn rfind(this, needle: str) -> option::Option[usize] {
         let n: usize = #str_len(needle);
         if n == (0 as usize) {
-            return option::Option[usize]::Some(this.len);
+            return option::Option[usize]::Some(this._len);
         }
-        if n > this.len {
+        if n > this._len {
             return option::Option[usize]::None;
         }
         let p: *u8 = #str_ptr(needle);
-        var i: usize = this.len -% n; // inclusive last start index
+        var i: usize = this._len -% n; // inclusive last start index
         loop {
-            if region_matches(this.ptr, i, p, n) {
+            if region_matches(this._ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
             }
             if i == (0 as usize) {
@@ -268,18 +286,18 @@ impl Text {
     // This is the public read door — it can never read out of bounds. Internal
     // callers that have already proven `i < len` (loop bodies below) use the
     // unchecked `_byte_at_raw` directly to skip the redundant check.
-    fn byte_at(this, i: usize) -> option::Option[u8] {
-        if i >= this.len {
+    fn byte_at(this, index: usize) -> option::Option[u8] {
+        if index >= this._len {
             return option::Option[u8]::None;
         }
-        return option::Option[u8]::Some(this._byte_at_raw(i));
+        return option::Option[u8]::Some(this._byte_at_raw(index));
     }
 
     // Unchecked byte read — caller guarantees `i < len`. Module-private (the
     // leading `_`): reading past `len` is out-of-bounds memory access, so this
     // is never exposed. Public callers use the bounds-checked `byte_at` instead.
     fn _byte_at_raw(this, i: usize) -> u8 {
-        let p: *u8 = { this.ptr + i };
+        let p: *u8 = { this._ptr + i };
         return { *p };
     }
 
@@ -290,41 +308,41 @@ impl Text {
     fn _copy_range(this, start: usize, end: usize) -> Text {
         let n: usize = end -% start;
         var t: Text = with_capacity(n);
-        if n != (0 as usize) && t.cap >= n {
-            let src: *u8 = { this.ptr + start };
-            { memcpy(t.ptr, src, n); }
-            t.len = n;
+        if n != (0 as usize) && t._cap >= n {
+            let src: *u8 = { this._ptr + start };
+            { memcpy(t._ptr, src, n); }
+            t._len = n;
         }
         return t;
     }
 
-    // Owned copy of the byte range `[start, end)`, or None if out of bounds /
-    // inverted. (Copies — the result owns its bytes.)
-    fn slice(this, start: usize, end: usize) -> option::Option[Text] {
-        if start > end {
+    // Owned copy of the byte range `[from, to)`, or None if out of bounds /
+    // inverted. (Copies — the result owns its bytes.) e.g. `t.slice(from: 2, to: 5)`.
+    fn slice(this, from: usize, to: usize) -> option::Option[Text] {
+        if from > to {
             return option::Option[Text]::None;
         }
-        if end > this.len {
+        if to > this._len {
             return option::Option[Text]::None;
         }
-        return option::Option[Text]::Some(this._copy_range(start, end));
+        return option::Option[Text]::Some(this._copy_range(from, to));
     }
 
     // Owned copy with leading ASCII whitespace removed.
     fn trim_start(this) -> Text {
         var start: usize = 0 as usize;
-        while start < this.len {
+        while start < this._len {
             if is_ascii_ws(this._byte_at_raw(start)) == false {
                 break;
             }
             start = start +% (1 as usize);
         }
-        return this._copy_range(start, this.len);
+        return this._copy_range(start, this._len);
     }
 
     // Owned copy with trailing ASCII whitespace removed.
     fn trim_end(this) -> Text {
-        var end: usize = this.len;
+        var end: usize = this._len;
         while end > (0 as usize) {
             if is_ascii_ws(this._byte_at_raw(end -% (1 as usize))) == false {
                 break;
@@ -337,13 +355,13 @@ impl Text {
     // Owned copy with leading and trailing ASCII whitespace removed.
     fn trim(this) -> Text {
         var start: usize = 0 as usize;
-        while start < this.len {
+        while start < this._len {
             if is_ascii_ws(this._byte_at_raw(start)) == false {
                 break;
             }
             start = start +% (1 as usize);
         }
-        var end: usize = this.len;
+        var end: usize = this._len;
         while end > start {
             if is_ascii_ws(this._byte_at_raw(end -% (1 as usize))) == false {
                 break;
@@ -353,29 +371,176 @@ impl Text {
         return this._copy_range(start, end);
     }
 
-    // Split on every (non-overlapping) occurrence of `sep`, returning the pieces
-    // as owned `Text` values. An empty `sep` yields the whole string as one
-    // piece. `"a,b,c".split(",")` → `["a", "b", "c"]`.
-    fn split(this, sep: str) -> vec::Vec[Text] {
+    // ASCII-lowercased owned copy (`A`–`Z` → `a`–`z`; other bytes unchanged).
+    fn lowercased(this) -> Text {
+        var t: Text = this.clone();
+        var i: usize = 0 as usize;
+        while i < t._len {
+            let p: *u8 = { t._ptr + i };
+            let b: u8 = { *p };
+            if b >= (65 as u8) && b <= (90 as u8) {
+                { *p = b +% (32 as u8); }
+            }
+            i = i +% (1 as usize);
+        }
+        return t;
+    }
+
+    // ASCII-uppercased owned copy (`a`–`z` → `A`–`Z`; other bytes unchanged).
+    fn uppercased(this) -> Text {
+        var t: Text = this.clone();
+        var i: usize = 0 as usize;
+        while i < t._len {
+            let p: *u8 = { t._ptr + i };
+            let b: u8 = { *p };
+            if b >= (97 as u8) && b <= (122 as u8) {
+                { *p = b -% (32 as u8); }
+            }
+            i = i +% (1 as usize);
+        }
+        return t;
+    }
+
+    // Split on every (non-overlapping) occurrence of `separator`, returning the
+    // pieces as owned `Text` values. An empty separator yields the whole string
+    // as one piece. `"a,b,c".split(separator: ",")` → `["a", "b", "c"]`.
+    fn split(this, separator: str) -> vec::Vec[Text] {
         var out: vec::Vec[Text] = vec::new::[Text]();
-        let n: usize = #str_len(sep);
+        let n: usize = #str_len(separator);
         if n == (0 as usize) {
-            out.push(this._copy_range(0 as usize, this.len));
+            out.append(this._copy_range(0 as usize, this._len));
             return out;
         }
-        let p: *u8 = #str_ptr(sep);
+        let p: *u8 = #str_ptr(separator);
         var start: usize = 0 as usize;
         var i: usize = 0 as usize;
-        while (i +% n) <= this.len {
-            if region_matches(this.ptr, i, p, n) {
-                out.push(this._copy_range(start, i));
+        while (i +% n) <= this._len {
+            if region_matches(this._ptr, i, p, n) {
+                out.append(this._copy_range(start, i));
                 i = i +% n;
                 start = i;
             } else {
                 i = i +% (1 as usize);
             }
         }
-        out.push(this._copy_range(start, this.len));
+        out.append(this._copy_range(start, this._len));
+        return out;
+    }
+
+    // ── Borrowed from Swift String: non-mutating substring + query helpers ──
+    // All return owned `Text` (the caller owns the bytes) or a plain value; none
+    // alias `this`, and the out-of-range cases clamp instead of trapping.
+
+    // Owned copy of the first `count` bytes — the whole string if it is shorter.
+    // Swift's `String.prefix(_:)`. Never traps.
+    fn prefix(this, count: usize) -> Text {
+        var n: usize = count;
+        if n > this._len {
+            n = this._len;
+        }
+        return this._copy_range(0 as usize, n);
+    }
+
+    // Owned copy of the last `count` bytes — the whole string if it is shorter.
+    // Swift's `String.suffix(_:)`.
+    fn suffix(this, count: usize) -> Text {
+        var n: usize = count;
+        if n > this._len {
+            n = this._len;
+        }
+        return this._copy_range(this._len -% n, this._len);
+    }
+
+    // Owned copy with the first `count` bytes dropped (Swift `dropFirst`).
+    fn drop_first(this, count: usize) -> Text {
+        var n: usize = count;
+        if n > this._len {
+            n = this._len;
+        }
+        return this._copy_range(n, this._len);
+    }
+
+    // Owned copy with the last `count` bytes dropped (Swift `dropLast`).
+    fn drop_last(this, count: usize) -> Text {
+        var n: usize = count;
+        if n > this._len {
+            n = this._len;
+        }
+        return this._copy_range(0 as usize, this._len -% n);
+    }
+
+    // Owned copy with `s` appended — non-mutating, leaving `this` untouched.
+    // C+ has no `+` operator overloading, so this is the value-style concat.
+    fn appending(this, s: str) -> Text {
+        var t: Text = this.clone();
+        t.append(s);
+        return t;
+    }
+
+    // True when this text's bytes equal `other` exactly (Swift `==`).
+    fn equals(this, other: str) -> bool {
+        let n: usize = #str_len(other);
+        if n != this._len {
+            return false;
+        }
+        return region_matches(this._ptr, 0 as usize, #str_ptr(other), n);
+    }
+
+    // True when every byte is ASCII (< 128). Mirrors Swift `String.isASCII`.
+    fn is_ascii(this) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._len {
+            if this._byte_at_raw(i) >= (128 as u8) {
+                return false;
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Count of non-overlapping occurrences of `needle`. An empty needle is 0.
+    fn count_of(this, needle: str) -> usize {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) || n > this._len {
+            return 0 as usize;
+        }
+        let p: *u8 = #str_ptr(needle);
+        var total: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while (i +% n) <= this._len {
+            if region_matches(this._ptr, i, p, n) {
+                total = total +% (1 as usize);
+                i = i +% n;
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        return total;
+    }
+
+    // Owned copy with every (non-overlapping) occurrence of `of` replaced by
+    // `with` (Swift `replacingOccurrences(of:with:)`). An empty `of` is a no-op
+    // copy. e.g. `t.replacing(of: ",", with: "; ")`.
+    fn replacing(this, of: str, with: str) -> Text {
+        let n: usize = #str_len(of);
+        if n == (0 as usize) {
+            return this.clone();
+        }
+        var out: Text = new();
+        let p: *u8 = #str_ptr(of);
+        var start: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while (i +% n) <= this._len {
+            if region_matches(this._ptr, i, p, n) {
+                out.append(this._copy_range(start, i));
+                out.append(with);
+                i = i +% n;
+                start = i;
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        out.append(this._copy_range(start, this._len));
         return out;
     }
 
@@ -388,27 +553,27 @@ impl Text {
     // `str` view's ptr+len.
     fn c_str(this) -> option::Option[CString] {
         var i: usize = 0 as usize;
-        while i < this.len {
+        while i < this._len {
             if this._byte_at_raw(i) == (0 as u8) {
                 return option::Option[CString]::None;
             }
             i = i +% (1 as usize);
         }
-        let buf: *u8 = { malloc(this.len +% (1 as usize)) };
+        let buf: *u8 = { malloc(this._len +% (1 as usize)) };
         if buf.is_null() {
             return option::Option[CString]::None;
         }
-        if this.len != (0 as usize) {
-            { memcpy(buf, this.ptr, this.len); }
+        if this._len != (0 as usize) {
+            { memcpy(buf, this._ptr, this._len); }
         }
-        let term: *u8 = { buf + this.len };
+        let term: *u8 = { buf + this._len };
         { *term = 0 as u8; }
-        return option::Option[CString]::Some(CString { ptr: buf, len: this.len });
+        return option::Option[CString]::Some(CString { _ptr: buf, _len: this._len });
     }
 
     fn drop(ref this) {
-        if this.ptr.is_not_null() {
-            { free(this.ptr); }
+        if this._ptr.is_not_null() {
+            { free(this._ptr); }
         }
         return;
     }
@@ -426,25 +591,312 @@ impl Text: Sync {}
 // `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
 // in `len`). Owns its buffer; frees it on drop. Build one with `Text::c_str`.
 struct CString {
-    ptr: *u8,
-    len: usize,
+    _ptr: *u8,
+    _len: usize,
 }
 
 impl CString {
     // The raw `*u8` the C ABI wants. Valid only while this `CString` is alive.
     fn as_ptr(this) -> *u8 {
-        return this.ptr;
+        return this._ptr;
     }
 
     // Length in bytes, NOT counting the trailing NUL.
-    fn len(this) -> usize {
-        return this.len;
+    fn count(this) -> usize {
+        return this._len;
     }
 
     fn drop(ref this) {
-        if this.ptr.is_not_null() {
-            { free(this.ptr); }
+        if this._ptr.is_not_null() {
+            { free(this._ptr); }
         }
         return;
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+// Package unit tests for Text. Run standalone (no e2e):
+//     cd vendor/stdlib && cpc test
+
+#[test]
+fn text_new_is_empty() {
+    let t: Text = new();
+    assert t.count() == (0 as usize);
+    assert t.is_empty();
+}
+
+#[test]
+fn text_from_str_basics() {
+    let t: Text = from_str("hello");
+    assert t.count() == (5 as usize);
+    assert t.is_empty() == false;
+    assert t.equals("hello");
+}
+
+#[test]
+fn text_lang_string_literal_lowering() {
+    // `#[lang("string")]`: a literal in a Text-typed context lowers to an owned
+    // heap Text built by field POSITION. Guards the `_ptr/_len/_cap` rename
+    // against the position-based lowering in codegen.
+    let t: Text = "hello";
+    assert t.count() == (5 as usize);
+    assert t.equals("hello");
+}
+
+#[test]
+fn text_append_concats_and_grows() {
+    var t: Text = from_str("foo");
+    let st: status::Status = t.append("bar");
+    assert st == status::Status::Ok;
+    assert t.count() == (6 as usize);
+    assert t.equals("foobar");
+}
+
+#[test]
+fn text_append_empty_is_noop_ok() {
+    var t: Text = from_str("x");
+    let st: status::Status = t.append("");
+    assert st == status::Status::Ok;
+    assert t.count() == (1 as usize);
+}
+
+#[test]
+fn text_reserve_grows_capacity_not_count() {
+    var t: Text = new();
+    let st: status::Status = t.reserve(16 as usize);
+    assert st == status::Status::Ok;
+    assert t.capacity() >= (16 as usize);
+    assert t.count() == (0 as usize);
+}
+
+#[test]
+fn text_remove_all_clears_len_keeps_cap() {
+    var t: Text = from_str("abcdef");
+    let cap: usize = t.capacity();
+    t.remove_all();
+    assert t.count() == (0 as usize);
+    assert t.is_empty();
+    assert t.capacity() == cap;
+}
+
+#[test]
+fn text_truncate_shortens() {
+    var t: Text = from_str("abcdef");
+    t.truncate(3 as usize);
+    assert t.equals("abc");
+}
+
+#[test]
+fn text_truncate_beyond_len_is_noop() {
+    var t: Text = from_str("abc");
+    t.truncate(99 as usize);
+    assert t.equals("abc");
+}
+
+#[test]
+fn text_clone_is_independent() {
+    let a: Text = from_str("hello");
+    var b: Text = a.clone();
+    b.append("!");
+    assert a.equals("hello");
+    assert b.equals("hello!");
+}
+
+#[test]
+fn text_has_prefix_suffix() {
+    let t: Text = from_str("hello world");
+    assert t.has_prefix("hello");
+    assert t.has_prefix("world") == false;
+    assert t.has_suffix("world");
+    assert t.has_suffix("hello") == false;
+    assert t.has_prefix("");
+}
+
+#[test]
+fn text_contains() {
+    let t: Text = from_str("hello world");
+    assert t.contains("o w");
+    assert t.contains("xyz") == false;
+}
+
+#[test]
+fn text_find_first_offset() {
+    let t: Text = from_str("abcabc");
+    match t.find("bc") {
+        option::Option[usize]::Some(i) => { assert i == (1 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match t.find("zz") {
+        option::Option[usize]::Some(i) => { assert false; }
+        option::Option[usize]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn text_rfind_last_offset() {
+    let t: Text = from_str("abcabc");
+    match t.rfind("bc") {
+        option::Option[usize]::Some(i) => { assert i == (4 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn text_byte_at_in_and_out_of_bounds() {
+    let t: Text = from_str("AB");
+    match t.byte_at(index: 0 as usize) {
+        option::Option[u8]::Some(b) => { assert b == (65 as u8); }
+        option::Option[u8]::None => { assert false; }
+    }
+    match t.byte_at(index: 9 as usize) {
+        option::Option[u8]::Some(b) => { assert false; }
+        option::Option[u8]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn text_slice_copies_range() {
+    let t: Text = from_str("hello");
+    match t.slice(from: 1 as usize, to: 4 as usize) {
+        option::Option[Text]::Some(s) => { assert s.equals("ell"); }
+        option::Option[Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn text_slice_out_of_bounds_is_none() {
+    let t: Text = from_str("hi");
+    match t.slice(from: 0 as usize, to: 9 as usize) {
+        option::Option[Text]::Some(s) => { assert false; }
+        option::Option[Text]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn text_slice_inverted_is_none() {
+    let t: Text = from_str("hello");
+    match t.slice(from: 4 as usize, to: 1 as usize) {
+        option::Option[Text]::Some(s) => { assert false; }
+        option::Option[Text]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn text_trim_variants() {
+    let a: Text = from_str("  hi  ");
+    assert a.trim().equals("hi");
+    assert a.trim_start().equals("hi  ");
+    assert a.trim_end().equals("  hi");
+}
+
+#[test]
+fn text_lowercased_uppercased() {
+    let t: Text = from_str("Hello, World!");
+    assert t.lowercased().equals("hello, world!");
+    assert t.uppercased().equals("HELLO, WORLD!");
+}
+
+#[test]
+fn text_split_on_sep() {
+    var parts: vec::Vec[Text] = from_str("a,bb,ccc").split(separator: ",");
+    assert parts.count() == (3 as usize);
+    match parts.remove_last() {
+        option::Option[Text]::Some(last) => { assert last.equals("ccc"); }
+        option::Option[Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn text_split_empty_sep_is_whole_string() {
+    var parts: vec::Vec[Text] = from_str("abc").split(separator: "");
+    assert parts.count() == (1 as usize);
+}
+
+#[test]
+fn text_repeating() {
+    let t: Text = repeating("ab", 3 as usize);
+    assert t.equals("ababab");
+}
+
+#[test]
+fn text_repeating_zero_is_empty() {
+    let t: Text = repeating("ab", 0 as usize);
+    assert t.is_empty();
+}
+
+#[test]
+fn text_prefix_suffix() {
+    let t: Text = from_str("hello");
+    assert t.prefix(count: 3 as usize).equals("hel");
+    assert t.suffix(count: 3 as usize).equals("llo");
+}
+
+#[test]
+fn text_prefix_suffix_clamp_no_trap() {
+    let t: Text = from_str("hi");
+    assert t.prefix(count: 99 as usize).equals("hi");
+    assert t.suffix(count: 99 as usize).equals("hi");
+}
+
+#[test]
+fn text_drop_first_last() {
+    let t: Text = from_str("hello");
+    assert t.drop_first(count: 2 as usize).equals("llo");
+    assert t.drop_last(count: 2 as usize).equals("hel");
+}
+
+#[test]
+fn text_appending_is_nonmutating() {
+    let a: Text = from_str("foo");
+    let b: Text = a.appending("bar");
+    assert a.equals("foo");
+    assert b.equals("foobar");
+}
+
+#[test]
+fn text_equals() {
+    let t: Text = from_str("abc");
+    assert t.equals("abc");
+    assert t.equals("ab") == false;
+    assert t.equals("abcd") == false;
+}
+
+#[test]
+fn text_is_ascii() {
+    assert from_str("plain ascii 123").is_ascii();
+    // 'é' is the 2-byte UTF-8 sequence C3 A9 — both bytes >= 128.
+    assert from_str("café").is_ascii() == false;
+}
+
+#[test]
+fn text_count_of() {
+    let t: Text = from_str("abababab");
+    assert t.count_of("ab") == (4 as usize);
+    assert t.count_of("xyz") == (0 as usize);
+    assert t.count_of("") == (0 as usize);
+}
+
+#[test]
+fn text_replacing() {
+    let t: Text = from_str("a,b,c");
+    assert t.replacing(of: ",", with: "; ").equals("a; b; c");
+    assert t.replacing(of: "x", with: "y").equals("a,b,c");
+    assert t.replacing(of: "", with: "z").equals("a,b,c");
+}
+
+#[test]
+fn text_c_str_counts_without_nul() {
+    let t: Text = from_str("hi");
+    match t.c_str() {
+        option::Option[CString]::Some(cs) => { assert cs.count() == (2 as usize); }
+        option::Option[CString]::None => { assert false; }
+    }
+    return;
 }

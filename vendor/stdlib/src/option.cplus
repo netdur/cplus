@@ -20,3 +20,35 @@ enum Option[T] {
 fn some[T](take v: T) -> Option[T] {
     return Option[T]::Some(v);
 }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn option_some_constructor() {
+    let o: Option[i32] = some::[i32](42);
+    match o {
+        Option[i32]::Some(x) => { assert x == 42; }
+        Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn option_some_direct() {
+    let o: Option[i32] = Option[i32]::Some(7);
+    match o {
+        Option[i32]::Some(x) => { assert x == 7; }
+        Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn option_none() {
+    let o: Option[i32] = Option[i32]::None;
+    match o {
+        Option[i32]::Some(x) => { assert false; }
+        Option[i32]::None => { assert true; }
+    }
+    return;
+}

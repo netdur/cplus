@@ -39,3 +39,38 @@ impl Status {
         return this != Status::Ok;
     }
 }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn status_ok_is_ok() {
+    let s: Status = Status::Ok;
+    assert s.is_ok();
+    assert s.is_err() == false;
+}
+
+#[test]
+fn status_errors_are_err() {
+    let a: Status = Status::OutOfMemory;
+    let b: Status = Status::OutOfBounds;
+    let c: Status = Status::InvalidInput;
+    assert a.is_err();
+    assert b.is_err();
+    assert c.is_err();
+    assert a.is_ok() == false;
+}
+
+#[test]
+fn status_eq_ne() {
+    assert Status::Ok == Status::Ok;
+    assert Status::Ok != Status::OutOfMemory;
+    assert Status::OutOfBounds != Status::InvalidInput;
+}
+
+#[test]
+fn status_is_copy() {
+    let s: Status = Status::OutOfMemory;
+    assert s.is_err();
+    assert s.is_err();
+    assert s == Status::OutOfMemory;
+}

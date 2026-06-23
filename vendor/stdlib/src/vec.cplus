@@ -2,13 +2,17 @@
 //
 // The core API rule is: a generic Vec[T] never bitwise-copies a T out of
 // storage. Operations that yield an owned element either remove it first
-// (`pop`, `swap_remove`), or require `T: Copy` at the boundary (`get`,
-// `at_copy`, `extend_from_slice`). To READ a non-Copy element in place, use
-// `at(i) -> Option[*T]` (a bounds-checked pointer; deref is `unsafe` because
-// the language has no element borrowing yet). `iter` is a gen method intended
-// for Copy `T` (it copies each element out); iterate non-Copy vectors by index
-// via `at`. Allocation sizing is overflow-checked and every malloc/realloc is
-// null-checked.
+// (`remove_last`, `swap_remove`), or require `T: Copy` at the boundary
+// (`at` / `first` / `last` / `append_slice`). To READ a non-Copy element in
+// place, use `at_ptr(index) -> Option[*T]` (a bounds-checked pointer; deref is
+// `unsafe` because the language has no element borrowing yet). `iter` is a gen
+// method intended for Copy `T` (it copies each element out); iterate non-Copy
+// vectors by index via `at_ptr`. Allocation sizing is overflow-checked and every
+// malloc/realloc is null-checked.
+//
+// API (Swift-flavored): count, capacity, is_empty; at(index)/first/last [Copy];
+// at_ptr(index) [any]; append, insert..at, set..at, remove_last, swap_remove,
+// remove_all, truncate, reserve, shrink_to_fit, append_slice; iter, as_slice.
 
 import "./option" as option;
 import "./iterator" as iterator;
@@ -18,11 +22,12 @@ extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memmove(dest: *u8, src: *u8, n: usize) -> *u8;
 
 struct Vec[T] {
-    ptr: *T,
-    len: usize,
-    cap: usize,
+    _ptr: *T,
+    _len: usize,
+    _cap: usize,
 }
 
 fn max_usize() -> usize {
@@ -77,31 +82,31 @@ fn next_capacity(current: usize, required: usize) -> usize {
 
 fn new[T]() -> Vec[T] {
     return Vec[T] {
-        ptr: { 0 as *T },
-        len: 0 as usize,
-        cap: 0 as usize,
+        _ptr: { 0 as *T },
+        _len: 0 as usize,
+        _cap: 0 as usize,
     };
 }
 
-// Pre-allocate room for `n` elements. A value producer, so it recovers rather
-// than reports: if the request overflows or the allocation fails, it returns a
-// valid empty vec (capacity 0) instead of trapping. A later `push` will try to
-// allocate again and surface the failure as a `Status` then.
-fn with_capacity[T](n: usize) -> Vec[T] {
-    if n == (0 as usize) {
+// Pre-allocate room for at least `minimum` elements. A value producer, so it
+// recovers rather than reports: if the request overflows or the allocation
+// fails, it returns a valid empty vec (capacity 0) instead of trapping. A later
+// `append` retries and surfaces the failure as a `Status` then.
+fn with_capacity[T](minimum: usize) -> Vec[T] {
+    if minimum == (0 as usize) {
         return new::[T]();
     }
     var bytes: usize = 0 as usize;
-    match checked_bytes::[T](n) {
+    match checked_bytes::[T](minimum) {
         option::Option[usize]::Some(b) => { bytes = b; }
         option::Option[usize]::None => { return new::[T](); }
     }
     let raw: *u8 = { malloc(bytes) };
     if raw.is_not_null() {
         return Vec[T] {
-            ptr: { raw as *T },
-            len: 0 as usize,
-            cap: n,
+            _ptr: { raw as *T },
+            _len: 0 as usize,
+            _cap: minimum,
         };
     }
     return new::[T]();
@@ -113,7 +118,7 @@ impl Vec[T] {
     // or `realloc` fails; `Ok` otherwise. A `new_cap` already within capacity is
     // a no-op `Ok`.
     fn grow_to(ref this, new_cap: usize) -> status::Status {
-        if new_cap <= this.cap {
+        if new_cap <= this._cap {
             return status::Status::Ok;
         }
         var bytes: usize = 0 as usize;
@@ -121,112 +126,149 @@ impl Vec[T] {
             option::Option[usize]::Some(b) => { bytes = b; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
+        let raw: *u8 = { realloc(this._ptr as *u8, bytes) };
         if raw.is_not_null() {
-            this.ptr = { raw as *T };
-            this.cap = new_cap;
+            this._ptr = { raw as *T };
+            this._cap = new_cap;
             return status::Status::Ok;
         }
         return status::Status::OutOfMemory;
     }
 
-    fn len(this) -> usize {
-        return this.len;
+    fn count(this) -> usize {
+        return this._len;
     }
 
     fn capacity(this) -> usize {
-        return this.cap;
+        return this._cap;
     }
 
     fn is_empty(this) -> bool {
-        return this.len == (0 as usize);
+        return this._len == (0 as usize);
     }
 
     // Ensure room for `additional` more elements. Returns `OutOfMemory` (vec
     // unchanged) if the new length overflows or the allocation fails.
     fn reserve(ref this, additional: usize) -> status::Status {
         var required: usize = 0 as usize;
-        match required_len(this.len, additional) {
+        match required_len(this._len, additional) {
             option::Option[usize]::Some(r) => { required = r; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        if required <= this.cap {
+        if required <= this._cap {
             return status::Status::Ok;
         }
-        return this.grow_to(next_capacity(this.cap, required));
+        return this.grow_to(next_capacity(this._cap, required));
     }
 
-    // Append `value`. On success returns `Ok`. If the vec cannot grow (length
-    // overflow or allocation failure) it returns `OutOfMemory`, leaving the vec
-    // unchanged; `value` is dropped as the function returns, so nothing leaks
-    // and there is no partial state. The caller may check the status or ignore
-    // it — either way the vec stays valid.
-    fn push(ref this, take value: T) -> status::Status {
+    // Append `value` to the end. On success returns `Ok`. If the vec cannot grow
+    // (length overflow or allocation failure) it returns `OutOfMemory`, leaving
+    // the vec unchanged; `value` is dropped as the function returns, so nothing
+    // leaks and there is no partial state. The caller may check the status or
+    // ignore it — either way the vec stays valid.
+    fn append(ref this, take value: T) -> status::Status {
         var required: usize = 0 as usize;
-        match required_len(this.len, 1 as usize) {
+        match required_len(this._len, 1 as usize) {
             option::Option[usize]::Some(r) => { required = r; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        if required > this.cap {
-            let st: status::Status = this.grow_to(next_capacity(this.cap, required));
+        if required > this._cap {
+            let st: status::Status = this.grow_to(next_capacity(this._cap, required));
             if st != status::Status::Ok {
                 return st;
             }
         }
-        let slot: *T = { this.ptr + this.len };
+        let slot: *T = { this._ptr + this._len };
         { *slot = value; }
-        this.len = required;
+        this._len = required;
         return status::Status::Ok;
     }
 
-    fn pop(ref this) -> option::Option[T] {
-        if this.len == (0 as usize) {
+    // Insert `value` so it ends up at index `at`, shifting the elements from `at`
+    // onward one place to the right. `at == count` appends. Returns `OutOfBounds`
+    // if `at > count` and `OutOfMemory` if the vec cannot grow — in both cases
+    // `value` is dropped as the function returns and the vec is left unchanged.
+    fn insert(ref this, take value: T, at: usize) -> status::Status {
+        if at > this._len {
+            return status::Status::OutOfBounds;
+        }
+        var required: usize = 0 as usize;
+        match required_len(this._len, 1 as usize) {
+            option::Option[usize]::Some(r) => { required = r; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
+        if required > this._cap {
+            let st: status::Status = this.grow_to(next_capacity(this._cap, required));
+            if st != status::Status::Ok {
+                return st;
+            }
+        }
+        // Shift [at, count) one slot right (bitwise move; relocates, no drop).
+        let moved: usize = this._len -% at;
+        if moved > (0 as usize) {
+            let from: *T = { this._ptr + at };
+            let to: *T = { this._ptr + (at +% (1 as usize)) };
+            var move_bytes: usize = 0 as usize;
+            match checked_bytes::[T](moved) {
+                option::Option[usize]::Some(b) => { move_bytes = b; }
+                option::Option[usize]::None => { return status::Status::OutOfMemory; }
+            }
+            { memmove(to as *u8, from as *u8, move_bytes); }
+        }
+        let slot: *T = { this._ptr + at };
+        { *slot = value; }
+        this._len = required;
+        return status::Status::Ok;
+    }
+
+    fn remove_last(ref this) -> option::Option[T] {
+        if this._len == (0 as usize) {
             return option::Option[T]::None;
         }
-        let new_len: usize = this.len -% (1 as usize);
-        let slot: *T = { this.ptr + new_len };
+        let new_len: usize = this._len -% (1 as usize);
+        let slot: *T = { this._ptr + new_len };
         let value: T = { *slot };
-        this.len = new_len;
+        this._len = new_len;
         return option::Option[T]::Some(value);
     }
 
     fn swap_remove(ref this, i: usize) -> option::Option[T] {
-        if i >= this.len {
+        if i >= this._len {
             return option::Option[T]::None;
         }
-        let last: usize = this.len -% (1 as usize);
-        let slot: *T = { this.ptr + i };
+        let last: usize = this._len -% (1 as usize);
+        let slot: *T = { this._ptr + i };
         let value: T = { *slot };
         if i != last {
-            let last_slot: *T = { this.ptr + last };
+            let last_slot: *T = { this._ptr + last };
             { *slot = *last_slot; }
         }
-        this.len = last;
+        this._len = last;
         return option::Option[T]::Some(value);
     }
 
-    fn clear(ref this) {
+    fn remove_all(ref this) {
         var i: usize = 0 as usize;
-        while i < this.len {
-            let elem: *T = { this.ptr + i };
+        while i < this._len {
+            let elem: *T = { this._ptr + i };
             { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        this.len = 0 as usize;
+        this._len = 0 as usize;
         return;
     }
 
     fn truncate(ref this, new_len: usize) {
-        if new_len >= this.len {
+        if new_len >= this._len {
             return;
         }
         var i: usize = new_len;
-        while i < this.len {
-            let elem: *T = { this.ptr + i };
+        while i < this._len {
+            let elem: *T = { this._ptr + i };
             { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        this.len = new_len;
+        this._len = new_len;
         return;
     }
 
@@ -234,66 +276,64 @@ impl Vec[T] {
     // buffer is kept (the data is intact) and `OutOfMemory` is returned; `Ok`
     // otherwise. Never traps.
     fn shrink_to_fit(ref this) -> status::Status {
-        if this.len == this.cap {
+        if this._len == this._cap {
             return status::Status::Ok;
         }
-        if this.len == (0 as usize) {
-            if this.ptr.is_not_null() {
-                { free(this.ptr as *u8); }
+        if this._len == (0 as usize) {
+            if this._ptr.is_not_null() {
+                { free(this._ptr as *u8); }
             }
-            this.ptr = { 0 as *T };
-            this.cap = 0 as usize;
+            this._ptr = { 0 as *T };
+            this._cap = 0 as usize;
             return status::Status::Ok;
         }
         var bytes: usize = 0 as usize;
-        match checked_bytes::[T](this.len) {
+        match checked_bytes::[T](this._len) {
             option::Option[usize]::Some(b) => { bytes = b; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
+        let raw: *u8 = { realloc(this._ptr as *u8, bytes) };
         if raw.is_not_null() {
-            this.ptr = { raw as *T };
-            this.cap = this.len;
+            this._ptr = { raw as *T };
+            this._cap = this._len;
             return status::Status::Ok;
         }
         return status::Status::OutOfMemory;
     }
 
     fn as_slice(this) -> T[] {
-        return { #slice_from_raw_parts(this.ptr, this.len) };
+        return { #slice_from_raw_parts(this._ptr, this._len) };
     }
 
-    // Pointer to element `i`, bounds-checked (None past the end).
+    // Raw pointer to element `index`, bounds-checked (None past the end).
     //
-    // This is the read path for NON-Copy elements, where `get`'s `T: Copy`
-    // bound does not apply. It hands back a raw `*T` into live storage, not an
-    // owned `T`, so there is no copy-out and no drop-flag hazard: the Vec keeps
-    // sole ownership, and a `*T` is never dropped. Reading through the pointer
-    // is `unsafe` only because, with no language-level element borrowing, the
-    // deref is unchecked:
+    // The read path for NON-Copy elements, where `at`'s `T: Copy` bound does not
+    // apply. It hands back a raw `*T` into live storage, not an owned `T`, so
+    // there is no copy-out and no drop-flag hazard: the Vec keeps sole ownership,
+    // and a `*T` is never dropped. Reading through the pointer is `unsafe` only
+    // because, with no language-level element borrowing, the deref is unchecked:
     //
-    //     match v.at(i) {
+    //     match v.at_ptr(index) {
     //         option::Option[*T]::Some(p) => { let n = { (*p).field }; ... }
     //         option::Option[*T]::None    => { ... }
     //     }
-    fn at(this, i: usize) -> option::Option[*T] {
-        if i >= this.len {
+    fn at_ptr(this, index: usize) -> option::Option[*T] {
+        if index >= this._len {
             return option::Option[*T]::None;
         }
-        return option::Option[*T]::Some({ this.ptr + i });
+        return option::Option[*T]::Some({ this._ptr + index });
     }
 
-    // Replace element `i` with `value`. Out of bounds is reported, not trapped:
-    // returns `OutOfBounds` when `i >= len` — `value` is dropped as the function
-    // returns, the vec is left unchanged, nothing leaks — and `Ok` on success.
-    // On success the previous element's Drop runs before the new value is moved
-    // in, so there is no leak and no double free. The caller may check the
-    // status or ignore it; the vec stays valid either way.
-    fn set(ref this, i: usize, take value: T) -> status::Status {
-        if i >= this.len {
+    // Replace the element at `at` with `value`. Out of bounds is reported, not
+    // trapped: returns `OutOfBounds` when `at >= count` — `value` is dropped as
+    // the function returns, the vec is left unchanged, nothing leaks — and `Ok`
+    // on success. On success the previous element's Drop runs before the new
+    // value is moved in, so there is no leak and no double free.
+    fn set(ref this, at: usize, take value: T) -> status::Status {
+        if at >= this._len {
             return status::Status::OutOfBounds;
         }
-        let slot: *T = { this.ptr + i };
+        let slot: *T = { this._ptr + at };
         { #drop_in_place::[T](slot); }
         { *slot = value; }
         return status::Status::Ok;
@@ -302,13 +342,13 @@ impl Vec[T] {
     // Yield each element by value, in order, as an `Iterator[T]` (drives for-in
     // and the iterator adapters). Intended for Copy `T`: iteration copies each
     // element out, so for a non-Copy `T` the yielded value would alias storage —
-    // read those by index through `at` instead. This is a gen *method* (receiver
-    // by value), not a `[T: Copy]` free fn, because the coroutine must own the
-    // receiver across yields; a borrowed param does not survive suspension.
+    // read those by index through `at_ptr` instead. This is a gen *method*
+    // (receiver by value), not a `[T: Copy]` free fn, because the coroutine must
+    // own the receiver across yields; a borrowed param does not survive suspension.
     gen fn iter(this) -> T {
         var i: usize = 0 as usize;
-        while i < this.len {
-            match this.at(i) {
+        while i < this._len {
+            match this.at_ptr(i) {
                 option::Option[*T]::Some(p) => { yield { *p }; }
                 option::Option[*T]::None => { return; }
             }
@@ -326,94 +366,382 @@ impl Vec[T] {
             return status::Status::Ok;
         }
         var required: usize = 0 as usize;
-        match required_len(this.len, count) {
+        match required_len(this._len, count) {
             option::Option[usize]::Some(r) => { required = r; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
-        if required > this.cap {
-            let st: status::Status = this.grow_to(next_capacity(this.cap, required));
+        if required > this._cap {
+            let st: status::Status = this.grow_to(next_capacity(this._cap, required));
             if st != status::Status::Ok {
                 return st;
             }
         }
-        let dest: *T = { this.ptr + this.len };
+        let dest: *T = { this._ptr + this._len };
         var bytes: usize = 0 as usize;
         match checked_bytes::[T](count) {
             option::Option[usize]::Some(b) => { bytes = b; }
             option::Option[usize]::None => { return status::Status::OutOfMemory; }
         }
         { memcpy(dest as *u8, src as *u8, bytes); }
-        this.len = required;
+        this._len = required;
         return status::Status::Ok;
     }
 
     fn drop(ref this) {
         var i: usize = 0 as usize;
-        while i < this.len {
-            let elem: *T = { this.ptr + i };
+        while i < this._len {
+            let elem: *T = { this._ptr + i };
             { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        if this.ptr.is_not_null() {
-            { free(this.ptr as *u8); }
+        if this._ptr.is_not_null() {
+            { free(this._ptr as *u8); }
         }
         return;
     }
 }
 
-fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
-    if i >= v.len {
-        return option::Option[T]::None;
+// Copy element reads + bulk-append, on the `T: Copy` boundary (the value
+// crosses by independent copy, never an alias into storage).
+impl Vec[T: Copy] {
+    // Element at `index`, or None past the end. The safe value-read door
+    // (replaces the old free `get`/`at_copy`) — never traps. For a non-Copy
+    // element, read in place through `at_ptr`.
+    fn at(this, index: usize) -> option::Option[T] {
+        if index >= this._len {
+            return option::Option[T]::None;
+        }
+        let slot: *T = { this._ptr + index };
+        return option::Option[T]::Some({ *slot });
     }
-    let slot: *T = { v.ptr + i };
-    return option::Option[T]::Some({ *slot });
-}
 
-// Like `get`, but asserts the index is in bounds and returns the element
-// directly (no Option) — the safe, ergonomic "I know this index is valid" read,
-// analogous to indexing. Copy-only (so the returned value is an independent copy,
-// never an alias into storage) and bounds-checked (aborts on out-of-bounds).
-fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
-    assert i < v.len;
-    let slot: *T = { v.ptr + i };
-    return { *slot };
-}
+    // First element, or None if empty.
+    fn first(this) -> option::Option[T] {
+        return this.at(0 as usize);
+    }
 
-fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) -> status::Status {
-    let count: usize = #slice_len(s);
-    if count == (0 as usize) {
+    // Last element, or None if empty.
+    fn last(this) -> option::Option[T] {
+        if this._len == (0 as usize) {
+            return option::Option[T]::None;
+        }
+        return this.at(this._len -% (1 as usize));
+    }
+
+    // Append every element of slice `s` (bitwise copy). Returns `OutOfMemory`
+    // (vec unchanged) if it cannot grow.
+    fn append_slice(ref this, s: T[]) -> status::Status {
+        let n: usize = #slice_len(s);
+        if n == (0 as usize) {
+            return status::Status::Ok;
+        }
+        var required: usize = 0 as usize;
+        match required_len(this._len, n) {
+            option::Option[usize]::Some(r) => { required = r; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
+        if required > this._cap {
+            let st: status::Status = this.grow_to(next_capacity(this._cap, required));
+            if st != status::Status::Ok {
+                return st;
+            }
+        }
+        let dest: *T = { this._ptr + this._len };
+        let src: *T = { #slice_ptr(s) };
+        var bytes: usize = 0 as usize;
+        match checked_bytes::[T](n) {
+            option::Option[usize]::Some(b) => { bytes = b; }
+            option::Option[usize]::None => { return status::Status::OutOfMemory; }
+        }
+        { memcpy(dest as *u8, src as *u8, bytes); }
+        this._len = required;
         return status::Status::Ok;
     }
-    var required: usize = 0 as usize;
-    match required_len(v.len, count) {
-        option::Option[usize]::Some(r) => { required = r; }
-        option::Option[usize]::None => { return status::Status::OutOfMemory; }
-    }
-    if required > v.cap {
-        let st: status::Status = v.grow_to(next_capacity(v.cap, required));
-        if st != status::Status::Ok {
-            return st;
-        }
-    }
-    let dest: *T = { v.ptr + v.len };
-    let src: *T = { #slice_ptr(s) };
-    var bytes: usize = 0 as usize;
-    match checked_bytes::[T](count) {
-        option::Option[usize]::Some(b) => { bytes = b; }
-        option::Option[usize]::None => { return status::Status::OutOfMemory; }
-    }
-    { memcpy(dest as *u8, src as *u8, bytes); }
-    v.len = required;
-    return status::Status::Ok;
 }
 
 fn collect[T](take source: iterator::Iterator[T]) -> Vec[T] {
     var out: Vec[T] = new::[T]();
     loop {
         match source.next() {
-            option::Option[T]::Some(value) => { out.push(value); }
+            option::Option[T]::Some(value) => { out.append(value); }
             option::Option[T]::None => { return out; }
         }
     }
     return out;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+// Package unit tests for Vec. Run standalone (no e2e):
+//     cd vendor/stdlib && cpc test
+
+#[test]
+fn vec_new_is_empty() {
+    let v: Vec[i32] = new::[i32]();
+    assert v.count() == (0 as usize);
+    assert v.is_empty();
+}
+
+#[test]
+fn vec_append_and_at() {
+    var v: Vec[i32] = new::[i32]();
+    assert v.append(10) == status::Status::Ok;
+    v.append(20);
+    v.append(30);
+    assert v.count() == (3 as usize);
+    assert v.is_empty() == false;
+    match v.at(1 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 20; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_at_out_of_bounds_is_none() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    match v.at(5 as usize) {
+        option::Option[i32]::Some(x) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn vec_first_last() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(7);
+    v.append(8);
+    v.append(9);
+    match v.first() {
+        option::Option[i32]::Some(x) => { assert x == 7; }
+        option::Option[i32]::None => { assert false; }
+    }
+    match v.last() {
+        option::Option[i32]::Some(x) => { assert x == 9; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_first_last_empty_is_none() {
+    let v: Vec[i32] = new::[i32]();
+    match v.first() {
+        option::Option[i32]::Some(x) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn vec_with_capacity() {
+    let v: Vec[i32] = with_capacity::[i32](16 as usize);
+    assert v.capacity() >= (16 as usize);
+    assert v.count() == (0 as usize);
+}
+
+#[test]
+fn vec_reserve() {
+    var v: Vec[i32] = new::[i32]();
+    assert v.reserve(32 as usize) == status::Status::Ok;
+    assert v.capacity() >= (32 as usize);
+}
+
+#[test]
+fn vec_capacity_grows_on_append() {
+    var v: Vec[i32] = new::[i32]();
+    var i: i32 = 0;
+    while i < 100 {
+        v.append(i);
+        i = i +% 1;
+    }
+    assert v.count() == (100 as usize);
+    assert v.capacity() >= (100 as usize);
+}
+
+#[test]
+fn vec_insert_shifts() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(3);
+    assert v.insert(2, at: 1 as usize) == status::Status::Ok;
+    assert v.count() == (3 as usize);
+    match v.at(1 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 2; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_insert_at_count_appends() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    assert v.insert(2, at: 1 as usize) == status::Status::Ok;
+    match v.last() {
+        option::Option[i32]::Some(x) => { assert x == 2; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_insert_out_of_bounds() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    assert v.insert(9, at: 5 as usize) == status::Status::OutOfBounds;
+    assert v.count() == (1 as usize);
+}
+
+#[test]
+fn vec_set_replaces() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    assert v.set(0 as usize, 99) == status::Status::Ok;
+    match v.at(0 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 99; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_set_out_of_bounds() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    assert v.set(5 as usize, 99) == status::Status::OutOfBounds;
+}
+
+#[test]
+fn vec_remove_last() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    match v.remove_last() {
+        option::Option[i32]::Some(x) => { assert x == 2; }
+        option::Option[i32]::None => { assert false; }
+    }
+    assert v.count() == (1 as usize);
+    return;
+}
+
+#[test]
+fn vec_remove_last_empty_is_none() {
+    var v: Vec[i32] = new::[i32]();
+    match v.remove_last() {
+        option::Option[i32]::Some(x) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn vec_swap_remove() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(10);
+    v.append(20);
+    v.append(30);
+    match v.swap_remove(0 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 10; }
+        option::Option[i32]::None => { assert false; }
+    }
+    assert v.count() == (2 as usize);
+    match v.at(0 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 30; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_remove_all() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    v.remove_all();
+    assert v.count() == (0 as usize);
+    assert v.is_empty();
+}
+
+#[test]
+fn vec_truncate() {
+    var v: Vec[i32] = new::[i32]();
+    var i: i32 = 0;
+    while i < 5 {
+        v.append(i);
+        i = i +% 1;
+    }
+    v.truncate(2 as usize);
+    assert v.count() == (2 as usize);
+}
+
+#[test]
+fn vec_truncate_beyond_len_is_noop() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    v.truncate(9 as usize);
+    assert v.count() == (2 as usize);
+}
+
+#[test]
+fn vec_shrink_to_fit() {
+    var v: Vec[i32] = with_capacity::[i32](64 as usize);
+    v.append(1);
+    assert v.shrink_to_fit() == status::Status::Ok;
+    assert v.capacity() == (1 as usize);
+    assert v.count() == (1 as usize);
+}
+
+#[test]
+fn vec_append_slice() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    var other: Vec[i32] = new::[i32]();
+    other.append(2);
+    other.append(3);
+    let s: i32[] = other.as_slice();
+    assert v.append_slice(s) == status::Status::Ok;
+    assert v.count() == (3 as usize);
+    match v.at(2 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 3; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_as_slice_len() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    v.append(3);
+    let s: i32[] = v.as_slice();
+    assert #slice_len(s) == (3 as usize);
+}
+
+#[test]
+fn vec_at_ptr_reads_in_place() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(42);
+    match v.at_ptr(0 as usize) {
+        option::Option[*i32]::Some(p) => { assert { *p } == 42; }
+        option::Option[*i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn vec_iter_sums() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    v.append(3);
+    var sum: i32 = 0;
+    for x in v.iter() {
+        sum = sum +% x;
+    }
+    assert sum == 6;
 }

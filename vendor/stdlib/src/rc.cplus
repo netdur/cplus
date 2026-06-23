@@ -13,16 +13,16 @@
 // Inherits the v0.0.4 stdlib limitations: no `make_mut`, inner T's
 // Drop on last reference is not invoked automatically.
 
-import "stdlib/option" as option;
+import "./option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 struct Rc[T] {
-    ctrl: *u8,
+    _ctrl: *u8,
 }
 
-// Header is `u64 refcount`. Value lives at `ctrl + 8`. An `Rc` is always a live
+// Header is `u64 refcount`. Value lives at `_ctrl + 8`. An `Rc` is always a live
 // heap slot, so on allocation failure `new` returns `None` (and `v` drops as the
 // function returns) rather than trapping.
 fn new[T](take v: T) -> option::Option[Rc[T]] {
@@ -37,16 +37,16 @@ fn new[T](take v: T) -> option::Option[Rc[T]] {
     { *refct = 1 as u64; }
     let value_ptr: *T = { (raw + header) as *T };
     { *value_ptr = v; }
-    return option::Option[Rc[T]]::Some(Rc[T] { ctrl: raw });
+    return option::Option[Rc[T]]::Some(Rc[T] { _ctrl: raw });
 }
 
 impl Rc[T] {
     // Non-atomic increment; returns a new Rc sharing the storage.
     fn clone(this) -> Rc[T] {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let cur: u64 = { *refct };
         { *refct = cur +% (1 as u64); }
-        return Rc[T] { ctrl: this.ctrl };
+        return Rc[T] { _ctrl: this._ctrl };
     }
 
 }
@@ -58,9 +58,9 @@ impl Rc[T] {
 // `Rc[NonCopy]` still works through `clone` / `strong_count` / Drop.
 impl Rc[T: Copy] {
     // Read inner T (bitwise copy).
-    fn get(this) -> T {
+    fn value(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = { (this.ctrl + header) as *T };
+        let value_ptr: *T = { (this._ctrl + header) as *T };
         return { *value_ptr };
     }
 }
@@ -69,23 +69,48 @@ impl Rc[T] {
 
     // Current strong-reference count (single-threaded, exact).
     fn strong_count(this) -> u64 {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         return { *refct };
     }
 
     // Destructor: non-atomic decrement; free the block on the last ref.
     fn drop(ref this) {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let cur: u64 = { *refct };
         let new_count: u64 = cur -% (1 as u64);
         { *refct = new_count; }
         if new_count == (0 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last reference
             // before freeing the control block.
-            let value_ptr: *T = { (this.ctrl + (8 as usize)) as *T };
+            let value_ptr: *T = { (this._ctrl + (8 as usize)) as *T };
             { #drop_in_place::[T](value_ptr); }
-            { free(this.ctrl); }
+            { free(this._ctrl); }
         }
         return;
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn rc_new_and_get() {
+    match new::[i32](5) {
+        option::Option[Rc[i32]]::Some(r) => { assert r.value() == 5; }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_clone_bumps_strong_count() {
+    match new::[i32](5) {
+        option::Option[Rc[i32]]::Some(r) => {
+            assert r.strong_count() == (1 as u64);
+            let r2: Rc[i32] = r.clone();
+            assert r.strong_count() == (2 as u64);
+            assert r2.value() == 5;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
 }

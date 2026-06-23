@@ -2,7 +2,7 @@
 //
 // `Arc[T]` is the canonical multi-owner type: cheap to clone, deep
 // last-drop free. The control block is `{ refcount: u64, value: T }`
-// allocated as one chunk; every `Arc` pointer carries `ctrl: *u8`
+// allocated as one chunk; every `Arc` pointer carries `_ctrl: *u8`
 // pointing at the header. `clone()` does an atomic increment;
 // `drop()` does an atomic decrement and frees the block on the
 // last reference.
@@ -23,17 +23,17 @@
 // at the last Arc's Drop. Build dropwise-aware types on top once the
 // per-T glue is invokable from generic body context.
 
-import "stdlib/atomic" as atomic;
-import "stdlib/option" as option;
+import "./atomic" as atomic;
+import "./option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 struct Arc[T] {
-    ctrl: *u8,
+    _ctrl: *u8,
 }
 
-// `Arc[T]` hides its control block behind a raw `ctrl` pointer, so the
+// `Arc[T]` hides its control block behind a raw `_ctrl` pointer, so the
 // v0.0.14 structural rule marks it `!Send`/`!Sync` by default. The atomic
 // refcount makes cross-thread transfer and sharing sound when the payload
 // itself is thread-safe, so we vouch for it conditionally: `Arc[T]` is
@@ -42,7 +42,7 @@ struct Arc[T] {
 impl Arc[T: Send + Sync]: Send {}
 impl Arc[T: Send + Sync]: Sync {}
 
-// Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
+// Header is `u64 refcount`. The value lives at `_ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
 // over-aligned T motivates it).
 fn new[T](take v: T) -> option::Option[Arc[T]] {
@@ -57,46 +57,46 @@ fn new[T](take v: T) -> option::Option[Arc[T]] {
     { *refct = 1 as u64; }
     let value_ptr: *T = { (raw + header) as *T };
     { *value_ptr = v; }
-    return option::Option[Arc[T]]::Some(Arc[T] { ctrl: raw });
+    return option::Option[Arc[T]]::Some(Arc[T] { _ctrl: raw });
 }
 
 impl Arc[T] {
     // Atomic increment refcount; return a new Arc sharing the storage.
     // Relaxed ordering on the increment is sufficient because the new
-    // Arc carries the same ctrl pointer that's already visible to this
+    // Arc carries the same _ctrl pointer that's already visible to this
     // thread; no happens-before relationship is established by the
     // increment itself.
     fn clone(this) -> Arc[T] {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let _prev: u64 = {
-            atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+            atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        return Arc[T] { ctrl: this.ctrl };
+        return Arc[T] { _ctrl: this._ctrl };
     }
 
     // Current strong-reference count (snapshot — racy under load,
     // useful for tests + debugging only).
     fn strong_count(this) -> u64 {
-        let refct: *u64 = { this.ctrl as *u64 };
-        return { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
+        let refct: *u64 = { this._ctrl as *u64 };
+        return { atomic::load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
     // Destructor: atomic decrement; free the block on the last ref.
     // AcqRel ordering: release pairs with prior writes through this
-    // ctrl ptr; acquire on the final decrement synchronises with all
+    // _ctrl ptr; acquire on the final decrement synchronises with all
     // prior Arc::drop's so the freeing thread sees a consistent view
     // of the value before deallocation.
     fn drop(ref this) {
-        let refct: *u64 = { this.ctrl as *u64 };
+        let refct: *u64 = { this._ctrl as *u64 };
         let prev: u64 = {
-            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+            atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
             // reference before freeing the control block.
-            let value_ptr: *T = { (this.ctrl + (8 as usize)) as *T };
+            let value_ptr: *T = { (this._ctrl + (8 as usize)) as *T };
             { #drop_in_place::[T](value_ptr); }
-            { free(this.ctrl); }
+            { free(this._ctrl); }
         }
         return;
     }
@@ -109,9 +109,34 @@ impl Arc[T] {
 // `Arc[NonCopy]` still works through `clone` / `strong_count` / Drop.
 impl Arc[T: Copy] {
     // Read inner T (bitwise copy).
-    fn get(this) -> T {
+    fn value(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = { (this.ctrl + header) as *T };
+        let value_ptr: *T = { (this._ctrl + header) as *T };
         return { *value_ptr };
     }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn arc_new_and_get() {
+    match new::[i32](9) {
+        option::Option[Arc[i32]]::Some(a) => { assert a.value() == 9; }
+        option::Option[Arc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn arc_clone_bumps_strong_count() {
+    match new::[i32](9) {
+        option::Option[Arc[i32]]::Some(a) => {
+            assert a.strong_count() == (1 as u64);
+            let a2: Arc[i32] = a.clone();
+            assert a.strong_count() == (2 as u64);
+            assert a2.value() == 9;
+        }
+        option::Option[Arc[i32]]::None => { assert false; }
+    }
+    return;
 }

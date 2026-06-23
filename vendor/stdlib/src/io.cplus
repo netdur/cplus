@@ -37,3 +37,17 @@ fn eprintln(s: str) {
     write_all(2 as i32, #str_ptr("\n"), 1 as usize);
     return;
 }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn io_write_paths_do_not_trap() {
+    // Smoke test: the libc-backed write paths run without trapping. Output
+    // capture is out of scope for a unit test; this guards compile + clean
+    // return. (`print`/`println` are bare-shadowed by the `#println`/`#print`
+    // intrinsics, so they are exercised via the qualified `io::` path by
+    // consumers, not here.) Empty strings keep test noise out.
+    write_all(1 as i32, #str_ptr(""), 0 as usize);
+    eprintln("");
+    assert true;
+}

@@ -58,3 +58,15 @@ fn spawn_local[T: Send](take f: future::Future[T]) {
 fn _touch_reactor() -> i32 {
     return reactor::waiter_count();
 }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+async fn _ready_value() -> i32 {
+    return 42;
+}
+
+#[test]
+fn block_on_drives_async_to_completion() {
+    let v: i32 = block_on::[i32](_ready_value());
+    assert v == 42;
+}

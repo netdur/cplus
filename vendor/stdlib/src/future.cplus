@@ -19,7 +19,7 @@
 struct Future[T] {
     // The LLVM coroutine frame, managed by the executor/coro runtime — not
     // freed by this struct (same as `Iterator.handle`). Hence `opaque`.
-    opaque handle: *u8,
+    opaque _handle: *u8,
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop
