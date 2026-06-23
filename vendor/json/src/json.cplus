@@ -116,33 +116,33 @@ fn object_new() -> Value {
 
 // `ptr` is owned but released explicitly via `buf_free`, not a `drop` —
 // `opaque` documents "not freed by this struct's drop" (see buf_free).
-struct Buf { opaque ptr: *u8, len: usize, cap: usize }
+struct Buf { opaque _ptr: *u8, len: usize, cap: usize }
 
 fn buf_new() -> Buf {
-    return Buf { ptr: { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
+    return Buf { _ptr: { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
 }
 
 fn buf_push(b: Buf, byte: u8) -> Buf {
     var b: Buf = b;
     if b.len == b.cap {
         let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
-        let raw: *u8 = { realloc(b.ptr, nc) };
-        b.ptr = raw;
+        let raw: *u8 = { realloc(b._ptr, nc) };
+        b._ptr = raw;
         b.cap = nc;
     }
-    let slot: *u8 = { b.ptr + b.len };
+    let slot: *u8 = { b._ptr + b.len };
     { *slot = byte; }
     b.len = b.len +% (1 as usize);
     return b;
 }
 
 fn buf_free(b: Buf) {
-    if { #addr(b.ptr) } != (0 as usize) { { free(b.ptr); } }
+    if { #addr(b._ptr) } != (0 as usize) { { free(b._ptr); } }
     return;
 }
 
 fn buf_to_string(b: Buf) -> text::Text {
-    let view: str = { #str_from_raw_parts(b.ptr, b.len) };
+    let view: str = { #str_from_raw_parts(b._ptr, b.len) };
     let out: text::Text = view.to_text();
     buf_free(b);
     return out;
@@ -182,14 +182,14 @@ fn buf_push_utf8(b: Buf, cp: i32) -> Buf {
 // ---------------- Parser --------------------------------------------------
 
 struct Parser {
-    opaque src: *u8,
+    opaque _src: *u8,
     len: usize,
     pos: usize,
 }
 
 fn parser_new(s: str) -> Parser {
     return Parser {
-        src: #str_ptr(s),
+        _src: #str_ptr(s),
         len: #str_len(s),
         pos: 0 as usize,
     };
@@ -197,14 +197,14 @@ fn parser_new(s: str) -> Parser {
 
 fn peek(p: Parser) -> i32 {
     if p.pos >= p.len { return - 1 as i32; }
-    let q: *u8 = { p.src + p.pos };
+    let q: *u8 = { p._src + p.pos };
     return { *q } as i32;
 }
 
 fn skip_ws(p: Parser) -> Parser {
     var p: Parser = p;
     while p.pos < p.len {
-        let q: *u8 = { p.src + p.pos };
+        let q: *u8 = { p._src + p.pos };
         let c: u8 = { *q };
         if c == (32 as u8) || c == (9 as u8) || c == (10 as u8) || c == (13 as u8) {
             p.pos = p.pos +% (1 as usize);
@@ -221,7 +221,7 @@ fn match_keyword(p: Parser, kw: str) -> bool {
     var i: usize = 0 as usize;
     while i < n {
         let kq: *u8 = { #str_ptr(kw) + i };
-        let sq: *u8 = { p.src + (p.pos +% i) };
+        let sq: *u8 = { p._src + (p.pos +% i) };
         if { *kq } != { *sq } { return false; }
         i = i +% (1 as usize);
     }
@@ -236,7 +236,7 @@ fn parse_string_bytes(p: Parser) -> StrParse {
     p.pos = p.pos +% (1 as usize);
     var b: Buf = buf_new();
     while p.pos < p.len {
-        let q: *u8 = { p.src + p.pos };
+        let q: *u8 = { p._src + p.pos };
         let c: u8 = { *q };
         if c == ('"' as u8) {
             p.pos = p.pos +% (1 as usize);
@@ -248,7 +248,7 @@ fn parse_string_bytes(p: Parser) -> StrParse {
                 buf_free(b);
                 return StrParse { p: p, ok: false, buf: buf_new() };
             }
-            let eq: *u8 = { p.src + p.pos };
+            let eq: *u8 = { p._src + p.pos };
             let esc: u8 = { *eq };
             p.pos = p.pos +% (1 as usize);
             if esc == ('"' as u8) { b = buf_push(b, '"' as u8); }
@@ -264,10 +264,10 @@ fn parse_string_bytes(p: Parser) -> StrParse {
                     buf_free(b);
                     return StrParse { p: p, ok: false, buf: buf_new() };
                 }
-                let h1q: *u8 = { p.src + p.pos };
-                let h2q: *u8 = { p.src + (p.pos +% (1 as usize)) };
-                let h3q: *u8 = { p.src + (p.pos +% (2 as usize)) };
-                let h4q: *u8 = { p.src + (p.pos +% (3 as usize)) };
+                let h1q: *u8 = { p._src + p.pos };
+                let h2q: *u8 = { p._src + (p.pos +% (1 as usize)) };
+                let h3q: *u8 = { p._src + (p.pos +% (2 as usize)) };
+                let h4q: *u8 = { p._src + (p.pos +% (3 as usize)) };
                 let h1: i32 = hex_digit({ *h1q });
                 let h2: i32 = hex_digit({ *h2q });
                 let h3: i32 = hex_digit({ *h3q });
@@ -287,13 +287,13 @@ fn parse_string_bytes(p: Parser) -> StrParse {
                 // the bits intact so callers can round-trip them.
                 if cp >= 0xD800 && cp <= 0xDBFF {
                     if p.pos +% (6 as usize) <= p.len {
-                        let s0: *u8 = { p.src + p.pos };
-                        let s1: *u8 = { p.src + (p.pos +% (1 as usize)) };
+                        let s0: *u8 = { p._src + p.pos };
+                        let s1: *u8 = { p._src + (p.pos +% (1 as usize)) };
                         if { *s0 } == ('\\' as u8) && { *s1 } == ('u' as u8) {
-                            let l1q: *u8 = { p.src + (p.pos +% (2 as usize)) };
-                            let l2q: *u8 = { p.src + (p.pos +% (3 as usize)) };
-                            let l3q: *u8 = { p.src + (p.pos +% (4 as usize)) };
-                            let l4q: *u8 = { p.src + (p.pos +% (5 as usize)) };
+                            let l1q: *u8 = { p._src + (p.pos +% (2 as usize)) };
+                            let l2q: *u8 = { p._src + (p.pos +% (3 as usize)) };
+                            let l3q: *u8 = { p._src + (p.pos +% (4 as usize)) };
+                            let l4q: *u8 = { p._src + (p.pos +% (5 as usize)) };
                             let l1: i32 = hex_digit({ *l1q });
                             let l2: i32 = hex_digit({ *l2q });
                             let l3: i32 = hex_digit({ *l3q });
@@ -351,7 +351,7 @@ fn parse_number(p: Parser) -> ValParse {
     // unchanged, so acceptance is identical to before.
     var is_int: bool = true;
     while p.pos < p.len {
-        let q: *u8 = { p.src + p.pos };
+        let q: *u8 = { p._src + p.pos };
         let c: u8 = { *q };
         if !is_number_byte(c) { break; }
         if c == ('.' as u8) || c == ('e' as u8) || c == ('E' as u8) { is_int = false; }
@@ -359,7 +359,7 @@ fn parse_number(p: Parser) -> ValParse {
     }
     let n: usize = p.pos -% start;
     if n == (0 as usize) { return fail(p); }
-    let src_q: *u8 = { p.src + start };
+    let src_q: *u8 = { p._src + start };
 
     // Integer fast-path. A canonical `-?[0-9]+` of at most 15 digits fits
     // exactly in an f64 (|v| < 10^15 < 2^53), so accumulating in i64 and
@@ -379,7 +379,7 @@ fn parse_number(p: Parser) -> ValParse {
             var all_digits: bool = true;
             var j: usize = i;
             while j < n {
-                let d: u8 = { *(p.src + (start +% j)) };
+                let d: u8 = { *(p._src + (start +% j)) };
                 if d < ('0' as u8) || d > ('9' as u8) { all_digits = false; break; }
                 acc = acc *% (10 as i64) +% ((d -% ('0' as u8)) as i64);
                 j = j +% (1 as usize);
@@ -461,7 +461,7 @@ fn parse_array(p: Parser) -> ValParse {
     loop {
         let r: ValParse = parse_value(p);
         match r {
-            ValParse::Ok(v, rp) => { p = rp; elems.push(v); }
+            ValParse::Ok(v, rp) => { p = rp; elems.append(v); }
             ValParse::Fail(rp) => { return fail(rp); }
         }
         p = skip_ws(p);
@@ -503,7 +503,7 @@ fn parse_object(p: Parser) -> ValParse {
 
         let r: ValParse = parse_value(p);
         match r {
-            ValParse::Ok(v, rp) => { p = rp; members.push(Member { key: key, value: v }); }
+            ValParse::Ok(v, rp) => { p = rp; members.append(Member { key: key, value: v }); }
             ValParse::Fail(rp) => { return fail(rp); }
         }
 
@@ -557,12 +557,12 @@ fn clone_value(v: Value) -> Value {
         Value::Number(n) => Value::Number(n),
         Value::Str(s) => Value::Str(s.clone()),
         Value::Array(arr) => {
-            let n: usize = arr.len();
+            let n: usize = arr.count();
             var out: vec::Vec[Value] = vec::new::[Value]();
             var i: usize = 0 as usize;
             while i < n {
-                match arr.at(i) {
-                    option::Option[*Value]::Some(p) => { out.push(clone_value({ *p })); }
+                match arr.at_ptr(i) {
+                    option::Option[*Value]::Some(p) => { out.append(clone_value({ *p })); }
                     option::Option[*Value]::None => {}
                 }
                 i = i +% (1 as usize);
@@ -570,13 +570,13 @@ fn clone_value(v: Value) -> Value {
             Value::Array(out)
         }
         Value::Object(arr) => {
-            let n: usize = arr.len();
+            let n: usize = arr.count();
             var out: vec::Vec[Member] = vec::new::[Member]();
             var i: usize = 0 as usize;
             while i < n {
-                match arr.at(i) {
+                match arr.at_ptr(i) {
                     option::Option[*Member]::Some(p) => {
-                        out.push(Member {
+                        out.append(Member {
                             key: { (*p).key.clone() },
                             value: clone_value({ (*p).value }),
                         });
@@ -613,14 +613,14 @@ fn as_str(v: Value) -> text::Text {
 
 fn array_len(v: Value) -> usize {
     return match v {
-        Value::Array(arr) => arr.len(),
+        Value::Array(arr) => arr.count(),
         _ => 0 as usize,
     };
 }
 
 fn array_at(v: Value, i: usize) -> Value {
     return match v {
-        Value::Array(arr) => match arr.at(i) {
+        Value::Array(arr) => match arr.at_ptr(i) {
             option::Option[*Value]::Some(p) => clone_value({ *p }),
             option::Option[*Value]::None => Value::Null,
         },
@@ -630,14 +630,14 @@ fn array_at(v: Value, i: usize) -> Value {
 
 fn object_len(v: Value) -> usize {
     return match v {
-        Value::Object(arr) => arr.len(),
+        Value::Object(arr) => arr.count(),
         _ => 0 as usize,
     };
 }
 
 fn object_key_at(v: Value, i: usize) -> text::Text {
     return match v {
-        Value::Object(arr) => match arr.at(i) {
+        Value::Object(arr) => match arr.at_ptr(i) {
             option::Option[*Member]::Some(p) => { (*p).key.clone() },
             option::Option[*Member]::None => "".to_text(),
         },
@@ -647,7 +647,7 @@ fn object_key_at(v: Value, i: usize) -> text::Text {
 
 fn object_value_at(v: Value, i: usize) -> Value {
     return match v {
-        Value::Object(arr) => match arr.at(i) {
+        Value::Object(arr) => match arr.at_ptr(i) {
             option::Option[*Member]::Some(p) => clone_value({ (*p).value }),
             option::Option[*Member]::None => Value::Null,
         },
@@ -658,11 +658,11 @@ fn object_value_at(v: Value, i: usize) -> Value {
 fn object_get(v: Value, key: str) -> Value {
     return match v {
         Value::Object(arr) => {
-            let n: usize = arr.len();
+            let n: usize = arr.count();
             var i: usize = 0 as usize;
             var found: Value = Value::Null;
             while i < n {
-                match arr.at(i) {
+                match arr.at_ptr(i) {
                     option::Option[*Member]::Some(p) => {
                         if { (*p).key } == key {
                             found = clone_value({ (*p).value });
@@ -839,11 +839,11 @@ fn encode_value(b: Buf, v: Value) -> Buf {
         Value::Str(s) => encode_string(b, { s }),
         Value::Array(arr) => {
             var bb: Buf = buf_push(b, '[' as u8);
-            let n: usize = arr.len();
+            let n: usize = arr.count();
             var i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
-                match arr.at(i) {
+                match arr.at_ptr(i) {
                     option::Option[*Value]::Some(p) => { bb = encode_value(bb, { *p }); }
                     option::Option[*Value]::None => {}
                 }
@@ -854,11 +854,11 @@ fn encode_value(b: Buf, v: Value) -> Buf {
         }
         Value::Object(arr) => {
             var bb: Buf = buf_push(b, '{' as u8);
-            let n: usize = arr.len();
+            let n: usize = arr.count();
             var i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
-                match arr.at(i) {
+                match arr.at_ptr(i) {
                     option::Option[*Member]::Some(p) => {
                         bb = encode_string(bb, { (*p).key });
                         bb = buf_push(bb, ':' as u8);
@@ -949,7 +949,7 @@ fn test_parse_string_simple() {
     let v: Value = parse_ok("\"hello\"");
     assert v.is_string();
     let s: text::Text = as_str(v);
-    assert s.len() == (5 as usize);
+    assert s.count() == (5 as usize);
 }
 
 #[test]
@@ -957,7 +957,7 @@ fn test_parse_string_with_escapes() {
     let v: Value = parse_ok("\"a\\nb\\t\\\\\"");
     let s: text::Text = as_str(v);
     // decoded: 'a', '\n', 'b', '\t', '\\' = 5 bytes
-    assert s.len() == (5 as usize);
+    assert s.count() == (5 as usize);
 }
 
 #[test]
@@ -1033,7 +1033,7 @@ fn test_builder_array_new_push() {
         Value::Array(a) => a,
         _ => vec::new::[Value](),
     };
-    arr_inner.push(Value::Number(7.0f64));
+    arr_inner.append(Value::Number(7.0f64));
     let final_v: Value = Value::Array(arr_inner);
     assert array_len(final_v) == (1 as usize);
 }
@@ -1069,7 +1069,7 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
     // emitted as 4 UTF-8 bytes: F0 9F 98 80.
     let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
     let s: text::Text = as_str(v);
-    assert s.len() == (4 as usize);
+    assert s.count() == (4 as usize);
     let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xF0 as u8);
     assert { *(p + 1) } == (0x9F as u8);
@@ -1082,7 +1082,7 @@ fn test_parse_bmp_unicode_escape_still_works() {
     // U+00E9 = é. Two-byte UTF-8 sequence: C3 A9.
     let v: Value = parse_ok("\"\\u00e9\"");
     let s: text::Text = as_str(v);
-    assert s.len() == (2 as usize);
+    assert s.count() == (2 as usize);
     let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xC3 as u8);
     assert { *(p + 1) } == (0xA9 as u8);
