@@ -13,7 +13,7 @@
 // than wrong code. Naming is mechanical snake_case; guideline-level renames are
 // a later override file's job.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct ObjcEmitter {
     header_path: String,
@@ -111,24 +111,44 @@ impl ObjcEmitter {
                 _ => {}
             }
         }
-        // Pass 2: interface wrappers (sticky-file filter excludes builtins).
+        // Pass 2: collect header-local interfaces + the categories that extend
+        // them (Foundation puts much of NSScanner/NSString/... in categories),
+        // then emit each class with its interface + category methods merged.
         let target = base(&self.header_path);
         let mut current_file: Option<String> = None;
+        let mut interfaces: Vec<serde_json::Value> = Vec::new();
+        let mut categories: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
         for decl in inner {
             if let Some(loc) = decl.get("loc") {
                 if let Some(f) = loc_file(loc) {
                     current_file = Some(f);
                 }
             }
-            if decl.get("kind").and_then(|v| v.as_str()) != Some("ObjCInterfaceDecl") {
+            let kind = decl.get("kind").and_then(|v| v.as_str());
+            if kind != Some("ObjCInterfaceDecl") && kind != Some("ObjCCategoryDecl") {
                 continue;
             }
             if decl.get("loc").map(loc_included).unwrap_or(false) {
                 continue;
             }
-            if current_file.as_deref().map(base) == Some(target.clone()) {
-                self.emit_interface(decl);
+            if current_file.as_deref().map(base) != Some(target.clone()) {
+                continue;
             }
+            if kind == Some("ObjCInterfaceDecl") {
+                interfaces.push(decl.clone());
+            } else if let Some(cls) = decl
+                .get("interface")
+                .and_then(|i| i.get("name"))
+                .and_then(|n| n.as_str())
+            {
+                categories.entry(cls.to_string()).or_default().push(decl.clone());
+            }
+        }
+        for itf in &interfaces {
+            let cls = itf.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let cats: &[serde_json::Value] =
+                categories.get(cls).map(|v| v.as_slice()).unwrap_or(&[]);
+            self.emit_interface(itf, cats);
         }
 
         // Assemble: preamble + the enum defs actually used + interface bodies.
@@ -228,17 +248,27 @@ impl ObjcEmitter {
         objc_name.strip_prefix(&self.prefix).unwrap_or(objc_name).to_string()
     }
 
-    fn emit_interface(&mut self, itf: &serde_json::Value) {
+    fn emit_interface(&mut self, itf: &serde_json::Value, categories: &[serde_json::Value]) {
         let objc_name = match itf.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
             None => return,
         };
         let ty = self.cplus_type_name(&objc_name);
-        let methods: Vec<serde_json::Value> = itf
-            .get("inner")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter(|m| m.get("kind").and_then(|k| k.as_str()) == Some("ObjCMethodDecl")).cloned().collect())
-            .unwrap_or_default();
+        // Methods from the @interface plus every category that extends it,
+        // deduped by selector (a property may be redeclared across them).
+        let mut methods: Vec<serde_json::Value> = Vec::new();
+        let mut seen_sel: HashSet<String> = HashSet::new();
+        for src in std::iter::once(itf).chain(categories.iter()) {
+            for m in src.get("inner").and_then(|v| v.as_array()).into_iter().flatten() {
+                if m.get("kind").and_then(|k| k.as_str()) != Some("ObjCMethodDecl") {
+                    continue;
+                }
+                let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if seen_sel.insert(sel) {
+                    methods.push(m.clone());
+                }
+            }
+        }
         let owned = methods.iter().any(|m| {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
             sel == "init" || sel.starts_with("initWith")

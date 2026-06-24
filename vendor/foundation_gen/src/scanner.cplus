@@ -86,6 +86,32 @@ impl Scanner {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLocale:\0")), locale);
     }
 
+    // SKIPPED `scanInt:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanInteger:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanLongLong:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanUnsignedLongLong:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanFloat:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanDouble:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanHexInt:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanHexLongLong:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanHexFloat:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanHexDouble:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanString:intoString:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanCharactersFromSet:intoString:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanUpToString:intoString:`: (return, arg) shape not yet modelled
+    // SKIPPED `scanUpToCharactersFromSet:intoString:`: (return, arg) shape not yet modelled
+    fn scanner_with_string(string: str) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSScanner\0")), rt::sel(#str_ptr("scannerWithString:\0")), bridge::nsstring(string));
+    }
+
+    fn localized_scanner_with_string(string: str) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSScanner\0")), rt::sel(#str_ptr("localizedScannerWithString:\0")), bridge::nsstring(string));
+    }
+
+    fn is_at_end(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isAtEnd\0"))) != (0 as i8);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

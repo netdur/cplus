@@ -12,3 +12,14 @@ fn generated_scanner_bool_roundtrip() {
     assert s.case_sensitive() == false;
     return;
 }
+
+// `isAtEnd` lives in the NSExtendedScanner *category* — exercises that category
+// methods are merged into the class's impl.
+#[test]
+fn generated_scanner_category_is_at_end() {
+    let empty: scanner::Scanner = scanner::Scanner::new("");
+    assert empty.is_at_end() == true;
+    let nonempty: scanner::Scanner = scanner::Scanner::new("abc");
+    assert nonempty.is_at_end() == false;
+    return;
+}
