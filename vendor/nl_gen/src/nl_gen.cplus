@@ -54,13 +54,18 @@ fn generated_tokenizer_first_token_range() {
     return;
 }
 
-// ABI smoke for a generated MULTI-ARG class method
-// (wordEmbeddingForLanguage:revision: -> word_embedding(for_language:, revision:)),
-// proving 2-arg selector codegen + the msg_id_id_u64 dispatch. The call must run
-// without crashing; it returns nil when the on-device model isn't installed, so
-// we don't assert on the handle (a wrong ABI would corrupt the stack / crash).
+// Exercises a generated MULTI-ARG class method
+// (wordEmbeddingForLanguage:revision: -> word_embedding(for_language:, revision:))
+// AND the nullable-object -> Option mapping. A bogus language has no embedding,
+// so AppKit returns nil -> None, deterministically (no on-device model needed),
+// while still dispatching the 2-arg msg_id_id_u64 ABI.
 #[test]
-fn generated_embedding_multiarg_call() {
-    let _e: *u8 = embedding::Embedding::word_embedding("en", revision: 0 as u64);
+fn generated_embedding_nullable_to_option() {
+    var found: bool = false;
+    match embedding::Embedding::word_embedding("xx-invalid-lang", revision: 0 as u64) {
+        option::Option[*u8]::Some(p) => { found = true; }
+        option::Option[*u8]::None => { found = false; }
+    }
+    assert found == false;
     return;
 }

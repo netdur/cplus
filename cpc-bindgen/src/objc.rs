@@ -38,6 +38,7 @@ struct EnumInfo {
 enum Ret {
     Void,
     Object,
+    ObjectOption, // nullable object handle -> Option[*u8]
     Text { nullable: bool },
     ScalarI64,
     ScalarU64,
@@ -398,6 +399,10 @@ impl ObjcEmitter {
         let (ret_spelling, body_line) = match &ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
             Ret::Object => (" -> *u8".into(), format!("        return {send};\n")),
+            Ret::ObjectOption => (
+                " -> option::Option[*u8]".into(),
+                format!("        let obj: *u8 = {send};\n        return bridge::obj_option(obj);\n"),
+            ),
             Ret::ScalarI64 => (" -> i64".into(), format!("        return {send};\n")),
             Ret::ScalarU64 => (" -> u64".into(), format!("        return {send};\n")),
             Ret::Range => (" -> rt::Range".into(), format!("        return {send};\n")),
@@ -427,7 +432,7 @@ impl ObjcEmitter {
         let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
         let ret_tag = match ret {
             Ret::Void => "void",
-            Ret::Object | Ret::Text { .. } => "id",
+            Ret::Object | Ret::ObjectOption | Ret::Text { .. } => "id",
             Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
             Ret::ScalarU64 => "u64",
             Ret::Range => "range",
@@ -489,8 +494,10 @@ impl ObjcEmitter {
         match base_ty {
             "NSInteger" | "long" => return Ret::ScalarI64,
             "NSUInteger" | "unsigned long" => return Ret::ScalarU64,
-            "instancetype" => return Ret::Object,
-            "id" => return Ret::Object,
+            "instancetype" => return Ret::Object, // a fresh +1, never nil
+            "id" => {
+                return if nullable { Ret::ObjectOption } else { Ret::Object };
+            }
             // 32-bit / float scalars need their own msgSend widths; defer.
             "int" | "unsigned int" | "unsigned" | "double" | "float" => {
                 return Ret::Unsupported(format!("scalar `{base_ty}` not yet modelled"))
@@ -504,7 +511,7 @@ impl ObjcEmitter {
             return Ret::Unsupported("block".into());
         }
         if base_ty.ends_with('*') {
-            return Ret::Object;
+            return if nullable { Ret::ObjectOption } else { Ret::Object };
         }
         Ret::Unsupported(format!("unmapped type `{base_ty}`"))
     }

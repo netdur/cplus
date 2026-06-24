@@ -42,3 +42,13 @@ fn to_text_option(ns: *u8) -> option::Option[text::Text] {
     }
     return option::some(to_text(ns));
 }
+
+// Nilable object handle -> `Option[*u8]`: `nil` -> `None`, else `Some(handle)`.
+// The path for nullable Objective-C object returns (a `nil` is absence, not a
+// sentinel).
+fn obj_option(p: *u8) -> option::Option[*u8] {
+    if p == { 0 as *u8 } {
+        return option::Option[*u8]::None;
+    }
+    return option::some(p);
+}

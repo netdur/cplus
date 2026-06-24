@@ -29,20 +29,24 @@ struct Embedding {
 impl Embedding {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn word_embedding_for_language(language: str) -> *u8 {
-        return rt::msg_id_id(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("wordEmbeddingForLanguage:\0")), bridge::nsstring(language));
+    fn word_embedding_for_language(language: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("wordEmbeddingForLanguage:\0")), bridge::nsstring(language));
+        return bridge::obj_option(obj);
     }
 
-    fn word_embedding(for_language: str, revision: u64) -> *u8 {
-        return rt::msg_id_id_u64(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("wordEmbeddingForLanguage:revision:\0")), bridge::nsstring(for_language), revision);
+    fn word_embedding(for_language: str, revision: u64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("wordEmbeddingForLanguage:revision:\0")), bridge::nsstring(for_language), revision);
+        return bridge::obj_option(obj);
     }
 
-    fn sentence_embedding_for_language(language: str) -> *u8 {
-        return rt::msg_id_id(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("sentenceEmbeddingForLanguage:\0")), bridge::nsstring(language));
+    fn sentence_embedding_for_language(language: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("sentenceEmbeddingForLanguage:\0")), bridge::nsstring(language));
+        return bridge::obj_option(obj);
     }
 
-    fn sentence_embedding_for_language_revision(language: str, revision: u64) -> *u8 {
-        return rt::msg_id_id_u64(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("sentenceEmbeddingForLanguage:revision:\0")), bridge::nsstring(language), revision);
+    fn sentence_embedding_for_language_revision(language: str, revision: u64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NLEmbedding\0")), rt::sel(#str_ptr("sentenceEmbeddingForLanguage:revision:\0")), bridge::nsstring(language), revision);
+        return bridge::obj_option(obj);
     }
 
     // SKIPPED `embeddingWithContentsOfURL:error:`: (return, arg) shape not yet modelled
