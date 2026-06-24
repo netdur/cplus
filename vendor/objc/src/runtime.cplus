@@ -75,6 +75,11 @@ extern fn objc_msg_id_range(recv: *u8, sel: *u8, a: Range) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_range_range(recv: *u8, sel: *u8, a: Range) -> Range;
 
+// `(recv, sel, NSRange, id)` — e.g. `-enumerateTokensInRange:usingBlock:`, where
+// the trailing `id` is a block pointer.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_range_id(recv: *u8, sel: *u8, a: Range, b: *u8);
+
 fn get_class(name: *u8) -> *u8 {
     return { objc_getClass(name) };
 }
@@ -153,6 +158,10 @@ fn msg_id_range(recv: *u8, selector: *u8, a: Range) -> *u8 {
 
 fn msg_range_range(recv: *u8, selector: *u8, a: Range) -> Range {
     return { objc_msg_range_range(recv, selector, a) };
+}
+
+fn msg_void_range_id(recv: *u8, selector: *u8, a: Range, b: *u8) {
+    { objc_msg_void_range_id(recv, selector, a, b); };
 }
 
 // alloc + init — the common +1-owned constructor.

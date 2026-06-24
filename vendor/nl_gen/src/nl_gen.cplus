@@ -5,6 +5,7 @@
 import "./recognizer" as recognizer;
 import "./tokenizer" as tokenizer;
 import "./embedding" as embedding;
+import "./block_proof" as block_proof;
 import "objc/runtime" as rt;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
