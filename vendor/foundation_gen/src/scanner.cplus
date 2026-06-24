@@ -100,8 +100,8 @@ impl Scanner {
     // SKIPPED `scanCharactersFromSet:intoString:`: (return, arg) shape not yet modelled
     // SKIPPED `scanUpToString:intoString:`: (return, arg) shape not yet modelled
     // SKIPPED `scanUpToCharactersFromSet:intoString:`: (return, arg) shape not yet modelled
-    fn scanner_with_string(string: str) -> *u8 {
-        return rt::msg_id_id(rt::get_class(#str_ptr("NSScanner\0")), rt::sel(#str_ptr("scannerWithString:\0")), bridge::nsstring(string));
+    fn scanner_with_string(string: str) -> Scanner {
+        return Scanner { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSScanner\0")), rt::sel(#str_ptr("scannerWithString:\0")), bridge::nsstring(string))) };
     }
 
     fn localized_scanner_with_string(string: str) -> *u8 {

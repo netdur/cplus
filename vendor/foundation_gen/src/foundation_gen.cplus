@@ -35,3 +35,12 @@ fn generated_timezone_string_array() {
     assert names.count() > (100 as usize);
     return;
 }
+
+// Factory-returns-Self: scannerWithString: is a class factory returning the
+// class's own type, so it yields a wrapped Scanner (not a raw handle).
+#[test]
+fn generated_scanner_factory_returns_self() {
+    let sc: scanner::Scanner = scanner::Scanner::scanner_with_string("");
+    assert sc.is_at_end() == true;
+    return;
+}
