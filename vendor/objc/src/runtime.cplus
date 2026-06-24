@@ -1,0 +1,135 @@
+// Minimal, framework-agnostic Objective-C runtime: the `objc_msgSend` shims and
+// class / selector / lifetime helpers that every generated ObjC binding builds
+// on. Framework wrappers (NaturalLanguage, AppKit, ...) depend on this rather
+// than each re-declaring the runtime. The richer per-arity message zoo lives
+// here; add shapes as new selectors need them.
+
+extern fn objc_getClass(name: *u8) -> *u8;
+extern fn sel_registerName(name: *u8) -> *u8;
+
+// ARC primitives (libobjc) — the same reference-counting calls ARC emits,
+// invoked by hand for the +1/`drop` ownership model.
+#[link_name = "objc_retain"]
+extern fn objc_retain(obj: *u8) -> *u8;
+
+#[link_name = "objc_release"]
+extern fn objc_release(obj: *u8);
+
+#[link_name = "objc_autorelease"]
+extern fn objc_autorelease(obj: *u8) -> *u8;
+
+// NSRange — Foundation's `{ location, length }` value type (NSUInteger is `u64`
+// on 64-bit Apple). Crosses the ObjC boundary by value via `#[repr(C)]`.
+#[repr(C)]
+struct Range {
+    location: u64,
+    length: u64,
+}
+
+// objc_msgSend shapes, one per (return, args) ABI signature in use.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id(recv: *u8, sel: *u8, a: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void(recv: *u8, sel: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id(recv: *u8, sel: *u8, a: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64(recv: *u8, sel: *u8, a: i64) -> *u8;
+
+// NSRange-valued / NSRange-taking sends (e.g. `-tokenRangeAtIndex:`,
+// `-tokensForRange:`, `-[NSValue rangeValue]`). NSRange is two integer
+// eightbytes, so it rides registers in and out under the SysV ABI.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range(recv: *u8, sel: *u8) -> Range;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range_u64(recv: *u8, sel: *u8, a: u64) -> Range;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_range(recv: *u8, sel: *u8, a: Range) -> *u8;
+
+fn get_class(name: *u8) -> *u8 {
+    return { objc_getClass(name) };
+}
+
+fn sel(name: *u8) -> *u8 {
+    return { sel_registerName(name) };
+}
+
+fn retain(obj: *u8) -> *u8 {
+    return { objc_retain(obj) };
+}
+
+fn release(obj: *u8) {
+    { objc_release(obj); };
+}
+
+fn autorelease(obj: *u8) -> *u8 {
+    return { objc_autorelease(obj) };
+}
+
+fn msg_id(recv: *u8, selector: *u8) -> *u8 {
+    return { objc_msg_id(recv, selector) };
+}
+
+fn msg_id_id(recv: *u8, selector: *u8, a: *u8) -> *u8 {
+    return { objc_msg_id_id(recv, selector, a) };
+}
+
+fn msg_void(recv: *u8, selector: *u8) {
+    { objc_msg_void(recv, selector); };
+}
+
+fn msg_void_id(recv: *u8, selector: *u8, a: *u8) {
+    { objc_msg_void_id(recv, selector, a); };
+}
+
+fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+    return { objc_msg_u64(recv, selector) };
+}
+
+fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
+    return { objc_msg_id_u64(recv, selector, a) };
+}
+
+fn msg_i64(recv: *u8, selector: *u8) -> i64 {
+    return { objc_msg_i64(recv, selector) };
+}
+
+fn msg_id_i64(recv: *u8, selector: *u8, a: i64) -> *u8 {
+    return { objc_msg_id_i64(recv, selector, a) };
+}
+
+fn msg_range(recv: *u8, selector: *u8) -> Range {
+    return { objc_msg_range(recv, selector) };
+}
+
+fn msg_range_u64(recv: *u8, selector: *u8, a: u64) -> Range {
+    return { objc_msg_range_u64(recv, selector, a) };
+}
+
+fn msg_id_range(recv: *u8, selector: *u8, a: Range) -> *u8 {
+    return { objc_msg_id_range(recv, selector, a) };
+}
+
+// alloc + init — the common +1-owned constructor.
+fn alloc_init(class_name: *u8) -> *u8 {
+    let cls: *u8 = get_class(class_name);
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_id(alloced, sel(#str_ptr("init\0")));
+}

@@ -1,0 +1,44 @@
+// C+ <-> Objective-C string bridge. Richer C+ types (`Text`, `str`) have no
+// direct ObjC counterpart, so they need explicit conversions; this is the
+// shared one every generated binding reaches for. `str`/`Text` in, `Text` (or
+// `Option[Text]` for nilable returns) out — the NSString stays hidden.
+
+import "./runtime" as rt;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+
+// NSUTF8StringEncoding = 4. C+ has no top-level const; a fn folds the same.
+fn ns_utf8() -> u64 { return 4 as u64; }
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_enc(recv: *u8, sel: *u8, ptr: *u8, len: usize, enc: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_u64(recv: *u8, sel: *u8, arg: u64) -> u64;
+
+// `str` -> NSString via `+[NSString stringWithBytes:length:encoding:]`, which
+// copies the buffer internally, so the caller's borrow can drop freely after.
+fn nsstring(s: str) -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSString\0"));
+    let selector: *u8 = rt::sel(#str_ptr("stringWithBytes:length:encoding:\0"));
+    return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
+}
+
+// NSString -> owned `Text` (copies out of the autoreleased UTF8 buffer, so it
+// is safe to outlive the source NSString and its pool).
+fn to_text(ns: *u8) -> text::Text {
+    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
+    let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
+    let len: u64 = { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
+    let view: str = { #str_from_raw_parts(utf8_ptr, len as usize) };
+    return view.to_text();
+}
+
+// Nilable NSString -> `Option[Text]`: a nil NSString (AppKit/Foundation's "no
+// value" signal) maps to `None`, a real one to `Some(owned Text)`.
+fn to_text_option(ns: *u8) -> option::Option[text::Text] {
+    if ns == { 0 as *u8 } {
+        return option::Option[text::Text]::None;
+    }
+    return option::some(to_text(ns));
+}

@@ -17,40 +17,83 @@
 // - Functions taking/returning unsupported C types (long double, vector,
 //   complex, etc.) are emitted with a `// SKIPPED: <reason>` comment.
 
+mod objc;
+
 use std::process::Command;
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    let header = match args.next() {
-        Some(h) => h,
-        None => {
-            eprintln!("cpc-bindgen — C header → C+ FFI declarations");
-            eprintln!();
-            eprintln!("usage: cpc-bindgen <header.h> [-- <extra clang args>...]");
-            std::process::exit(2);
-        }
-    };
+    // Flags (`--objc`, `--prefix P`) precede the header; clang args follow `--`.
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let mut objc_mode = false;
+    let mut prefix = String::new();
+    let mut header: Option<String> = None;
     let mut clang_args: Vec<String> = Vec::new();
     let mut seen_dashdash = false;
-    for a in args {
+    let mut i = 0;
+    while i < raw.len() {
+        let a = &raw[i];
         if !seen_dashdash {
             if a == "--" {
                 seen_dashdash = true;
+                i += 1;
+                continue;
+            }
+            if a == "--objc" {
+                objc_mode = true;
+                i += 1;
+                continue;
+            }
+            if a == "--prefix" {
+                prefix = raw.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--prefix=") {
+                prefix = p.to_string();
+                i += 1;
+                continue;
+            }
+            if header.is_none() && !a.starts_with('-') {
+                header = Some(a.clone());
+                i += 1;
                 continue;
             }
         }
-        clang_args.push(a);
+        clang_args.push(a.clone());
+        i += 1;
+    }
+    let header = match header {
+        Some(h) => h,
+        None => {
+            eprintln!("cpc-bindgen — native header → C+ binding");
+            eprintln!();
+            eprintln!("usage: cpc-bindgen [--objc] [--prefix P] <header.h> [-- <clang args>...]");
+            std::process::exit(2);
+        }
+    };
+
+    // ObjC needs the SDK sysroot; default it from `xcrun` when not supplied.
+    if objc_mode && !clang_args.iter().any(|a| a == "-isysroot") {
+        if let Ok(out) = Command::new("xcrun").arg("--show-sdk-path").output() {
+            if out.status.success() {
+                let sdk = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !sdk.is_empty() {
+                    clang_args.push("-isysroot".into());
+                    clang_args.push(sdk);
+                }
+            }
+        }
     }
 
-    // Shell out to clang for a JSON AST dump. `-fsyntax-only` skips
-    // codegen; the JSON is what we want. The header's path lands as
-    // the TU; we filter to top-level decls actually in `header`.
+    // Shell out to clang for a JSON AST dump. `-fsyntax-only` skips codegen;
+    // the JSON is what we want. We filter to decls actually in `header`.
+    let lang = if objc_mode { "objective-c" } else { "c" };
     let mut cmd = Command::new("clang");
     cmd.arg("-Xclang")
         .arg("-ast-dump=json")
         .arg("-fsyntax-only")
         .arg("-x")
-        .arg("c");
+        .arg(lang);
     for a in &clang_args {
         cmd.arg(a);
     }
@@ -76,9 +119,14 @@ fn main() {
         }
     };
 
-    let mut emitter = Emitter::new(&header);
-    emitter.walk(&v);
-    print!("{}", emitter.finish());
+    if objc_mode {
+        let emitter = objc::ObjcEmitter::new(&header, &prefix);
+        print!("{}", emitter.run(&v));
+    } else {
+        let mut emitter = Emitter::new(&header);
+        emitter.walk(&v);
+        print!("{}", emitter.finish());
+    }
 }
 
 struct Emitter {

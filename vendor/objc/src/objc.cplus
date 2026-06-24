@@ -1,0 +1,10 @@
+// objc — shared Objective-C runtime + string bridge for generated C+ bindings.
+//
+// Framework bindings (naturallanguage, appkit, ...) import the submodules
+// directly (`import "objc/runtime"`, `import "objc/bridge"`); this facade is the
+// package entry and re-exports the common value types.
+
+import "./runtime" as runtime;
+import "./bridge" as bridge;
+
+type Range = runtime::Range;

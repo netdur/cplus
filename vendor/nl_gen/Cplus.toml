@@ -1,0 +1,12 @@
+[package]
+name    = "nl_gen"
+version = "0.0.0"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+objc   = "*"
+
+[link]
+frameworks = ["NaturalLanguage", "Foundation"]
+libs       = ["objc"]

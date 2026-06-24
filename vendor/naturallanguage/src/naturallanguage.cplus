@@ -1,0 +1,12 @@
+// naturallanguage — C+ binding for Apple's NaturalLanguage framework
+// (on-device language identification and tokenization).
+//
+// This package is the golden, hand-written target that `cpc-bind --from objc`
+// reproduces from the SDK headers.
+
+import "./recognizer" as recognizer;
+import "./tokenizer" as tokenizer;
+
+type LanguageRecognizer = recognizer::LanguageRecognizer;
+type Tokenizer = tokenizer::Tokenizer;
+type TokenUnit = tokenizer::TokenUnit;

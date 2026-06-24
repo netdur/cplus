@@ -1,0 +1,29 @@
+// Proof harness: tests the cpc-bindgen-GENERATED recognizer.cplus (not the
+// hand-written golden) against the live framework, to confirm the generator's
+// output compiles and runs.
+
+import "./recognizer" as recognizer;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+
+type LanguageRecognizer = recognizer::LanguageRecognizer;
+
+#[test]
+fn generated_recognizer_detects_french() {
+    match recognizer::LanguageRecognizer::dominant_language_for_string("Bonjour le monde, comment allez-vous aujourd'hui?") {
+        option::Option[text::Text]::Some(lang) => { assert lang.equals("fr"); }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn generated_recognizer_instance_detects_english() {
+    let rec: recognizer::LanguageRecognizer = recognizer::LanguageRecognizer::new();
+    rec.process_string("The quick brown fox jumps over the lazy dog every single morning.");
+    match rec.dominant_language() {
+        option::Option[text::Text]::Some(lang) => { assert lang.equals("en"); }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    return;
+}

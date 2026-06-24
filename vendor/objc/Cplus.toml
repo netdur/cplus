@@ -1,0 +1,11 @@
+[package]
+name    = "objc"
+version = "0.0.0"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+
+[link]
+frameworks = ["Foundation"]
+libs       = ["objc"]
