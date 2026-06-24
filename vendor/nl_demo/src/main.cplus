@@ -1,0 +1,40 @@
+// nl_demo — a real consumer of the cpc-bindgen-GENERATED NaturalLanguage
+// binding (`nl_gen`). Detects the language of a few sample strings and prints
+// the result, proving the generated package works as an ordinary dependency.
+
+import "nl_gen/recognizer" as nl;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+
+fn put(s: str) {
+    { write(1 as i32, #str_ptr(s), #str_len(s)); };
+    return;
+}
+
+fn newline() {
+    let c: u8 = 10 as u8;
+    { write(1 as i32, #addr_of(c), 1 as usize); };
+    return;
+}
+
+fn report(sample: str) {
+    put(sample);
+    put("  ->  ");
+    match nl::LanguageRecognizer::dominant_language_for_string(sample) {
+        option::Option[text::Text]::Some(lang) => { put({ lang }); }
+        option::Option[text::Text]::None => { put("(unknown)"); }
+    }
+    newline();
+    return;
+}
+
+fn main() -> i32 {
+    report("Bonjour le monde, comment allez-vous aujourd'hui?");
+    report("The quick brown fox jumps over the lazy dog every morning.");
+    report("Hola mundo, me llamo Adel y este es un pequeno ejemplo.");
+    report("Guten Tag, wie geht es Ihnen denn heute Morgen so?");
+    report("Ciao a tutti, oggi e una bellissima giornata di sole.");
+    return 0;
+}
