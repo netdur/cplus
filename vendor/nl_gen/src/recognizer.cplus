@@ -14,7 +14,7 @@ struct LanguageRecognizer {
 impl LanguageRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn dominant_language_for_string(string: str) -> option::Option[text::Text] {
+    fn detect(string: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NLLanguageRecognizer\0")), rt::sel(#str_ptr("dominantLanguageForString:\0")), bridge::nsstring(string));
         return bridge::to_text_option(ns);
     }
@@ -25,7 +25,7 @@ impl LanguageRecognizer {
         return LanguageRecognizer { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    fn process_string(this, string: str) {
+    fn process(this, string: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("processString:\0")), bridge::nsstring(string));
     }
 

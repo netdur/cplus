@@ -26,6 +26,7 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
     let mut prefix = String::new();
+    let mut overrides_path: Option<String> = None;
     let mut header: Option<String> = None;
     let mut clang_args: Vec<String> = Vec::new();
     let mut seen_dashdash = false;
@@ -50,6 +51,16 @@ fn main() {
             }
             if let Some(p) = a.strip_prefix("--prefix=") {
                 prefix = p.to_string();
+                i += 1;
+                continue;
+            }
+            if a == "--overrides" {
+                overrides_path = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--overrides=") {
+                overrides_path = Some(p.to_string());
                 i += 1;
                 continue;
             }
@@ -120,7 +131,20 @@ fn main() {
     };
 
     if objc_mode {
-        let emitter = objc::ObjcEmitter::new(&header, &prefix);
+        let overrides = match &overrides_path {
+            Some(p) => match std::fs::read_to_string(p) {
+                Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+                    eprintln!("cpc-bindgen: overrides `{p}` parse failed: {e}");
+                    std::process::exit(1);
+                }),
+                Err(e) => {
+                    eprintln!("cpc-bindgen: cannot read overrides `{p}`: {e}");
+                    std::process::exit(1);
+                }
+            },
+            None => serde_json::Value::Null,
+        };
+        let emitter = objc::ObjcEmitter::new(&header, &prefix, overrides);
         print!("{}", emitter.run(&v));
     } else {
         let mut emitter = Emitter::new(&header);

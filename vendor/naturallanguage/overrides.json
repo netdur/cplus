@@ -1,0 +1,15 @@
+{
+  "_comment": "cpc-bindgen naming overrides for NaturalLanguage — the hand-curated taste the SDK metadata can't supply. The generator mechanizes everything else.",
+  "methods": {
+    "NLLanguageRecognizer": {
+      "dominantLanguageForString:": { "name": "detect" },
+      "processString:":             { "name": "process" }
+    },
+    "NLTokenizer": {
+      "setString:":          { "name": "set_text", "params": ["text"] },
+      "string":              { "name": "text" },
+      "tokenRangeAtIndex:":  { "name": "token_range", "params": ["at"] },
+      "tokensForRange:":     { "name": "tokens" }
+    }
+  }
+}

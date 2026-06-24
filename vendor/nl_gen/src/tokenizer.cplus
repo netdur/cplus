@@ -49,15 +49,15 @@ impl Tokenizer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLanguage:\0")), bridge::nsstring(language));
     }
 
-    fn token_range_at_index(this, character_index: u64) -> rt::Range {
-        return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("tokenRangeAtIndex:\0")), character_index);
+    fn token_range(this, at: u64) -> rt::Range {
+        return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("tokenRangeAtIndex:\0")), at);
     }
 
     fn token_range_for_range(this, range: rt::Range) -> rt::Range {
         return rt::msg_range_range(this._obj, rt::sel(#str_ptr("tokenRangeForRange:\0")), range);
     }
 
-    fn tokens_for_range(this, range: rt::Range) -> vec::Vec[rt::Range] {
+    fn tokens(this, range: rt::Range) -> vec::Vec[rt::Range] {
         let arr: *u8 = rt::msg_id_range(this._obj, rt::sel(#str_ptr("tokensForRange:\0")), range);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[rt::Range] = vec::Vec[rt::Range]::with_capacity(n as usize);
@@ -77,13 +77,13 @@ impl Tokenizer {
         return token_unit_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("unit\0"))));
     }
 
-    fn string(this) -> option::Option[text::Text] {
+    fn text(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("string\0")));
         return bridge::to_text_option(ns);
     }
 
-    fn set_string(this, string: str) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setString:\0")), bridge::nsstring(string));
+    fn set_text(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setString:\0")), bridge::nsstring(text));
     }
 
     fn drop(ref this) {

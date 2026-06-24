@@ -18,6 +18,7 @@ use std::collections::HashMap;
 pub struct ObjcEmitter {
     header_path: String,
     prefix: String,
+    overrides: serde_json::Value,
     body: String,
     needs_vec: bool,
     typedefs: HashMap<String, String>,
@@ -55,16 +56,36 @@ enum Arg {
 }
 
 impl ObjcEmitter {
-    pub fn new(header_path: &str, prefix: &str) -> Self {
+    pub fn new(header_path: &str, prefix: &str, overrides: serde_json::Value) -> Self {
         ObjcEmitter {
             header_path: header_path.to_string(),
             prefix: prefix.to_string(),
+            overrides,
             body: String::new(),
             needs_vec: false,
             typedefs: HashMap::new(),
             enums: HashMap::new(),
             used_enums: Vec::new(),
         }
+    }
+
+    // --- override-file lookups (the hand-curated naming taste) ---
+
+    fn type_override(&self, objc: &str) -> Option<String> {
+        self.overrides.get("types").and_then(|t| t.get(objc)).and_then(|v| v.as_str()).map(String::from)
+    }
+
+    fn method_override<'a>(&'a self, class: &str, sel: &str) -> Option<&'a serde_json::Value> {
+        self.overrides.get("methods").and_then(|m| m.get(class)).and_then(|c| c.get(sel))
+    }
+
+    fn is_skipped(&self, class: &str, sel: &str) -> bool {
+        self.overrides
+            .get("skip")
+            .and_then(|s| s.get(class))
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().any(|x| x.as_str() == Some(sel)))
+            .unwrap_or(false)
     }
 
     pub fn run(mut self, tu: &serde_json::Value) -> String {
@@ -198,6 +219,9 @@ impl ObjcEmitter {
     }
 
     fn cplus_type_name(&self, objc_name: &str) -> String {
+        if let Some(over) = self.type_override(objc_name) {
+            return over;
+        }
         objc_name.strip_prefix(&self.prefix).unwrap_or(objc_name).to_string()
     }
 
@@ -264,6 +288,20 @@ impl ObjcEmitter {
             })
             .unwrap_or_default();
 
+        // Override-file taste: skip directive, method-name and param-label renames.
+        if self.is_skipped(objc_class, &sel) {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: override\n"));
+            return;
+        }
+        let mov = self.method_override(objc_class, &sel).cloned();
+        let ov_name: Option<String> = mov.as_ref().and_then(|o| o.get("name")).and_then(|v| v.as_str()).map(String::from);
+        let ov_params: Vec<String> = mov
+            .as_ref()
+            .and_then(|o| o.get("params"))
+            .and_then(|p| p.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
         if params.len() > 1 {
             self.body.push_str(&format!("    // SKIPPED `{sel}`: {}-arg selectors not yet modelled\n", params.len()));
             return;
@@ -275,7 +313,7 @@ impl ObjcEmitter {
         let mut sig_param = String::new();
         let mut arg: Option<Arg> = None;
         if let Some((pname, pqt)) = params.get(0) {
-            let pn = snake(pname);
+            let pn = ov_params.get(0).cloned().unwrap_or_else(|| snake(pname));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: param `{pqt}` — {why}\n"));
@@ -314,7 +352,7 @@ impl ObjcEmitter {
             format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
         };
         let receiver = if is_instance { "this" } else { "" };
-        let name = snake(sel.split(':').next().unwrap_or(&sel));
+        let name = ov_name.clone().unwrap_or_else(|| snake(sel.split(':').next().unwrap_or(&sel)));
 
         // ValueArray is a multi-statement body; handle it separately.
         if let Ret::ValueArray = ret {
