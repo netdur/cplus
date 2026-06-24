@@ -46,6 +46,7 @@ enum Ret {
     EnumTy(String),
     Range,
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
+    TextArray,  // NSArray<NSString *> -> Vec[Text]
     Unsupported(String),
 }
 
@@ -419,6 +420,33 @@ impl ObjcEmitter {
             return;
         }
 
+        if let Ret::TextArray = ret {
+            let array_call = match self.send_expr(&recv, &sel, &Ret::Object, &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray<NSString> arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_vec = true;
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[text::Text] {{\n\
+                 \x20       let arr: *u8 = {array_call};\n\
+                 \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
+                 \x20           out.append(bridge::to_text(value));\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
         let send = match self.send_expr(&recv, &sel, &ret, &args) {
             Some(s) => s,
             None => {
@@ -450,7 +478,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::Unsupported(_) => unreachable!(),
+            Ret::ValueArray | Ret::TextArray | Ret::Unsupported(_) => unreachable!(),
         };
 
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
@@ -470,7 +498,7 @@ impl ObjcEmitter {
             Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
             Ret::ScalarU64 => "u64",
             Ret::Range => "range",
-            Ret::ValueArray | Ret::Unsupported(_) => return None,
+            Ret::ValueArray | Ret::TextArray | Ret::Unsupported(_) => return None,
         };
         let mut tags: Vec<&str> = vec![ret_tag];
         let mut exprs: Vec<String> = Vec::new();
@@ -517,6 +545,9 @@ impl ObjcEmitter {
         }
         if self.is_value_array(base_ty) {
             return Ret::ValueArray;
+        }
+        if self.is_string_array(base_ty) {
+            return Ret::TextArray;
         }
         if self.is_nsstring(base_ty) {
             return Ret::Text { nullable };
@@ -636,6 +667,18 @@ impl ObjcEmitter {
     fn is_value_array(&self, ty: &str) -> bool {
         let t = ty.replace(' ', "");
         t == "NSArray<NSValue*>*"
+    }
+
+    /// `NSArray<NSString *> *` (or a string-typedef element like NLLanguage).
+    fn is_string_array(&self, ty: &str) -> bool {
+        let t = ty.trim();
+        if let Some(rest) = t.strip_prefix("NSArray<") {
+            let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"));
+            if let Some(elem) = elem {
+                return self.is_nsstring(elem.trim());
+            }
+        }
+        false
     }
 
     fn is_nsstring(&self, ty: &str) -> bool {

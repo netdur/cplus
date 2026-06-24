@@ -2,6 +2,9 @@
 // against the live framework — exercises BOOL <-> bool (get + set).
 
 import "./scanner" as scanner;
+import "./timezone" as timezone;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 
 #[test]
 fn generated_scanner_bool_roundtrip() {
@@ -21,5 +24,14 @@ fn generated_scanner_category_is_at_end() {
     assert empty.is_at_end() == true;
     let nonempty: scanner::Scanner = scanner::Scanner::new("abc");
     assert nonempty.is_at_end() == false;
+    return;
+}
+
+// NSArray<NSString *> -> Vec[Text]: knownTimeZoneNames is a class property (in
+// the NSExtendedTimeZone category) returning hundreds of zone-name strings.
+#[test]
+fn generated_timezone_string_array() {
+    let names: vec::Vec[text::Text] = timezone::TimeZone::known_time_zone_names();
+    assert names.count() > (100 as usize);
     return;
 }
