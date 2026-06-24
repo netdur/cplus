@@ -16,16 +16,56 @@
     opaque realp: *f32,
     opaque imagp: *f32,
 }
+fn DSPSplitComplex_new(realp: *f32, imagp: *f32) -> DSPSplitComplex {
+    return DSPSplitComplex { realp: realp, imagp: imagp };
+}
 #[repr(C)] struct DSPDoubleSplitComplex {
     opaque realp: *f64,
     opaque imagp: *f64,
 }
+fn DSPDoubleSplitComplex_new(realp: *f64, imagp: *f64) -> DSPDoubleSplitComplex {
+    return DSPDoubleSplitComplex { realp: realp, imagp: imagp };
+}
+// C enum `(anonymous)` — constants as i32 accessors.
+fn kFFTDirection_Forward() -> i32 { return 1 as i32; }
+fn kFFTDirection_Inverse() -> i32 { return -1 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn kFFTRadix2() -> i32 { return 0 as i32; }
+fn kFFTRadix3() -> i32 { return 1 as i32; }
+fn kFFTRadix5() -> i32 { return 2 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn vDSP_HALF_WINDOW() -> i32 { return 1 as i32; }
+fn vDSP_HANN_DENORM() -> i32 { return 0 as i32; }
+fn vDSP_HANN_NORM() -> i32 { return 2 as i32; }
 #[repr(C)] struct vDSP_uint24 {
     opaque bytes: *u8,
+}
+fn vDSP_uint24_new(bytes: *u8) -> vDSP_uint24 {
+    return vDSP_uint24 { bytes: bytes };
 }
 #[repr(C)] struct vDSP_int24 {
     opaque bytes: *u8,
 }
+fn vDSP_int24_new(bytes: *u8) -> vDSP_int24 {
+    return vDSP_int24 { bytes: bytes };
+}
+// C enum `(anonymous)` — constants as i32 accessors.
+fn vDSP_DFT_FORWARD() -> i32 { return 1 as i32; }
+fn vDSP_DFT_INVERSE() -> i32 { return -1 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn vDSP_DFT_Interleaved_ComplextoComplex() -> i32 { return 0 as i32; }
+fn vDSP_DFT_Interleaved_RealtoComplex() -> i32 { return 1 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn vDSP_DCT_II() -> i32 { return 2 as i32; }
+fn vDSP_DCT_III() -> i32 { return 3 as i32; }
+fn vDSP_DCT_IV() -> i32 { return 4 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn FFT_FORWARD() -> i32 { return 1 as i32; }
+fn FFT_INVERSE() -> i32 { return -1 as i32; }
+// C enum `(anonymous)` — constants as i32 accessors.
+fn FFT_RADIX2() -> i32 { return 0 as i32; }
+fn FFT_RADIX3() -> i32 { return 1 as i32; }
+fn FFT_RADIX5() -> i32 { return 2 as i32; }
 #[link_name = "vDSP_create_fftsetup"]
 extern fn __c_vDSP_create_fftsetup(__Log2n: u64, __Radix: i32) -> *u8;
 fn vDSP_create_fftsetup(__Log2n: u64, __Radix: i32) -> *u8 {
@@ -189,338 +229,338 @@ fn vDSP_biquadm_SetActiveFiltersD(__setup: *u8, __filter_states: *bool) {
     return;
 }
 #[link_name = "vDSP_ctoz"]
-extern fn __c_vDSP_ctoz(__C: *u8, __IC: i64, __Z: *u8, __IZ: i64, __N: u64);
-fn vDSP_ctoz(__C: *u8, __IC: i64, __Z: *u8, __IZ: i64, __N: u64) {
+extern fn __c_vDSP_ctoz(__C: *DSPComplex, __IC: i64, __Z: *DSPSplitComplex, __IZ: i64, __N: u64);
+fn vDSP_ctoz(__C: *DSPComplex, __IC: i64, __Z: *DSPSplitComplex, __IZ: i64, __N: u64) {
     { __c_vDSP_ctoz(__C, __IC, __Z, __IZ, __N); }
     return;
 }
 #[link_name = "vDSP_ctozD"]
-extern fn __c_vDSP_ctozD(__C: *u8, __IC: i64, __Z: *u8, __IZ: i64, __N: u64);
-fn vDSP_ctozD(__C: *u8, __IC: i64, __Z: *u8, __IZ: i64, __N: u64) {
+extern fn __c_vDSP_ctozD(__C: *DSPDoubleComplex, __IC: i64, __Z: *DSPDoubleSplitComplex, __IZ: i64, __N: u64);
+fn vDSP_ctozD(__C: *DSPDoubleComplex, __IC: i64, __Z: *DSPDoubleSplitComplex, __IZ: i64, __N: u64) {
     { __c_vDSP_ctozD(__C, __IC, __Z, __IZ, __N); }
     return;
 }
 #[link_name = "vDSP_ztoc"]
-extern fn __c_vDSP_ztoc(__Z: *u8, __IZ: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_ztoc(__Z: *u8, __IZ: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_ztoc(__Z: *DSPSplitComplex, __IZ: i64, __C: *DSPComplex, __IC: i64, __N: u64);
+fn vDSP_ztoc(__Z: *DSPSplitComplex, __IZ: i64, __C: *DSPComplex, __IC: i64, __N: u64) {
     { __c_vDSP_ztoc(__Z, __IZ, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_ztocD"]
-extern fn __c_vDSP_ztocD(__Z: *u8, __IZ: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_ztocD(__Z: *u8, __IZ: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_ztocD(__Z: *DSPDoubleSplitComplex, __IZ: i64, __C: *DSPDoubleComplex, __IC: i64, __N: u64);
+fn vDSP_ztocD(__Z: *DSPDoubleSplitComplex, __IZ: i64, __C: *DSPDoubleComplex, __IC: i64, __N: u64) {
     { __c_vDSP_ztocD(__Z, __IZ, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_fft_zip"]
-extern fn __c_vDSP_fft_zip(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zip(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zip(__Setup, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zipD"]
-extern fn __c_vDSP_fft_zipD(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zipD(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zipD(__Setup, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zipt"]
-extern fn __c_vDSP_fft_zipt(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zipt(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zipt(__Setup, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_ziptD"]
-extern fn __c_vDSP_fft_ziptD(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_ziptD(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_ziptD(__Setup, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zop"]
-extern fn __c_vDSP_fft_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zop(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zopt"]
-extern fn __c_vDSP_fft_zopt(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zopt(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zopt(__Setup, __A, __IA, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zopD"]
-extern fn __c_vDSP_fft_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zopD(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zoptD"]
-extern fn __c_vDSP_fft_zoptD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zoptD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zoptD(__Setup, __A, __IA, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zrip"]
-extern fn __c_vDSP_fft_zrip(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zrip(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zrip(__Setup, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zripD"]
-extern fn __c_vDSP_fft_zripD(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zripD(__Setup: *u8, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zripD(__Setup, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zript"]
-extern fn __c_vDSP_fft_zript(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zript(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zript(__Setup, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zriptD"]
-extern fn __c_vDSP_fft_zriptD(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zriptD(__Setup: *u8, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zriptD(__Setup, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zrop"]
-extern fn __c_vDSP_fft_zrop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zrop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zrop(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zropD"]
-extern fn __c_vDSP_fft_zropD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zropD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zropD(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zropt"]
-extern fn __c_vDSP_fft_zropt(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zropt(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zropt(__Setup, __A, __IA, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft_zroptD"]
-extern fn __c_vDSP_fft_zroptD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32);
-fn vDSP_fft_zroptD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Buffer: *u8, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32);
+fn vDSP_fft_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft_zroptD(__Setup, __A, __IA, __C, __IC, __Buffer, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zip"]
-extern fn __c_vDSP_fft2d_zip(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zip(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zip(__Setup, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zipD"]
-extern fn __c_vDSP_fft2d_zipD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zipD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zipD(__Setup, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zipt"]
-extern fn __c_vDSP_fft2d_zipt(__Setup: *u8, __C: *u8, __IC1: i64, __IC0: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zipt(__Setup: *u8, __C: *u8, __IC1: i64, __IC0: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC1: i64, __IC0: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC1: i64, __IC0: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zipt(__Setup, __C, __IC1, __IC0, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_ziptD"]
-extern fn __c_vDSP_fft2d_ziptD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_ziptD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_ziptD(__Setup, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zop"]
-extern fn __c_vDSP_fft2d_zop(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zop(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zop(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zopD"]
-extern fn __c_vDSP_fft2d_zopD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zopD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zopD(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zopt"]
-extern fn __c_vDSP_fft2d_zopt(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zopt(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zopt(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zoptD"]
-extern fn __c_vDSP_fft2d_zoptD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zoptD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zoptD(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zrip"]
-extern fn __c_vDSP_fft2d_zrip(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zrip(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zrip(__Setup, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zripD"]
-extern fn __c_vDSP_fft2d_zripD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __flag: i32);
-fn vDSP_fft2d_zripD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __flag: i32) {
+extern fn __c_vDSP_fft2d_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __flag: i32);
+fn vDSP_fft2d_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __flag: i32) {
     { __c_vDSP_fft2d_zripD(__Setup, __C, __IC0, __IC1, __Log2N0, __Log2N1, __flag); }
     return;
 }
 #[link_name = "vDSP_fft2d_zript"]
-extern fn __c_vDSP_fft2d_zript(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zript(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zript(__Setup, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zriptD"]
-extern fn __c_vDSP_fft2d_zriptD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __flag: i32);
-fn vDSP_fft2d_zriptD(__Setup: *u8, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __flag: i32) {
+extern fn __c_vDSP_fft2d_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __flag: i32);
+fn vDSP_fft2d_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __flag: i32) {
     { __c_vDSP_fft2d_zriptD(__Setup, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __flag); }
     return;
 }
 #[link_name = "vDSP_fft2d_zrop"]
-extern fn __c_vDSP_fft2d_zrop(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zrop(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zrop(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zropt"]
-extern fn __c_vDSP_fft2d_zropt(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zropt(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zropt(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zropD"]
-extern fn __c_vDSP_fft2d_zropD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zropD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zropD(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft2d_zroptD"]
-extern fn __c_vDSP_fft2d_zroptD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
-fn vDSP_fft2d_zroptD(__Setup: *u8, __A: *u8, __IA0: i64, __IA1: i64, __C: *u8, __IC0: i64, __IC1: i64, __Buffer: *u8, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
+extern fn __c_vDSP_fft2d_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32);
+fn vDSP_fft2d_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA0: i64, __IA1: i64, __C: *DSPDoubleSplitComplex, __IC0: i64, __IC1: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N0: u64, __Log2N1: u64, __Direction: i32) {
     { __c_vDSP_fft2d_zroptD(__Setup, __A, __IA0, __IA1, __C, __IC0, __IC1, __Buffer, __Log2N0, __Log2N1, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zip"]
-extern fn __c_vDSP_fftm_zip(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zip(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zip(__Setup, __C, __IC, __IM, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zipD"]
-extern fn __c_vDSP_fftm_zipD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zipD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zipD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zipD(__Setup, __C, __IC, __IM, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zipt"]
-extern fn __c_vDSP_fftm_zipt(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zipt(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zipt(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zipt(__Setup, __C, __IC, __IM, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_ziptD"]
-extern fn __c_vDSP_fftm_ziptD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_ziptD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_ziptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_ziptD(__Setup, __C, __IC, __IM, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zop"]
-extern fn __c_vDSP_fftm_zop(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zop(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zop(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zopD"]
-extern fn __c_vDSP_fftm_zopD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zopD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zopD(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zopt"]
-extern fn __c_vDSP_fftm_zopt(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zopt(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zopt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zopt(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zoptD"]
-extern fn __c_vDSP_fftm_zoptD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zoptD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zoptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zoptD(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zrip"]
-extern fn __c_vDSP_fftm_zrip(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zrip(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zrip(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zrip(__Setup, __C, __IC, __IM, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zripD"]
-extern fn __c_vDSP_fftm_zripD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zripD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zripD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zripD(__Setup, __C, __IC, __IM, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zript"]
-extern fn __c_vDSP_fftm_zript(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zript(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zript(__Setup: *u8, __C: *DSPSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zript(__Setup, __C, __IC, __IM, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zriptD"]
-extern fn __c_vDSP_fftm_zriptD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zriptD(__Setup: *u8, __C: *u8, __IC: i64, __IM: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zriptD(__Setup: *u8, __C: *DSPDoubleSplitComplex, __IC: i64, __IM: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zriptD(__Setup, __C, __IC, __IM, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zrop"]
-extern fn __c_vDSP_fftm_zrop(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zrop(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zrop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zrop(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zropt"]
-extern fn __c_vDSP_fftm_zropt(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zropt(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zropt(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __IMA: i64, __C: *DSPSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zropt(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zropD"]
-extern fn __c_vDSP_fftm_zropD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zropD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zropD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zropD(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fftm_zroptD"]
-extern fn __c_vDSP_fftm_zroptD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32);
-fn vDSP_fftm_zroptD(__Setup: *u8, __A: *u8, __IA: i64, __IMA: i64, __C: *u8, __IC: i64, __IMC: i64, __Buffer: *u8, __Log2N: u64, __M: u64, __Direction: i32) {
+extern fn __c_vDSP_fftm_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32);
+fn vDSP_fftm_zroptD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __IMA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __IMC: i64, __Buffer: *DSPDoubleSplitComplex, __Log2N: u64, __M: u64, __Direction: i32) {
     { __c_vDSP_fftm_zroptD(__Setup, __A, __IA, __IMA, __C, __IC, __IMC, __Buffer, __Log2N, __M, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft3_zop"]
-extern fn __c_vDSP_fft3_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft3_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft3_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft3_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft3_zop(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft3_zopD"]
-extern fn __c_vDSP_fft3_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft3_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft3_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft3_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft3_zopD(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft5_zop"]
-extern fn __c_vDSP_fft5_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft5_zop(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft5_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft5_zop(__Setup: *u8, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft5_zop(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
 #[link_name = "vDSP_fft5_zopD"]
-extern fn __c_vDSP_fft5_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32);
-fn vDSP_fft5_zopD(__Setup: *u8, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __Log2N: u64, __Direction: i32) {
+extern fn __c_vDSP_fft5_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32);
+fn vDSP_fft5_zopD(__Setup: *u8, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __Log2N: u64, __Direction: i32) {
     { __c_vDSP_fft5_zopD(__Setup, __A, __IA, __C, __IC, __Log2N, __Direction); }
     return;
 }
@@ -561,14 +601,14 @@ fn vDSP_convD(__A: *f64, __IA: i64, __F: *f64, __IF: i64, __C: *f64, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zconv"]
-extern fn __c_vDSP_zconv(__A: *u8, __IA: i64, __F: *u8, __IF: i64, __C: *u8, __IC: i64, __N: u64, __P: u64);
-fn vDSP_zconv(__A: *u8, __IA: i64, __F: *u8, __IF: i64, __C: *u8, __IC: i64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zconv(__A: *DSPSplitComplex, __IA: i64, __F: *DSPSplitComplex, __IF: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64, __P: u64);
+fn vDSP_zconv(__A: *DSPSplitComplex, __IA: i64, __F: *DSPSplitComplex, __IF: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64, __P: u64) {
     { __c_vDSP_zconv(__A, __IA, __F, __IF, __C, __IC, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zconvD"]
-extern fn __c_vDSP_zconvD(__A: *u8, __IA: i64, __F: *u8, __IF: i64, __C: *u8, __IC: i64, __N: u64, __P: u64);
-fn vDSP_zconvD(__A: *u8, __IA: i64, __F: *u8, __IF: i64, __C: *u8, __IC: i64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zconvD(__A: *DSPDoubleSplitComplex, __IA: i64, __F: *DSPDoubleSplitComplex, __IF: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64, __P: u64);
+fn vDSP_zconvD(__A: *DSPDoubleSplitComplex, __IA: i64, __F: *DSPDoubleSplitComplex, __IF: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64, __P: u64) {
     { __c_vDSP_zconvD(__A, __IA, __F, __IF, __C, __IC, __N, __P); }
     return;
 }
@@ -633,62 +673,62 @@ fn vDSP_mmulD(__A: *f64, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zmma"]
-extern fn __c_vDSP_zmma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmma(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmmaD"]
-extern fn __c_vDSP_zmmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmmaD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmms"]
-extern fn __c_vDSP_zmms(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmms(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmms(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmms(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmms(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmmsD"]
-extern fn __c_vDSP_zmmsD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmmsD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmmsD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmmsD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmmsD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zvmmaa"]
-extern fn __c_vDSP_zvmmaa(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __E: *u8, __IE: i64, __F: *u8, __IF: i64, __N: u64);
-fn vDSP_zvmmaa(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __E: *u8, __IE: i64, __F: *u8, __IF: i64, __N: u64) {
+extern fn __c_vDSP_zvmmaa(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __E: *DSPSplitComplex, __IE: i64, __F: *DSPSplitComplex, __IF: i64, __N: u64);
+fn vDSP_zvmmaa(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __E: *DSPSplitComplex, __IE: i64, __F: *DSPSplitComplex, __IF: i64, __N: u64) {
     { __c_vDSP_zvmmaa(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __E, __IE, __F, __IF, __N); }
     return;
 }
 #[link_name = "vDSP_zvmmaaD"]
-extern fn __c_vDSP_zvmmaaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __E: *u8, __IE: i64, __F: *u8, __IF: i64, __N: u64);
-fn vDSP_zvmmaaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __E: *u8, __IE: i64, __F: *u8, __IF: i64, __N: u64) {
+extern fn __c_vDSP_zvmmaaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __E: *DSPDoubleSplitComplex, __IE: i64, __F: *DSPDoubleSplitComplex, __IF: i64, __N: u64);
+fn vDSP_zvmmaaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __E: *DSPDoubleSplitComplex, __IE: i64, __F: *DSPDoubleSplitComplex, __IF: i64, __N: u64) {
     { __c_vDSP_zvmmaaD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __E, __IE, __F, __IF, __N); }
     return;
 }
 #[link_name = "vDSP_zmsm"]
-extern fn __c_vDSP_zmsm(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmsm(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmsm(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmsm(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmsm(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmsmD"]
-extern fn __c_vDSP_zmsmD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmsmD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmsmD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmsmD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmsmD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmmul"]
-extern fn __c_vDSP_zmmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmmul(__A, __IA, __B, __IB, __C, __IC, __M, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zmmulD"]
-extern fn __c_vDSP_zmmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __M: u64, __N: u64, __P: u64);
-fn vDSP_zmmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __M: u64, __N: u64, __P: u64) {
+extern fn __c_vDSP_zmmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __M: u64, __N: u64, __P: u64);
+fn vDSP_zmmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __M: u64, __N: u64, __P: u64) {
     { __c_vDSP_zmmulD(__A, __IA, __B, __IB, __C, __IC, __M, __N, __P); }
     return;
 }
@@ -711,26 +751,26 @@ fn vDSP_vaddi(__A: *i32, __IA: i64, __B: *i32, __IB: i64, __C: *i32, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zvadd"]
-extern fn __c_vDSP_zvadd(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvadd(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvadd(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvadd(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvadd(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvaddD"]
-extern fn __c_vDSP_zvaddD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvaddD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvaddD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvaddD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvaddD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvadd"]
-extern fn __c_vDSP_zrvadd(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvadd(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvadd(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvadd(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvadd(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvaddD"]
-extern fn __c_vDSP_zrvaddD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvaddD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvaddD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvaddD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvaddD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
@@ -747,14 +787,14 @@ fn vDSP_vsubD(__B: *f64, __IB: i64, __A: *f64, __IA: i64, __C: *f64, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zvsub"]
-extern fn __c_vDSP_zvsub(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvsub(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvsub(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvsub(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvsub(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvsubD"]
-extern fn __c_vDSP_zvsubD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvsubD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvsubD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvsubD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvsubD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
@@ -771,14 +811,14 @@ fn vDSP_vmulD(__A: *f64, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zrvmul"]
-extern fn __c_vDSP_zrvmul(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvmul(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvmul(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvmul(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvmul(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvmulD"]
-extern fn __c_vDSP_zrvmulD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvmulD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvmulD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
@@ -801,26 +841,26 @@ fn vDSP_vdivi(__B: *i32, __IB: i64, __A: *i32, __IA: i64, __C: *i32, __IC: i64, 
     return;
 }
 #[link_name = "vDSP_zvdiv"]
-extern fn __c_vDSP_zvdiv(__B: *u8, __IB: i64, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvdiv(__B: *u8, __IB: i64, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvdiv(__B: *DSPSplitComplex, __IB: i64, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvdiv(__B: *DSPSplitComplex, __IB: i64, __A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvdiv(__B, __IB, __A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvdivD"]
-extern fn __c_vDSP_zvdivD(__B: *u8, __IB: i64, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvdivD(__B: *u8, __IB: i64, __A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvdivD(__B: *DSPDoubleSplitComplex, __IB: i64, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvdivD(__B: *DSPDoubleSplitComplex, __IB: i64, __A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvdivD(__B, __IB, __A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvdiv"]
-extern fn __c_vDSP_zrvdiv(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvdiv(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvdiv(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvdiv(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvdiv(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvdivD"]
-extern fn __c_vDSP_zrvdivD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvdivD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvdivD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvdivD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvdivD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
@@ -885,26 +925,26 @@ fn vDSP_dotprD(__A: *f64, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __N: u64) 
     return;
 }
 #[link_name = "vDSP_zdotpr"]
-extern fn __c_vDSP_zdotpr(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zdotpr(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zdotpr(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __N: u64);
+fn vDSP_zdotpr(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __N: u64) {
     { __c_vDSP_zdotpr(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zdotprD"]
-extern fn __c_vDSP_zdotprD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zdotprD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zdotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64);
+fn vDSP_zdotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64) {
     { __c_vDSP_zdotprD(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zrdotpr"]
-extern fn __c_vDSP_zrdotpr(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zrdotpr(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zrdotpr(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __N: u64);
+fn vDSP_zrdotpr(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __N: u64) {
     { __c_vDSP_zrdotpr(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zrdotprD"]
-extern fn __c_vDSP_zrdotprD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zrdotprD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zrdotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64);
+fn vDSP_zrdotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64) {
     { __c_vDSP_zrdotprD(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
@@ -933,62 +973,62 @@ fn vDSP_vmaD(__A: *f64, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, _
     return;
 }
 #[link_name = "vDSP_zvma"]
-extern fn __c_vDSP_zvma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvma(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __N); }
     return;
 }
 #[link_name = "vDSP_zvmaD"]
-extern fn __c_vDSP_zvmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvmaD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __N); }
     return;
 }
 #[link_name = "vDSP_zvmul"]
-extern fn __c_vDSP_zvmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64, __Conjugate: i32);
-fn vDSP_zvmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64, __Conjugate: i32) {
+extern fn __c_vDSP_zvmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64, __Conjugate: i32);
+fn vDSP_zvmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64, __Conjugate: i32) {
     { __c_vDSP_zvmul(__A, __IA, __B, __IB, __C, __IC, __N, __Conjugate); }
     return;
 }
 #[link_name = "vDSP_zvmulD"]
-extern fn __c_vDSP_zvmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64, __Conjugate: i32);
-fn vDSP_zvmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64, __Conjugate: i32) {
+extern fn __c_vDSP_zvmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64, __Conjugate: i32);
+fn vDSP_zvmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64, __Conjugate: i32) {
     { __c_vDSP_zvmulD(__A, __IA, __B, __IB, __C, __IC, __N, __Conjugate); }
     return;
 }
 #[link_name = "vDSP_zidotpr"]
-extern fn __c_vDSP_zidotpr(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zidotpr(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zidotpr(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __N: u64);
+fn vDSP_zidotpr(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __N: u64) {
     { __c_vDSP_zidotpr(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zidotprD"]
-extern fn __c_vDSP_zidotprD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64);
-fn vDSP_zidotprD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zidotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64);
+fn vDSP_zidotprD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __N: u64) {
     { __c_vDSP_zidotprD(__A, __IA, __B, __IB, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zvcma"]
-extern fn __c_vDSP_zvcma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvcma(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvcma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvcma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvcma(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __N); }
     return;
 }
 #[link_name = "vDSP_zvcmaD"]
-extern fn __c_vDSP_zvcmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvcmaD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvcmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvcmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvcmaD(__A, __IA, __B, __IB, __C, __IC, __D, __ID, __N); }
     return;
 }
 #[link_name = "vDSP_zrvsub"]
-extern fn __c_vDSP_zrvsub(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvsub(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvsub(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvsub(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvsub(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zrvsubD"]
-extern fn __c_vDSP_zrvsubD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zrvsubD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zrvsubD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zrvsubD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zrvsubD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
@@ -1023,14 +1063,14 @@ fn vDSP_vabsi(__A: *i32, __IA: i64, __C: *i32, __IC: i64, __N: u64) {
     return;
 }
 #[link_name = "vDSP_zvabs"]
-extern fn __c_vDSP_zvabs(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_zvabs(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvabs(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_zvabs(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_zvabs(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvabsD"]
-extern fn __c_vDSP_zvabsD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64);
-fn vDSP_zvabsD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvabsD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64);
+fn vDSP_zvabsD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
     { __c_vDSP_zvabsD(__A, __IA, __C, __IC, __N); }
     return;
 }
@@ -1059,14 +1099,14 @@ fn vDSP_vfilli(__A: *i32, __C: *i32, __IC: i64, __N: u64) {
     return;
 }
 #[link_name = "vDSP_zvfill"]
-extern fn __c_vDSP_zvfill(__A: *u8, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvfill(__A: *u8, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvfill(__A: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvfill(__A: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvfill(__A, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvfillD"]
-extern fn __c_vDSP_zvfillD(__A: *u8, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvfillD(__A: *u8, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvfillD(__A: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvfillD(__A: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvfillD(__A, __C, __IC, __N); }
     return;
 }
@@ -1107,14 +1147,14 @@ fn vDSP_vsdivi(__A: *i32, __IA: i64, __B: *i32, __C: *i32, __IC: i64, __N: u64) 
     return;
 }
 #[link_name = "vDSP_zaspec"]
-extern fn __c_vDSP_zaspec(__A: *u8, __C: *f32, __N: u64);
-fn vDSP_zaspec(__A: *u8, __C: *f32, __N: u64) {
+extern fn __c_vDSP_zaspec(__A: *DSPSplitComplex, __C: *f32, __N: u64);
+fn vDSP_zaspec(__A: *DSPSplitComplex, __C: *f32, __N: u64) {
     { __c_vDSP_zaspec(__A, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zaspecD"]
-extern fn __c_vDSP_zaspecD(__A: *u8, __C: *f64, __N: u64);
-fn vDSP_zaspecD(__A: *u8, __C: *f64, __N: u64) {
+extern fn __c_vDSP_zaspecD(__A: *DSPDoubleSplitComplex, __C: *f64, __N: u64);
+fn vDSP_zaspecD(__A: *DSPDoubleSplitComplex, __C: *f64, __N: u64) {
     { __c_vDSP_zaspecD(__A, __C, __N); }
     return;
 }
@@ -1131,14 +1171,14 @@ fn vDSP_blkman_windowD(__C: *f64, __N: u64, __Flag: i32) {
     return;
 }
 #[link_name = "vDSP_zcoher"]
-extern fn __c_vDSP_zcoher(__A: *f32, __B: *f32, __C: *u8, __D: *f32, __N: u64);
-fn vDSP_zcoher(__A: *f32, __B: *f32, __C: *u8, __D: *f32, __N: u64) {
+extern fn __c_vDSP_zcoher(__A: *f32, __B: *f32, __C: *DSPSplitComplex, __D: *f32, __N: u64);
+fn vDSP_zcoher(__A: *f32, __B: *f32, __C: *DSPSplitComplex, __D: *f32, __N: u64) {
     { __c_vDSP_zcoher(__A, __B, __C, __D, __N); }
     return;
 }
 #[link_name = "vDSP_zcoherD"]
-extern fn __c_vDSP_zcoherD(__A: *f64, __B: *f64, __C: *u8, __D: *f64, __N: u64);
-fn vDSP_zcoherD(__A: *f64, __B: *f64, __C: *u8, __D: *f64, __N: u64) {
+extern fn __c_vDSP_zcoherD(__A: *f64, __B: *f64, __C: *DSPDoubleSplitComplex, __D: *f64, __N: u64);
+fn vDSP_zcoherD(__A: *f64, __B: *f64, __C: *DSPDoubleSplitComplex, __D: *f64, __N: u64) {
     { __c_vDSP_zcoherD(__A, __B, __C, __D, __N); }
     return;
 }
@@ -1155,146 +1195,146 @@ fn vDSP_desampD(__A: *f64, __DF: i64, __F: *f64, __C: *f64, __N: u64, __P: u64) 
     return;
 }
 #[link_name = "vDSP_zrdesamp"]
-extern fn __c_vDSP_zrdesamp(__A: *u8, __DF: i64, __F: *f32, __C: *u8, __N: u64, __P: u64);
-fn vDSP_zrdesamp(__A: *u8, __DF: i64, __F: *f32, __C: *u8, __N: u64, __P: u64) {
+extern fn __c_vDSP_zrdesamp(__A: *DSPSplitComplex, __DF: i64, __F: *f32, __C: *DSPSplitComplex, __N: u64, __P: u64);
+fn vDSP_zrdesamp(__A: *DSPSplitComplex, __DF: i64, __F: *f32, __C: *DSPSplitComplex, __N: u64, __P: u64) {
     { __c_vDSP_zrdesamp(__A, __DF, __F, __C, __N, __P); }
     return;
 }
 #[link_name = "vDSP_zrdesampD"]
-extern fn __c_vDSP_zrdesampD(__A: *u8, __DF: i64, __F: *f64, __C: *u8, __N: u64, __P: u64);
-fn vDSP_zrdesampD(__A: *u8, __DF: i64, __F: *f64, __C: *u8, __N: u64, __P: u64) {
+extern fn __c_vDSP_zrdesampD(__A: *DSPDoubleSplitComplex, __DF: i64, __F: *f64, __C: *DSPDoubleSplitComplex, __N: u64, __P: u64);
+fn vDSP_zrdesampD(__A: *DSPDoubleSplitComplex, __DF: i64, __F: *f64, __C: *DSPDoubleSplitComplex, __N: u64, __P: u64) {
     { __c_vDSP_zrdesampD(__A, __DF, __F, __C, __N, __P); }
     return;
 }
 #[link_name = "vDSP_ztrans"]
-extern fn __c_vDSP_ztrans(__A: *f32, __B: *u8, __C: *u8, __N: u64);
-fn vDSP_ztrans(__A: *f32, __B: *u8, __C: *u8, __N: u64) {
+extern fn __c_vDSP_ztrans(__A: *f32, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __N: u64);
+fn vDSP_ztrans(__A: *f32, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __N: u64) {
     { __c_vDSP_ztrans(__A, __B, __C, __N); }
     return;
 }
 #[link_name = "vDSP_ztransD"]
-extern fn __c_vDSP_ztransD(__A: *f64, __B: *u8, __C: *u8, __N: u64);
-fn vDSP_ztransD(__A: *f64, __B: *u8, __C: *u8, __N: u64) {
+extern fn __c_vDSP_ztransD(__A: *f64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __N: u64);
+fn vDSP_ztransD(__A: *f64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __N: u64) {
     { __c_vDSP_ztransD(__A, __B, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zcspec"]
-extern fn __c_vDSP_zcspec(__A: *u8, __B: *u8, __C: *u8, __N: u64);
-fn vDSP_zcspec(__A: *u8, __B: *u8, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zcspec(__A: *DSPSplitComplex, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __N: u64);
+fn vDSP_zcspec(__A: *DSPSplitComplex, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __N: u64) {
     { __c_vDSP_zcspec(__A, __B, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zcspecD"]
-extern fn __c_vDSP_zcspecD(__A: *u8, __B: *u8, __C: *u8, __N: u64);
-fn vDSP_zcspecD(__A: *u8, __B: *u8, __C: *u8, __N: u64) {
+extern fn __c_vDSP_zcspecD(__A: *DSPDoubleSplitComplex, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __N: u64);
+fn vDSP_zcspecD(__A: *DSPDoubleSplitComplex, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __N: u64) {
     { __c_vDSP_zcspecD(__A, __B, __C, __N); }
     return;
 }
 #[link_name = "vDSP_zvcmul"]
-extern fn __c_vDSP_zvcmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvcmul(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvcmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvcmul(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __IB: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvcmul(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvcmulD"]
-extern fn __c_vDSP_zvcmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __iC: i64, __N: u64);
-fn vDSP_zvcmulD(__A: *u8, __IA: i64, __B: *u8, __IB: i64, __C: *u8, __iC: i64, __N: u64) {
+extern fn __c_vDSP_zvcmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __iC: i64, __N: u64);
+fn vDSP_zvcmulD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __IB: i64, __C: *DSPDoubleSplitComplex, __iC: i64, __N: u64) {
     { __c_vDSP_zvcmulD(__A, __IA, __B, __IB, __C, __iC, __N); }
     return;
 }
 #[link_name = "vDSP_zvconj"]
-extern fn __c_vDSP_zvconj(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvconj(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvconj(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvconj(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvconj(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvconjD"]
-extern fn __c_vDSP_zvconjD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvconjD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvconjD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvconjD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvconjD(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvzsml"]
-extern fn __c_vDSP_zvzsml(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvzsml(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvzsml(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvzsml(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvzsml(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvzsmlD"]
-extern fn __c_vDSP_zvzsmlD(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvzsmlD(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvzsmlD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvzsmlD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvzsmlD(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmags"]
-extern fn __c_vDSP_zvmags(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_zvmags(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmags(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_zvmags(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_zvmags(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmagsD"]
-extern fn __c_vDSP_zvmagsD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64);
-fn vDSP_zvmagsD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmagsD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64);
+fn vDSP_zvmagsD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
     { __c_vDSP_zvmagsD(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmgsa"]
-extern fn __c_vDSP_zvmgsa(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_zvmgsa(__A: *u8, __IA: i64, __B: *f32, __IB: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmgsa(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_zvmgsa(__A: *DSPSplitComplex, __IA: i64, __B: *f32, __IB: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_zvmgsa(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmgsaD"]
-extern fn __c_vDSP_zvmgsaD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, __N: u64);
-fn vDSP_zvmgsaD(__A: *u8, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmgsaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, __N: u64);
+fn vDSP_zvmgsaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *f64, __IB: i64, __C: *f64, __IC: i64, __N: u64) {
     { __c_vDSP_zvmgsaD(__A, __IA, __B, __IB, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmov"]
-extern fn __c_vDSP_zvmov(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvmov(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmov(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvmov(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvmov(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvmovD"]
-extern fn __c_vDSP_zvmovD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvmovD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvmovD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvmovD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvmovD(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvneg"]
-extern fn __c_vDSP_zvneg(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvneg(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvneg(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvneg(__A: *DSPSplitComplex, __IA: i64, __C: *DSPSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvneg(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvnegD"]
-extern fn __c_vDSP_zvnegD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_zvnegD(__A: *u8, __IA: i64, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvnegD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64);
+fn vDSP_zvnegD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *DSPDoubleSplitComplex, __IC: i64, __N: u64) {
     { __c_vDSP_zvnegD(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvphas"]
-extern fn __c_vDSP_zvphas(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_zvphas(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvphas(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_zvphas(__A: *DSPSplitComplex, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_zvphas(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvphasD"]
-extern fn __c_vDSP_zvphasD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64);
-fn vDSP_zvphasD(__A: *u8, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
+extern fn __c_vDSP_zvphasD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64);
+fn vDSP_zvphasD(__A: *DSPDoubleSplitComplex, __IA: i64, __C: *f64, __IC: i64, __N: u64) {
     { __c_vDSP_zvphasD(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_zvsma"]
-extern fn __c_vDSP_zvsma(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvsma(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvsma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvsma(__A: *DSPSplitComplex, __IA: i64, __B: *DSPSplitComplex, __C: *DSPSplitComplex, __IC: i64, __D: *DSPSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvsma(__A, __IA, __B, __C, __IC, __D, __ID, __N); }
     return;
 }
 #[link_name = "vDSP_zvsmaD"]
-extern fn __c_vDSP_zvsmaD(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64);
-fn vDSP_zvsmaD(__A: *u8, __IA: i64, __B: *u8, __C: *u8, __IC: i64, __D: *u8, __ID: i64, __N: u64) {
+extern fn __c_vDSP_zvsmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64);
+fn vDSP_zvsmaD(__A: *DSPDoubleSplitComplex, __IA: i64, __B: *DSPDoubleSplitComplex, __C: *DSPDoubleSplitComplex, __IC: i64, __D: *DSPDoubleSplitComplex, __ID: i64, __N: u64) {
     { __c_vDSP_zvsmaD(__A, __IA, __B, __C, __IC, __D, __ID, __N); }
     return;
 }
@@ -1827,38 +1867,38 @@ fn vDSP_vfixu32D(__A: *f64, __IA: i64, __C: *u32, __IC: i64, __N: u64) {
     return;
 }
 #[link_name = "vDSP_vsmfixu24"]
-extern fn __c_vDSP_vsmfixu24(__A: *f32, __IA: i64, __B: *f32, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_vsmfixu24(__A: *f32, __IA: i64, __B: *f32, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vsmfixu24(__A: *f32, __IA: i64, __B: *f32, __C: *vDSP_uint24, __IC: i64, __N: u64);
+fn vDSP_vsmfixu24(__A: *f32, __IA: i64, __B: *f32, __C: *vDSP_uint24, __IC: i64, __N: u64) {
     { __c_vDSP_vsmfixu24(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_vsmfix24"]
-extern fn __c_vDSP_vsmfix24(__A: *f32, __IA: i64, __B: *f32, __C: *u8, __IC: i64, __N: u64);
-fn vDSP_vsmfix24(__A: *f32, __IA: i64, __B: *f32, __C: *u8, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vsmfix24(__A: *f32, __IA: i64, __B: *f32, __C: *vDSP_int24, __IC: i64, __N: u64);
+fn vDSP_vsmfix24(__A: *f32, __IA: i64, __B: *f32, __C: *vDSP_int24, __IC: i64, __N: u64) {
     { __c_vDSP_vsmfix24(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_vfltu24"]
-extern fn __c_vDSP_vfltu24(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_vfltu24(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vfltu24(__A: *vDSP_uint24, __IA: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_vfltu24(__A: *vDSP_uint24, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_vfltu24(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_vflt24"]
-extern fn __c_vDSP_vflt24(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_vflt24(__A: *u8, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vflt24(__A: *vDSP_int24, __IA: i64, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_vflt24(__A: *vDSP_int24, __IA: i64, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_vflt24(__A, __IA, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_vfltsmu24"]
-extern fn __c_vDSP_vfltsmu24(__A: *u8, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_vfltsmu24(__A: *u8, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vfltsmu24(__A: *vDSP_uint24, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_vfltsmu24(__A: *vDSP_uint24, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_vfltsmu24(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
 #[link_name = "vDSP_vfltsm24"]
-extern fn __c_vDSP_vfltsm24(__A: *u8, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64);
-fn vDSP_vfltsm24(__A: *u8, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64) {
+extern fn __c_vDSP_vfltsm24(__A: *vDSP_int24, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64);
+fn vDSP_vfltsm24(__A: *vDSP_int24, __IA: i64, __B: *f32, __C: *f32, __IC: i64, __N: u64) {
     { __c_vDSP_vfltsm24(__A, __IA, __B, __C, __IC, __N); }
     return;
 }
@@ -2659,14 +2699,14 @@ fn vDSP_DFT_Interleaved_CreateSetupD(Previous: *u8, Length: u64, Direction: i32,
     return { __c_vDSP_DFT_Interleaved_CreateSetupD(Previous, Length, Direction, RealtoComplex) };
 }
 #[link_name = "vDSP_DFT_Interleaved_Execute"]
-extern fn __c_vDSP_DFT_Interleaved_Execute(Setup: *u8, Iri: *u8, Ori: *u8);
-fn vDSP_DFT_Interleaved_Execute(Setup: *u8, Iri: *u8, Ori: *u8) {
+extern fn __c_vDSP_DFT_Interleaved_Execute(Setup: *u8, Iri: *DSPComplex, Ori: *DSPComplex);
+fn vDSP_DFT_Interleaved_Execute(Setup: *u8, Iri: *DSPComplex, Ori: *DSPComplex) {
     { __c_vDSP_DFT_Interleaved_Execute(Setup, Iri, Ori); }
     return;
 }
 #[link_name = "vDSP_DFT_Interleaved_ExecuteD"]
-extern fn __c_vDSP_DFT_Interleaved_ExecuteD(Setup: *u8, Iri: *u8, Ori: *u8);
-fn vDSP_DFT_Interleaved_ExecuteD(Setup: *u8, Iri: *u8, Ori: *u8) {
+extern fn __c_vDSP_DFT_Interleaved_ExecuteD(Setup: *u8, Iri: *DSPDoubleComplex, Ori: *DSPDoubleComplex);
+fn vDSP_DFT_Interleaved_ExecuteD(Setup: *u8, Iri: *DSPDoubleComplex, Ori: *DSPDoubleComplex) {
     { __c_vDSP_DFT_Interleaved_ExecuteD(Setup, Iri, Ori); }
     return;
 }

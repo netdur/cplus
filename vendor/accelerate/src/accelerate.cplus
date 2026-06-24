@@ -87,3 +87,25 @@ fn cblas_dgemm_matrix_multiply() {
     assert unwrap_f64(c.at(3 as usize)) == 50.0;
     return;
 }
+
+// Typed C struct pointer: construct a DSPSplitComplex (a generated #[repr(C)]
+// struct) and pass &it (a *DSPSplitComplex) to vDSP. |3 + 4i|^2 = 25.
+#[test]
+fn vdsp_zvmags_typed_struct() {
+    var real: vec::Vec[f32] = vec::Vec[f32]::with_capacity(1 as usize);
+    real.append(3.0 as f32);
+    var imag: vec::Vec[f32] = vec::Vec[f32]::with_capacity(1 as usize);
+    imag.append(4.0 as f32);
+    let rsl: f32[] = real.as_slice();
+    let isl: f32[] = imag.as_slice();
+    let rp: *f32 = { #slice_ptr(rsl) };
+    let ip: *f32 = { #slice_ptr(isl) };
+
+    var c: vdsp::DSPSplitComplex = vdsp::DSPSplitComplex_new(rp, ip);
+    var out: f32 = 0.0 as f32;
+    let cp: *vdsp::DSPSplitComplex = { #addr_of(c) };
+    let op: *f32 = { #addr_of(out) };
+    vdsp::vDSP_zvmags(cp, 1 as i64, op, 1 as i64, 1 as u64);
+    assert out == (25.0 as f32);
+    return;
+}

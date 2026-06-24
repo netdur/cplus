@@ -247,9 +247,11 @@ impl Emitter {
         parts.join(" ")
     }
 
-    /// Map a C type to C+, first expanding typedefs from the whole TU.
+    /// Map a C type to C+, first expanding typedefs from the whole TU, and
+    /// treating the structs we've emitted (`seen_records`) as complete (so
+    /// they're usable by value and as typed pointers).
     fn map_type(&self, qt: &str) -> Result<String, String> {
-        map_c_type_to_cplus(&self.expand(qt, 16))
+        map_c_type_to_cplus(&self.expand(qt, 16), &self.seen_records)
     }
 
     /// True iff `decl` originated from the user's header (not a system include).
@@ -293,6 +295,11 @@ impl Emitter {
         // Implicit-decl noise from <stdarg.h> etc. — clang sometimes emits a
         // declaration with isImplicit=true that we should ignore.
         if decl.get("isImplicit").and_then(|v| v.as_bool()) == Some(true) {
+            return;
+        }
+        // `static`/`static inline` functions (e.g. Foundation's NS_INLINE
+        // NSMakeRange) have no external symbol to link against — skip them.
+        if decl.get("storageClass").and_then(|v| v.as_str()) == Some("static") {
             return;
         }
         let qual_type = decl
@@ -446,6 +453,8 @@ impl Emitter {
         let mut bitfields: Vec<(String, String, u32, u32)> = Vec::new(); // (parent, name, bit_offset, width)
         let mut bit_cursor: u32 = 0;
         let mut storage_field_idx = 0u32;
+        let mut plain_fields: Vec<(String, String)> = Vec::new();
+        let mut has_ptr_field = false;
         for field in &inner {
             if field.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
                 continue;
@@ -485,22 +494,37 @@ impl Emitter {
                     continue;
                 }
             };
-            let field_prefix = if cplus_ty.starts_with('*') {
-                "opaque "
-            } else {
-                ""
-            };
-            self.out.push_str(&format!(
-                "    {field_prefix}{}: {},\n",
-                sanitize_ident(&fname),
-                cplus_ty
-            ));
+            // Raw-pointer fields must be `opaque` (C+ ownership: the struct
+            // doesn't own them). That makes them un-settable cross-module, so a
+            // constructor fn is emitted below for structs that have any.
+            let is_ptr = cplus_ty.starts_with('*');
+            has_ptr_field = has_ptr_field || is_ptr;
+            let prefix = if is_ptr { "opaque " } else { "" };
+            let cname = sanitize_ident(&fname);
+            self.out.push_str(&format!("    {prefix}{cname}: {cplus_ty},\n"));
+            plain_fields.push((cname, cplus_ty));
         }
         if !bitfields.is_empty() {
             self.out
                 .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
         }
         self.out.push_str("}\n");
+        // Constructor for structs with opaque (pointer) fields, since callers in
+        // other modules can't set opaque fields via a struct literal.
+        if has_ptr_field && !plain_fields.is_empty() {
+            let params = plain_fields
+                .iter()
+                .map(|(n, t)| format!("{n}: {t}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let inits = plain_fields
+                .iter()
+                .map(|(n, _)| format!("{n}: {n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.out
+                .push_str(&format!("fn {name}_new({params}) -> {name} {{\n    return {name} {{ {inits} }};\n}}\n"));
+        }
         // Emit bitfield accessors after the struct.
         for (parent, fname, off, width) in bitfields {
             if width == 0 {
@@ -545,7 +569,7 @@ impl Emitter {
                 && !lhs.contains("struct ")
                 && !lhs.contains("union ")
             {
-                if let Ok(cplus_ty) = map_c_type_to_cplus(lhs.trim()) {
+                if let Ok(cplus_ty) = map_c_type_to_cplus(lhs.trim(), &self.seen_records) {
                     self.out
                         .push_str(&format!("type {} = {};\n", sanitize_ident(name), cplus_ty));
                     return;
@@ -696,7 +720,10 @@ fn parse_fn_qual_type(qt: &str) -> Option<(String, Vec<String>, bool)> {
 /// Map a C type spelling (as it appears in clang's `qualType`) to a C+ type.
 /// Returns a string suitable for the C+ source, or `Err` with a reason
 /// when the type isn't mappable.
-fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
+fn map_c_type_to_cplus(
+    c_ty: &str,
+    complete: &std::collections::HashSet<String>,
+) -> Result<String, String> {
     // Function pointers (inline `RET (*)(args)` or typedef'd) -> opaque code
     // pointer. Checked on the raw spelling before `*` normalization below.
     if c_ty.contains("(*") {
@@ -731,8 +758,9 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
         if inner == "void" {
             return Ok("*u8".to_string());
         }
-        // A pointer to an unknown / opaque / incomplete type is an opaque handle.
-        return match map_c_type_to_cplus(inner) {
+        // A pointer to an unknown / opaque / incomplete type is an opaque handle;
+        // a pointer to a known complete struct is a typed pointer.
+        return match map_c_type_to_cplus(inner, complete) {
             Ok(t) => Ok(format!("*{t}")),
             Err(_) => Ok("*u8".to_string()),
         };
@@ -741,7 +769,7 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
     // (matches C decay rules for function params).
     if let Some(bracket) = s.find('[') {
         let inner = s[..bracket].trim();
-        return match map_c_type_to_cplus(inner) {
+        return match map_c_type_to_cplus(inner, complete) {
             Ok(t) => Ok(format!("*{t}")),
             Err(_) => Ok("*u8".to_string()),
         };
@@ -783,9 +811,18 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
         "long double" => return Err("long double unsupported".to_string()),
         // C enums pass as `int` at the ABI.
         s if s.starts_with("enum ") => "i32".to_string(),
-        // Struct/union by value (and any other unknown identifier) isn't usable
-        // at the FFI boundary here: Err so the caller SKIPs the decl — or, when
-        // behind a pointer/array, it already mapped to an opaque `*u8` above.
+        // Struct/union: usable by value (or as a typed pointer above) only if we
+        // emitted a complete definition; otherwise Err -> opaque `*u8` (pointer)
+        // or `// SKIPPED` (by value).
+        s if s.starts_with("struct ") || s.starts_with("union ") => {
+            let name = s.trim_start_matches("struct ").trim_start_matches("union ");
+            if complete.contains(name) {
+                name.to_string()
+            } else {
+                return Err(format!("incomplete record `{name}`"));
+            }
+        }
+        s if complete.contains(s) => s.to_string(),
         _ => return Err(format!("unsupported type `{s}`")),
     })
 }
@@ -876,13 +913,14 @@ mod tests {
 
     #[test]
     fn scalar_map() {
-        assert_eq!(map_c_type_to_cplus("int").unwrap(), "i32");
-        assert_eq!(map_c_type_to_cplus("unsigned int").unwrap(), "u32");
-        assert_eq!(map_c_type_to_cplus("size_t").unwrap(), "usize");
-        assert_eq!(map_c_type_to_cplus("char *").unwrap(), "*i8");
-        assert_eq!(map_c_type_to_cplus("const char *").unwrap(), "*i8");
-        assert_eq!(map_c_type_to_cplus("void").unwrap(), "()");
-        assert_eq!(map_c_type_to_cplus("uint32_t **").unwrap(), "**u32");
+        let c: std::collections::HashSet<String> = std::collections::HashSet::new();
+        assert_eq!(map_c_type_to_cplus("int", &c).unwrap(), "i32");
+        assert_eq!(map_c_type_to_cplus("unsigned int", &c).unwrap(), "u32");
+        assert_eq!(map_c_type_to_cplus("size_t", &c).unwrap(), "usize");
+        assert_eq!(map_c_type_to_cplus("char *", &c).unwrap(), "*i8");
+        assert_eq!(map_c_type_to_cplus("const char *", &c).unwrap(), "*i8");
+        assert_eq!(map_c_type_to_cplus("void", &c).unwrap(), "()");
+        assert_eq!(map_c_type_to_cplus("uint32_t **", &c).unwrap(), "**u32");
     }
 
     #[test]
