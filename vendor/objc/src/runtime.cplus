@@ -46,6 +46,12 @@ extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
 extern fn objc_msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i8(recv: *u8, sel: *u8, a: i8);
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 
 #[link_name = "objc_msgSend"]
@@ -111,6 +117,14 @@ fn msg_u64(recv: *u8, selector: *u8) -> u64 {
 
 fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
     return { objc_msg_id_u64(recv, selector, a) };
+}
+
+fn msg_i8(recv: *u8, selector: *u8) -> i8 {
+    return { objc_msg_i8(recv, selector) };
+}
+
+fn msg_void_i8(recv: *u8, selector: *u8, a: i8) {
+    { objc_msg_void_i8(recv, selector, a); };
 }
 
 fn msg_i64(recv: *u8, selector: *u8) -> i64 {

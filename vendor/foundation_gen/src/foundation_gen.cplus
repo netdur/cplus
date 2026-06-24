@@ -1,0 +1,14 @@
+// Proof harness: tests cpc-bindgen-GENERATED Foundation bindings (NSScanner)
+// against the live framework — exercises BOOL <-> bool (get + set).
+
+import "./scanner" as scanner;
+
+#[test]
+fn generated_scanner_bool_roundtrip() {
+    let s: scanner::Scanner = scanner::Scanner::new("123");
+    s.set_case_sensitive(true);
+    assert s.case_sensitive() == true;
+    s.set_case_sensitive(false);
+    assert s.case_sensitive() == false;
+    return;
+}

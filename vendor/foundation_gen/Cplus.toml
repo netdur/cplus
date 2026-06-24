@@ -1,0 +1,11 @@
+[package]
+name    = "foundation_gen"
+version = "0.0.0"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+objc   = "*"
+
+[link]
+frameworks = ["Foundation"]

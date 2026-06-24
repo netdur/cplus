@@ -40,6 +40,7 @@ enum Ret {
     Object,
     ObjectOption, // nullable object handle -> Option[*u8]
     Text { nullable: bool },
+    Bool,
     ScalarI64,
     ScalarU64,
     EnumTy(String),
@@ -50,6 +51,7 @@ enum Ret {
 
 enum Arg {
     Id(String),       // object / string already lowered to an id expression
+    Bool(String),     // BOOL param (the C+ bool name; lowered to i8 on the wire)
     ScalarI64(String),
     ScalarU64(String),
     Range(String),
@@ -398,6 +400,7 @@ impl ObjcEmitter {
         let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
         let (ret_spelling, body_line) = match &ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
+            Ret::Bool => (" -> bool".into(), format!("        return {send} != (0 as i8);\n")),
             Ret::Object => (" -> *u8".into(), format!("        return {send};\n")),
             Ret::ObjectOption => (
                 " -> option::Option[*u8]".into(),
@@ -433,6 +436,7 @@ impl ObjcEmitter {
         let ret_tag = match ret {
             Ret::Void => "void",
             Ret::Object | Ret::ObjectOption | Ret::Text { .. } => "id",
+            Ret::Bool => "i8",
             Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
             Ret::ScalarU64 => "u64",
             Ret::Range => "range",
@@ -443,6 +447,7 @@ impl ObjcEmitter {
         for a in args {
             let (t, e): (&str, String) = match a {
                 Arg::Id(e) => ("id", e.clone()),
+                Arg::Bool(e) => ("i8", format!("{e} as i8")),
                 Arg::ScalarI64(e) => ("i64", e.clone()),
                 Arg::ScalarU64(e) => ("u64", e.clone()),
                 Arg::Range(e) => ("range", e.clone()),
@@ -456,8 +461,9 @@ impl ObjcEmitter {
         // Grow this in lockstep with vendor/objc/src/runtime.cplus.
         let suffix = tags.join("_");
         const KNOWN: &[&str] = &[
-            "void", "void_id", "id", "id_id", "id_i64", "id_u64", "id_id_u64",
-            "id_range", "i64", "u64", "range", "range_u64", "range_range",
+            "void", "void_id", "void_i8", "id", "id_id", "id_i64", "id_u64",
+            "id_id_u64", "id_range", "i8", "i64", "u64", "range", "range_u64",
+            "range_range",
         ];
         if !KNOWN.contains(&suffix.as_str()) {
             return None;
@@ -494,6 +500,7 @@ impl ObjcEmitter {
         match base_ty {
             "NSInteger" | "long" => return Ret::ScalarI64,
             "NSUInteger" | "unsigned long" => return Ret::ScalarU64,
+            "BOOL" | "_Bool" | "bool" => return Ret::Bool,
             "instancetype" => return Ret::Object, // a fresh +1, never nil
             "id" => {
                 return if nullable { Ret::ObjectOption } else { Ret::Object };
@@ -535,6 +542,7 @@ impl ObjcEmitter {
         match base_ty {
             "NSInteger" | "long" => return Arg::ScalarI64(pname.to_string()),
             "NSUInteger" | "unsigned long" => return Arg::ScalarU64(pname.to_string()),
+            "BOOL" | "_Bool" | "bool" => return Arg::Bool(pname.to_string()),
             "id" => return Arg::Id(pname.to_string()),
             "int" | "unsigned int" | "unsigned" | "double" | "float" => {
                 return Arg::Unsupported(format!("scalar `{base_ty}` not yet modelled"))
@@ -570,6 +578,7 @@ impl ObjcEmitter {
         match b {
             "NSInteger" | "long" => "i64".to_string(),
             "NSUInteger" | "unsigned long" => "u64".to_string(),
+            "BOOL" | "_Bool" | "bool" => "bool".to_string(),
             "int" => "i32".to_string(),
             "unsigned int" | "unsigned" => "u32".to_string(),
             _ => "*u8".to_string(),
