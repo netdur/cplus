@@ -1,12 +1,17 @@
-// Proof harness: tests the cpc-bindgen-GENERATED recognizer.cplus (not the
-// hand-written golden) against the live framework, to confirm the generator's
-// output compiles and runs.
+// Proof harness: tests the cpc-bindgen-GENERATED recognizer.cplus and
+// tokenizer.cplus (not the hand-written golden) against the live framework, to
+// confirm the generator's output compiles and runs.
 
 import "./recognizer" as recognizer;
+import "./tokenizer" as tokenizer;
+import "objc/runtime" as rt;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 type LanguageRecognizer = recognizer::LanguageRecognizer;
+type Tokenizer = tokenizer::Tokenizer;
+type TokenUnit = tokenizer::TokenUnit;
 
 #[test]
 fn generated_recognizer_detects_french() {
@@ -25,5 +30,25 @@ fn generated_recognizer_instance_detects_english() {
         option::Option[text::Text]::Some(lang) => { assert lang.equals("en"); }
         option::Option[text::Text]::None => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn generated_tokenizer_segments_words() {
+    let tok: tokenizer::Tokenizer = tokenizer::Tokenizer::new(tokenizer::TokenUnit::Word);
+    tok.set_string("the quick brown fox");                       // 19 ASCII chars
+    let full: rt::Range = rt::Range { location: 0 as u64, length: 19 as u64 };
+    let toks: vec::Vec[rt::Range] = tok.tokens_for_range(full);
+    assert toks.count() == (4 as usize);
+    return;
+}
+
+#[test]
+fn generated_tokenizer_first_token_range() {
+    let tok: tokenizer::Tokenizer = tokenizer::Tokenizer::new(tokenizer::TokenUnit::Word);
+    tok.set_string("the quick brown fox");
+    let r: rt::Range = tok.token_range_at_index(0 as u64);
+    assert r.location == (0 as u64);
+    assert r.length == (3 as u64);                               // "the"
     return;
 }

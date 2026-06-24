@@ -63,6 +63,9 @@ extern fn objc_msg_range_u64(recv: *u8, sel: *u8, a: u64) -> Range;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_range(recv: *u8, sel: *u8, a: Range) -> *u8;
 
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range_range(recv: *u8, sel: *u8, a: Range) -> Range;
+
 fn get_class(name: *u8) -> *u8 {
     return { objc_getClass(name) };
 }
@@ -125,6 +128,10 @@ fn msg_range_u64(recv: *u8, selector: *u8, a: u64) -> Range {
 
 fn msg_id_range(recv: *u8, selector: *u8, a: Range) -> *u8 {
     return { objc_msg_id_range(recv, selector, a) };
+}
+
+fn msg_range_range(recv: *u8, selector: *u8, a: Range) -> Range {
+    return { objc_msg_range_range(recv, selector, a) };
 }
 
 // alloc + init — the common +1-owned constructor.

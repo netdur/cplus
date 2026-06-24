@@ -20,7 +20,9 @@ impl LanguageRecognizer {
     }
 
     fn new() -> LanguageRecognizer {
-        return LanguageRecognizer { _obj: rt::alloc_init(#str_ptr("NLLanguageRecognizer\0")) };
+        let cls: *u8 = rt::get_class(#str_ptr("NLLanguageRecognizer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return LanguageRecognizer { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
     fn process_string(this, string: str) {
@@ -38,9 +40,9 @@ impl LanguageRecognizer {
     }
 
     // SKIPPED `languageHints`: return `NS_REFINED_FOR_SWIFT NSDictionary<NLLanguage,NSNumber *> *` — generic collection
-    // SKIPPED `setLanguageHints:`: param `NS_REFINED_FOR_SWIFT NSDictionary<NLLanguage,NSNumber *> *` not yet modelled
+    // SKIPPED `setLanguageHints:`: param `NS_REFINED_FOR_SWIFT NSDictionary<NLLanguage,NSNumber *> *` — generic collection
     // SKIPPED `languageConstraints`: return `NSArray<NLLanguage> * _Nonnull` — generic collection
-    // SKIPPED `setLanguageConstraints:`: param `NSArray<NLLanguage> * _Nonnull` not yet modelled
+    // SKIPPED `setLanguageConstraints:`: param `NSArray<NLLanguage> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);
     }
