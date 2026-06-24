@@ -162,6 +162,10 @@ struct Emitter {
     /// Cached top-level decls so emit_typedef can resolve an anonymous
     /// RecordDecl by id.
     last_tu_inner: Option<Vec<serde_json::Value>>,
+    /// Every typedef in the TU (including dependency headers), name -> underlying
+    /// spelling, so types from included headers (vDSP_Length, FFTSetup, ...)
+    /// resolve to concrete C+ even though we only *emit* header-local decls.
+    typedefs: std::collections::HashMap<String, String>,
 }
 
 impl Emitter {
@@ -178,6 +182,7 @@ impl Emitter {
             seen_records: std::collections::HashSet::new(),
             deferred_fns: Vec::new(),
             last_tu_inner: None,
+            typedefs: std::collections::HashMap::new(),
         }
     }
 
@@ -187,6 +192,18 @@ impl Emitter {
             None => return,
         };
         self.last_tu_inner = Some(inner.clone());
+        // Pre-pass: index every typedef in the TU (incl. dependency headers) so
+        // cross-header types resolve during emission.
+        for decl in inner {
+            if decl.get("kind").and_then(|v| v.as_str()) == Some("TypedefDecl") {
+                if let (Some(name), Some(qt)) = (
+                    decl.get("name").and_then(|v| v.as_str()),
+                    decl.get("type").and_then(|t| t.get("qualType")).and_then(|v| v.as_str()),
+                ) {
+                    self.typedefs.insert(name.to_string(), qt.to_string());
+                }
+            }
+        }
         // Two-pass: structs/typedefs first so functions reference defined types.
         for decl in inner {
             if !self.decl_in_header(decl) {
@@ -211,6 +228,28 @@ impl Emitter {
         for line in std::mem::take(&mut self.deferred_fns) {
             self.out.push_str(&line);
         }
+    }
+
+    /// Replace typedef-name tokens with their underlying spelling (recursively),
+    /// so a C type built from dependency-header typedefs resolves to a concrete
+    /// spelling before mapping. `fuel` guards against self-referential typedefs.
+    fn expand(&self, qt: &str, fuel: u32) -> String {
+        if fuel == 0 {
+            return qt.to_string();
+        }
+        let mut parts: Vec<String> = Vec::new();
+        for tok in qt.replace('*', " * ").split_whitespace() {
+            match self.typedefs.get(tok) {
+                Some(under) if under.trim() != tok => parts.push(self.expand(under, fuel - 1)),
+                _ => parts.push(tok.to_string()),
+            }
+        }
+        parts.join(" ")
+    }
+
+    /// Map a C type to C+, first expanding typedefs from the whole TU.
+    fn map_type(&self, qt: &str) -> Result<String, String> {
+        map_c_type_to_cplus(&self.expand(qt, 16))
     }
 
     /// True iff `decl` originated from the user's header (not a system include).
@@ -270,7 +309,7 @@ impl Emitter {
                 return;
             }
         };
-        let ret_cplus = match map_c_type_to_cplus(&ret_c) {
+        let ret_cplus = match self.map_type(&ret_c) {
             Ok(t) => t,
             Err(why) => {
                 self.out
@@ -297,7 +336,7 @@ impl Emitter {
         let mut params_out: Vec<String> = Vec::with_capacity(params_c.len());
         let mut arg_names: Vec<String> = Vec::with_capacity(params_c.len());
         for (i, p_c) in params_c.iter().enumerate() {
-            let p_cplus = match map_c_type_to_cplus(p_c) {
+            let p_cplus = match self.map_type(p_c) {
                 Ok(t) => t,
                 Err(why) => {
                     self.out.push_str(&format!(
@@ -438,7 +477,7 @@ impl Emitter {
                 storage_field_idx += 1;
                 bit_cursor = 0;
             }
-            let cplus_ty = match map_c_type_to_cplus(qt) {
+            let cplus_ty = match self.map_type(qt) {
                 Ok(t) => t,
                 Err(why) => {
                     self.out
@@ -492,6 +531,13 @@ impl Emitter {
             .and_then(|t| t.get("qualType"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        // Function-pointer typedefs (`void (*Proc)(int)`) — bind as an opaque
+        // code pointer so functions taking them still resolve.
+        if qual_type.contains("(*") {
+            self.out
+                .push_str(&format!("type {} = *u8;\n", sanitize_ident(name)));
+            return;
+        }
         if let Some((lhs, rhs)) = qual_type.rsplit_once(' ') {
             if rhs == name
                 && lhs != "struct"
@@ -559,16 +605,35 @@ impl Emitter {
     }
 
     fn emit_enum(&mut self, decl: &serde_json::Value) {
+        // C enums pass as `int` at the ABI, and C+ has no top-level const, so
+        // each constant becomes an `i32`-returning accessor fn (the stdlib idiom,
+        // cf. `events`/`layout`): `cblas_dgemm(cblas::CblasRowMajor(), ...)`.
         let name = decl.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if name.is_empty() {
-            return;
+        let label = if name.is_empty() { "(anonymous)" } else { name };
+        self.out
+            .push_str(&format!("// C enum `{label}` — constants as i32 accessors.\n"));
+        let mut next: i64 = 0;
+        for c in decl
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if c.get("kind").and_then(|k| k.as_str()) != Some("EnumConstantDecl") {
+                continue;
+            }
+            let cname = match c.get("name").and_then(|n| n.as_str()) {
+                Some(n) if !n.is_empty() => n,
+                _ => continue,
+            };
+            let val = read_enum_value(c).unwrap_or(next);
+            next = val + 1;
+            self.out.push_str(&format!(
+                "fn {}() -> i32 {{ return {} as i32; }}\n",
+                sanitize_ident(cname),
+                val
+            ));
         }
-        // C enums map to plain `enum Name { ... }` with explicit i32 values.
-        // For MVP we just emit a type alias comment — explicit C constants
-        // would require deeper enum-value reading from clang's AST.
-        self.out.push_str(&format!(
-            "// C enum `{name}` — use `i32` at FFI boundary.\n"
-        ));
     }
 }
 
@@ -632,35 +697,54 @@ fn parse_fn_qual_type(qt: &str) -> Option<(String, Vec<String>, bool)> {
 /// Returns a string suitable for the C+ source, or `Err` with a reason
 /// when the type isn't mappable.
 fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
-    let s = c_ty.trim();
-    // Strip a trailing `const` qualifier (it's at the start on field types
-    // like `const char *`, end on params occasionally).
-    let s = s
-        .trim_start_matches("const ")
-        .trim_end_matches(" const")
-        .trim();
+    // Function pointers (inline `RET (*)(args)` or typedef'd) -> opaque code
+    // pointer. Checked on the raw spelling before `*` normalization below.
+    if c_ty.contains("(*") {
+        return Ok("*u8".to_string());
+    }
+    // Normalize the spelling: put spaces around every `*`, then drop the
+    // qualifier tokens (`const`, nullability, ...) — they don't affect the
+    // C+ FFI type. This handles interior const (`float * const *`), nullability
+    // (`float * _Nonnull`), and odd spacing uniformly.
+    let normalized: String = c_ty
+        .replace('*', " * ")
+        .split_whitespace()
+        .filter(|t| {
+            !matches!(
+                *t,
+                "const" | "volatile" | "restrict"
+                    | "_Nonnull" | "_Nullable" | "_Null_unspecified"
+                    | "__nonnull" | "__nullable"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let s = normalized.trim();
     if s.is_empty() {
         return Err("empty type".to_string());
     }
     // Pointer types — `T *` or `T*`. Be greedy: each `*` consumes one
     // level. Recurse on the inner.
     if let Some(inner) = s.strip_suffix('*') {
-        let inner_ty = map_c_type_to_cplus(inner.trim())?;
-        return Ok(format!("*{inner_ty}"));
+        let inner = inner.trim();
+        // `void *` is an opaque byte pointer in C+, not a pointer-to-unit.
+        if inner == "void" {
+            return Ok("*u8".to_string());
+        }
+        // A pointer to an unknown / opaque / incomplete type is an opaque handle.
+        return match map_c_type_to_cplus(inner) {
+            Ok(t) => Ok(format!("*{t}")),
+            Err(_) => Ok("*u8".to_string()),
+        };
     }
     // Fixed-size array — `T[N]`. Treat as pointer at FFI boundary
     // (matches C decay rules for function params).
     if let Some(bracket) = s.find('[') {
         let inner = s[..bracket].trim();
-        let inner_ty = map_c_type_to_cplus(inner)?;
-        return Ok(format!("*{inner_ty}"));
-    }
-    // Function pointer `RET (*)(args...)`. The qualType serialization is
-    // ugly; emit a `fn(...) -> R`-style C+ type or punt for v1.
-    if s.contains("(*)") {
-        // crude: map to `*u8` (opaque code pointer). Better mapping
-        // requires recursively parsing the inner signature.
-        return Ok("*u8".to_string());
+        return match map_c_type_to_cplus(inner) {
+            Ok(t) => Ok(format!("*{t}")),
+            Err(_) => Ok("*u8".to_string()),
+        };
     }
     Ok(match s {
         "void" => "()".to_string(),
@@ -697,13 +781,12 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
         "int64_t" => "i64".to_string(),
         "uint64_t" => "u64".to_string(),
         "long double" => return Err("long double unsupported".to_string()),
-        // Struct types: `struct Foo` or just `Foo` after typedef. Emit as
-        // a bare name; user must have included the struct decl.
-        s if s.starts_with("struct ") => s.trim_start_matches("struct ").to_string(),
-        s if s.starts_with("union ") => s.trim_start_matches("union ").to_string(),
+        // C enums pass as `int` at the ABI.
         s if s.starts_with("enum ") => "i32".to_string(),
-        // Unknown — punt. User adds a typedef on their side.
-        _ => s.to_string(),
+        // Struct/union by value (and any other unknown identifier) isn't usable
+        // at the FFI boundary here: Err so the caller SKIPs the decl — or, when
+        // behind a pointer/array, it already mapped to an opaque `*u8` above.
+        _ => return Err(format!("unsupported type `{s}`")),
     })
 }
 
@@ -716,6 +799,29 @@ fn guess_record_size(decl: &serde_json::Value) -> Option<u64> {
         }
     }
     None
+}
+
+/// Read an enum constant's value from its initializer (clang nests it under
+/// ConstantExpr/IntegerLiteral). `None` if implicit (caller uses the counter).
+fn read_enum_value(node: &serde_json::Value) -> Option<i64> {
+    fn search(v: &serde_json::Value) -> Option<i64> {
+        if let Some(s) = v.get("value").and_then(|x| x.as_str()) {
+            if let Ok(n) = s.parse::<i64>() {
+                return Some(n);
+            }
+        }
+        for c in v.get("inner").and_then(|x| x.as_array()).into_iter().flatten() {
+            if let Some(n) = search(c) {
+                return Some(n);
+            }
+        }
+        None
+    }
+    node.get("inner")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+        .find_map(search)
 }
 
 fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
