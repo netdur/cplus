@@ -51,6 +51,9 @@ extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64(recv: *u8, sel: *u8, a: i64) -> *u8;
 
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64) -> *u8;
+
 // NSRange-valued / NSRange-taking sends (e.g. `-tokenRangeAtIndex:`,
 // `-tokensForRange:`, `-[NSValue rangeValue]`). NSRange is two integer
 // eightbytes, so it rides registers in and out under the SysV ABI.
@@ -116,6 +119,10 @@ fn msg_i64(recv: *u8, selector: *u8) -> i64 {
 
 fn msg_id_i64(recv: *u8, selector: *u8, a: i64) -> *u8 {
     return { objc_msg_id_i64(recv, selector, a) };
+}
+
+fn msg_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: u64) -> *u8 {
+    return { objc_msg_id_id_u64(recv, selector, a, b) };
 }
 
 fn msg_range(recv: *u8, selector: *u8) -> Range {

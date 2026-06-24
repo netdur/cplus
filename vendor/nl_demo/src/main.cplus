@@ -22,7 +22,7 @@ fn newline() {
 fn report(sample: str) {
     put(sample);
     put("  ->  ");
-    match nl::LanguageRecognizer::dominant_language_for_string(sample) {
+    match nl::LanguageRecognizer::detect(sample) {
         option::Option[text::Text]::Some(lang) => { put({ lang }); }
         option::Option[text::Text]::None => { put("(unknown)"); }
     }

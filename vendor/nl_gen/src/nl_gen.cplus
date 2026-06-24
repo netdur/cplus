@@ -4,6 +4,7 @@
 
 import "./recognizer" as recognizer;
 import "./tokenizer" as tokenizer;
+import "./embedding" as embedding;
 import "objc/runtime" as rt;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
@@ -50,5 +51,16 @@ fn generated_tokenizer_first_token_range() {
     let r: rt::Range = tok.token_range(at: 0 as u64);
     assert r.location == (0 as u64);
     assert r.length == (3 as u64);                                // "the"
+    return;
+}
+
+// ABI smoke for a generated MULTI-ARG class method
+// (wordEmbeddingForLanguage:revision: -> word_embedding(for_language:, revision:)),
+// proving 2-arg selector codegen + the msg_id_id_u64 dispatch. The call must run
+// without crashing; it returns nil when the on-device model isn't installed, so
+// we don't assert on the handle (a wrong ABI would corrupt the stack / crash).
+#[test]
+fn generated_embedding_multiarg_call() {
+    let _e: *u8 = embedding::Embedding::word_embedding("en", revision: 0 as u64);
     return;
 }

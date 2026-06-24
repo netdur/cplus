@@ -72,7 +72,7 @@ impl Tokenizer {
         return out;
     }
 
-    // SKIPPED `enumerateTokensInRange:usingBlock:`: 2-arg selectors not yet modelled
+    // SKIPPED `enumerateTokensInRange:usingBlock:`: param `void (^ _Nonnull)(NSRange, NLTokenizerAttributes, BOOL * _Nonnull)` — block
     fn unit(this) -> TokenUnit {
         return token_unit_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("unit\0"))));
     }

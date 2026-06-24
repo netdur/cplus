@@ -241,10 +241,17 @@ impl ObjcEmitter {
             sel == "init" || sel.starts_with("initWith")
         });
 
-        self.body.push_str(&format!(
-            "// `{objc_name}` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.\n"
-        ));
-        self.body.push_str(&format!("struct {ty} {{\n    _obj: *u8,\n}}\n\n"));
+        // Owned classes (have an init) carry the +1 and release in `drop`;
+        // factory/singleton classes are non-owning, so the handle is `opaque`
+        // (no drop — another owner frees it).
+        let note = if owned {
+            "Owned via alloc/init; `drop` releases the +1."
+        } else {
+            "Non-owning handle (factory/singleton); `opaque`, no drop."
+        };
+        let field = if owned { "_obj: *u8" } else { "opaque _obj: *u8" };
+        self.body.push_str(&format!("// `{objc_name}` (Foundation/ObjC). {note}\n"));
+        self.body.push_str(&format!("struct {ty} {{\n    {field},\n}}\n\n"));
         self.body.push_str(&format!("impl {ty} {{\n"));
         self.body.push_str("    fn raw(this) -> *u8 { return this._obj; }\n\n");
 
@@ -302,30 +309,26 @@ impl ObjcEmitter {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        if params.len() > 1 {
-            self.body.push_str(&format!("    // SKIPPED `{sel}`: {}-arg selectors not yet modelled\n", params.len()));
-            return;
-        }
-
-        // Lower the single optional argument: `sig_param` is the public C+
-        // parameter (the enum/str/Range type), `arg` is the wire expression
-        // (the raw int / bridged NSString / etc. passed to msgSend).
-        let mut sig_param = String::new();
-        let mut arg: Option<Arg> = None;
-        if let Some((pname, pqt)) = params.get(0) {
-            let pn = ov_params.get(0).cloned().unwrap_or_else(|| snake(pname));
+        // Lower every argument: `sig_param` is the public C+ parameter list
+        // (labels = override or AST param names, types = enum/str/Range/scalar),
+        // `args` are the wire expressions (raw int / bridged NSString / ...).
+        let mut sig_parts: Vec<String> = Vec::new();
+        let mut args: Vec<Arg> = Vec::new();
+        for (idx, (pname, pqt)) in params.iter().enumerate() {
+            let pn = ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: param `{pqt}` — {why}\n"));
                 return;
             }
-            sig_param = format!("{pn}: {}", self.param_sig_type(pqt));
-            arg = Some(a);
+            sig_parts.push(format!("{pn}: {}", self.param_sig_type(pqt)));
+            args.push(a);
         }
+        let sig_param = sig_parts.join(", ");
 
         // Constructors: alloc + send the init selector, wrap in Self.
         if is_init {
-            let send = self.send_expr("alloced", &sel, &Ret::Object, &arg);
+            let send = self.send_expr("alloced", &sel, &Ret::Object, &args);
             let send = match send {
                 Some(s) => s,
                 None => {
@@ -352,14 +355,14 @@ impl ObjcEmitter {
             format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
         };
         let receiver = if is_instance { "this" } else { "" };
-        let name = ov_name.clone().unwrap_or_else(|| snake(sel.split(':').next().unwrap_or(&sel)));
+        let name = ov_name.clone().unwrap_or_else(|| mechanical_name(&sel));
 
         // ValueArray is a multi-statement body; handle it separately.
         if let Ret::ValueArray = ret {
-            let arg = match &arg {
-                Some(Arg::Range(e)) => e.clone(),
+            let arg = match args.as_slice() {
+                [Arg::Range(e)] => e.clone(),
                 _ => {
-                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray return needs an NSRange arg\n"));
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray return needs a single NSRange arg\n"));
                     return;
                 }
             };
@@ -383,7 +386,7 @@ impl ObjcEmitter {
             return;
         }
 
-        let send = match self.send_expr(&recv, &sel, &ret, &arg) {
+        let send = match self.send_expr(&recv, &sel, &ret, &args) {
             Some(s) => s,
             None => {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: (return, arg) shape not yet modelled\n"));
@@ -415,38 +418,51 @@ impl ObjcEmitter {
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
     }
 
-    /// The `rt::msg_*` call expression for a (receiver, selector, return, arg)
-    /// combination, or None if no runtime shape covers it. For enum returns the
-    /// raw integer call is produced (the caller wraps it in `<enum>_from_raw`).
-    fn send_expr(&mut self, recv: &str, sel: &str, ret: &Ret, arg: &Option<Arg>) -> Option<String> {
+    /// The `rt::msg_*` call expression for a (receiver, selector, return, args)
+    /// combination. The runtime wrappers are named `msg_<ret>_<arg>…` by their
+    /// ABI signature, so the name is derived mechanically and works for any
+    /// arity (the vendor/objc shim must exist; it's added per signature). For
+    /// enum returns the raw integer call is produced (caller wraps in from_raw).
+    fn send_expr(&self, recv: &str, sel: &str, ret: &Ret, args: &[Arg]) -> Option<String> {
         let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
-        // Reduce the return to a wire class: id-like, i64-like, u64-like, range, void.
-        enum Wire { Id, I64, U64, Range, Void }
-        let wire = match ret {
-            Ret::Void => Wire::Void,
-            Ret::Object | Ret::Text { .. } => Wire::Id,
-            Ret::ScalarI64 | Ret::EnumTy(_) => Wire::I64,
-            Ret::ScalarU64 => Wire::U64,
-            Ret::Range => Wire::Range,
+        let ret_tag = match ret {
+            Ret::Void => "void",
+            Ret::Object | Ret::Text { .. } => "id",
+            Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
+            Ret::ScalarU64 => "u64",
+            Ret::Range => "range",
             Ret::ValueArray | Ret::Unsupported(_) => return None,
         };
-        let a = arg.as_ref();
-        let expr = match (wire, a) {
-            (Wire::Void, None) => format!("rt::msg_void({recv}, {sl})"),
-            (Wire::Void, Some(Arg::Id(e))) => format!("rt::msg_void_id({recv}, {sl}, {e})"),
-            (Wire::Id, None) => format!("rt::msg_id({recv}, {sl})"),
-            (Wire::Id, Some(Arg::Id(e))) => format!("rt::msg_id_id({recv}, {sl}, {e})"),
-            (Wire::Id, Some(Arg::ScalarI64(e))) => format!("rt::msg_id_i64({recv}, {sl}, {e})"),
-            (Wire::Id, Some(Arg::ScalarU64(e))) => format!("rt::msg_id_u64({recv}, {sl}, {e})"),
-            (Wire::Id, Some(Arg::Range(e))) => format!("rt::msg_id_range({recv}, {sl}, {e})"),
-            (Wire::I64, None) => format!("rt::msg_i64({recv}, {sl})"),
-            (Wire::U64, None) => format!("rt::msg_u64({recv}, {sl})"),
-            (Wire::Range, None) => format!("rt::msg_range({recv}, {sl})"),
-            (Wire::Range, Some(Arg::ScalarU64(e))) => format!("rt::msg_range_u64({recv}, {sl}, {e})"),
-            (Wire::Range, Some(Arg::Range(e))) => format!("rt::msg_range_range({recv}, {sl}, {e})"),
-            _ => return None,
-        };
-        Some(expr)
+        let mut tags: Vec<&str> = vec![ret_tag];
+        let mut exprs: Vec<String> = Vec::new();
+        for a in args {
+            let (t, e): (&str, String) = match a {
+                Arg::Id(e) => ("id", e.clone()),
+                Arg::ScalarI64(e) => ("i64", e.clone()),
+                Arg::ScalarU64(e) => ("u64", e.clone()),
+                Arg::Range(e) => ("range", e.clone()),
+                Arg::Unsupported(_) => return None,
+            };
+            tags.push(t);
+            exprs.push(e);
+        }
+        // The runtime provides a fixed set of msgSend ABI shapes; only emit a
+        // call when its shape exists, otherwise SKIP (keeps output compilable).
+        // Grow this in lockstep with vendor/objc/src/runtime.cplus.
+        let suffix = tags.join("_");
+        const KNOWN: &[&str] = &[
+            "void", "void_id", "id", "id_id", "id_i64", "id_u64", "id_id_u64",
+            "id_range", "i64", "u64", "range", "range_u64", "range_range",
+        ];
+        if !KNOWN.contains(&suffix.as_str()) {
+            return None;
+        }
+        let mut call = format!("rt::msg_{suffix}({recv}, {sl}");
+        for e in &exprs {
+            call.push_str(&format!(", {e}"));
+        }
+        call.push(')');
+        Some(call)
     }
 
     fn map_ret(&mut self, qt: &str) -> Ret {
@@ -657,6 +673,20 @@ fn read_int(node: &serde_json::Value) -> Option<i64> {
         None
     }
     node.get("inner").and_then(|x| x.as_array()).into_iter().flatten().find_map(search)
+}
+
+/// Mechanical C+ method name from a selector. Single-colon selectors keep their
+/// one segment (`tokensForRange:` -> `tokens_for_range`); multi-part selectors
+/// camel-join every segment so they stay collision-free (`a:b:` -> `a_b`, never
+/// clashing with `a:`). The override file supplies nicer labels on top.
+fn mechanical_name(sel: &str) -> String {
+    let parts: Vec<&str> = sel.split(':').filter(|s| !s.is_empty()).collect();
+    let joined: String = parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| if i == 0 { p.to_string() } else { pascal(p) })
+        .collect();
+    snake(&joined)
 }
 
 /// camelCase / PascalCase -> snake_case.

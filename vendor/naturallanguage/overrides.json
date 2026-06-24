@@ -10,6 +10,9 @@
       "string":              { "name": "text" },
       "tokenRangeAtIndex:":  { "name": "token_range", "params": ["at"] },
       "tokensForRange:":     { "name": "tokens" }
+    },
+    "NLEmbedding": {
+      "wordEmbeddingForLanguage:revision:": { "name": "word_embedding", "params": ["for_language", "revision"] }
     }
   }
 }
