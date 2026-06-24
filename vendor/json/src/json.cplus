@@ -2,21 +2,22 @@
 //
 // `Value` is a recursive tagged enum; `Object` payload uses
 // `Vec[Member]` instead of `HashMap[str, Value]` because HashMap
-// requires `V: Copy` and `Value` is non-Copy (the `Str` / `Array` /
-// `Object` variants own heap storage). Linear lookup for
-// `object_get(...)` — fine for typical JSON payloads, would need
-// a different shape only for objects with hundreds of keys.
+// requires `V: Copy` and `Value` is non-Copy (the `Text` / `Array` /
+// `Object` variants own heap storage). Linear lookup for `v.get(key)` —
+// fine for typical JSON payloads, would need a different shape only for
+// objects with hundreds of keys.
 //
-// **API.**
+// **API** (value-centric; every accessor returns `Option`, so a missing
+// key/index is `None` — never a trap, never confused with a present `null`):
 //   - `Value::parse(s) -> Result[Value, ParseError]`
-//   - `v.to_text() -> string` (compact JSON; `%.17g` for numbers
-//      round-trips correctly, accepting some ugliness)
-//   - constructors: `Value::null()`, `Value::bool(b)`, `Value::number(n)`,
-//      `Value::str(s)`, builder helpers `array_new()`, `object_new()`,
-//      `array_push(arr, v)`, `object_push(obj, key, v)`
-//   - accessors: `is_null`, `is_bool`, `is_number`, `is_string`,
-//      `is_array`, `is_object`, `as_bool`, `as_number`, `as_str`,
-//      `array_len`, `array_at`, `object_get`
+//   - `v.to_text() -> Text`  (compact JSON; `%.17g` numbers round-trip)
+//   - constructors: `Value::null()` / `bool_(b)` / `number(n)` / `str_(s)`,
+//      `empty_array()`, `empty_object()`
+//   - predicates: `v.is_null()` / `is_bool` / `is_number` / `is_string`
+//      / `is_array` / `is_object`
+//   - accessors: `v.count()`, `v.at(index:)`, `v.get(key:)`,
+//      `v.key_at(i)`, `v.value_at(i)`, `v.as_bool()`, `v.as_number()`,
+//      `v.as_text()`
 //
 // Cleanup is automatic via the enum's recursive Drop — no manual
 // `value_free` required (that was the pointer-API workaround).
@@ -37,7 +38,7 @@ enum Value {
     Null,
     Bool(bool),
     Number(f64),
-    Str(text::Text),
+    Text(text::Text),
     Array(vec::Vec[Value]),
     Object(vec::Vec[Member]),
 }
@@ -57,7 +58,7 @@ impl Value {
     fn null() -> Value { return Value::Null; }
     fn bool_(b: bool) -> Value { return Value::Bool(b); }
     fn number(n: f64) -> Value { return Value::Number(n); }
-    fn str_(s: str) -> Value { return Value::Str(s.to_text()); }
+    fn str_(s: str) -> Value { return Value::Text(s.to_text()); }
 
     // Predicates.
     fn is_null(this) -> bool {
@@ -83,7 +84,7 @@ impl Value {
     }
     fn is_string(this) -> bool {
         let yes: bool = match this {
-            Value::Str(_) => true,
+            Value::Text(_) => true,
             _ => false,
         };
         return yes;
@@ -102,13 +103,104 @@ impl Value {
         };
         return yes;
     }
+
+    // ---- accessors ----
+    // All borrow `this` and report absence as `None` — never a trap, and never
+    // conflating a missing key/index with a present JSON `null`.
+
+    // Element count: array elements, object members, or 0 for a scalar.
+    fn count(this) -> usize {
+        return match this {
+            Value::Array(arr) => arr.count(),
+            Value::Object(arr) => arr.count(),
+            _ => 0 as usize,
+        };
+    }
+
+    // The payload if `this` is exactly that kind, else `None`.
+    fn as_bool(this) -> option::Option[bool] {
+        return match this {
+            Value::Bool(x) => option::Option[bool]::Some(x),
+            _ => option::Option[bool]::None,
+        };
+    }
+    fn as_number(this) -> option::Option[f64] {
+        return match this {
+            Value::Number(x) => option::Option[f64]::Some(x),
+            _ => option::Option[f64]::None,
+        };
+    }
+    fn as_text(this) -> option::Option[text::Text] {
+        return match this {
+            Value::Text(x) => option::Option[text::Text]::Some(x.clone()),
+            _ => option::Option[text::Text]::None,
+        };
+    }
+
+    // Array element at `index`, or `None` if not an array / out of range.
+    fn at(this, index: usize) -> option::Option[Value] {
+        return match this {
+            Value::Array(arr) => match arr.at_ptr(index) {
+                option::Option[*Value]::Some(p) => option::Option[Value]::Some(clone_value({ *p })),
+                option::Option[*Value]::None => option::Option[Value]::None,
+            },
+            _ => option::Option[Value]::None,
+        };
+    }
+
+    // Object value for `key`, or `None` if not an object / no such key. A present
+    // `null` returns `Some(Value::Null)` — distinct from a missing key.
+    fn get(this, key: str) -> option::Option[Value] {
+        return match this {
+            Value::Object(arr) => {
+                let n: usize = arr.count();
+                var i: usize = 0 as usize;
+                var found: option::Option[Value] = option::Option[Value]::None;
+                while i < n {
+                    match arr.at_ptr(i) {
+                        option::Option[*Member]::Some(p) => {
+                            if { (*p).key } == key {
+                                found = option::Option[Value]::Some(clone_value({ (*p).value }));
+                                i = n;
+                            } else {
+                                i = i +% (1 as usize);
+                            }
+                        }
+                        option::Option[*Member]::None => { i = n; }
+                    }
+                }
+                found
+            }
+            _ => option::Option[Value]::None,
+        };
+    }
+
+    // Object's `index`-th key / value in insertion order, or `None` if out of range.
+    fn key_at(this, index: usize) -> option::Option[text::Text] {
+        return match this {
+            Value::Object(arr) => match arr.at_ptr(index) {
+                option::Option[*Member]::Some(p) => option::Option[text::Text]::Some({ (*p).key.clone() }),
+                option::Option[*Member]::None => option::Option[text::Text]::None,
+            },
+            _ => option::Option[text::Text]::None,
+        };
+    }
+    fn value_at(this, index: usize) -> option::Option[Value] {
+        return match this {
+            Value::Object(arr) => match arr.at_ptr(index) {
+                option::Option[*Member]::Some(p) => option::Option[Value]::Some(clone_value({ (*p).value })),
+                option::Option[*Member]::None => option::Option[Value]::None,
+            },
+            _ => option::Option[Value]::None,
+        };
+    }
 }
 
-fn array_new() -> Value {
+fn empty_array() -> Value {
     return Value::Array(vec::new::[Value]());
 }
 
-fn object_new() -> Value {
+fn empty_object() -> Value {
     return Value::Object(vec::new::[Member]());
 }
 
@@ -441,7 +533,7 @@ fn parse_value(p: Parser) -> ValParse {
         let sp: StrParse = parse_string_bytes(p);
         if !sp.ok { return fail(sp.p); }
         let s: text::Text = buf_to_string(sp.buf);
-        return ValParse::Ok(Value::Str(s), sp.p);
+        return ValParse::Ok(Value::Text(s), sp.p);
     }
     if cb == ('[' as u8) { return parse_array(p); }
     if cb == ('{' as u8) { return parse_object(p); }
@@ -522,26 +614,30 @@ fn parse_object(p: Parser) -> ValParse {
     return fail(p);
 }
 
-fn parse(s: str) -> result::Result[Value, ParseError] {
-    let p0: Parser = parser_new(s);
-    let r: ValParse = parse_value(p0);
-    let res: result::Result[Value, ParseError] = match r {
-        ValParse::Ok(v, rp) => {
-            let p_end: Parser = skip_ws(rp);
-            if p_end.pos != p_end.len {
-                result::Result[Value, ParseError]::Err(ParseError { pos: p_end.pos })
-            } else {
-                result::Result[Value, ParseError]::Ok(v)
+impl Value {
+    // Parse `s` as JSON: `Ok(value)` on success, or `Err(ParseError)` carrying
+    // the byte offset of the failure. Never traps.
+    fn parse(s: str) -> result::Result[Value, ParseError] {
+        let p0: Parser = parser_new(s);
+        let r: ValParse = parse_value(p0);
+        let res: result::Result[Value, ParseError] = match r {
+            ValParse::Ok(v, rp) => {
+                let p_end: Parser = skip_ws(rp);
+                if p_end.pos != p_end.len {
+                    result::Result[Value, ParseError]::Err(ParseError { pos: p_end.pos })
+                } else {
+                    result::Result[Value, ParseError]::Ok(v)
+                }
             }
-        }
-        ValParse::Fail(rp) => {
-            result::Result[Value, ParseError]::Err(ParseError { pos: rp.pos })
-        }
-    };
-    return res;
+            ValParse::Fail(rp) => {
+                result::Result[Value, ParseError]::Err(ParseError { pos: rp.pos })
+            }
+        };
+        return res;
+    }
 }
 
-// ---------------- Accessors -----------------------------------------------
+// ---------------- Deep clone (used by the accessor methods) ---------------
 
 // v0.0.14: deep-clone a Value into an independent owned value. Accessors that
 // return owning data (an inner Value or a string) clone it so the result is
@@ -555,7 +651,7 @@ fn clone_value(v: Value) -> Value {
         Value::Null => Value::Null,
         Value::Bool(b) => Value::Bool(b),
         Value::Number(n) => Value::Number(n),
-        Value::Str(s) => Value::Str(s.clone()),
+        Value::Text(s) => Value::Text(s.clone()),
         Value::Array(arr) => {
             let n: usize = arr.count();
             var out: vec::Vec[Value] = vec::new::[Value]();
@@ -587,96 +683,6 @@ fn clone_value(v: Value) -> Value {
             }
             Value::Object(out)
         }
-    };
-}
-
-fn as_bool(v: Value) -> bool {
-    return match v {
-        Value::Bool(x) => x,
-        _ => false,
-    };
-}
-
-fn as_number(v: Value) -> f64 {
-    return match v {
-        Value::Number(x) => x,
-        _ => 0.0f64,
-    };
-}
-
-fn as_str(v: Value) -> text::Text {
-    return match v {
-        Value::Str(x) => x.clone(),
-        _ => "".to_text(),
-    };
-}
-
-fn array_len(v: Value) -> usize {
-    return match v {
-        Value::Array(arr) => arr.count(),
-        _ => 0 as usize,
-    };
-}
-
-fn array_at(v: Value, i: usize) -> Value {
-    return match v {
-        Value::Array(arr) => match arr.at_ptr(i) {
-            option::Option[*Value]::Some(p) => clone_value({ *p }),
-            option::Option[*Value]::None => Value::Null,
-        },
-        _ => Value::Null,
-    };
-}
-
-fn object_len(v: Value) -> usize {
-    return match v {
-        Value::Object(arr) => arr.count(),
-        _ => 0 as usize,
-    };
-}
-
-fn object_key_at(v: Value, i: usize) -> text::Text {
-    return match v {
-        Value::Object(arr) => match arr.at_ptr(i) {
-            option::Option[*Member]::Some(p) => { (*p).key.clone() },
-            option::Option[*Member]::None => "".to_text(),
-        },
-        _ => "".to_text(),
-    };
-}
-
-fn object_value_at(v: Value, i: usize) -> Value {
-    return match v {
-        Value::Object(arr) => match arr.at_ptr(i) {
-            option::Option[*Member]::Some(p) => clone_value({ (*p).value }),
-            option::Option[*Member]::None => Value::Null,
-        },
-        _ => Value::Null,
-    };
-}
-
-fn object_get(v: Value, key: str) -> Value {
-    return match v {
-        Value::Object(arr) => {
-            let n: usize = arr.count();
-            var i: usize = 0 as usize;
-            var found: Value = Value::Null;
-            while i < n {
-                match arr.at_ptr(i) {
-                    option::Option[*Member]::Some(p) => {
-                        if { (*p).key } == key {
-                            found = clone_value({ (*p).value });
-                            i = n; // break
-                        } else {
-                            i = i +% (1 as usize);
-                        }
-                    }
-                    option::Option[*Member]::None => { i = n; }
-                }
-            }
-            found
-        }
-        _ => Value::Null,
     };
 }
 
@@ -836,7 +842,7 @@ fn encode_value(b: Buf, v: Value) -> Buf {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
         Value::Number(n) => encode_number(b, n),
-        Value::Str(s) => encode_string(b, { s }),
+        Value::Text(s) => encode_string(b, { s }),
         Value::Array(arr) => {
             var bb: Buf = buf_push(b, '[' as u8);
             let n: usize = arr.count();
@@ -886,7 +892,7 @@ impl Value {
 // ---------------- Unit tests (run via `cpc test`) ----------------
 
 fn parse_ok(src: str) -> Value {
-    let r: result::Result[Value, ParseError] = parse(src);
+    let r: result::Result[Value, ParseError] = Value::parse(src);
     guard let result::Result[Value, ParseError]::Ok(v) = r else {
         assert false;
         return Value::Null;
@@ -895,12 +901,32 @@ fn parse_ok(src: str) -> Value {
 }
 
 fn parse_fails(src: str) -> bool {
-    let r: result::Result[Value, ParseError] = parse(src);
+    let r: result::Result[Value, ParseError] = Value::parse(src);
     let failed: bool = match r {
         result::Result[Value, ParseError]::Ok(_) => false,
         result::Result[Value, ParseError]::Err(_) => true,
     };
     return failed;
+}
+
+// Unwrap helpers: assert the accessor returned `Some` and hand back the value.
+// Keep the parse tests readable; the Option behavior itself is covered by the
+// dedicated `*_none*` / `*_distinguishes_*` tests below.
+fn _must_bool(v: Value) -> bool {
+    guard let option::Option[bool]::Some(b) = v.as_bool() else { assert false; return false; };
+    return b;
+}
+fn _must_number(v: Value) -> f64 {
+    guard let option::Option[f64]::Some(n) = v.as_number() else { assert false; return 0.0f64; };
+    return n;
+}
+fn _must_text(v: Value) -> text::Text {
+    guard let option::Option[text::Text]::Some(t) = v.as_text() else { assert false; return "".to_text(); };
+    return t;
+}
+fn _must_get(v: Value, key: str) -> Value {
+    guard let option::Option[Value]::Some(x) = v.get(key) else { assert false; return Value::Null; };
+    return x;
 }
 
 #[test]
@@ -913,20 +939,20 @@ fn test_parse_null() {
 fn test_parse_true() {
     let v: Value = parse_ok("true");
     assert v.is_bool();
-    assert as_bool(v);
+    assert _must_bool(v);
 }
 
 #[test]
 fn test_parse_false() {
     let v: Value = parse_ok("false");
-    assert as_bool(v) == false;
+    assert _must_bool(v) == false;
 }
 
 #[test]
 fn test_parse_number_integer() {
     let v: Value = parse_ok("42");
     assert v.is_number();
-    let n: f64 = as_number(v);
+    let n: f64 = _must_number(v);
     assert n >= 41.5f64;
     assert n <= 42.5f64;
 }
@@ -934,7 +960,7 @@ fn test_parse_number_integer() {
 #[test]
 fn test_parse_number_with_exponent() {
     let v: Value = parse_ok("-1.5e2");
-    let n: f64 = as_number(v);
+    let n: f64 = _must_number(v);
     assert n >= - 150.5f64;
     assert n <= - 149.5f64;
 }
@@ -948,14 +974,14 @@ fn test_parse_number_rejects_double_dot() {
 fn test_parse_string_simple() {
     let v: Value = parse_ok("\"hello\"");
     assert v.is_string();
-    let s: text::Text = as_str(v);
+    let s: text::Text = _must_text(v);
     assert s.count() == (5 as usize);
 }
 
 #[test]
 fn test_parse_string_with_escapes() {
     let v: Value = parse_ok("\"a\\nb\\t\\\\\"");
-    let s: text::Text = as_str(v);
+    let s: text::Text = _must_text(v);
     // decoded: 'a', '\n', 'b', '\t', '\\' = 5 bytes
     assert s.count() == (5 as usize);
 }
@@ -964,37 +990,41 @@ fn test_parse_string_with_escapes() {
 fn test_parse_empty_array() {
     let v: Value = parse_ok("[]");
     assert v.is_array();
-    assert array_len(v) == (0 as usize);
+    assert v.count() == (0 as usize);
 }
 
 #[test]
 fn test_parse_array_of_numbers() {
     let v: Value = parse_ok("[1, 2, 3]");
-    assert array_len(v) == (3 as usize);
+    assert v.count() == (3 as usize);
 }
 
 #[test]
 fn test_parse_empty_object() {
     let v: Value = parse_ok("{}");
     assert v.is_object();
-    assert object_len(v) == (0 as usize);
+    assert v.count() == (0 as usize);
 }
 
 #[test]
 fn test_parse_object_get_by_key() {
     let v: Value = parse_ok("{\"a\":1,\"b\":2}");
-    let va: Value = object_get(v, "a");
+    let va: Value = _must_get(v, "a");
     assert va.is_number();
-    let vmiss: Value = object_get(parse_ok("{\"a\":1}"), "missing");
-    assert vmiss.is_null();
+    // missing key -> None (not a null Value)
+    match parse_ok("{\"a\":1}").get("missing") {
+        option::Option[Value]::Some(x) => { assert false; }
+        option::Option[Value]::None => { assert true; }
+    }
+    return;
 }
 
 #[test]
 fn test_parse_nested() {
     let v: Value = parse_ok("{\"arr\":[true,false,null]}");
-    let arr: Value = object_get(v, "arr");
+    let arr: Value = _must_get(v, "arr");
     assert arr.is_array();
-    assert array_len(arr) == (3 as usize);
+    assert arr.count() == (3 as usize);
 }
 
 #[test]
@@ -1028,14 +1058,14 @@ fn test_round_trip_object() {
 
 #[test]
 fn test_builder_array_new_push() {
-    var arr: Value = array_new();
+    var arr: Value = empty_array();
     var arr_inner: vec::Vec[Value] = match arr {
         Value::Array(a) => a,
         _ => vec::new::[Value](),
     };
     arr_inner.append(Value::Number(7.0f64));
     let final_v: Value = Value::Array(arr_inner);
-    assert array_len(final_v) == (1 as usize);
+    assert final_v.count() == (1 as usize);
 }
 
 #[test]
@@ -1068,7 +1098,7 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
     // 😀 = 😀 (U+1F600). Combined into a single codepoint,
     // emitted as 4 UTF-8 bytes: F0 9F 98 80.
     let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
-    let s: text::Text = as_str(v);
+    let s: text::Text = _must_text(v);
     assert s.count() == (4 as usize);
     let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xF0 as u8);
@@ -1081,9 +1111,62 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
 fn test_parse_bmp_unicode_escape_still_works() {
     // U+00E9 = é. Two-byte UTF-8 sequence: C3 A9.
     let v: Value = parse_ok("\"\\u00e9\"");
-    let s: text::Text = as_str(v);
+    let s: text::Text = _must_text(v);
     assert s.count() == (2 as usize);
     let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xC3 as u8);
     assert { *(p + 1) } == (0xA9 as u8);
+}
+
+// ---- accessor safety + new method-API coverage ----
+
+#[test]
+fn test_get_distinguishes_null_from_missing() {
+    let v: Value = parse_ok("{\"present\":null}");
+    match v.get("present") {              // present-but-null -> Some(Null)
+        option::Option[Value]::Some(x) => { assert x.is_null(); }
+        option::Option[Value]::None => { assert false; }
+    }
+    match v.get("absent") {               // missing key -> None
+        option::Option[Value]::Some(x) => { assert false; }
+        option::Option[Value]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn test_accessors_none_on_type_mismatch() {
+    let v: Value = parse_ok("42");        // a number
+    match v.as_bool() { option::Option[bool]::Some(b) => { assert false; } option::Option[bool]::None => { assert true; } }
+    match v.as_text() { option::Option[text::Text]::Some(t) => { assert false; } option::Option[text::Text]::None => { assert true; } }
+    return;
+}
+
+#[test]
+fn test_at_with_label_and_bounds() {
+    let v: Value = parse_ok("[10, 20, 30]");
+    match v.at(index: 1 as usize) {
+        option::Option[Value]::Some(x) => { assert _must_number(x) >= 19.5f64; }
+        option::Option[Value]::None => { assert false; }
+    }
+    match v.at(index: 99 as usize) {      // out of bounds -> None
+        option::Option[Value]::Some(x) => { assert false; }
+        option::Option[Value]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn test_object_key_value_at() {
+    let v: Value = parse_ok("{\"a\":1,\"b\":2}");
+    assert v.count() == (2 as usize);
+    match v.key_at(0 as usize) {
+        option::Option[text::Text]::Some(k) => { assert k.equals("a"); }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match v.value_at(1 as usize) {
+        option::Option[Value]::Some(val) => { assert _must_number(val) >= 1.5f64; }
+        option::Option[Value]::None => { assert false; }
+    }
+    return;
 }
