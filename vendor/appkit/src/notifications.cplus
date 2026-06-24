@@ -19,6 +19,7 @@
 // unsubscribes.
 
 import "./runtime" as rt;
+import "./convert" as bridge;
 
 // The IMP for `handleNotification:` — (self, _cmd, notification). Reads the
 // C+ callback associated with the observer instance and forwards the
@@ -57,46 +58,36 @@ fn default_center() -> *u8 {
 // An owned subscription. Dropping it unsubscribes (`removeObserver:`) and
 // releases the synthesized observer instance.
 struct Observer {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl Observer {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::msg_void_id(default_center(), rt::sel(#str_ptr("removeObserver:\0")), this.obj);
-        rt::release(this.obj);
+        rt::msg_void_id(default_center(), rt::sel(#str_ptr("removeObserver:\0")), this._obj);
+        rt::release(this._obj);
     }
 }
 
 struct NotificationCenter {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl NotificationCenter {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     // The default (process-wide) notification center.
     fn default() -> NotificationCenter {
-        return NotificationCenter { obj: default_center() };
+        return NotificationCenter { _obj: default_center() };
     }
 
     // Post a notification by name, with no object/userInfo.
-    fn post(this, name: *u8) {
+    fn post(this, name: str) {
         rt::msg_void_id_id(
-            this.obj,
+            this._obj,
             rt::sel(#str_ptr("postNotificationName:object:\0")),
-            rt::ns_string(name),
-            { 0 as *u8 },
-        );
-    }
-
-    // Post a pre-built `NSString*` name.
-    fn post_ns(this, name_ns: *u8) {
-        rt::msg_void_id_id(
-            this.obj,
-            rt::sel(#str_ptr("postNotificationName:object:\0")),
-            name_ns,
+            bridge::cplus_str_to_nsstring(name),
             { 0 as *u8 },
         );
     }
@@ -104,18 +95,18 @@ impl NotificationCenter {
     // Subscribe `cb` to notifications named `name` (from any object). The
     // returned `Observer` owns the subscription — keep it alive; drop it to
     // unsubscribe.
-    fn add_observer(this, name: *u8, cb: fn(*u8)) -> Observer {
+    fn add_observer(this, name: str, cb: fn(*u8)) -> Observer {
         let cls: *u8 = observer_class();
         let obs: *u8 = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
         rt::set_associated_callback(obs, #str_ptr("notify_cb_key\0"), cb, 0 as usize);
         rt::msg_void_id_id_id_id(
-            this.obj,
+            this._obj,
             rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
             obs,
             rt::sel(#str_ptr("handleNotification:\0")),
-            rt::ns_string(name),
+            bridge::cplus_str_to_nsstring(name),
             { 0 as *u8 },
         );
-        return Observer { obj: obs };
+        return Observer { _obj: obs };
     }
 }

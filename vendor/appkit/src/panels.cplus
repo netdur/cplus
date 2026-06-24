@@ -1,17 +1,19 @@
 import "./runtime" as rt;
+import "./convert" as bridge;
+import "stdlib/option" as option;
 
 struct Panel {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl Panel {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
-    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Panel {
+    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defers: bool) -> Panel {
         let cls: *u8 = rt::get_class(#str_ptr("NSPanel\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let panel: *u8 = rt::msg_init_window(
@@ -20,124 +22,141 @@ impl Panel {
             frame,
             style_mask,
             backing,
-            defer_flag,
+            defers as i8,
         );
-        return Panel { obj: panel };
+        // SAFETY: this wrapper owns the +1 and releases it in `drop`. NSWindow's
+        // default `releasedWhenClosed = YES` would release it a SECOND time when
+        // the panel closes (double-free / use-after-free). Disable it so the
+        // wrapper's `drop` is the sole release.
+        rt::msg_void_i8(panel, rt::sel(#str_ptr("setReleasedWhenClosed:\0")), 0 as i8);
+        return Panel { _obj: panel };
     }
 
-    fn set_title(this, title: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
+    fn set_title(this, title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::cplus_str_to_nsstring(title));
     }
 
-    fn make_key_and_order_front(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
+    fn make_key_and_order_front(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
     }
 
     fn close(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("close\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
 }
 
 struct SavePanel {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl SavePanel {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn shared() -> SavePanel {
-        return SavePanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSSavePanel\0")), rt::sel(#str_ptr("savePanel\0"))) };
+        return SavePanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSSavePanel\0")), rt::sel(#str_ptr("savePanel\0"))) };
     }
 
-    fn set_title(this, title: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
+    fn set_title(this, title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::cplus_str_to_nsstring(title));
     }
 
-    fn set_prompt(this, prompt: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPrompt:\0")), rt::ns_string(prompt));
+    fn set_prompt(this, prompt: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrompt:\0")), bridge::cplus_str_to_nsstring(prompt));
     }
 
-    fn set_message(this, message: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessage:\0")), rt::ns_string(message));
+    fn set_message(this, message: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMessage:\0")), bridge::cplus_str_to_nsstring(message));
     }
 
-    fn set_name_field_string_value(this, value: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setNameFieldStringValue:\0")), rt::ns_string(value));
+    // Pre-fill the editable filename field.
+    fn set_name(this, name: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNameFieldStringValue:\0")), bridge::cplus_str_to_nsstring(name));
     }
 
     fn run_modal(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    fn url(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("URL\0")));
+    // The chosen file URL (an `NSURL*`), or `None` if the user cancelled.
+    fn url(this) -> option::Option[*u8] {
+        let u: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
+        if u == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(u);
     }
 }
 
 struct OpenPanel {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl OpenPanel {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn shared() -> OpenPanel {
-        return OpenPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSOpenPanel\0")), rt::sel(#str_ptr("openPanel\0"))) };
+        return OpenPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSOpenPanel\0")), rt::sel(#str_ptr("openPanel\0"))) };
     }
 
-    fn set_can_choose_files(this, flag: i8) {
-        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setCanChooseFiles:\0")), flag);
+    fn set_can_choose_files(this, can_choose: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCanChooseFiles:\0")), can_choose as i8);
     }
 
-    fn set_can_choose_directories(this, flag: i8) {
-        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setCanChooseDirectories:\0")), flag);
+    fn set_can_choose_directories(this, can_choose: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCanChooseDirectories:\0")), can_choose as i8);
     }
 
-    fn set_allows_multiple_selection(this, flag: i8) {
-        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), flag);
+    fn set_allows_multiple_selection(this, allows: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), allows as i8);
     }
 
     fn run_modal(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    fn url(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("URL\0")));
+    // The chosen file URL (an `NSURL*`), or `None` if the user cancelled.
+    fn url(this) -> option::Option[*u8] {
+        let u: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
+        if u == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(u);
     }
 
+    // The chosen file URLs as an `NSArray*` (empty if the user cancelled).
     fn urls(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("URLs\0")));
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("URLs\0")));
     }
 }
 
 struct PageLayout {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl PageLayout {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn shared() -> PageLayout {
-        return PageLayout { obj: rt::msg_id(rt::get_class(#str_ptr("NSPageLayout\0")), rt::sel(#str_ptr("pageLayout\0"))) };
+        return PageLayout { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPageLayout\0")), rt::sel(#str_ptr("pageLayout\0"))) };
     }
 
     fn run_modal(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 }
 
 struct PrintPanel {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl PrintPanel {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn shared() -> PrintPanel {
-        return PrintPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
+        return PrintPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
     }
 
     fn run_modal(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 }

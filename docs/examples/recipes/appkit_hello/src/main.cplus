@@ -11,7 +11,6 @@ import "appkit/window" as window;
 import "appkit/view" as view;
 import "appkit/controls" as controls;
 import "appkit/graphics" as graphics;
-import "appkit/convert" as bridge;
 import "stdlib/text" as text;
 
 // libc — for the spec-mandated READY marker (mirrors proves/03).
@@ -45,8 +44,8 @@ fn main() -> i32 {
         size: rt::Size { width: 480.0, height: 200.0 },
     };
     // styleMask: titled(1) | closable(2) | miniaturizable(4) | resizable(8) = 15
-    let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(#str_ptr("C+ AppKit Demo\0"));
+    let win = window::Window::new(frame, 15 as u64, 2 as u64, false);
+    win.set_title("C+ AppKit Demo");
     win.center();
 
     // ---- Label ----
@@ -54,25 +53,17 @@ fn main() -> i32 {
         origin: rt::Point { x: 40.0, y: 120.0 },
         size: rt::Size { width: 400.0, height: 40.0 },
     };
-    let label = controls::TextField::new_label(label_frame);
+    let label = controls::Label::new(label_frame);
     label.set_alignment(2 as i64);                    // .center
-    let font: *u8 = graphics::Font::system_font_of_size(20.0);
+    let font: *u8 = graphics::Font::system(20.0);
     label.set_font(font);
 
-    // Bridge usage: build a `Text` dynamically, then hand the NSString
-    // form to setStringValue: directly. This is the path consumers reach
-    // for whenever the label content isn't a static literal.
-    let greeting: text::Text = "Hello from C+".to_text();
-    let ns_greeting: *u8 = bridge::cplus_string_to_nsstring(greeting);
-    rt::msg_void_id(
-        label.raw(),
-        rt::sel(#str_ptr("setStringValue:\0")),
-        ns_greeting,
-    );
+    // The aligned API takes/returns C+ strings directly — the NSString bridge
+    // is hidden inside `set_text` / `text`.
+    label.set_text("Hello from C+");
 
-    // Sanity round-trip: read it back, prove the bridge preserves it.
-    let current_ns: *u8 = label.string_value();
-    let back: text::Text = bridge::nsstring_to_cplus_string(current_ns);
+    // Sanity round-trip: read it back, prove the value survives.
+    let back: text::Text = label.text();
     if { back } != "Hello from C+" {
         return 1;
     }
@@ -83,7 +74,7 @@ fn main() -> i32 {
         size: rt::Size { width: 100.0, height: 32.0 },
     };
     let quit_btn = controls::Button::new(btn_frame);
-    quit_btn.set_title(#str_ptr("Quit\0"));
+    quit_btn.set_title("Quit");
     quit_btn.set_on_click(on_quit_click);
 
     // ---- Wire subviews ----
@@ -92,9 +83,8 @@ fn main() -> i32 {
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit_btn.raw());
 
     // ---- Show + activate ----
-    let null_sender: *u8 = { 0 as *u8 };
-    win.make_key_and_order_front(null_sender);
-    app.activate(1 as i8);
+    win.make_key_and_order_front();
+    app.activate();
 
     // READY marker — spec convention for headless test harnesses.
     { puts(#str_ptr("READY\0")); }

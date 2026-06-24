@@ -1,71 +1,71 @@
 import "./runtime" as rt;
 
 struct AutoreleasePool {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl AutoreleasePool {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn new() -> AutoreleasePool {
         let pool_cls: *u8 = rt::get_class(#str_ptr("NSAutoreleasePool\0"));
         let pool_alloc: *u8 = rt::msg_id(pool_cls, rt::sel(#str_ptr("alloc\0")));
         let pool: *u8 = rt::msg_id(pool_alloc, rt::sel(#str_ptr("init\0")));
-        return AutoreleasePool { obj: pool };
+        return AutoreleasePool { _obj: pool };
     }
 
     fn drain(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("drain\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("drain\0")));
     }
 }
 
 struct Application {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl Application {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn shared() -> Application {
         let nsapp_cls: *u8 = rt::get_class(#str_ptr("NSApplication\0"));
         let app: *u8 = rt::msg_id(nsapp_cls, rt::sel(#str_ptr("sharedApplication\0")));
-        return Application { obj: app };
+        return Application { _obj: app };
     }
 
     fn set_activation_policy(this, policy: i64) {
-        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setActivationPolicy:\0")), policy);
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setActivationPolicy:\0")), policy);
     }
 
     fn set_delegate(this, delegate: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    fn activate(this, ignoring_other_apps: i8) {
-        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps);
+    fn activate(this, ignoring_other_apps: bool = true) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps as i8);
     }
 
     fn run(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("run\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("run\0")));
     }
 
-    fn stop(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("stop:\0")), sender);
+    fn stop(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("stop:\0")), sender);
     }
 
-    fn terminate(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("terminate:\0")), sender);
+    fn terminate(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
 
-    fn hide(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("hide:\0")), sender);
+    fn hide(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("hide:\0")), sender);
     }
 
-    fn unhide(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("unhide:\0")), sender);
+    fn unhide(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("unhide:\0")), sender);
     }
 
     fn set_main_menu(this, menu: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMainMenu:\0")), menu);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMainMenu:\0")), menu);
     }
 }
 

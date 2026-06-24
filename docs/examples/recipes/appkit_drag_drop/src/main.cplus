@@ -20,6 +20,9 @@ import "appkit/controls" as controls;
 import "appkit/graphics" as graphics;
 import "appkit/drag" as drag;
 import "appkit/menu" as menu;
+import "appkit/convert" as bridge;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
 
 static RESULT_LABEL: *u8 = #zero::[*u8]();
 
@@ -32,7 +35,7 @@ fn src_mask(self_obj: *u8, _cmd: *u8, session: *u8, context: i64) -> i64 {
 }
 fn src_dragged(self_obj: *u8, _cmd: *u8, event: *u8) {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 140.0, height: 24.0 } };
-    drag::begin_string_drag(self_obj, event, #str_ptr("Hello from C+\0"), f, { 0 as *u8 });
+    drag::begin_string_drag(self_obj, event, "Hello from C+", f, { 0 as *u8 });
     return;
 }
 
@@ -41,10 +44,13 @@ fn dest_entered(self_obj: *u8, _cmd: *u8, info: *u8) -> i64 {
     return drag::drag_op_copy();
 }
 fn dest_perform(self_obj: *u8, _cmd: *u8, info: *u8) -> i8 {
-    let s: *u8 = drag::dragged_string_ns(info);
-    if s == { 0 as *u8 } { return 0 as i8; }
-    rt::msg_void_id({ RESULT_LABEL }, rt::sel(#str_ptr("setStringValue:\0")), s);
-    return 1 as i8;
+    return match drag::dragged_string(info) {
+        option::Option[text::Text]::Some(dropped) => {
+            rt::msg_void_id({ RESULT_LABEL }, rt::sel(#str_ptr("setStringValue:\0")), bridge::cplus_string_to_nsstring(dropped));
+            1 as i8
+        },
+        option::Option[text::Text]::None => { 0 as i8 },
+    };
 }
 
 // Give a plain NSView a solid background so the drop zones are visible.
@@ -56,9 +62,9 @@ fn set_bg(view: *u8, color: *u8) {
     return;
 }
 
-fn label_at(frame: rt::Rect, text: *u8) -> controls::TextField {
-    let l = controls::TextField::new_label(frame);
-    l.set_string_value(text);
+fn label_at(frame: rt::Rect, caption: str) -> controls::Label {
+    let l = controls::Label::new(frame);
+    l.set_text(caption);
     return l;
 }
 
@@ -70,14 +76,14 @@ fn main() -> i32 {
     app.set_delegate(delegate);
 
     let frame = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 460.0, height: 320.0 } };
-    let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(#str_ptr("C+ Drag & Drop\0"));
+    let win = window::Window::new(frame, 15 as u64, 2 as u64, false);
+    win.set_title("C+ Drag & Drop");
     win.center();
     let content: *u8 = win.content_view();
 
     let src_label = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 284.0 }, size: rt::Size { width: 420.0, height: 22.0 } },
-        #str_ptr("TOP (blue) box: drag OUT  ->  into TextEdit\0"),
+        "TOP (blue) box: drag OUT  ->  into TextEdit",
     );
     let src_frame = rt::Rect { origin: rt::Point { x: 20.0, y: 186.0 }, size: rt::Size { width: 420.0, height: 92.0 } };
     let src: *u8 = drag::create_drag_source_view(src_frame, src_mask, src_dragged);
@@ -85,7 +91,7 @@ fn main() -> i32 {
 
     let dst_label = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 156.0 }, size: rt::Size { width: 420.0, height: 22.0 } },
-        #str_ptr("BOTTOM (orange) box: drop text onto it\0"),
+        "BOTTOM (orange) box: drop text onto it",
     );
     let dst_frame = rt::Rect { origin: rt::Point { x: 20.0, y: 66.0 }, size: rt::Size { width: 420.0, height: 84.0 } };
     let dst: *u8 = drag::create_drag_destination_view(dst_frame, dest_entered, dest_perform);
@@ -94,12 +100,12 @@ fn main() -> i32 {
 
     let res = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 22.0 }, size: rt::Size { width: 300.0, height: 28.0 } },
-        #str_ptr("(dropped text shows here)\0"),
+        "(dropped text shows here)",
     );
     { RESULT_LABEL = res.raw(); };
 
     let quit = controls::Button::new(rt::Rect { origin: rt::Point { x: 348.0, y: 18.0 }, size: rt::Size { width: 92.0, height: 32.0 } });
-    quit.set_title(#str_ptr("Quit\0"));
+    quit.set_title("Quit");
     quit.set_on_click(on_quit);
 
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), src);
@@ -109,17 +115,17 @@ fn main() -> i32 {
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), res.raw());
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit.raw());
 
-    let mainmenu = menu::Menu::new(#str_ptr("MainMenu\0"));
-    let appitem = menu::MenuItem::new(#str_ptr("App\0"), { 0 as *u8 }, #str_ptr("\0"));
-    let appmenu = menu::Menu::new(#str_ptr("App\0"));
-    let quititem = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
+    let mainmenu = menu::Menu::new("MainMenu");
+    let appitem = menu::MenuItem::new("App", { 0 as *u8 }, "");
+    let appmenu = menu::Menu::new("App");
+    let quititem = menu::MenuItem::new("Quit", #str_ptr("terminate:\0"), "q");
     appmenu.add_item(quititem.raw());
     appitem.set_submenu(appmenu.raw());
     mainmenu.add_item(appitem.raw());
     app.set_main_menu(mainmenu.raw());
 
-    win.make_key_and_order_front({ 0 as *u8 });
-    app.activate(1 as i8);
+    win.make_key_and_order_front();
+    app.activate();
     app.run();
 
     pool.drain();

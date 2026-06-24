@@ -1,4 +1,5 @@
 import "./runtime" as rt;
+import "./convert" as bridge;
 
 // Synthesize an `NSWindowDelegate` from two C+ method bodies and return a
 // `+1`-owned handle (the documented delegate pattern, plan.appkit.md §3 —
@@ -39,13 +40,13 @@ fn create_window_delegate(
 }
 
 struct Window {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl Window {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
-    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Window {
+    fn new(frame: rt::Rect, style_mask: u64, backing: u64, defers: bool) -> Window {
         let nswindow_cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
         let window_alloc: *u8 = rt::msg_id(nswindow_cls, rt::sel(#str_ptr("alloc\0")));
         let window: *u8 = rt::msg_init_window(
@@ -54,80 +55,71 @@ impl Window {
             frame,
             style_mask,
             backing,
-            defer_flag,
+            defers as i8,
         );
-        return Window { obj: window };
+        return Window { _obj: window };
     }
 
-    fn set_title(this, title: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
-    }
-
-    // v0.0.7 Slice 5.1: pre-built-NSString variant. Use this from
-    // callers that already have an `NSString*` (e.g. from
-    // `bridge::cplus_string_to_nsstring` on dynamic content); the
-    // `set_title` variant above wraps a C-string literal via
-    // `rt::ns_string` and is the right choice for `"Hi\0"`-shape args.
-    fn set_title_ns(this, title_ns: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), title_ns);
+    fn set_title(this, title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::cplus_str_to_nsstring(title));
     }
 
     fn center(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("center\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("center\0")));
     }
 
     fn content_view(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("contentView\0")));
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
     }
 
     fn set_content_view(this, view: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContentView:\0")), view);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), view);
     }
 
-    fn make_key_and_order_front(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
+    fn make_key_and_order_front(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), sender);
     }
 
-    fn order_front(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("orderFront:\0")), sender);
+    fn order_front(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFront:\0")), sender);
     }
 
     fn close(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("close\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
 
     fn set_background_color(this, color: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color);
     }
 
     fn set_delegate(this, delegate: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
     fn set_toolbar(this, toolbar: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar);
     }
 
     // GAP 4 (v0.0.19): control how the toolbar integrates with the titlebar
     // (`setToolbarStyle:`, macOS 11+). `style` is an `NSWindowToolbarStyle`:
     // 0 automatic, 1 expanded, 2 preference, 3 unified, 4 unifiedCompact.
     fn set_toolbar_style(this, style: i64) {
-        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setToolbarStyle:\0")), style);
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setToolbarStyle:\0")), style);
     }
 
     fn set_min_size(this, size: rt::Size) {
-        rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinSize:\0")), size);
     }
 
     fn set_max_size(this, size: rt::Size) {
-        rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
     }
 
-    fn set_titlebar_appears_transparent(this, flag: i8) {
-        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setTitlebarAppearsTransparent:\0")), flag);
+    fn set_titlebar_appears_transparent(this, transparent: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setTitlebarAppearsTransparent:\0")), transparent as i8);
     }
 
     fn set_title_visibility(this, visibility: i64) {
-        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTitleVisibility:\0")), visibility);
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitleVisibility:\0")), visibility);
     }
 }

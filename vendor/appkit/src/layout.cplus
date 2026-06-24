@@ -125,8 +125,8 @@ fn deactivate(constraint: *u8) -> *u8 {
 }
 
 // Whether a constraint is currently installed (`-[NSLayoutConstraint isActive]`).
-fn is_active(constraint: *u8) -> i8 {
-    return rt::msg_i64(constraint, rt::sel(#str_ptr("isActive\0"))) as i8;
+fn is_active(constraint: *u8) -> bool {
+    return rt::msg_i64(constraint, rt::sel(#str_ptr("isActive\0"))) != (0 as i64);
 }
 
 // ---- Priority (NSLayoutPriority, a `float`) ----
@@ -150,7 +150,11 @@ fn priority(constraint: *u8) -> f32 {
 // Create an `NSLayoutGuide`, add it to `view` (which owns it), and return it.
 // Use the same anchor getters (`leading`/`top`/`width`/…) on the returned guide.
 fn add_guide(view: *u8) -> *u8 {
-    let guide: *u8 = rt::alloc_init(#str_ptr("NSLayoutGuide\0"));
-    rt::msg_void_id(view, rt::sel(#str_ptr("addLayoutGuide:\0")), guide);
+    let guide: *u8 = rt::alloc_init(#str_ptr("NSLayoutGuide\0")); // +1
+    rt::msg_void_id(view, rt::sel(#str_ptr("addLayoutGuide:\0")), guide); // view retains
+    // SAFETY: alloc/init handed us +1; `addLayoutGuide:` made the view retain it.
+    // Release our +1 (the view owns it now) — otherwise the guide leaks. The
+    // returned pointer stays a valid borrow while the view holds the guide.
+    rt::release(guide);
     return guide;
 }

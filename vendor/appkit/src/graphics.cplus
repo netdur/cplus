@@ -1,94 +1,112 @@
 import "./runtime" as rt;
+import "./convert" as bridge;
+import "stdlib/option" as option;
 
 struct ImageView {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl ImageView {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new(frame: rt::Rect) -> ImageView {
         let cls: *u8 = rt::get_class(#str_ptr("NSImageView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let iv: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
-        return ImageView { obj: iv };
+        return ImageView { _obj: iv };
     }
 
     fn set_image(this, image: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
     // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
     // see `view::View::into_raw` for the full explanation + the use-after-free
     // trap it prevents.
     fn into_raw(ref this) -> *u8 {
-        let p: *u8 = this.obj;
-        this.obj = { 0 as *u8 };
+        let p: *u8 = this._obj;
+        this._obj = { 0 as *u8 };
         return p;
     }
 
     fn from_raw(obj: *u8) -> ImageView {
-        return ImageView { obj: obj };
+        return ImageView { _obj: obj };
     }
 
     fn set_scaling(this, scaling: i64) {
-        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
     }
 
     // GAP 4 (v0.0.19): tint a template/SF-Symbol image — `setContentTintColor:`
     // (macOS 10.14+). Takes an `NSColor*` (e.g. `Color::label_color()`).
     fn set_content_tint_color(this, color: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContentTintColor:\0")), color);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentTintColor:\0")), color);
     }
 
     // GAP 4 (v0.0.19): apply an `NSImageSymbolConfiguration` (build one with
     // `Image::symbol_config`) to the displayed SF Symbol — `setSymbolConfiguration:`
     // (macOS 11+).
     fn set_symbol_configuration(this, config: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), config);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), config);
     }
 }
 
 struct Image {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl Image {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
-    fn by_name(name: *u8) -> *u8 {
-        let ns_name = rt::ns_string(name);
+    // A named image (`+[NSImage imageNamed:]`), or `None` if no image is
+    // registered under that name.
+    fn by_name(name: str) -> option::Option[*u8] {
         let cls = rt::get_class(#str_ptr("NSImage\0"));
-        return rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), ns_name);
+        let img: *u8 = rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), bridge::cplus_str_to_nsstring(name));
+        if img == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(img);
     }
 
-    fn init_with_file(path: *u8) -> *u8 {
-        let ns_path = rt::ns_string(path);
+    // Load an image from a file path, or `None` if it can't be read.
+    fn from_file(path: str) -> option::Option[*u8] {
         let cls = rt::get_class(#str_ptr("NSImage\0"));
         let img_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return rt::msg_id_id(img_alloc, rt::sel(#str_ptr("initWithContentsOfFile:\0")), ns_path);
+        let img = rt::msg_id_id(img_alloc, rt::sel(#str_ptr("initWithContentsOfFile:\0")), bridge::cplus_str_to_nsstring(path)); // +1
+        if img == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        // SAFETY: return +0 (autoreleased) to match the sibling factories
+        // (`by_name`/`system_symbol`), which `Image` is opaque/no-drop for. Without
+        // this the alloc/init +1 has no owner and the NSImage leaks; a consumer
+        // passing it to `setImage:` (which retains) would never release the +1.
+        return option::some(rt::autorelease(img));
     }
 
     // GAP 4 (v0.0.19): create an SF Symbol image by system name (e.g.
     // "gearshape", "star.fill") — `+[NSImage imageWithSystemSymbolName:
-    // accessibilityDescription:]` (macOS 11+). Pass `0 as *u8` for no
-    // accessibility description. Returns the (autoreleased) symbol image, or
-    // `0 as *u8` if the name isn't a known system symbol. Feed the result to
+    // accessibilityDescription:]` (macOS 11+). `accessibility` defaults to ""
+    // (no description). Returns the (autoreleased) symbol image, or `None` if
+    // the name isn't a known system symbol. Feed the result to
     // `with_symbol_configuration` (GAP 6) to size/weight it, or set it on an
     // `ImageView`.
-    fn system_symbol(name: *u8, accessibility_description: *u8) -> *u8 {
+    fn system_symbol(name: str, accessibility: str = "") -> option::Option[*u8] {
         let cls = rt::get_class(#str_ptr("NSImage\0"));
-        let ns_name = rt::ns_string(name);
-        return rt::msg_id_2id(
+        let img: *u8 = rt::msg_id_2id(
             cls,
             rt::sel(#str_ptr("imageWithSystemSymbolName:accessibilityDescription:\0")),
-            ns_name,
-            accessibility_description,
+            bridge::cplus_str_to_nsstring(name),
+            bridge::cplus_str_to_nsstring(accessibility),
         );
+        if img == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(img);
     }
 
     // GAP 6 (v0.0.19): build an `NSImageSymbolConfiguration` from a point size
@@ -117,12 +135,16 @@ impl Image {
     // `#msg_send` / `rt::sel` can't catch a wrong selector string at compile
     // time, so always route symbol-config through this wrapper rather than
     // hand-rolling the selector in app code (this was Iris's GAP 6 crash).
-    fn with_symbol_configuration(image: *u8, config: *u8) -> *u8 {
-        return rt::msg_id_id(
+    fn with_symbol_configuration(image: *u8, config: *u8) -> option::Option[*u8] {
+        let configured: *u8 = rt::msg_id_id(
             image,
             rt::sel(#str_ptr("imageWithSymbolConfiguration:\0")),
             config,
         );
+        if configured == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(configured);
     }
 }
 
@@ -141,11 +163,11 @@ impl Image {
 // an NSColor directly and it crashes. `set_border_color` / `set_background_color`
 // take an `NSColor*` and bridge via `Color::cg_color` for you.
 struct RoundedView {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl RoundedView {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn new(frame: rt::Rect) -> RoundedView {
         let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
@@ -154,16 +176,16 @@ impl RoundedView {
         // Layer-backing creates the backing CALayer that the rounded chrome
         // lives on. Without this, `layer` is nil and the setters no-op.
         rt::msg_void_i8(v, rt::sel(#str_ptr("setWantsLayer:\0")), 1 as i8);
-        return RoundedView { obj: v };
+        return RoundedView { _obj: v };
     }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     // The backing CALayer (valid once `wantsLayer` is set, which `new` does).
     fn layer(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("layer\0")));
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0")));
     }
 
     fn set_corner_radius(this, radius: f64) {
@@ -175,29 +197,29 @@ impl RoundedView {
     }
 
     // Takes an `NSColor*`; bridged to CGColorRef for the layer.
-    fn set_border_color(this, ns_color: *u8) {
-        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBorderColor:\0")), Color::cg_color(ns_color));
+    fn set_border_color(this, color: *u8) {
+        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBorderColor:\0")), Color::cg_color(color));
     }
 
     // Takes an `NSColor*`; bridged to CGColorRef for the layer.
-    fn set_background_color(this, ns_color: *u8) {
-        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBackgroundColor:\0")), Color::cg_color(ns_color));
+    fn set_background_color(this, color: *u8) {
+        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBackgroundColor:\0")), Color::cg_color(color));
     }
 
     fn add_subview(this, view: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addSubview:\0")), view);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSubview:\0")), view);
     }
 
     // GAP 2 (v0.0.19): see `view::View::into_raw` for the ownership-transfer
     // rationale + the use-after-free trap these prevent.
     fn into_raw(ref this) -> *u8 {
-        let p: *u8 = this.obj;
-        this.obj = { 0 as *u8 };
+        let p: *u8 = this._obj;
+        this._obj = { 0 as *u8 };
         return p;
     }
 
     fn from_raw(obj: *u8) -> RoundedView {
-        return RoundedView { obj: obj };
+        return RoundedView { _obj: obj };
     }
 }
 
@@ -206,92 +228,92 @@ impl RoundedView {
 // `stroke`/`fill` it inside a view's draw method. Owned (+1 via alloc/init, like
 // Alert): `drop` releases it. Building a path needs no graphics context.
 struct BezierPath {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl BezierPath {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn new() -> BezierPath {
-        return BezierPath { obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
+        return BezierPath { _obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
     }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn move_to(this, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(this.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
     }
 
     fn line_to(this, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(this.obj, rt::sel(#str_ptr("lineToPoint:\0")), p);
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("lineToPoint:\0")), p);
     }
 
     fn close(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("closePath\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("closePath\0")));
     }
 
     fn append_rect(this, rect: rt::Rect) {
-        rt::msg_void_rect(this.obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
     }
 
-    fn append_oval_in_rect(this, rect: rt::Rect) {
-        rt::msg_void_rect(this.obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
+    fn append_oval(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
 
     fn set_line_width(this, width: f64) {
-        rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
+        rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
     }
 
     // Number of path elements (move/line/curve/close). A data property — no
     // drawing context required.
     fn element_count(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("elementCount\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("elementCount\0")));
     }
 
     // Stroke / fill the path into the current graphics context (call from a
     // view's draw method).
     fn stroke(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("stroke\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("stroke\0")));
     }
 
     fn fill(this) {
-        rt::msg_void(this.obj, rt::sel(#str_ptr("fill\0")));
+        rt::msg_void(this._obj, rt::sel(#str_ptr("fill\0")));
     }
 }
 
 struct Font {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl Font {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
-    fn system_font_of_size(size: f64) -> *u8 {
+    fn system(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
     }
 
-    fn bold_system_font_of_size(size: f64) -> *u8 {
+    fn bold_system(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("boldSystemFontOfSize:\0")), size);
     }
 
-    fn label_font_of_size(size: f64) -> *u8 {
+    fn label(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("labelFontOfSize:\0")), size);
     }
 }
 
 struct Color {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 impl Color {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn rgba(r: f64, g: f64, b: f64, a: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
@@ -303,8 +325,8 @@ impl Color {
     // pass an `NSColor*` directly and you get a type-mismatch crash. Use this to
     // convert (e.g. for `RoundedView`). The returned `CGColorRef` is valid while
     // the source NSColor is alive.
-    fn cg_color(ns_color: *u8) -> *u8 {
-        return rt::msg_id(ns_color, rt::sel(#str_ptr("CGColor\0")));
+    fn cg_color(color: *u8) -> *u8 {
+        return rt::msg_id(color, rt::sel(#str_ptr("CGColor\0")));
     }
 
     fn red() -> *u8 {

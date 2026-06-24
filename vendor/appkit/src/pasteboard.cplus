@@ -10,9 +10,13 @@
 // `clear` returns a change count, and every `set_*` must follow a `clear`.
 
 import "./runtime" as rt;
+import "./convert" as bridge;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
 
 struct Pasteboard {
-    opaque obj: *u8,
+    opaque _obj: *u8,
 }
 
 // NSPasteboardTypeString, as an NSString. Built per call (autoreleased, +0);
@@ -22,57 +26,42 @@ fn type_string() -> *u8 {
 }
 
 impl Pasteboard {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     // The shared system clipboard.
     fn general() -> Pasteboard {
         let cls: *u8 = rt::get_class(#str_ptr("NSPasteboard\0"));
         let pb: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0")));
-        return Pasteboard { obj: pb };
+        return Pasteboard { _obj: pb };
     }
 
     // Remove the current contents and declare ownership; returns the new
     // change count. Call before any `set_*`.
     fn clear(this) -> i64 {
-        return rt::msg_i64(this.obj, rt::sel(#str_ptr("clearContents\0")));
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("clearContents\0")));
     }
 
-    // Write a UTF-8 C string as plain text. Returns 1 on success, 0 on
-    // failure. The caller is responsible for a preceding `clear`.
-    fn set_string(this, text: *u8) -> i8 {
-        return rt::msg_i8_id_id(
-            this.obj,
+    // Write plain text to the clipboard. Returns `Status::Ok` on success, or
+    // `Status::InvalidInput` if AppKit rejected the write (the most common cause
+    // is not having declared ownership via a preceding `clear`). The caller is
+    // responsible for that `clear`.
+    fn set_string(this, text: str) -> status::Status {
+        let ok: i8 = rt::msg_i8_id_id(
+            this._obj,
             rt::sel(#str_ptr("setString:forType:\0")),
-            rt::ns_string(text),
+            bridge::cplus_str_to_nsstring(text),
             type_string(),
         );
-    }
-
-    // Write a pre-built `NSString*` (e.g. from `convert::cplus_string_to_nsstring`).
-    fn set_string_ns(this, text_ns: *u8) -> i8 {
-        return rt::msg_i8_id_id(
-            this.obj,
-            rt::sel(#str_ptr("setString:forType:\0")),
-            text_ns,
-            type_string(),
-        );
-    }
-
-    // Read the plain-text contents as an `NSString*`, or null if the
-    // clipboard holds no string of that type. Pair with
-    // `convert::nsstring_to_cplus_string` to get an owned C+ `Text`.
-    fn string_ns(this) -> *u8 {
-        return rt::msg_id_id(this.obj, rt::sel(#str_ptr("stringForType:\0")), type_string());
-    }
-
-    // Convenience: read the contents as a NUL-terminated UTF-8 C string
-    // (`-[NSString UTF8String]`), or null if absent. The returned buffer is
-    // owned by the autorelease pool — copy it before the pool drains.
-    fn string_utf8(this) -> *u8 {
-        let ns: *u8 = this.string_ns();
-        if ns == { 0 as *u8 } {
-            return { 0 as *u8 };
+        if ok != (0 as i8) {
+            return status::Status::Ok;
         }
-        return rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
+        return status::Status::InvalidInput;
+    }
+
+    // Read the plain-text contents as an owned `Text`, or `None` if the
+    // clipboard holds no string of that type.
+    fn string(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("stringForType:\0")), type_string());
+        return bridge::nsstring_to_text_option(ns);
     }
 }

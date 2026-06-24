@@ -57,19 +57,19 @@ fn main() -> i32 {
     app.set_delegate(delegate);
 
     let frame = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 520.0, height: 320.0 } };
-    let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(#str_ptr("List + Detail\0"));
+    let win = window::Window::new(frame, 15 as u64, 2 as u64, false);
+    win.set_title("List + Detail");
     win.center();
     let content: *u8 = win.content_view();
 
     let list_frame = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 200.0, height: 320.0 } };
     let scroll = view::ScrollView::new(list_frame);
-    scroll.set_has_vertical_scroller(1 as i8);
+    scroll.set_has_vertical_scroller(true);
     let table = data::TableView::new(list_frame);
-    let col = data::TableColumn::new(#str_ptr("name\0"));
-    col.set_title(#str_ptr("Fruit\0"));
+    let col = data::TableColumn::new("name");
+    col.set_title("Fruit");
     col.set_width(180.0);
-    table.add_table_column(col.raw());
+    table.add_column(col.raw());
     let ds: *u8 = data::create_table_data_source(ds_rows, ds_value);
     table.set_data_source(ds);
     { THE_TABLE = table.raw(); };
@@ -79,30 +79,30 @@ fn main() -> i32 {
     table.reload_data();
 
     let detail_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 140.0 }, size: rt::Size { width: 280.0, height: 40.0 } };
-    let detail = controls::TextField::new_label(detail_frame);
-    detail.set_string_value(#str_ptr("Select an item\0"));
+    let detail = controls::Label::new(detail_frame);
+    detail.set_text("Select an item");
     { DETAIL_LABEL = detail.raw(); };
 
     let btn_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 40.0 }, size: rt::Size { width: 100.0, height: 32.0 } };
     let quit = controls::Button::new(btn_frame);
-    quit.set_title(#str_ptr("Quit\0"));
+    quit.set_title("Quit");
     quit.set_on_click(on_quit);
 
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), scroll.raw());
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), detail.raw());
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit.raw());
 
-    let mainmenu = menu::Menu::new(#str_ptr("MainMenu\0"));
-    let appitem = menu::MenuItem::new(#str_ptr("App\0"), { 0 as *u8 }, #str_ptr("\0"));
-    let appmenu = menu::Menu::new(#str_ptr("App\0"));
-    let quititem = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
+    let mainmenu = menu::Menu::new("MainMenu");
+    let appitem = menu::MenuItem::new("App", { 0 as *u8 }, "");
+    let appmenu = menu::Menu::new("App");
+    let quititem = menu::MenuItem::new("Quit", #str_ptr("terminate:\0"), "q");
     appmenu.add_item(quititem.raw());
     appitem.set_submenu(appmenu.raw());
     mainmenu.add_item(appitem.raw());
     app.set_main_menu(mainmenu.raw());
 
-    win.make_key_and_order_front({ 0 as *u8 });
-    app.activate(1 as i8);
+    win.make_key_and_order_front();
+    app.activate();
     { puts(#str_ptr("READY\0")); };
     { fflush(0 as *u8); };
     app.run();

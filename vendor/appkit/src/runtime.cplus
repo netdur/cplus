@@ -565,7 +565,7 @@ fn array_add_string(arr: *u8, s: *u8) {
 // the object (store it in a long-lived value); a top-level object that nothing
 // else retains must not be dropped while still on screen.
 //
-// `retain` returns its argument so call sites can write `this.obj =
+// `retain` returns its argument so call sites can write `this._obj =
 // rt::retain(x)` in one line.
 
 fn retain(obj: *u8) -> *u8 {
@@ -646,4 +646,44 @@ fn get_action_target() -> *u8 {
     let app: *u8 = msg_id(get_class(#str_ptr("NSApplication\0")), sel(#str_ptr("sharedApplication\0")));
     set_associated_object(app, #str_ptr("action_target_inst\0"), inst, 1 as usize);
     return inst;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+// Binding-logic coverage only (the +1/drop contract, class/sel resolution, the
+// value-type layer) — NOT Apple's framework behaviour, which is out of scope.
+
+#[test]
+fn runtime_retain_release_balanced() {
+    // The contract every owned wrapper's `drop` relies on: retain is +1 and
+    // release is -1, synchronously. Uses NSObject (clean, autorelease-free count).
+    let obj: *u8 = alloc_init(#str_ptr("NSObject\0")); // +1
+    let base: i64 = retain_count(obj);
+    let _bumped: *u8 = retain(obj);
+    assert retain_count(obj) == base + (1 as i64);
+    release(obj);
+    assert retain_count(obj) == base;
+    release(obj); // balance the alloc/init +1
+    return;
+}
+
+#[test]
+fn runtime_class_and_sel_lookup() {
+    assert get_class(#str_ptr("NSObject\0")) != { 0 as *u8 };
+    assert sel(#str_ptr("alloc\0")) != { 0 as *u8 };
+    // an unknown class name resolves to nil rather than crashing
+    assert get_class(#str_ptr("NSDefinitelyNotARealClass_zzq\0")) == { 0 as *u8 };
+    return;
+}
+
+#[test]
+fn runtime_rect_value_type_fields() {
+    let r: Rect = Rect {
+        origin: Point { x: 1.0, y: 2.0 },
+        size: Size { width: 3.0, height: 4.0 },
+    };
+    assert r.origin.x == 1.0;
+    assert r.origin.y == 2.0;
+    assert r.size.width == 3.0;
+    assert r.size.height == 4.0;
+    return;
 }

@@ -1,133 +1,139 @@
 import "./runtime" as rt;
+import "stdlib/option" as option;
 
 struct ViewController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl ViewController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> ViewController {
-        return ViewController { obj: rt::alloc_init(#str_ptr("NSViewController\0")) };
+        return ViewController { _obj: rt::alloc_init(#str_ptr("NSViewController\0")) };
     }
 
     fn set_view(this, view: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setView:\0")), view);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
     }
 
     fn view(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("view\0")));
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
     }
 }
 
 struct WindowController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl WindowController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> WindowController {
-        return WindowController { obj: rt::alloc_init(#str_ptr("NSWindowController\0")) };
+        return WindowController { _obj: rt::alloc_init(#str_ptr("NSWindowController\0")) };
     }
 
     fn set_window(this, window: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setWindow:\0")), window);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindow:\0")), window);
     }
 
-    fn window(this) -> *u8 {
-        return rt::msg_id(this.obj, rt::sel(#str_ptr("window\0")));
+    // The managed window (an `NSWindow*`), or `None` if none has been set.
+    fn window(this) -> option::Option[*u8] {
+        let w: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("window\0")));
+        if w == { 0 as *u8 } {
+            return option::Option[*u8]::None;
+        }
+        return option::some(w);
     }
 
-    fn show_window(this, sender: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("showWindow:\0")), sender);
+    fn show_window(this, sender: *u8 = 0 as *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("showWindow:\0")), sender);
     }
 }
 
 struct TabViewController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl TabViewController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> TabViewController {
-        return TabViewController { obj: rt::alloc_init(#str_ptr("NSTabViewController\0")) };
+        return TabViewController { _obj: rt::alloc_init(#str_ptr("NSTabViewController\0")) };
     }
 
-    fn add_tab_view_item(this, item: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addTabViewItem:\0")), item);
+    fn add_item(this, item: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), item);
     }
 }
 
 struct SplitViewController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl SplitViewController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> SplitViewController {
-        return SplitViewController { obj: rt::alloc_init(#str_ptr("NSSplitViewController\0")) };
+        return SplitViewController { _obj: rt::alloc_init(#str_ptr("NSSplitViewController\0")) };
     }
 
-    fn add_split_view_item(this, item: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addSplitViewItem:\0")), item);
+    fn add_item(this, item: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSplitViewItem:\0")), item);
     }
 }
 
 struct ArrayController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl ArrayController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> ArrayController {
-        return ArrayController { obj: rt::alloc_init(#str_ptr("NSArrayController\0")) };
+        return ArrayController { _obj: rt::alloc_init(#str_ptr("NSArrayController\0")) };
     }
 
     fn set_content(this, content: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContent:\0")), content);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContent:\0")), content);
     }
 }
 
 struct ObjectController {
-    obj: *u8,
+    _obj: *u8,
 }
 
 impl ObjectController {
-    fn raw(this) -> *u8 { return this.obj; }
+    fn raw(this) -> *u8 { return this._obj; }
 
     fn drop(ref this) {
-        rt::release(this.obj);
+        rt::release(this._obj);
     }
 
     fn new() -> ObjectController {
-        return ObjectController { obj: rt::alloc_init(#str_ptr("NSObjectController\0")) };
+        return ObjectController { _obj: rt::alloc_init(#str_ptr("NSObjectController\0")) };
     }
 
     fn set_content(this, content: *u8) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContent:\0")), content);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContent:\0")), content);
     }
 }

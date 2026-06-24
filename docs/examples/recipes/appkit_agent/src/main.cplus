@@ -67,26 +67,26 @@ fn main() -> i32 {
     let _app = application::Application::shared();
 
     // ---- An ordinary AppKit window ----
-    let win: window::Window = window::Window::new(rect(0.0, 0.0, 480.0, 240.0), 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(#str_ptr("Agent-aware demo\0"));
+    let win: window::Window = window::Window::new(rect(0.0, 0.0, 480.0, 240.0), 15 as u64, 2 as u64, false);
+    win.set_title("Agent-aware demo");
     let content: *u8 = win.content_view();
 
     // A Save button — tagged + wired to a real handler.
     let save: controls::Button = controls::Button::new(rect(360.0, 20.0, 100.0, 32.0));
-    save.set_title(#str_ptr("Save\0"));
+    save.set_title("Save");
     save.set_on_click(on_save);
     ui::set_agent_id(save.raw(), "save-btn");
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), save.raw());
 
     // A name field — tagged, so the agent may read + write its text.
-    let name: controls::TextField = controls::TextField::new_input_field(rect(20.0, 180.0, 300.0, 24.0));
+    let name: controls::TextField = controls::TextField::new(rect(20.0, 180.0, 300.0, 24.0));
     ui::set_agent_id(name.raw(), "name-field");
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), name.raw());
 
     // A decorative label — deliberately UNtagged: it shows up in the tree but is
     // not actionable (the agent can see it, not act on it).
-    let caption: controls::TextField = controls::TextField::new_label(rect(20.0, 140.0, 300.0, 20.0));
-    caption.set_string_value(#str_ptr("Your name:\0"));
+    let caption: controls::Label = controls::Label::new(rect(20.0, 140.0, 300.0, 20.0));
+    caption.set_text("Your name:");
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.raw());
 
     // ---- Open the agent surface ----

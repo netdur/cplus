@@ -14,6 +14,7 @@ import "./toolbar" as toolbar;
 import "./controllers" as controllers;
 import "./pasteboard" as pasteboard;
 import "./notifications" as notifications;
+import "./convert" as convert;
 
 type Point = runtime::Point;
 type Size = runtime::Size;
@@ -32,6 +33,7 @@ type Box = view::Box;
 type Scroller = view::Scroller;
 type BackgroundExtensionView = view::BackgroundExtensionView;
 
+type Label = controls::Label;
 type TextField = controls::TextField;
 type Button = controls::Button;
 type Slider = controls::Slider;

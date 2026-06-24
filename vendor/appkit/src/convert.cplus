@@ -18,6 +18,7 @@
 import "./runtime" as rt;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/option" as option;
 
 // ===========================================================================
 // objc_msgSend shapes used only by this module. The runtime.cplus set
@@ -89,6 +90,17 @@ fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
     return view.to_text();
 }
 
+// Nilable NSString → `Option[Text]`. A `nil` NSString (the common AppKit
+// "no value" signal — empty selection, unset URL string, empty pasteboard)
+// maps to `None`; a real NSString to an owned `Some(Text)`. This is the
+// path public getters reach for so absence is expressed in the type.
+fn nsstring_to_text_option(ns: *u8) -> option::Option[text::Text] {
+    if ns == { 0 as *u8 } {
+        return option::Option[text::Text]::None;
+    }
+    return option::some(nsstring_to_cplus_string(ns));
+}
+
 // `str` view into the NSString's autoreleased UTF8 buffer. Unsafe —
 // the view's lifetime is the autorelease pool's, NOT the caller's
 // scope. Use the owned `nsstring_to_cplus_string` when in doubt.
@@ -124,7 +136,7 @@ fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: i32 = { objc_msg_i32(num, int_sel) };
-        out.push(v);
+        out.append(v);
         i = i +% (1 as usize);
     }
     return out;
@@ -141,7 +153,7 @@ fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: i64 = { rt::msg_i64(num, v_sel) };
-        out.push(v);
+        out.append(v);
         i = i +% (1 as usize);
     }
     return out;
@@ -158,7 +170,7 @@ fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
         // ABI-equivalent because objc_msgSend uses the FP register
         // class either way and float→double is a lossless widening.
         let d: f64 = { rt::msg_f64(num, v_sel) };
-        out.push(d as f32);
+        out.append(d as f32);
         i = i +% (1 as usize);
     }
     return out;
@@ -172,7 +184,7 @@ fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: f64 = { rt::msg_f64(num, v_sel) };
-        out.push(v);
+        out.append(v);
         i = i +% (1 as usize);
     }
     return out;
@@ -206,7 +218,7 @@ fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
     let selector: *u8 = rt::sel(#str_ptr("dataWithBytes:length:\0"));
     let slice: u8[] = v.as_slice();
     let p: *u8 = { #slice_ptr(slice) };
-    let n: usize = v.len();
+    let n: usize = v.count();
     return { objc_msg_id_ptr_len(cls, selector, p, n) };
 }
 
@@ -219,6 +231,46 @@ fn vec_u8_to_nsdata_view(v: vec::Vec[u8]) -> *u8 {
     let selector: *u8 = rt::sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
     let slice: u8[] = v.as_slice();
     let p: *u8 = { #slice_ptr(slice) };
-    let n: usize = v.len();
+    let n: usize = v.count();
     return { objc_msg_id_ptr_len_free(cls, selector, p, n, 0 as i8) };
+}
+
+#[test]
+fn convert_text_nsstring_roundtrip() {
+    let original: text::Text = text::from_str("hello cafe snowman");
+    let ns: *u8 = cplus_string_to_nsstring(original);
+    let back: text::Text = nsstring_to_cplus_string(ns);
+    assert back.equals("hello cafe snowman");
+}
+
+#[test]
+fn convert_nsstring_to_text_option_some() {
+    let ns: *u8 = cplus_str_to_nsstring("present");
+    match nsstring_to_text_option(ns) {
+        option::Option[text::Text]::Some(t) => { assert t.equals("present"); }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn convert_nsstring_to_text_option_none() {
+    let nothing: *u8 = { 0 as *u8 };
+    match nsstring_to_text_option(nothing) {
+        option::Option[text::Text]::Some(t) => { assert false; }
+        option::Option[text::Text]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn convert_nsdata_vec_u8_length_roundtrip() {
+    var v: vec::Vec[u8] = vec::Vec[u8]::with_capacity(3 as usize);
+    v.append(10 as u8);
+    v.append(20 as u8);
+    v.append(30 as u8);
+    let data: *u8 = vec_u8_to_nsdata(v);              // copies the bytes into NSData
+    let back: vec::Vec[u8] = nsdata_to_vec_u8(data);  // owned copy back out
+    assert back.count() == (3 as usize);
+    return;
 }
