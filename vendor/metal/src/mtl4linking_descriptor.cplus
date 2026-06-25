@@ -14,6 +14,8 @@ struct MTL4BinaryFunction {
 impl MTL4BinaryFunction {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunction { return MTL4BinaryFunction { _obj: ptr }; }
+
 }
 
 // `MTLDynamicLibrary` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct DynamicLibrary {
 impl DynamicLibrary {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DynamicLibrary { return DynamicLibrary { _obj: ptr }; }
+
 }
 
 // `MTL4StaticLinkingDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct MTL4StaticLinkingDescriptor {
 
 impl MTL4StaticLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4StaticLinkingDescriptor { return MTL4StaticLinkingDescriptor { _obj: ptr }; }
 
     // SKIPPED `functionDescriptors`: return `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
     // SKIPPED `setFunctionDescriptors:`: param `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
@@ -49,6 +55,8 @@ struct MTL4PipelineStageDynamicLinkingDescriptor {
 
 impl MTL4PipelineStageDynamicLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4PipelineStageDynamicLinkingDescriptor { return MTL4PipelineStageDynamicLinkingDescriptor { _obj: ptr }; }
 
     fn max_call_stack_depth(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxCallStackDepth\0")));
@@ -68,6 +76,8 @@ struct MTL4RenderPipelineDynamicLinkingDescriptor {
 
 impl MTL4RenderPipelineDynamicLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineDynamicLinkingDescriptor { return MTL4RenderPipelineDynamicLinkingDescriptor { _obj: ptr }; }
 
     fn vertex_linking_descriptor(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("vertexLinkingDescriptor\0")));

@@ -44,6 +44,8 @@ struct LogStateDescriptor {
 impl LogStateDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LogStateDescriptor { return LogStateDescriptor { _obj: ptr }; }
+
     fn level(this) -> LogLevel {
         return log_level_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("level\0"))));
     }

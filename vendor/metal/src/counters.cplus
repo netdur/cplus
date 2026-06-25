@@ -39,6 +39,8 @@ struct CounterSampleBufferDescriptor {
 impl CounterSampleBufferDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CounterSampleBufferDescriptor { return CounterSampleBufferDescriptor { _obj: ptr }; }
+
     // SKIPPED `counterSet`: return `id<MTLCounterSet> _Nullable` — generic collection
     // SKIPPED `setCounterSet:`: param `id<MTLCounterSet> _Nullable` — generic collection
     fn label(this) -> text::Text {

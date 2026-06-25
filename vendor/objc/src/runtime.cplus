@@ -46,6 +46,31 @@ struct Range {
     length: u64,
 }
 
+// Core Graphics geometry types. On arm64 each is an HFA (homogeneous float
+// aggregate): Rect passes in v0-v3, Point and Size in v0-v1. Passing these
+// structs by value is ABI-compatible with NSRect/NSPoint/NSSize — no pointer
+// indirection, no padding. x86_64 macOS is out of support (macOS 26 Tahoe
+// is arm64-only), so no sret/memory-class handling is needed.
+#[repr(C)]
+struct Rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[repr(C)]
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+struct Size {
+    w: f64,
+    h: f64,
+}
+
 // objc_msgSend shapes, one per (return, args) ABI signature in use.
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
@@ -76,6 +101,9 @@ extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64(recv: *u8, sel: *u8, a: i64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_i64(recv: *u8, sel: *u8, a: i64) -> i8;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64) -> *u8;
@@ -194,6 +222,10 @@ fn msg_void_i8(recv: *u8, selector: *u8, a: i8) {
     { objc_msg_void_i8(recv, selector, a); };
 }
 
+fn msg_i8_i64(recv: *u8, selector: *u8, a: i64) -> i8 {
+    return { objc_msg_i8_i64(recv, selector, a) };
+}
+
 fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return { objc_msg_i64(recv, selector) };
 }
@@ -279,4 +311,84 @@ fn alloc_init(class_name: *u8) -> *u8 {
     let cls: *u8 = get_class(class_name);
     let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
     return msg_id(alloced, sel(#str_ptr("init\0")));
+}
+
+// Geometry msgSend shapes. Each `Rect`/`Point`/`Size` argument passes as an
+// HFA in the float registers — indistinguishable at the call-site from that
+// many separate f64 arguments under the arm64 ABI.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect(recv: *u8, sel: *u8) -> Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect(recv: *u8, sel: *u8, a: Rect);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect(recv: *u8, sel: *u8, a: Rect) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_rect(recv: *u8, sel: *u8, a: Rect) -> Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_rect_id(recv: *u8, sel: *u8, a: Rect, b: *u8) -> Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_rect_u64(recv: *u8, sel: *u8, a: Rect, b: u64) -> Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_i8(recv: *u8, sel: *u8, a: Rect, b: i8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_i8_i8(recv: *u8, sel: *u8, a: Rect, b: i8, c: i8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_u64_i64_i8(recv: *u8, sel: *u8, a: Rect, b: u64, c: i64, d: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f64_rect(recv: *u8, sel: *u8, a: Rect) -> f64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_size(recv: *u8, sel: *u8) -> Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_size(recv: *u8, sel: *u8, a: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_point(recv: *u8, sel: *u8) -> Point;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_point(recv: *u8, sel: *u8, a: Point);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_point_point(recv: *u8, sel: *u8, a: Point) -> Point;
+
+fn msg_rect(recv: *u8, selector: *u8) -> Rect {
+    return { objc_msg_rect(recv, selector) };
+}
+fn msg_void_rect(recv: *u8, selector: *u8, a: Rect) {
+    { objc_msg_void_rect(recv, selector, a); };
+}
+fn msg_id_rect(recv: *u8, selector: *u8, a: Rect) -> *u8 {
+    return { objc_msg_id_rect(recv, selector, a) };
+}
+fn msg_rect_rect(recv: *u8, selector: *u8, a: Rect) -> Rect {
+    return { objc_msg_rect_rect(recv, selector, a) };
+}
+fn msg_rect_rect_id(recv: *u8, selector: *u8, a: Rect, b: *u8) -> Rect {
+    return { objc_msg_rect_rect_id(recv, selector, a, b) };
+}
+fn msg_rect_rect_u64(recv: *u8, selector: *u8, a: Rect, b: u64) -> Rect {
+    return { objc_msg_rect_rect_u64(recv, selector, a, b) };
+}
+fn msg_void_rect_i8(recv: *u8, selector: *u8, a: Rect, b: i8) {
+    { objc_msg_void_rect_i8(recv, selector, a, b); };
+}
+fn msg_void_rect_i8_i8(recv: *u8, selector: *u8, a: Rect, b: i8, c: i8) {
+    { objc_msg_void_rect_i8_i8(recv, selector, a, b, c); };
+}
+fn msg_id_rect_u64_i64_i8(recv: *u8, selector: *u8, a: Rect, b: u64, c: i64, d: i8) -> *u8 {
+    return { objc_msg_id_rect_u64_i64_i8(recv, selector, a, b, c, d) };
+}
+fn msg_f64_rect(recv: *u8, selector: *u8, a: Rect) -> f64 {
+    return { objc_msg_f64_rect(recv, selector, a) };
+}
+fn msg_size(recv: *u8, selector: *u8) -> Size {
+    return { objc_msg_size(recv, selector) };
+}
+fn msg_void_size(recv: *u8, selector: *u8, a: Size) {
+    { objc_msg_void_size(recv, selector, a); };
+}
+fn msg_point(recv: *u8, selector: *u8) -> Point {
+    return { objc_msg_point(recv, selector) };
+}
+fn msg_void_point(recv: *u8, selector: *u8, a: Point) {
+    { objc_msg_void_point(recv, selector, a); };
+}
+fn msg_point_point(recv: *u8, selector: *u8, a: Point) -> Point {
+    return { objc_msg_point_point(recv, selector, a) };
 }

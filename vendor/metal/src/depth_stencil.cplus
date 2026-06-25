@@ -87,6 +87,8 @@ struct StencilDescriptor {
 impl StencilDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> StencilDescriptor { return StencilDescriptor { _obj: ptr }; }
+
     fn stencil_compare_function(this) -> CompareFunction {
         return compare_function_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("stencilCompareFunction\0"))));
     }
@@ -120,6 +122,8 @@ struct DepthStencilDescriptor {
 
 impl DepthStencilDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DepthStencilDescriptor { return DepthStencilDescriptor { _obj: ptr }; }
 
     fn depth_compare_function(this) -> CompareFunction {
         return compare_function_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("depthCompareFunction\0"))));

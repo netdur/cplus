@@ -14,6 +14,8 @@ struct ResourceStatePassSampleBufferAttachmentDescriptor {
 impl ResourceStatePassSampleBufferAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ResourceStatePassSampleBufferAttachmentDescriptor { return ResourceStatePassSampleBufferAttachmentDescriptor { _obj: ptr }; }
+
     // SKIPPED `sampleBuffer`: return `id<MTLCounterSampleBuffer> _Nullable` — generic collection
     // SKIPPED `setSampleBuffer:`: param `id<MTLCounterSampleBuffer> _Nullable` — generic collection
     fn start_of_encoder_sample_index(this) -> u64 {
@@ -36,6 +38,8 @@ struct ResourceStatePassSampleBufferAttachmentDescriptorArray {
 impl ResourceStatePassSampleBufferAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ResourceStatePassSampleBufferAttachmentDescriptorArray { return ResourceStatePassSampleBufferAttachmentDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
     }
@@ -50,6 +54,8 @@ struct ResourceStatePassDescriptor {
 
 impl ResourceStatePassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResourceStatePassDescriptor { return ResourceStatePassDescriptor { _obj: ptr }; }
 
     fn resource_state_pass_descriptor() -> ResourceStatePassDescriptor {
         return ResourceStatePassDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLResourceStatePassDescriptor\0")), rt::sel(#str_ptr("resourceStatePassDescriptor\0"))) };

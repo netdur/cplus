@@ -15,6 +15,8 @@ struct MTL4LibraryDescriptor {
 impl MTL4LibraryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4LibraryDescriptor { return MTL4LibraryDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4FunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct MTL4FunctionDescriptor {
 
 impl MTL4FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor { _obj: ptr }; }
 
 }
 
@@ -35,6 +39,8 @@ struct MTL4RenderPipelineDescriptor {
 impl MTL4RenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineDescriptor { return MTL4RenderPipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4ComputePipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,6 +50,8 @@ struct MTL4ComputePipelineDescriptor {
 
 impl MTL4ComputePipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4ComputePipelineDescriptor { return MTL4ComputePipelineDescriptor { _obj: ptr }; }
 
 }
 
@@ -55,6 +63,8 @@ struct MTL4PipelineDescriptor {
 impl MTL4PipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4MachineLearningPipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -64,6 +74,8 @@ struct MTL4MachineLearningPipelineDescriptor {
 
 impl MTL4MachineLearningPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineDescriptor { return MTL4MachineLearningPipelineDescriptor { _obj: ptr }; }
 
 }
 
@@ -75,6 +87,8 @@ struct MTL4BinaryFunctionDescriptor {
 impl MTL4BinaryFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunctionDescriptor { return MTL4BinaryFunctionDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4PipelineStageDynamicLinkingDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -84,6 +98,8 @@ struct MTL4PipelineStageDynamicLinkingDescriptor {
 
 impl MTL4PipelineStageDynamicLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4PipelineStageDynamicLinkingDescriptor { return MTL4PipelineStageDynamicLinkingDescriptor { _obj: ptr }; }
 
 }
 
@@ -95,6 +111,8 @@ struct MTL4RenderPipelineDynamicLinkingDescriptor {
 impl MTL4RenderPipelineDynamicLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineDynamicLinkingDescriptor { return MTL4RenderPipelineDynamicLinkingDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4CompilerDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -104,6 +122,8 @@ struct MTL4CompilerDescriptor {
 
 impl MTL4CompilerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CompilerDescriptor { return MTL4CompilerDescriptor { _obj: ptr }; }
 
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
@@ -125,6 +145,8 @@ struct MTL4CompilerTaskOptions {
 
 impl MTL4CompilerTaskOptions {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CompilerTaskOptions { return MTL4CompilerTaskOptions { _obj: ptr }; }
 
     // SKIPPED `lookupArchives`: return `NSArray<id<MTL4Archive>> * _Nullable` — generic collection
     // SKIPPED `setLookupArchives:`: param `NSArray<id<MTL4Archive>> * _Nullable` — generic collection

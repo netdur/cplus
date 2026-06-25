@@ -15,6 +15,8 @@ struct RasterizationRateSampleArray {
 impl RasterizationRateSampleArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RasterizationRateSampleArray { return RasterizationRateSampleArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index);
     }
@@ -29,6 +31,8 @@ struct RasterizationRateLayerDescriptor {
 
 impl RasterizationRateLayerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RasterizationRateLayerDescriptor { return RasterizationRateLayerDescriptor { _obj: ptr }; }
 
     fn new() -> RasterizationRateLayerDescriptor {
         let cls: *u8 = rt::get_class(#str_ptr("MTLRasterizationRateLayerDescriptor\0"));
@@ -70,6 +74,8 @@ struct RasterizationRateLayerArray {
 impl RasterizationRateLayerArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RasterizationRateLayerArray { return RasterizationRateLayerArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, layer_index: u64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), layer_index);
         return bridge::obj_option(obj);
@@ -85,6 +91,8 @@ struct RasterizationRateMapDescriptor {
 
 impl RasterizationRateMapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RasterizationRateMapDescriptor { return RasterizationRateMapDescriptor { _obj: ptr }; }
 
     // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:`: param `MTLSize` — unmapped type `MTLSize`
     // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:layer:`: param `MTLSize` — unmapped type `MTLSize`

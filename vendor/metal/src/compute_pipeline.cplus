@@ -36,6 +36,8 @@ struct ComputePipelineReflection {
 impl ComputePipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComputePipelineReflection { return ComputePipelineReflection { _obj: ptr }; }
+
     // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
     // SKIPPED `arguments`: return `NSArray<MTLArgument *> * _Nonnull` — generic collection
 }
@@ -47,6 +49,8 @@ struct ComputePipelineDescriptor {
 
 impl ComputePipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputePipelineDescriptor { return ComputePipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

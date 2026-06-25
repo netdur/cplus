@@ -14,6 +14,8 @@ struct VisibleFunctionTableDescriptor {
 impl VisibleFunctionTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VisibleFunctionTableDescriptor { return VisibleFunctionTableDescriptor { _obj: ptr }; }
+
     fn visible_function_table_descriptor() -> VisibleFunctionTableDescriptor {
         return VisibleFunctionTableDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLVisibleFunctionTableDescriptor\0")), rt::sel(#str_ptr("visibleFunctionTableDescriptor\0"))) };
     }

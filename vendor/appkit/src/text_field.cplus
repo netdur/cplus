@@ -24,29 +24,11 @@ fn text_field_bezel_style_from_raw(raw: i64) -> TextFieldBezelStyle {
     return TextFieldBezelStyle::NSTextFieldSquareBezel;
 }
 
-// `NSLineBreakStrategy` (NS_ENUM)
-enum LineBreakStrategy {
-    None,
-    PushOut,
-    HangulWordPriority,
-    Standard,
-}
-
-fn line_break_strategy_raw(v: LineBreakStrategy) -> i64 {
-    return match v {
-        LineBreakStrategy::None => { 0 as i64 },
-        LineBreakStrategy::PushOut => { 1 as i64 },
-        LineBreakStrategy::HangulWordPriority => { 2 as i64 },
-        LineBreakStrategy::Standard => { 65535 as i64 },
-    };
-}
-
-fn line_break_strategy_from_raw(raw: i64) -> LineBreakStrategy {
-    if raw == (1 as i64) { return LineBreakStrategy::PushOut; }
-    if raw == (2 as i64) { return LineBreakStrategy::HangulWordPriority; }
-    if raw == (65535 as i64) { return LineBreakStrategy::Standard; }
-    return LineBreakStrategy::None;
-}
+// `NSLineBreakStrategy` (NS_OPTIONS) — bitfield; combine with `|`.
+const line_break_strategy_none: u64 = 0 as u64;
+const line_break_strategy_push_out: u64 = 1 as u64;
+const line_break_strategy_hangul_word_priority: u64 = 2 as u64;
+const line_break_strategy_standard: u64 = 65535 as u64;
 
 // `NSTextField` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextField {
@@ -55,6 +37,8 @@ struct TextField {
 
 impl TextField {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextField { return TextField { _obj: ptr }; }
 
     fn select_text(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
@@ -180,8 +164,8 @@ impl TextField {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsDefaultTighteningForTruncation:\0")), allows_default_tightening_for_truncation as i8);
     }
 
-    fn line_break_strategy(this) -> LineBreakStrategy {
-        return line_break_strategy_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0"))));
+    fn line_break_strategy(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0")));
     }
 
     // SKIPPED `setLineBreakStrategy:`: (return, arg) shape not yet modelled

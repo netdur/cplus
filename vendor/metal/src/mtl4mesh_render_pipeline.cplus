@@ -86,6 +86,8 @@ struct MTL4FunctionDescriptor {
 impl MTL4FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4MeshRenderPipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -95,6 +97,8 @@ struct MTL4MeshRenderPipelineDescriptor {
 
 impl MTL4MeshRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4MeshRenderPipelineDescriptor { return MTL4MeshRenderPipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

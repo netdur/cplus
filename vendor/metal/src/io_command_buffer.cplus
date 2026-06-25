@@ -15,12 +15,12 @@ import "objc/synthesis" as synth;
 // SKIPPED `copyStatusToBuffer:offset:`: arg shape (only <=5 object args modelled)
 // SKIPPED `waitForEvent:value:`: arg shape (only <=5 object args modelled)
 // SKIPPED `signalEvent:value:`: arg shape (only <=5 object args modelled)
-fn IOCommandBuffer_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn IOCommandBuffer_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn IOCommandBuffer_noop_v_0(user: *u8) { return; }
-fn IOCommandBuffer_noop_v_1(user: *u8, a0: *u8) { return; }
+fn IOCommandBufferProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
+fn IOCommandBufferProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+fn IOCommandBufferProtocol_noop_v_0(user: *u8) { return; }
+fn IOCommandBufferProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct IOCommandBuffer {
+struct IOCommandBufferProtocol {
     commit: fn(*u8),
     wait_until_completed: fn(*u8),
     try_cancel: fn(*u8),
@@ -35,11 +35,11 @@ struct IOCommandBuffer {
     opaque user: *u8,
 }
 
-fn IOCommandBuffer_new(user: *u8) -> IOCommandBuffer {
-    return IOCommandBuffer { commit: IOCommandBuffer_noop_v_0, wait_until_completed: IOCommandBuffer_noop_v_0, try_cancel: IOCommandBuffer_noop_v_0, add_barrier: IOCommandBuffer_noop_v_0, push_debug_group: IOCommandBuffer_noop_v_1, pop_debug_group: IOCommandBuffer_noop_v_0, enqueue: IOCommandBuffer_noop_v_0, label: IOCommandBuffer_noop_id_0, set_label: IOCommandBuffer_noop_v_1, status: IOCommandBuffer_noop_u64_0, error: IOCommandBuffer_noop_id_0, user: user };
+fn IOCommandBufferProtocol_new(user: *u8) -> IOCommandBufferProtocol {
+    return IOCommandBufferProtocol { commit: IOCommandBufferProtocol_noop_v_0, wait_until_completed: IOCommandBufferProtocol_noop_v_0, try_cancel: IOCommandBufferProtocol_noop_v_0, add_barrier: IOCommandBufferProtocol_noop_v_0, push_debug_group: IOCommandBufferProtocol_noop_v_1, pop_debug_group: IOCommandBufferProtocol_noop_v_0, enqueue: IOCommandBufferProtocol_noop_v_0, label: IOCommandBufferProtocol_noop_id_0, set_label: IOCommandBufferProtocol_noop_v_1, status: IOCommandBufferProtocol_noop_u64_0, error: IOCommandBufferProtocol_noop_id_0, user: user };
 }
 
-impl IOCommandBuffer {
+impl IOCommandBufferProtocol {
     fn set_commit(ref this, handler: fn(*u8)) {
         this.commit = handler;
         return;
@@ -86,113 +86,113 @@ impl IOCommandBuffer {
     }
 }
 
-fn IOCommandBuffer_key() -> *u8 { return { 28672 as *u8 }; }
+fn IOCommandBufferProtocol_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn IOCommandBuffer_commit_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_commit_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).commit };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).wait_until_completed };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_try_cancel_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_try_cancel_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).try_cancel };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_add_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_add_barrier_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).add_barrier };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_push_debug_group_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_push_debug_group_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8, *u8) = { (*c).push_debug_group };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn IOCommandBuffer_pop_debug_group_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_pop_debug_group_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).pop_debug_group };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_enqueue_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_enqueue_imp(self_obj: *u8, cmd: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) = { (*c).enqueue };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn IOCommandBuffer_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) -> *u8 = { (*c).label };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn IOCommandBuffer_set_label_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_set_label_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8, *u8) = { (*c).set_label };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn IOCommandBuffer_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) -> u64 = { (*c).status };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn IOCommandBuffer_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *IOCommandBuffer = { synth::get_associated(self_obj, IOCommandBuffer_key()) as *IOCommandBuffer };
+fn IOCommandBufferProtocol_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *IOCommandBufferProtocol = { synth::get_associated(self_obj, IOCommandBufferProtocol_key()) as *IOCommandBufferProtocol };
     let f: fn(*u8) -> *u8 = { (*c).error };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_IOCommandBuffer(ctx: *IOCommandBuffer) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_IOCommandBuffer\0");
+fn create_IOCommandBufferProtocol(ctx: *IOCommandBufferProtocol) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_IOCommandBufferProtocol\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), IOCommandBuffer_commit_imp, #str_ptr("v@:\0"));
-        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), IOCommandBuffer_wait_until_completed_imp, #str_ptr("v@:\0"));
-        let add_try_cancel: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("tryCancel\0")), IOCommandBuffer_try_cancel_imp, #str_ptr("v@:\0"));
-        let add_add_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("addBarrier\0")), IOCommandBuffer_add_barrier_imp, #str_ptr("v@:\0"));
-        let add_push_debug_group: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pushDebugGroup:\0")), IOCommandBuffer_push_debug_group_imp, #str_ptr("v@:@\0"));
-        let add_pop_debug_group: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("popDebugGroup\0")), IOCommandBuffer_pop_debug_group_imp, #str_ptr("v@:\0"));
-        let add_enqueue: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("enqueue\0")), IOCommandBuffer_enqueue_imp, #str_ptr("v@:\0"));
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), IOCommandBuffer_label_imp, #str_ptr("@@:\0"));
-        let add_set_label: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setLabel:\0")), IOCommandBuffer_set_label_imp, #str_ptr("v@:@\0"));
-        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), IOCommandBuffer_status_imp, #str_ptr("Q@:\0"));
-        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), IOCommandBuffer_error_imp, #str_ptr("@@:\0"));
+        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), IOCommandBufferProtocol_commit_imp, #str_ptr("v@:\0"));
+        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), IOCommandBufferProtocol_wait_until_completed_imp, #str_ptr("v@:\0"));
+        let add_try_cancel: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("tryCancel\0")), IOCommandBufferProtocol_try_cancel_imp, #str_ptr("v@:\0"));
+        let add_add_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("addBarrier\0")), IOCommandBufferProtocol_add_barrier_imp, #str_ptr("v@:\0"));
+        let add_push_debug_group: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pushDebugGroup:\0")), IOCommandBufferProtocol_push_debug_group_imp, #str_ptr("v@:@\0"));
+        let add_pop_debug_group: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("popDebugGroup\0")), IOCommandBufferProtocol_pop_debug_group_imp, #str_ptr("v@:\0"));
+        let add_enqueue: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("enqueue\0")), IOCommandBufferProtocol_enqueue_imp, #str_ptr("v@:\0"));
+        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), IOCommandBufferProtocol_label_imp, #str_ptr("@@:\0"));
+        let add_set_label: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setLabel:\0")), IOCommandBufferProtocol_set_label_imp, #str_ptr("v@:@\0"));
+        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), IOCommandBufferProtocol_status_imp, #str_ptr("Q@:\0"));
+        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), IOCommandBufferProtocol_error_imp, #str_ptr("@@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, IOCommandBuffer_key(), { ctx as *u8 });
+    synth::set_associated(d, IOCommandBufferProtocol_key(), { ctx as *u8 });
     return d;
 }
 

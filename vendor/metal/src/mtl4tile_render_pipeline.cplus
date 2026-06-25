@@ -14,6 +14,8 @@ struct MTL4TileRenderPipelineDescriptor {
 impl MTL4TileRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4TileRenderPipelineDescriptor { return MTL4TileRenderPipelineDescriptor { _obj: ptr }; }
+
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }

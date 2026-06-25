@@ -72,6 +72,10 @@ struct EnumInfo {
     raw_fn: String,
     from_raw_fn: String,
     variants: Vec<(String, i64)>,
+    // True when the ObjC declaration used NS_OPTIONS (flag_enum attribute).
+    // These emit as u64 constants rather than a C+ enum, and callers combine
+    // them with `|` directly.
+    is_options: bool,
 }
 
 enum Ret {
@@ -88,6 +92,9 @@ enum Ret {
     ScalarF32, // float
     EnumTy(String),
     Range,
+    Rect,  // NSRect / CGRect — rt::Rect HFA
+    Point, // NSPoint / CGPoint — rt::Point HFA
+    Size,  // NSSize / CGSize — rt::Size HFA
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
     TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
@@ -113,6 +120,9 @@ enum Arg {
     ScalarU32(String), // unsigned int
     ScalarF32(String), // float
     Range(String),
+    Rect(String),  // NSRect / CGRect — rt::Rect HFA
+    Point(String), // NSPoint / CGPoint — rt::Point HFA
+    Size(String),  // NSSize / CGSize — rt::Size HFA
     Unsupported(String),
 }
 
@@ -302,6 +312,15 @@ impl ObjcEmitter {
         if variants.is_empty() {
             return;
         }
+        let is_options = decl
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter().any(|n| {
+                    n.get("kind").and_then(|k| k.as_str()) == Some("FlagEnumAttr")
+                })
+            })
+            .unwrap_or(false);
         let cplus_name = self.cplus_type_name(&objc_name);
         let snake_name = snake(&cplus_name);
         self.enums.insert(
@@ -312,12 +331,24 @@ impl ObjcEmitter {
                 raw_fn: format!("{snake_name}_raw"),
                 from_raw_fn: format!("{snake_name}_from_raw"),
                 variants,
+                is_options,
             },
         );
     }
 
     fn render_enum(&self, e: &EnumInfo) -> String {
         let mut s = String::new();
+        if e.is_options {
+            // NS_OPTIONS: emit u64 constants so callers combine flags with `|`.
+            s.push_str(&format!("// `{}` (NS_OPTIONS) — bitfield; combine with `|`.\n", e.objc_name));
+            let prefix = snake(&e.cplus_name);
+            for (v, val) in &e.variants {
+                let const_name = format!("{}_{}", prefix, snake(v));
+                s.push_str(&format!("const {const_name}: u64 = {val} as u64;\n"));
+            }
+            s.push('\n');
+            return s;
+        }
         s.push_str(&format!("// `{}` (NS_ENUM)\n", e.objc_name));
         s.push_str(&format!("enum {} {{\n", e.cplus_name));
         for (v, _) in &e.variants {
@@ -395,11 +426,13 @@ impl ObjcEmitter {
         self.body.push_str(&format!("struct {ty} {{\n    {field},\n}}\n\n"));
         self.body.push_str(&format!("impl {ty} {{\n"));
         self.body.push_str("    fn raw(this) -> *u8 { return this._obj; }\n\n");
+        self.body.push_str(&format!("    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _obj: ptr }}; }}\n\n"));
 
-        // Fresh method-name scope per impl; `raw` is always emitted above and
-        // `drop` below (owned), so reserve them so a selector can't collide.
+        // Fresh method-name scope per impl; `raw`/`from_raw` are always emitted
+        // above, `drop` below (owned), so reserve them so a selector can't collide.
         self.seen_methods.clear();
         self.seen_methods.insert("raw".to_string());
+        self.seen_methods.insert("from_raw".to_string());
         if owned {
             self.seen_methods.insert("drop".to_string());
         }
@@ -921,6 +954,9 @@ impl ObjcEmitter {
             Ret::ScalarU32 => (" -> u32".into(), format!("        return {send};\n")),
             Ret::ScalarF32 => (" -> f32".into(), format!("        return {send};\n")),
             Ret::Range => (" -> rt::Range".into(), format!("        return {send};\n")),
+            Ret::Rect => (" -> rt::Rect".into(), format!("        return {send};\n")),
+            Ret::Point => (" -> rt::Point".into(), format!("        return {send};\n")),
+            Ret::Size => (" -> rt::Size".into(), format!("        return {send};\n")),
             Ret::Text { nullable } => {
                 if *nullable {
                     (" -> option::Option[text::Text]".into(), format!("        let ns: *u8 = {send};\n        return bridge::to_text_option(ns);\n"))
@@ -932,9 +968,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => {
-                unreachable!()
-            }
+            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => unreachable!(),
         };
 
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
@@ -1146,6 +1180,9 @@ impl ObjcEmitter {
             Ret::ScalarU32 => "u32",
             Ret::ScalarF32 => "f32",
             Ret::Range => "range",
+            Ret::Rect => "rect",
+            Ret::Point => "point",
+            Ret::Size => "size",
             Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => {
                 return None
             }
@@ -1163,6 +1200,9 @@ impl ObjcEmitter {
                 Arg::ScalarU32(e) => ("u32", e.clone()),
                 Arg::ScalarF32(e) => ("f32", e.clone()),
                 Arg::Range(e) => ("range", e.clone()),
+                Arg::Rect(e) => ("rect", e.clone()),
+                Arg::Point(e) => ("point", e.clone()),
+                Arg::Size(e) => ("size", e.clone()),
                 Arg::Unsupported(_) => return None,
             };
             tags.push(t);
@@ -1175,10 +1215,17 @@ impl ObjcEmitter {
         const KNOWN: &[&str] = &[
             "void", "void_id", "void_i8", "void_f64", "void_range_id", "id",
             "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
-            "i8", "i64", "u64", "f64", "range", "range_u64", "range_range",
+            "i8", "i8_i64", "i64", "u64", "f64", "range", "range_u64", "range_range",
             // 32-bit scalars (int / unsigned / float)
             "i32", "u32", "f32", "void_i32", "void_u32", "void_f32",
             "id_i32", "id_u32", "id_f32",
+            // Geometry (NSRect/NSPoint/NSSize) — arm64 HFA, passes in v-regs.
+            "rect", "void_rect", "id_rect",
+            "rect_rect", "rect_rect_id", "rect_rect_u64",
+            "void_rect_i8", "void_rect_i8_i8",
+            "id_rect_u64_i64_i8", "f64_rect",
+            "size", "void_size",
+            "point", "void_point", "point_point",
         ];
         if !KNOWN.contains(&suffix.as_str()) {
             return None;
@@ -1200,6 +1247,15 @@ impl ObjcEmitter {
         if base_ty == "NSRange" {
             return Ret::Range;
         }
+        if base_ty == "NSRect" || base_ty == "CGRect" {
+            return Ret::Rect;
+        }
+        if base_ty == "NSPoint" || base_ty == "CGPoint" {
+            return Ret::Point;
+        }
+        if base_ty == "NSSize" || base_ty == "CGSize" {
+            return Ret::Size;
+        }
         if self.is_value_array(base_ty) {
             return Ret::ValueArray;
         }
@@ -1212,6 +1268,9 @@ impl ObjcEmitter {
         if let Some(objc_enum) = self.enum_of(base_ty) {
             if !self.used_enums.contains(&objc_enum) {
                 self.used_enums.push(objc_enum.clone());
+            }
+            if self.enums.get(&objc_enum).map(|e| e.is_options).unwrap_or(false) {
+                return Ret::ScalarU64;
             }
             return Ret::EnumTy(objc_enum);
         }
@@ -1268,6 +1327,15 @@ impl ObjcEmitter {
         if base_ty == "NSRange" {
             return Arg::Range(pname.to_string());
         }
+        if base_ty == "NSRect" || base_ty == "CGRect" {
+            return Arg::Rect(pname.to_string());
+        }
+        if base_ty == "NSPoint" || base_ty == "CGPoint" {
+            return Arg::Point(pname.to_string());
+        }
+        if base_ty == "NSSize" || base_ty == "CGSize" {
+            return Arg::Size(pname.to_string());
+        }
         if self.is_nsstring(base_ty) {
             return Arg::Id(format!("bridge::nsstring({pname})"));
         }
@@ -1279,7 +1347,11 @@ impl ObjcEmitter {
             if !self.used_enums.contains(&objc_enum) {
                 self.used_enums.push(objc_enum.clone());
             }
-            let raw = self.enums.get(&objc_enum).unwrap().raw_fn.clone();
+            let info = self.enums.get(&objc_enum).unwrap();
+            if info.is_options {
+                return Arg::ScalarU64(pname.to_string());
+            }
+            let raw = info.raw_fn.clone();
             return Arg::ScalarI64(format!("{raw}({pname})"));
         }
         match base_ty {
@@ -1313,6 +1385,15 @@ impl ObjcEmitter {
         if b == "NSRange" {
             return "rt::Range".to_string();
         }
+        if b == "NSRect" || b == "CGRect" {
+            return "rt::Rect".to_string();
+        }
+        if b == "NSPoint" || b == "CGPoint" {
+            return "rt::Point".to_string();
+        }
+        if b == "NSSize" || b == "CGSize" {
+            return "rt::Size".to_string();
+        }
         if self.is_nsstring(b) {
             return "str".to_string();
         }
@@ -1320,7 +1401,11 @@ impl ObjcEmitter {
             return "vec::Vec[text::Text]".to_string();
         }
         if let Some(objc_enum) = self.enum_of(b) {
-            return self.enums.get(&objc_enum).unwrap().cplus_name.clone();
+            let info = self.enums.get(&objc_enum).unwrap();
+            if info.is_options {
+                return "u64".to_string();
+            }
+            return info.cplus_name.clone();
         }
         match b {
             "NSInteger" | "long" => "i64".to_string(),
@@ -1447,13 +1532,14 @@ fn loc_included(loc: &serde_json::Value) -> bool {
 
 fn strip_nullability(qt: &str) -> (String, bool) {
     let mut s = qt.trim();
-    // Clang leaves some attribute macros in the type spelling. `NS_REFINED_FOR_SWIFT`
-    // in particular leaks as a leading token on properties (e.g.
-    // `NS_REFINED_FOR_SWIFT NSDictionary<...> *`), which would otherwise hide the
-    // real type from the dict / object matchers. Strip it so a property accessor's
-    // type normalizes to the same spelling as the equivalent method return.
-    if let Some(rest) = s.strip_prefix("NS_REFINED_FOR_SWIFT ") {
-        s = rest.trim();
+    // Strip leading annotation tokens that don't affect the C+ type.
+    // `NS_REFINED_FOR_SWIFT` leaks on properties; `__kindof` is an ObjC
+    // subclass qualifier (`__kindof NSApplication *` means "NSApplication or
+    // a subclass") — both collapse to the plain type for binding purposes.
+    for prefix in &["NS_REFINED_FOR_SWIFT ", "__kindof "] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            s = rest.trim();
+        }
     }
     for (suf, nul) in [(" _Nullable", true), (" _Nonnull", false), (" _Null_unspecified", true)] {
         if let Some(stripped) = s.strip_suffix(suf) {

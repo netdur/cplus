@@ -7,41 +7,15 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `MTLIndirectCommandType` (NS_ENUM)
-enum IndirectCommandType {
-    Draw,
-    DrawIndexed,
-    DrawPatches,
-    DrawIndexedPatches,
-    ConcurrentDispatch,
-    ConcurrentDispatchThreads,
-    DrawMeshThreadgroups,
-    DrawMeshThreads,
-}
-
-fn indirect_command_type_raw(v: IndirectCommandType) -> i64 {
-    return match v {
-        IndirectCommandType::Draw => { 1 as i64 },
-        IndirectCommandType::DrawIndexed => { 2 as i64 },
-        IndirectCommandType::DrawPatches => { 4 as i64 },
-        IndirectCommandType::DrawIndexedPatches => { 8 as i64 },
-        IndirectCommandType::ConcurrentDispatch => { 32 as i64 },
-        IndirectCommandType::ConcurrentDispatchThreads => { 64 as i64 },
-        IndirectCommandType::DrawMeshThreadgroups => { 128 as i64 },
-        IndirectCommandType::DrawMeshThreads => { 256 as i64 },
-    };
-}
-
-fn indirect_command_type_from_raw(raw: i64) -> IndirectCommandType {
-    if raw == (2 as i64) { return IndirectCommandType::DrawIndexed; }
-    if raw == (4 as i64) { return IndirectCommandType::DrawPatches; }
-    if raw == (8 as i64) { return IndirectCommandType::DrawIndexedPatches; }
-    if raw == (32 as i64) { return IndirectCommandType::ConcurrentDispatch; }
-    if raw == (64 as i64) { return IndirectCommandType::ConcurrentDispatchThreads; }
-    if raw == (128 as i64) { return IndirectCommandType::DrawMeshThreadgroups; }
-    if raw == (256 as i64) { return IndirectCommandType::DrawMeshThreads; }
-    return IndirectCommandType::Draw;
-}
+// `MTLIndirectCommandType` (NS_OPTIONS) — bitfield; combine with `|`.
+const indirect_command_type_draw: u64 = 1 as u64;
+const indirect_command_type_draw_indexed: u64 = 2 as u64;
+const indirect_command_type_draw_patches: u64 = 4 as u64;
+const indirect_command_type_draw_indexed_patches: u64 = 8 as u64;
+const indirect_command_type_concurrent_dispatch: u64 = 32 as u64;
+const indirect_command_type_concurrent_dispatch_threads: u64 = 64 as u64;
+const indirect_command_type_draw_mesh_threadgroups: u64 = 128 as u64;
+const indirect_command_type_draw_mesh_threads: u64 = 256 as u64;
 
 // `MTLIndirectCommandBufferDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct IndirectCommandBufferDescriptor {
@@ -51,8 +25,10 @@ struct IndirectCommandBufferDescriptor {
 impl IndirectCommandBufferDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn command_types(this) -> IndirectCommandType {
-        return indirect_command_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("commandTypes\0"))));
+    fn from_raw(ptr: *u8) -> IndirectCommandBufferDescriptor { return IndirectCommandBufferDescriptor { _obj: ptr }; }
+
+    fn command_types(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("commandTypes\0")));
     }
 
     // SKIPPED `setCommandTypes:`: (return, arg) shape not yet modelled

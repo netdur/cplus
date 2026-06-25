@@ -57,23 +57,9 @@ fn store_action_from_raw(raw: i64) -> StoreAction {
     return StoreAction::DontCare;
 }
 
-// `MTLStoreActionOptions` (NS_ENUM)
-enum StoreActionOptions {
-    MTLStoreActionOptionNone,
-    MTLStoreActionOptionCustomSamplePositions,
-}
-
-fn store_action_options_raw(v: StoreActionOptions) -> i64 {
-    return match v {
-        StoreActionOptions::MTLStoreActionOptionNone => { 0 as i64 },
-        StoreActionOptions::MTLStoreActionOptionCustomSamplePositions => { 1 as i64 },
-    };
-}
-
-fn store_action_options_from_raw(raw: i64) -> StoreActionOptions {
-    if raw == (1 as i64) { return StoreActionOptions::MTLStoreActionOptionCustomSamplePositions; }
-    return StoreActionOptions::MTLStoreActionOptionNone;
-}
+// `MTLStoreActionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const store_action_options_m_t_l_store_action_option_none: u64 = 0 as u64;
+const store_action_options_m_t_l_store_action_option_custom_sample_positions: u64 = 1 as u64;
 
 // `MTLMultisampleDepthResolveFilter` (NS_ENUM)
 enum MultisampleDepthResolveFilter {
@@ -140,6 +126,8 @@ struct RenderPassAttachmentDescriptor {
 impl RenderPassAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPassAttachmentDescriptor { return RenderPassAttachmentDescriptor { _obj: ptr }; }
+
     // SKIPPED `texture`: return `id<MTLTexture> _Nullable` — generic collection
     // SKIPPED `setTexture:`: param `id<MTLTexture> _Nullable` — generic collection
     fn level(this) -> u64 {
@@ -184,8 +172,8 @@ impl RenderPassAttachmentDescriptor {
     }
 
     // SKIPPED `setStoreAction:`: (return, arg) shape not yet modelled
-    fn store_action_options(this) -> StoreActionOptions {
-        return store_action_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("storeActionOptions\0"))));
+    fn store_action_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("storeActionOptions\0")));
     }
 
     // SKIPPED `setStoreActionOptions:`: (return, arg) shape not yet modelled
@@ -199,6 +187,8 @@ struct RenderPassColorAttachmentDescriptor {
 impl RenderPassColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPassColorAttachmentDescriptor { return RenderPassColorAttachmentDescriptor { _obj: ptr }; }
+
     // SKIPPED `clearColor`: return `MTLClearColor` — unmapped type `MTLClearColor`
     // SKIPPED `setClearColor:`: param `MTLClearColor` — unmapped type `MTLClearColor`
 }
@@ -210,6 +200,8 @@ struct RenderPassDepthAttachmentDescriptor {
 
 impl RenderPassDepthAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPassDepthAttachmentDescriptor { return RenderPassDepthAttachmentDescriptor { _obj: ptr }; }
 
     fn clear_depth(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("clearDepth\0")));
@@ -234,6 +226,8 @@ struct RenderPassStencilAttachmentDescriptor {
 impl RenderPassStencilAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPassStencilAttachmentDescriptor { return RenderPassStencilAttachmentDescriptor { _obj: ptr }; }
+
     // SKIPPED `clearStencil`: return `uint32_t` — unmapped type `uint32_t`
     // SKIPPED `setClearStencil:`: param `uint32_t` — unmapped type `uint32_t`
     fn stencil_resolve_filter(this) -> MultisampleStencilResolveFilter {
@@ -251,6 +245,8 @@ struct RenderPassColorAttachmentDescriptorArray {
 impl RenderPassColorAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPassColorAttachmentDescriptorArray { return RenderPassColorAttachmentDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
     }
@@ -265,6 +261,8 @@ struct RenderPassSampleBufferAttachmentDescriptor {
 
 impl RenderPassSampleBufferAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPassSampleBufferAttachmentDescriptor { return RenderPassSampleBufferAttachmentDescriptor { _obj: ptr }; }
 
     // SKIPPED `sampleBuffer`: return `id<MTLCounterSampleBuffer> _Nullable` — generic collection
     // SKIPPED `setSampleBuffer:`: param `id<MTLCounterSampleBuffer> _Nullable` — generic collection
@@ -298,6 +296,8 @@ struct RenderPassSampleBufferAttachmentDescriptorArray {
 impl RenderPassSampleBufferAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPassSampleBufferAttachmentDescriptorArray { return RenderPassSampleBufferAttachmentDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
     }
@@ -312,6 +312,8 @@ struct RenderPassDescriptor {
 
 impl RenderPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPassDescriptor { return RenderPassDescriptor { _obj: ptr }; }
 
     fn render_pass_descriptor() -> RenderPassDescriptor {
         return RenderPassDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLRenderPassDescriptor\0")), rt::sel(#str_ptr("renderPassDescriptor\0"))) };

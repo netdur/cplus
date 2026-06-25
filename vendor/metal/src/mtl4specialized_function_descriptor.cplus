@@ -14,6 +14,8 @@ struct MTL4SpecializedFunctionDescriptor {
 impl MTL4SpecializedFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4SpecializedFunctionDescriptor { return MTL4SpecializedFunctionDescriptor { _obj: ptr }; }
+
     fn function_descriptor(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionDescriptor\0")));
         return bridge::obj_option(obj);

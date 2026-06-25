@@ -15,6 +15,8 @@ struct MTL4CommandAllocatorDescriptor {
 impl MTL4CommandAllocatorDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4CommandAllocatorDescriptor { return MTL4CommandAllocatorDescriptor { _obj: ptr }; }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);

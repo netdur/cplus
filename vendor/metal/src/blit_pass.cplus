@@ -14,6 +14,8 @@ struct BlitPassSampleBufferAttachmentDescriptor {
 impl BlitPassSampleBufferAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BlitPassSampleBufferAttachmentDescriptor { return BlitPassSampleBufferAttachmentDescriptor { _obj: ptr }; }
+
     // SKIPPED `sampleBuffer`: return `id<MTLCounterSampleBuffer> _Nullable` — generic collection
     // SKIPPED `setSampleBuffer:`: param `id<MTLCounterSampleBuffer> _Nullable` — generic collection
     fn start_of_encoder_sample_index(this) -> u64 {
@@ -36,6 +38,8 @@ struct BlitPassSampleBufferAttachmentDescriptorArray {
 impl BlitPassSampleBufferAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BlitPassSampleBufferAttachmentDescriptorArray { return BlitPassSampleBufferAttachmentDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
     }
@@ -50,6 +54,8 @@ struct BlitPassDescriptor {
 
 impl BlitPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BlitPassDescriptor { return BlitPassDescriptor { _obj: ptr }; }
 
     fn blit_pass_descriptor() -> BlitPassDescriptor {
         return BlitPassDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLBlitPassDescriptor\0")), rt::sel(#str_ptr("blitPassDescriptor\0"))) };

@@ -12,20 +12,20 @@ import "objc/synthesis" as synth;
 // SKIPPED `presentAfterMinimumDuration:`: arg shape (only <=5 object args modelled)
 // SKIPPED `addPresentedHandler:`: arg shape (only <=5 object args modelled)
 // SKIPPED `presentedTime`: return `CFTimeInterval` not modelled
-fn Drawable_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn Drawable_noop_v_0(user: *u8) { return; }
+fn DrawableProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+fn DrawableProtocol_noop_v_0(user: *u8) { return; }
 
-struct Drawable {
+struct DrawableProtocol {
     present: fn(*u8),
     drawable_i_d: fn(*u8) -> u64,
     opaque user: *u8,
 }
 
-fn Drawable_new(user: *u8) -> Drawable {
-    return Drawable { present: Drawable_noop_v_0, drawable_i_d: Drawable_noop_u64_0, user: user };
+fn DrawableProtocol_new(user: *u8) -> DrawableProtocol {
+    return DrawableProtocol { present: DrawableProtocol_noop_v_0, drawable_i_d: DrawableProtocol_noop_u64_0, user: user };
 }
 
-impl Drawable {
+impl DrawableProtocol {
     fn set_present(ref this, handler: fn(*u8)) {
         this.present = handler;
         return;
@@ -36,34 +36,34 @@ impl Drawable {
     }
 }
 
-fn Drawable_key() -> *u8 { return { 28672 as *u8 }; }
+fn DrawableProtocol_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn Drawable_present_imp(self_obj: *u8, cmd: *u8) {
-    let c: *Drawable = { synth::get_associated(self_obj, Drawable_key()) as *Drawable };
+fn DrawableProtocol_present_imp(self_obj: *u8, cmd: *u8) {
+    let c: *DrawableProtocol = { synth::get_associated(self_obj, DrawableProtocol_key()) as *DrawableProtocol };
     let f: fn(*u8) = { (*c).present };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn Drawable_drawable_i_d_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Drawable = { synth::get_associated(self_obj, Drawable_key()) as *Drawable };
+fn DrawableProtocol_drawable_i_d_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DrawableProtocol = { synth::get_associated(self_obj, DrawableProtocol_key()) as *DrawableProtocol };
     let f: fn(*u8) -> u64 = { (*c).drawable_i_d };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_Drawable(ctx: *Drawable) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Drawable\0");
+fn create_DrawableProtocol(ctx: *DrawableProtocol) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_DrawableProtocol\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_present: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("present\0")), Drawable_present_imp, #str_ptr("v@:\0"));
-        let add_drawable_i_d: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("drawableID\0")), Drawable_drawable_i_d_imp, #str_ptr("Q@:\0"));
+        let add_present: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("present\0")), DrawableProtocol_present_imp, #str_ptr("v@:\0"));
+        let add_drawable_i_d: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("drawableID\0")), DrawableProtocol_drawable_i_d_imp, #str_ptr("Q@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Drawable_key(), { ctx as *u8 });
+    synth::set_associated(d, DrawableProtocol_key(), { ctx as *u8 });
     return d;
 }
 

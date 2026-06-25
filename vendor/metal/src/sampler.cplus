@@ -162,6 +162,8 @@ struct SamplerDescriptor {
 impl SamplerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SamplerDescriptor { return SamplerDescriptor { _obj: ptr }; }
+
     fn min_filter(this) -> SamplerMinMagFilter {
         return sampler_min_mag_filter_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("minFilter\0"))));
     }

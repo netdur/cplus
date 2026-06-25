@@ -8,55 +8,40 @@ import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
-// `NSWindowStyleMask` (NS_ENUM)
-enum WindowStyleMask {
-    Borderless,
-    Titled,
-    Closable,
-    Miniaturizable,
-    Resizable,
-    TexturedBackground,
-    UnifiedTitleAndToolbar,
-    FullScreen,
-    FullSizeContentView,
-    UtilityWindow,
-    DocModalWindow,
-    NonactivatingPanel,
-    HUDWindow,
+// `NSWindowStyleMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const window_style_mask_borderless: u64 = 0 as u64;
+const window_style_mask_titled: u64 = 1 as u64;
+const window_style_mask_closable: u64 = 2 as u64;
+const window_style_mask_miniaturizable: u64 = 4 as u64;
+const window_style_mask_resizable: u64 = 8 as u64;
+const window_style_mask_textured_background: u64 = 256 as u64;
+const window_style_mask_unified_title_and_toolbar: u64 = 4096 as u64;
+const window_style_mask_full_screen: u64 = 16384 as u64;
+const window_style_mask_full_size_content_view: u64 = 32768 as u64;
+const window_style_mask_utility_window: u64 = 16 as u64;
+const window_style_mask_doc_modal_window: u64 = 64 as u64;
+const window_style_mask_nonactivating_panel: u64 = 128 as u64;
+const window_style_mask_h_u_d_window: u64 = 8192 as u64;
+
+// `NSBackingStoreType` (NS_ENUM)
+enum BackingStoreType {
+    NSBackingStoreRetained,
+    NSBackingStoreNonretained,
+    NSBackingStoreBuffered,
 }
 
-fn window_style_mask_raw(v: WindowStyleMask) -> i64 {
+fn backing_store_type_raw(v: BackingStoreType) -> i64 {
     return match v {
-        WindowStyleMask::Borderless => { 0 as i64 },
-        WindowStyleMask::Titled => { 1 as i64 },
-        WindowStyleMask::Closable => { 2 as i64 },
-        WindowStyleMask::Miniaturizable => { 4 as i64 },
-        WindowStyleMask::Resizable => { 8 as i64 },
-        WindowStyleMask::TexturedBackground => { 256 as i64 },
-        WindowStyleMask::UnifiedTitleAndToolbar => { 4096 as i64 },
-        WindowStyleMask::FullScreen => { 16384 as i64 },
-        WindowStyleMask::FullSizeContentView => { 32768 as i64 },
-        WindowStyleMask::UtilityWindow => { 16 as i64 },
-        WindowStyleMask::DocModalWindow => { 64 as i64 },
-        WindowStyleMask::NonactivatingPanel => { 128 as i64 },
-        WindowStyleMask::HUDWindow => { 8192 as i64 },
+        BackingStoreType::NSBackingStoreRetained => { 0 as i64 },
+        BackingStoreType::NSBackingStoreNonretained => { 1 as i64 },
+        BackingStoreType::NSBackingStoreBuffered => { 2 as i64 },
     };
 }
 
-fn window_style_mask_from_raw(raw: i64) -> WindowStyleMask {
-    if raw == (1 as i64) { return WindowStyleMask::Titled; }
-    if raw == (2 as i64) { return WindowStyleMask::Closable; }
-    if raw == (4 as i64) { return WindowStyleMask::Miniaturizable; }
-    if raw == (8 as i64) { return WindowStyleMask::Resizable; }
-    if raw == (256 as i64) { return WindowStyleMask::TexturedBackground; }
-    if raw == (4096 as i64) { return WindowStyleMask::UnifiedTitleAndToolbar; }
-    if raw == (16384 as i64) { return WindowStyleMask::FullScreen; }
-    if raw == (32768 as i64) { return WindowStyleMask::FullSizeContentView; }
-    if raw == (16 as i64) { return WindowStyleMask::UtilityWindow; }
-    if raw == (64 as i64) { return WindowStyleMask::DocModalWindow; }
-    if raw == (128 as i64) { return WindowStyleMask::NonactivatingPanel; }
-    if raw == (8192 as i64) { return WindowStyleMask::HUDWindow; }
-    return WindowStyleMask::Borderless;
+fn backing_store_type_from_raw(raw: i64) -> BackingStoreType {
+    if raw == (1 as i64) { return BackingStoreType::NSBackingStoreNonretained; }
+    if raw == (2 as i64) { return BackingStoreType::NSBackingStoreBuffered; }
+    return BackingStoreType::NSBackingStoreRetained;
 }
 
 // `NSRectEdge` (NS_ENUM)
@@ -116,6 +101,30 @@ fn window_ordering_mode_from_raw(raw: i64) -> WindowOrderingMode {
     return WindowOrderingMode::NSWindowAbove;
 }
 
+// `NSAlignmentOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const alignment_options_n_s_align_min_x_inward: u64 = 1 as u64;
+const alignment_options_n_s_align_min_y_inward: u64 = 2 as u64;
+const alignment_options_n_s_align_max_x_inward: u64 = 4 as u64;
+const alignment_options_n_s_align_max_y_inward: u64 = 8 as u64;
+const alignment_options_n_s_align_width_inward: u64 = 16 as u64;
+const alignment_options_n_s_align_height_inward: u64 = 32 as u64;
+const alignment_options_n_s_align_min_x_outward: u64 = 256 as u64;
+const alignment_options_n_s_align_min_y_outward: u64 = 512 as u64;
+const alignment_options_n_s_align_max_x_outward: u64 = 1024 as u64;
+const alignment_options_n_s_align_max_y_outward: u64 = 2048 as u64;
+const alignment_options_n_s_align_width_outward: u64 = 4096 as u64;
+const alignment_options_n_s_align_height_outward: u64 = 8192 as u64;
+const alignment_options_n_s_align_min_x_nearest: u64 = 65536 as u64;
+const alignment_options_n_s_align_min_y_nearest: u64 = 131072 as u64;
+const alignment_options_n_s_align_max_x_nearest: u64 = 262144 as u64;
+const alignment_options_n_s_align_max_y_nearest: u64 = 524288 as u64;
+const alignment_options_n_s_align_width_nearest: u64 = 1048576 as u64;
+const alignment_options_n_s_align_height_nearest: u64 = 2097152 as u64;
+const alignment_options_n_s_align_rect_flipped: u64 = 1 as u64;
+const alignment_options_n_s_align_all_edges_inward: u64 = 15 as u64;
+const alignment_options_n_s_align_all_edges_outward: u64 = 3840 as u64;
+const alignment_options_n_s_align_all_edges_nearest: u64 = 983040 as u64;
+
 // `NSWindowButton` (NS_ENUM)
 enum WindowButton {
     NSWindowCloseButton,
@@ -164,23 +173,9 @@ fn display_gamut_from_raw(raw: i64) -> DisplayGamut {
     return DisplayGamut::SRGB;
 }
 
-// `NSWindowNumberListOptions` (NS_ENUM)
-enum WindowNumberListOptions {
-    NSWindowNumberListAllApplications,
-    NSWindowNumberListAllSpaces,
-}
-
-fn window_number_list_options_raw(v: WindowNumberListOptions) -> i64 {
-    return match v {
-        WindowNumberListOptions::NSWindowNumberListAllApplications => { 1 as i64 },
-        WindowNumberListOptions::NSWindowNumberListAllSpaces => { 16 as i64 },
-    };
-}
-
-fn window_number_list_options_from_raw(raw: i64) -> WindowNumberListOptions {
-    if raw == (16 as i64) { return WindowNumberListOptions::NSWindowNumberListAllSpaces; }
-    return WindowNumberListOptions::NSWindowNumberListAllApplications;
-}
+// `NSWindowNumberListOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const window_number_list_options_n_s_window_number_list_all_applications: u64 = 1 as u64;
+const window_number_list_options_n_s_window_number_list_all_spaces: u64 = 16 as u64;
 
 // `NSWindowDepth` (NS_ENUM)
 enum WindowDepth {
@@ -248,65 +243,16 @@ fn window_toolbar_style_from_raw(raw: i64) -> WindowToolbarStyle {
     return WindowToolbarStyle::Automatic;
 }
 
-// `NSEventModifierFlags` (NS_ENUM)
-enum EventModifierFlags {
-    NSEventModifierFlagCapsLock,
-    NSEventModifierFlagShift,
-    NSEventModifierFlagControl,
-    NSEventModifierFlagOption,
-    NSEventModifierFlagCommand,
-    NSEventModifierFlagNumericPad,
-    NSEventModifierFlagHelp,
-    NSEventModifierFlagFunction,
-    NSEventModifierFlagDeviceIndependentFlagsMask,
-}
-
-fn event_modifier_flags_raw(v: EventModifierFlags) -> i64 {
-    return match v {
-        EventModifierFlags::NSEventModifierFlagCapsLock => { 65536 as i64 },
-        EventModifierFlags::NSEventModifierFlagShift => { 131072 as i64 },
-        EventModifierFlags::NSEventModifierFlagControl => { 262144 as i64 },
-        EventModifierFlags::NSEventModifierFlagOption => { 524288 as i64 },
-        EventModifierFlags::NSEventModifierFlagCommand => { 1048576 as i64 },
-        EventModifierFlags::NSEventModifierFlagNumericPad => { 2097152 as i64 },
-        EventModifierFlags::NSEventModifierFlagHelp => { 4194304 as i64 },
-        EventModifierFlags::NSEventModifierFlagFunction => { 8388608 as i64 },
-        EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask => { 4294901760 as i64 },
-    };
-}
-
-fn event_modifier_flags_from_raw(raw: i64) -> EventModifierFlags {
-    if raw == (131072 as i64) { return EventModifierFlags::NSEventModifierFlagShift; }
-    if raw == (262144 as i64) { return EventModifierFlags::NSEventModifierFlagControl; }
-    if raw == (524288 as i64) { return EventModifierFlags::NSEventModifierFlagOption; }
-    if raw == (1048576 as i64) { return EventModifierFlags::NSEventModifierFlagCommand; }
-    if raw == (2097152 as i64) { return EventModifierFlags::NSEventModifierFlagNumericPad; }
-    if raw == (4194304 as i64) { return EventModifierFlags::NSEventModifierFlagHelp; }
-    if raw == (8388608 as i64) { return EventModifierFlags::NSEventModifierFlagFunction; }
-    if raw == (4294901760 as i64) { return EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask; }
-    return EventModifierFlags::NSEventModifierFlagCapsLock;
-}
-
-// `NSBackingStoreType` (NS_ENUM)
-enum BackingStoreType {
-    NSBackingStoreRetained,
-    NSBackingStoreNonretained,
-    NSBackingStoreBuffered,
-}
-
-fn backing_store_type_raw(v: BackingStoreType) -> i64 {
-    return match v {
-        BackingStoreType::NSBackingStoreRetained => { 0 as i64 },
-        BackingStoreType::NSBackingStoreNonretained => { 1 as i64 },
-        BackingStoreType::NSBackingStoreBuffered => { 2 as i64 },
-    };
-}
-
-fn backing_store_type_from_raw(raw: i64) -> BackingStoreType {
-    if raw == (1 as i64) { return BackingStoreType::NSBackingStoreNonretained; }
-    if raw == (2 as i64) { return BackingStoreType::NSBackingStoreBuffered; }
-    return BackingStoreType::NSBackingStoreRetained;
-}
+// `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_shift: u64 = 131072 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_control: u64 = 262144 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_option: u64 = 524288 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_command: u64 = 1048576 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_numeric_pad: u64 = 2097152 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_help: u64 = 4194304 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_function: u64 = 8388608 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_device_independent_flags_mask: u64 = 4294901760 as u64;
 
 // `NSWindowSharingType` (NS_ENUM)
 enum WindowSharingType {
@@ -326,65 +272,23 @@ fn window_sharing_type_from_raw(raw: i64) -> WindowSharingType {
     return WindowSharingType::NSWindowSharingNone;
 }
 
-// `NSWindowCollectionBehavior` (NS_ENUM)
-enum WindowCollectionBehavior {
-    Default,
-    CanJoinAllSpaces,
-    MoveToActiveSpace,
-    Managed,
-    Transient,
-    Stationary,
-    ParticipatesInCycle,
-    IgnoresCycle,
-    FullScreenPrimary,
-    FullScreenAuxiliary,
-    FullScreenNone,
-    FullScreenAllowsTiling,
-    FullScreenDisallowsTiling,
-    Primary,
-    Auxiliary,
-    CanJoinAllApplications,
-}
-
-fn window_collection_behavior_raw(v: WindowCollectionBehavior) -> i64 {
-    return match v {
-        WindowCollectionBehavior::Default => { 0 as i64 },
-        WindowCollectionBehavior::CanJoinAllSpaces => { 1 as i64 },
-        WindowCollectionBehavior::MoveToActiveSpace => { 2 as i64 },
-        WindowCollectionBehavior::Managed => { 4 as i64 },
-        WindowCollectionBehavior::Transient => { 8 as i64 },
-        WindowCollectionBehavior::Stationary => { 16 as i64 },
-        WindowCollectionBehavior::ParticipatesInCycle => { 32 as i64 },
-        WindowCollectionBehavior::IgnoresCycle => { 64 as i64 },
-        WindowCollectionBehavior::FullScreenPrimary => { 128 as i64 },
-        WindowCollectionBehavior::FullScreenAuxiliary => { 256 as i64 },
-        WindowCollectionBehavior::FullScreenNone => { 512 as i64 },
-        WindowCollectionBehavior::FullScreenAllowsTiling => { 2048 as i64 },
-        WindowCollectionBehavior::FullScreenDisallowsTiling => { 4096 as i64 },
-        WindowCollectionBehavior::Primary => { 65536 as i64 },
-        WindowCollectionBehavior::Auxiliary => { 131072 as i64 },
-        WindowCollectionBehavior::CanJoinAllApplications => { 262144 as i64 },
-    };
-}
-
-fn window_collection_behavior_from_raw(raw: i64) -> WindowCollectionBehavior {
-    if raw == (1 as i64) { return WindowCollectionBehavior::CanJoinAllSpaces; }
-    if raw == (2 as i64) { return WindowCollectionBehavior::MoveToActiveSpace; }
-    if raw == (4 as i64) { return WindowCollectionBehavior::Managed; }
-    if raw == (8 as i64) { return WindowCollectionBehavior::Transient; }
-    if raw == (16 as i64) { return WindowCollectionBehavior::Stationary; }
-    if raw == (32 as i64) { return WindowCollectionBehavior::ParticipatesInCycle; }
-    if raw == (64 as i64) { return WindowCollectionBehavior::IgnoresCycle; }
-    if raw == (128 as i64) { return WindowCollectionBehavior::FullScreenPrimary; }
-    if raw == (256 as i64) { return WindowCollectionBehavior::FullScreenAuxiliary; }
-    if raw == (512 as i64) { return WindowCollectionBehavior::FullScreenNone; }
-    if raw == (2048 as i64) { return WindowCollectionBehavior::FullScreenAllowsTiling; }
-    if raw == (4096 as i64) { return WindowCollectionBehavior::FullScreenDisallowsTiling; }
-    if raw == (65536 as i64) { return WindowCollectionBehavior::Primary; }
-    if raw == (131072 as i64) { return WindowCollectionBehavior::Auxiliary; }
-    if raw == (262144 as i64) { return WindowCollectionBehavior::CanJoinAllApplications; }
-    return WindowCollectionBehavior::Default;
-}
+// `NSWindowCollectionBehavior` (NS_OPTIONS) — bitfield; combine with `|`.
+const window_collection_behavior_default: u64 = 0 as u64;
+const window_collection_behavior_can_join_all_spaces: u64 = 1 as u64;
+const window_collection_behavior_move_to_active_space: u64 = 2 as u64;
+const window_collection_behavior_managed: u64 = 4 as u64;
+const window_collection_behavior_transient: u64 = 8 as u64;
+const window_collection_behavior_stationary: u64 = 16 as u64;
+const window_collection_behavior_participates_in_cycle: u64 = 32 as u64;
+const window_collection_behavior_ignores_cycle: u64 = 64 as u64;
+const window_collection_behavior_full_screen_primary: u64 = 128 as u64;
+const window_collection_behavior_full_screen_auxiliary: u64 = 256 as u64;
+const window_collection_behavior_full_screen_none: u64 = 512 as u64;
+const window_collection_behavior_full_screen_allows_tiling: u64 = 2048 as u64;
+const window_collection_behavior_full_screen_disallows_tiling: u64 = 4096 as u64;
+const window_collection_behavior_primary: u64 = 65536 as u64;
+const window_collection_behavior_auxiliary: u64 = 131072 as u64;
+const window_collection_behavior_can_join_all_applications: u64 = 262144 as u64;
 
 // `NSWindowAnimationBehavior` (NS_ENUM)
 enum WindowAnimationBehavior {
@@ -413,20 +317,8 @@ fn window_animation_behavior_from_raw(raw: i64) -> WindowAnimationBehavior {
     return WindowAnimationBehavior::Default;
 }
 
-// `NSWindowOcclusionState` (NS_ENUM)
-enum WindowOcclusionState {
-    Visible,
-}
-
-fn window_occlusion_state_raw(v: WindowOcclusionState) -> i64 {
-    return match v {
-        WindowOcclusionState::Visible => { 2 as i64 },
-    };
-}
-
-fn window_occlusion_state_from_raw(raw: i64) -> WindowOcclusionState {
-    return WindowOcclusionState::Visible;
-}
+// `NSWindowOcclusionState` (NS_OPTIONS) — bitfield; combine with `|`.
+const window_occlusion_state_visible: u64 = 2 as u64;
 
 // `NSTitlebarSeparatorStyle` (NS_ENUM)
 enum TitlebarSeparatorStyle {
@@ -533,122 +425,42 @@ fn user_interface_layout_direction_from_raw(raw: i64) -> UserInterfaceLayoutDire
     return UserInterfaceLayoutDirection::LeftToRight;
 }
 
-// `NSEventMask` (NS_ENUM)
-enum EventMask {
-    LeftMouseDown,
-    LeftMouseUp,
-    RightMouseDown,
-    RightMouseUp,
-    MouseMoved,
-    LeftMouseDragged,
-    RightMouseDragged,
-    MouseEntered,
-    MouseExited,
-    KeyDown,
-    KeyUp,
-    FlagsChanged,
-    AppKitDefined,
-    SystemDefined,
-    ApplicationDefined,
-    Periodic,
-    CursorUpdate,
-    ScrollWheel,
-    TabletPoint,
-    TabletProximity,
-    OtherMouseDown,
-    OtherMouseUp,
-    OtherMouseDragged,
-    Gesture,
-    Magnify,
-    Swipe,
-    Rotate,
-    BeginGesture,
-    EndGesture,
-    SmartMagnify,
-    Pressure,
-    DirectTouch,
-    ChangeMode,
-    MouseCancelled,
-    Any,
-}
-
-fn event_mask_raw(v: EventMask) -> i64 {
-    return match v {
-        EventMask::LeftMouseDown => { 2 as i64 },
-        EventMask::LeftMouseUp => { 4 as i64 },
-        EventMask::RightMouseDown => { 8 as i64 },
-        EventMask::RightMouseUp => { 16 as i64 },
-        EventMask::MouseMoved => { 32 as i64 },
-        EventMask::LeftMouseDragged => { 64 as i64 },
-        EventMask::RightMouseDragged => { 128 as i64 },
-        EventMask::MouseEntered => { 256 as i64 },
-        EventMask::MouseExited => { 512 as i64 },
-        EventMask::KeyDown => { 1024 as i64 },
-        EventMask::KeyUp => { 2048 as i64 },
-        EventMask::FlagsChanged => { 4096 as i64 },
-        EventMask::AppKitDefined => { 8192 as i64 },
-        EventMask::SystemDefined => { 16384 as i64 },
-        EventMask::ApplicationDefined => { 32768 as i64 },
-        EventMask::Periodic => { 65536 as i64 },
-        EventMask::CursorUpdate => { 131072 as i64 },
-        EventMask::ScrollWheel => { 4194304 as i64 },
-        EventMask::TabletPoint => { 8388608 as i64 },
-        EventMask::TabletProximity => { 16777216 as i64 },
-        EventMask::OtherMouseDown => { 33554432 as i64 },
-        EventMask::OtherMouseUp => { 67108864 as i64 },
-        EventMask::OtherMouseDragged => { 134217728 as i64 },
-        EventMask::Gesture => { 536870912 as i64 },
-        EventMask::Magnify => { 1073741824 as i64 },
-        EventMask::Swipe => { 2147483648 as i64 },
-        EventMask::Rotate => { 262144 as i64 },
-        EventMask::BeginGesture => { 524288 as i64 },
-        EventMask::EndGesture => { 1048576 as i64 },
-        EventMask::SmartMagnify => { 4294967296 as i64 },
-        EventMask::Pressure => { 17179869184 as i64 },
-        EventMask::DirectTouch => { 137438953472 as i64 },
-        EventMask::ChangeMode => { 274877906944 as i64 },
-        EventMask::MouseCancelled => { 1099511627776 as i64 },
-        EventMask::Any => { 9223372036854775807 as i64 },
-    };
-}
-
-fn event_mask_from_raw(raw: i64) -> EventMask {
-    if raw == (4 as i64) { return EventMask::LeftMouseUp; }
-    if raw == (8 as i64) { return EventMask::RightMouseDown; }
-    if raw == (16 as i64) { return EventMask::RightMouseUp; }
-    if raw == (32 as i64) { return EventMask::MouseMoved; }
-    if raw == (64 as i64) { return EventMask::LeftMouseDragged; }
-    if raw == (128 as i64) { return EventMask::RightMouseDragged; }
-    if raw == (256 as i64) { return EventMask::MouseEntered; }
-    if raw == (512 as i64) { return EventMask::MouseExited; }
-    if raw == (1024 as i64) { return EventMask::KeyDown; }
-    if raw == (2048 as i64) { return EventMask::KeyUp; }
-    if raw == (4096 as i64) { return EventMask::FlagsChanged; }
-    if raw == (8192 as i64) { return EventMask::AppKitDefined; }
-    if raw == (16384 as i64) { return EventMask::SystemDefined; }
-    if raw == (32768 as i64) { return EventMask::ApplicationDefined; }
-    if raw == (65536 as i64) { return EventMask::Periodic; }
-    if raw == (131072 as i64) { return EventMask::CursorUpdate; }
-    if raw == (4194304 as i64) { return EventMask::ScrollWheel; }
-    if raw == (8388608 as i64) { return EventMask::TabletPoint; }
-    if raw == (16777216 as i64) { return EventMask::TabletProximity; }
-    if raw == (33554432 as i64) { return EventMask::OtherMouseDown; }
-    if raw == (67108864 as i64) { return EventMask::OtherMouseUp; }
-    if raw == (134217728 as i64) { return EventMask::OtherMouseDragged; }
-    if raw == (536870912 as i64) { return EventMask::Gesture; }
-    if raw == (1073741824 as i64) { return EventMask::Magnify; }
-    if raw == (2147483648 as i64) { return EventMask::Swipe; }
-    if raw == (262144 as i64) { return EventMask::Rotate; }
-    if raw == (524288 as i64) { return EventMask::BeginGesture; }
-    if raw == (1048576 as i64) { return EventMask::EndGesture; }
-    if raw == (4294967296 as i64) { return EventMask::SmartMagnify; }
-    if raw == (17179869184 as i64) { return EventMask::Pressure; }
-    if raw == (137438953472 as i64) { return EventMask::DirectTouch; }
-    if raw == (274877906944 as i64) { return EventMask::ChangeMode; }
-    if raw == (1099511627776 as i64) { return EventMask::MouseCancelled; }
-    if raw == (9223372036854775807 as i64) { return EventMask::Any; }
-    return EventMask::LeftMouseDown;
-}
+// `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_mask_left_mouse_down: u64 = 2 as u64;
+const event_mask_left_mouse_up: u64 = 4 as u64;
+const event_mask_right_mouse_down: u64 = 8 as u64;
+const event_mask_right_mouse_up: u64 = 16 as u64;
+const event_mask_mouse_moved: u64 = 32 as u64;
+const event_mask_left_mouse_dragged: u64 = 64 as u64;
+const event_mask_right_mouse_dragged: u64 = 128 as u64;
+const event_mask_mouse_entered: u64 = 256 as u64;
+const event_mask_mouse_exited: u64 = 512 as u64;
+const event_mask_key_down: u64 = 1024 as u64;
+const event_mask_key_up: u64 = 2048 as u64;
+const event_mask_flags_changed: u64 = 4096 as u64;
+const event_mask_app_kit_defined: u64 = 8192 as u64;
+const event_mask_system_defined: u64 = 16384 as u64;
+const event_mask_application_defined: u64 = 32768 as u64;
+const event_mask_periodic: u64 = 65536 as u64;
+const event_mask_cursor_update: u64 = 131072 as u64;
+const event_mask_scroll_wheel: u64 = 4194304 as u64;
+const event_mask_tablet_point: u64 = 8388608 as u64;
+const event_mask_tablet_proximity: u64 = 16777216 as u64;
+const event_mask_other_mouse_down: u64 = 33554432 as u64;
+const event_mask_other_mouse_up: u64 = 67108864 as u64;
+const event_mask_other_mouse_dragged: u64 = 134217728 as u64;
+const event_mask_gesture: u64 = 536870912 as u64;
+const event_mask_magnify: u64 = 1073741824 as u64;
+const event_mask_swipe: u64 = 2147483648 as u64;
+const event_mask_rotate: u64 = 262144 as u64;
+const event_mask_begin_gesture: u64 = 524288 as u64;
+const event_mask_end_gesture: u64 = 1048576 as u64;
+const event_mask_smart_magnify: u64 = 4294967296 as u64;
+const event_mask_pressure: u64 = 17179869184 as u64;
+const event_mask_direct_touch: u64 = 137438953472 as u64;
+const event_mask_change_mode: u64 = 274877906944 as u64;
+const event_mask_mouse_cancelled: u64 = 1099511627776 as u64;
+const event_mask_any: u64 = 9223372036854775807 as u64;
 
 // `NSWindowBackingLocation` (NS_ENUM)
 enum WindowBackingLocation {
@@ -679,6 +491,8 @@ struct CADisplayLink {
 impl CADisplayLink {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CADisplayLink { return CADisplayLink { _obj: ptr }; }
+
 }
 
 // `NSButton` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -688,6 +502,8 @@ struct Button {
 
 impl Button {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
 }
 
@@ -699,6 +515,8 @@ struct ButtonCell {
 impl ButtonCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ButtonCell { return ButtonCell { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -708,6 +526,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -719,6 +539,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSScreen` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -728,6 +550,8 @@ struct Screen {
 
 impl Screen {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Screen { return Screen { _obj: ptr }; }
 
 }
 
@@ -739,6 +563,8 @@ struct Notification {
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
+
 }
 
 // `NSText` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -748,6 +574,8 @@ struct Text {
 
 impl Text {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Text { return Text { _obj: ptr }; }
 
 }
 
@@ -759,6 +587,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSMutableSet` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -768,6 +598,8 @@ struct MutableSet {
 
 impl MutableSet {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableSet { return MutableSet { _obj: ptr }; }
 
 }
 
@@ -779,6 +611,8 @@ struct Set {
 impl Set {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Set { return Set { _obj: ptr }; }
+
 }
 
 // `NSDate` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -788,6 +622,8 @@ struct Date {
 
 impl Date {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Date { return Date { _obj: ptr }; }
 
 }
 
@@ -799,6 +635,8 @@ struct Toolbar {
 impl Toolbar {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Toolbar { return Toolbar { _obj: ptr }; }
+
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -808,6 +646,8 @@ struct GraphicsContext {
 
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
 
 }
 
@@ -819,6 +659,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSColorSpace` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -828,6 +670,8 @@ struct ColorSpace {
 
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
 
 }
 
@@ -839,6 +683,8 @@ struct DockTile {
 impl DockTile {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DockTile { return DockTile { _obj: ptr }; }
+
 }
 
 // `NSViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -848,6 +694,8 @@ struct ViewController {
 
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
 
 }
 
@@ -859,6 +707,8 @@ struct TitlebarAccessoryViewController {
 impl TitlebarAccessoryViewController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TitlebarAccessoryViewController { return TitlebarAccessoryViewController { _obj: ptr }; }
+
 }
 
 // `NSEvent` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -868,6 +718,8 @@ struct Event {
 
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
 
 }
 
@@ -879,6 +731,8 @@ struct WindowController {
 impl WindowController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> WindowController { return WindowController { _obj: ptr }; }
+
 }
 
 // `NSWindowTab` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -888,6 +742,8 @@ struct WindowTab {
 
 impl WindowTab {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> WindowTab { return WindowTab { _obj: ptr }; }
 
 }
 
@@ -899,6 +755,8 @@ struct WindowTabGroup {
 impl WindowTabGroup {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> WindowTabGroup { return WindowTabGroup { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -909,12 +767,31 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `frameRectForContentRect:styleMask:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `contentRectForFrameRect:styleMask:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
+    fn frame_rect_for_content_rect_style_mask(c_rect: rt::Rect, style: u64) -> rt::Rect {
+        return rt::msg_rect_rect_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("frameRectForContentRect:styleMask:\0")), c_rect, style);
+    }
+
+    fn content_rect_for_frame_rect_style_mask(f_rect: rt::Rect, style: u64) -> rt::Rect {
+        return rt::msg_rect_rect_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("contentRectForFrameRect:styleMask:\0")), f_rect, style);
+    }
+
     // SKIPPED `minFrameWidthWithTitle:styleMask:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameRectForContentRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `contentRectForFrameRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `initWithContentRect:styleMask:backing:defer:`: param `NSRect` — unmapped type `NSRect`
+    fn frame_rect_for_content_rect(this, content_rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("frameRectForContentRect:\0")), content_rect);
+    }
+
+    fn content_rect_for_frame_rect(this, frame_rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("contentRectForFrameRect:\0")), frame_rect);
+    }
+
+    fn new(content_rect: rt::Rect, style: u64, backing_store_type: BackingStoreType, flag: bool) -> Window {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Window { _obj: rt::msg_id_rect_u64_i64_i8(alloced, rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")), content_rect, style, backing_store_type_raw(backing_store_type), flag as i8) };
+    }
+
     // SKIPPED `initWithContentRect:styleMask:backing:defer:screen:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn add_titlebar_accessory_view_controller(this, child_view_controller: *u8) {
@@ -932,14 +809,38 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditingFor:\0")), object);
     }
 
-    // SKIPPED `constrainFrameRect:toScreen:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setFrame:display:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setContentSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setFrameOrigin:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `setFrameTopLeftPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `cascadeTopLeftFromPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `animationResizeTime:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setFrame:display:animate:`: param `NSRect` — unmapped type `NSRect`
+    fn constrain_frame_rect_to_screen(this, frame_rect: rt::Rect, screen: *u8) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("constrainFrameRect:toScreen:\0")), frame_rect, screen);
+    }
+
+    fn set_frame_display(this, frame_rect: rt::Rect, flag: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setFrame:display:\0")), frame_rect, flag as i8);
+    }
+
+    fn set_content_size(this, size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentSize:\0")), size);
+    }
+
+    fn set_frame_origin(this, point: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setFrameOrigin:\0")), point);
+    }
+
+    fn set_frame_top_left_point(this, point: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setFrameTopLeftPoint:\0")), point);
+    }
+
+    fn cascade_top_left_from_point(this, top_left_point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("cascadeTopLeftFromPoint:\0")), top_left_point);
+    }
+
+    fn animation_resize_time(this, new_frame: rt::Rect) -> f64 {
+        return rt::msg_f64_rect(this._obj, rt::sel(#str_ptr("animationResizeTime:\0")), new_frame);
+    }
+
+    fn set_frame_display_animate(this, frame_rect: rt::Rect, display_flag: bool, animate_flag: bool) {
+        rt::msg_void_rect_i8_i8(this._obj, rt::sel(#str_ptr("setFrame:display:animate:\0")), frame_rect, display_flag as i8, animate_flag as i8);
+    }
+
     fn display_if_needed(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("displayIfNeeded\0")));
     }
@@ -1024,15 +925,42 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resignMainWindow\0")));
     }
 
-    // SKIPPED `convertRectToScreen:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `convertRectFromScreen:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `convertPointToScreen:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `convertPointFromScreen:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `convertRectToBacking:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `convertRectFromBacking:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `convertPointToBacking:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `convertPointFromBacking:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `backingAlignedRect:options:`: param `NSRect` — unmapped type `NSRect`
+    fn convert_rect_to_screen(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectToScreen:\0")), rect);
+    }
+
+    fn convert_rect_from_screen(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectFromScreen:\0")), rect);
+    }
+
+    fn convert_point_to_screen(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointToScreen:\0")), point);
+    }
+
+    fn convert_point_from_screen(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromScreen:\0")), point);
+    }
+
+    fn convert_rect_to_backing(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectToBacking:\0")), rect);
+    }
+
+    fn convert_rect_from_backing(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectFromBacking:\0")), rect);
+    }
+
+    fn convert_point_to_backing(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointToBacking:\0")), point);
+    }
+
+    fn convert_point_from_backing(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromBacking:\0")), point);
+    }
+
+    fn backing_aligned_rect_options(this, rect: rt::Rect, options: u64) -> rt::Rect {
+        return rt::msg_rect_rect_u64(this._obj, rt::sel(#str_ptr("backingAlignedRect:options:\0")), rect, options);
+    }
+
     fn perform_close(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performClose:\0")), sender);
     }
@@ -1045,8 +973,14 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performZoom:\0")), sender);
     }
 
-    // SKIPPED `dataWithEPSInsideRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `dataWithPDFInsideRect:`: param `NSRect` — unmapped type `NSRect`
+    fn data_with_e_p_s_inside_rect(this, rect: rt::Rect) -> *u8 {
+        return rt::msg_id_rect(this._obj, rt::sel(#str_ptr("dataWithEPSInsideRect:\0")), rect);
+    }
+
+    fn data_with_p_d_f_inside_rect(this, rect: rt::Rect) -> *u8 {
+        return rt::msg_id_rect(this._obj, rt::sel(#str_ptr("dataWithPDFInsideRect:\0")), rect);
+    }
+
     fn print(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("print:\0")), sender);
     }
@@ -1098,7 +1032,7 @@ impl Window {
 
     // SKIPPED `canRepresentDisplayGamut:`: (return, arg) shape not yet modelled
     // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
-    // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: (return, arg) shape not yet modelled
     fn window_with_content_view_controller(content_view_controller: *u8) -> Window {
         return Window { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowWithContentViewController:\0")), content_view_controller)) };
     }
@@ -1210,7 +1144,10 @@ impl Window {
     }
 
     // SKIPPED `setToolbarStyle:`: (return, arg) shape not yet modelled
-    // SKIPPED `contentLayoutRect`: return `NSRect` — unmapped type `NSRect`
+    fn content_layout_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("contentLayoutRect\0")));
+    }
+
     // SKIPPED `contentLayoutGuide`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
     // SKIPPED `titlebarAccessoryViewControllers`: return `API_AVAILABLE NSArray<__kindof NSTitlebarAccessoryViewController *> *` — generic collection
     // SKIPPED `setTitlebarAccessoryViewControllers:`: param `API_AVAILABLE NSArray<__kindof NSTitlebarAccessoryViewController *> *` — generic collection
@@ -1254,25 +1191,55 @@ impl Window {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowNumber\0")));
     }
 
-    fn style_mask(this) -> WindowStyleMask {
-        return window_style_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("styleMask\0"))));
+    fn style_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("styleMask\0")));
     }
 
     // SKIPPED `setStyleMask:`: (return, arg) shape not yet modelled
-    // SKIPPED `cascadingReferenceFrame`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
+    fn cascading_reference_frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("cascadingReferenceFrame\0")));
+    }
+
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
     fn in_live_resize(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("inLiveResize\0"))) != (0 as i8);
     }
 
-    // SKIPPED `resizeIncrements`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setResizeIncrements:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `aspectRatio`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setAspectRatio:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentResizeIncrements`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentResizeIncrements:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentAspectRatio`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentAspectRatio:`: param `NSSize` — unmapped type `NSSize`
+    fn resize_increments(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("resizeIncrements\0")));
+    }
+
+    fn set_resize_increments(this, resize_increments: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setResizeIncrements:\0")), resize_increments);
+    }
+
+    fn aspect_ratio(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("aspectRatio\0")));
+    }
+
+    fn set_aspect_ratio(this, aspect_ratio: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setAspectRatio:\0")), aspect_ratio);
+    }
+
+    fn content_resize_increments(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentResizeIncrements\0")));
+    }
+
+    fn set_content_resize_increments(this, content_resize_increments: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentResizeIncrements:\0")), content_resize_increments);
+    }
+
+    fn content_aspect_ratio(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentAspectRatio\0")));
+    }
+
+    fn set_content_aspect_ratio(this, content_aspect_ratio: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentAspectRatio:\0")), content_aspect_ratio);
+    }
+
     fn views_need_display(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("viewsNeedDisplay\0"))) != (0 as i8);
     }
@@ -1294,8 +1261,8 @@ impl Window {
         return bridge::obj_option(obj);
     }
 
-    fn resize_flags(this) -> EventModifierFlags {
-        return event_modifier_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("resizeFlags\0"))));
+    fn resize_flags(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("resizeFlags\0")));
     }
 
     fn is_released_when_closed(this) -> bool {
@@ -1507,8 +1474,8 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCanBecomeVisibleWithoutLogin:\0")), can_become_visible_without_login as i8);
     }
 
-    fn collection_behavior(this) -> WindowCollectionBehavior {
-        return window_collection_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("collectionBehavior\0"))));
+    fn collection_behavior(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("collectionBehavior\0")));
     }
 
     // SKIPPED `setCollectionBehavior:`: (return, arg) shape not yet modelled
@@ -1531,18 +1498,54 @@ impl Window {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `minSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `maxSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaxSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentMinSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentMinSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentMaxSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentMaxSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `minFullScreenContentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinFullScreenContentSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `maxFullScreenContentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaxFullScreenContentSize:`: param `NSSize` — unmapped type `NSSize`
+    fn min_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minSize\0")));
+    }
+
+    fn set_min_size(this, min_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinSize:\0")), min_size);
+    }
+
+    fn max_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maxSize\0")));
+    }
+
+    fn set_max_size(this, max_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxSize:\0")), max_size);
+    }
+
+    fn content_min_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentMinSize\0")));
+    }
+
+    fn set_content_min_size(this, content_min_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentMinSize:\0")), content_min_size);
+    }
+
+    fn content_max_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentMaxSize\0")));
+    }
+
+    fn set_content_max_size(this, content_max_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentMaxSize:\0")), content_max_size);
+    }
+
+    fn min_full_screen_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minFullScreenContentSize\0")));
+    }
+
+    fn set_min_full_screen_content_size(this, min_full_screen_content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinFullScreenContentSize:\0")), min_full_screen_content_size);
+    }
+
+    fn max_full_screen_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maxFullScreenContentSize\0")));
+    }
+
+    fn set_max_full_screen_content_size(this, max_full_screen_content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxFullScreenContentSize:\0")), max_full_screen_content_size);
+    }
+
     // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn window_controller(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windowController\0")));
@@ -1587,8 +1590,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorSpace:\0")), color_space);
     }
 
-    fn occlusion_state(this) -> WindowOcclusionState {
-        return window_occlusion_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("occlusionState\0"))));
+    fn occlusion_state(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("occlusionState\0")));
     }
 
     fn titlebar_separator_style(this) -> TitlebarSeparatorStyle {
@@ -1688,8 +1691,8 @@ impl Window {
     }
 
     // SKIPPED `trackEventsMatchingMask:timeout:mode:handler:`: block-method msgSend shape not modelled
-    fn next_event_matching_mask(this, mask: EventMask) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:\0")), event_mask_raw(mask));
+    fn next_event_matching_mask(this, mask: u64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:\0")), mask);
         return bridge::obj_option(obj);
     }
 
@@ -1721,7 +1724,10 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setIgnoresMouseEvents:\0")), ignores_mouse_events as i8);
     }
 
-    // SKIPPED `mouseLocationOutsideOfEventStream`: return `NSPoint` — unmapped type `NSPoint`
+    fn mouse_location_outside_of_event_stream(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("mouseLocationOutsideOfEventStream\0")));
+    }
+
     fn disable_cursor_rects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("disableCursorRects\0")));
     }
@@ -1747,7 +1753,7 @@ impl Window {
     }
 
     // SKIPPED `beginDraggingSessionWithItems:event:source:`: param `NSArray<NSDraggingItem *> * _Nonnull` — generic collection
-    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: (return, arg) shape not yet modelled
     fn register_for_dragged_types(this, new_types: vec::Vec[text::Text]) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("registerForDraggedTypes:\0")), bridge::nsarray_of_text(new_types));
     }
@@ -1757,7 +1763,10 @@ impl Window {
     }
 
     // SKIPPED `displayLinkWithTarget:selector:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `cacheImageInRect:`: param `NSRect` — unmapped type `NSRect`
+    fn cache_image_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("cacheImageInRect:\0")), rect);
+    }
+
     fn restore_cached_image(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("restoreCachedImage\0")));
     }
@@ -1774,8 +1783,14 @@ impl Window {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("gState\0")));
     }
 
-    // SKIPPED `convertBaseToScreen:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `convertScreenToBase:`: param `NSPoint` — unmapped type `NSPoint`
+    fn convert_base_to_screen(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertBaseToScreen:\0")), point);
+    }
+
+    fn convert_screen_to_base(this, point: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertScreenToBase:\0")), point);
+    }
+
     fn user_space_scale_factor(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("userSpaceScaleFactor\0")));
     }

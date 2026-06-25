@@ -91,50 +91,18 @@ fn hazard_tracking_mode_from_raw(raw: i64) -> HazardTrackingMode {
     return HazardTrackingMode::Default;
 }
 
-// `MTLResourceOptions` (NS_ENUM)
-enum ResourceOptions {
-    MTLResourceCPUCacheModeDefaultCache,
-    MTLResourceCPUCacheModeWriteCombined,
-    MTLResourceStorageModeShared,
-    MTLResourceStorageModeManaged,
-    MTLResourceStorageModePrivate,
-    MTLResourceStorageModeMemoryless,
-    MTLResourceHazardTrackingModeDefault,
-    MTLResourceHazardTrackingModeUntracked,
-    MTLResourceHazardTrackingModeTracked,
-    MTLResourceOptionCPUCacheModeDefault,
-    MTLResourceOptionCPUCacheModeWriteCombined,
-}
-
-fn resource_options_raw(v: ResourceOptions) -> i64 {
-    return match v {
-        ResourceOptions::MTLResourceCPUCacheModeDefaultCache => { 0 as i64 },
-        ResourceOptions::MTLResourceCPUCacheModeWriteCombined => { 1 as i64 },
-        ResourceOptions::MTLResourceStorageModeShared => { 0 as i64 },
-        ResourceOptions::MTLResourceStorageModeManaged => { 16 as i64 },
-        ResourceOptions::MTLResourceStorageModePrivate => { 32 as i64 },
-        ResourceOptions::MTLResourceStorageModeMemoryless => { 48 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeDefault => { 0 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeUntracked => { 256 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeTracked => { 512 as i64 },
-        ResourceOptions::MTLResourceOptionCPUCacheModeDefault => { 0 as i64 },
-        ResourceOptions::MTLResourceOptionCPUCacheModeWriteCombined => { 1 as i64 },
-    };
-}
-
-fn resource_options_from_raw(raw: i64) -> ResourceOptions {
-    if raw == (1 as i64) { return ResourceOptions::MTLResourceCPUCacheModeWriteCombined; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceStorageModeShared; }
-    if raw == (16 as i64) { return ResourceOptions::MTLResourceStorageModeManaged; }
-    if raw == (32 as i64) { return ResourceOptions::MTLResourceStorageModePrivate; }
-    if raw == (48 as i64) { return ResourceOptions::MTLResourceStorageModeMemoryless; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeDefault; }
-    if raw == (256 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeUntracked; }
-    if raw == (512 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeTracked; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceOptionCPUCacheModeDefault; }
-    if raw == (1 as i64) { return ResourceOptions::MTLResourceOptionCPUCacheModeWriteCombined; }
-    return ResourceOptions::MTLResourceCPUCacheModeDefaultCache;
-}
+// `MTLResourceOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const resource_options_m_t_l_resource_c_p_u_cache_mode_default_cache: u64 = 0 as u64;
+const resource_options_m_t_l_resource_c_p_u_cache_mode_write_combined: u64 = 1 as u64;
+const resource_options_m_t_l_resource_storage_mode_shared: u64 = 0 as u64;
+const resource_options_m_t_l_resource_storage_mode_managed: u64 = 16 as u64;
+const resource_options_m_t_l_resource_storage_mode_private: u64 = 32 as u64;
+const resource_options_m_t_l_resource_storage_mode_memoryless: u64 = 48 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_default: u64 = 0 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_untracked: u64 = 256 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_tracked: u64 = 512 as u64;
+const resource_options_m_t_l_resource_option_c_p_u_cache_mode_default: u64 = 0 as u64;
+const resource_options_m_t_l_resource_option_c_p_u_cache_mode_write_combined: u64 = 1 as u64;
 
 // `MTLHeapType` (NS_ENUM)
 enum HeapType {
@@ -165,6 +133,8 @@ struct HeapDescriptor {
 impl HeapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> HeapDescriptor { return HeapDescriptor { _obj: ptr }; }
+
     fn size(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("size\0")));
     }
@@ -190,8 +160,8 @@ impl HeapDescriptor {
     }
 
     // SKIPPED `setHazardTrackingMode:`: (return, arg) shape not yet modelled
-    fn resource_options(this) -> ResourceOptions {
-        return resource_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("resourceOptions\0"))));
+    fn resource_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("resourceOptions\0")));
     }
 
     // SKIPPED `setResourceOptions:`: (return, arg) shape not yet modelled

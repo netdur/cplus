@@ -33,6 +33,8 @@ struct MTL4CounterHeapDescriptor {
 impl MTL4CounterHeapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4CounterHeapDescriptor { return MTL4CounterHeapDescriptor { _obj: ptr }; }
+
     fn type_(this) -> MTL4CounterHeapType {
         return m_t_l4_counter_heap_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }

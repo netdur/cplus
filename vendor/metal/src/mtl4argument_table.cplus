@@ -15,6 +15,8 @@ struct MTL4ArgumentTableDescriptor {
 impl MTL4ArgumentTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4ArgumentTableDescriptor { return MTL4ArgumentTableDescriptor { _obj: ptr }; }
+
     fn max_buffer_bind_count(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxBufferBindCount\0")));
     }

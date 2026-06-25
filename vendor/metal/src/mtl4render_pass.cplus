@@ -32,6 +32,8 @@ struct MTL4RenderPassDescriptor {
 impl MTL4RenderPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4RenderPassDescriptor { return MTL4RenderPassDescriptor { _obj: ptr }; }
+
     // SKIPPED `setSamplePositions:count:`: (return, arg) shape not yet modelled
     // SKIPPED `getSamplePositions:count:`: (return, arg) shape not yet modelled
     fn color_attachments(this) -> *u8 {

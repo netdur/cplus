@@ -14,6 +14,8 @@ struct CompileOptions {
 impl CompileOptions {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CompileOptions { return CompileOptions { _obj: ptr }; }
+
 }
 
 // `MTL4LibraryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct MTL4LibraryDescriptor {
 
 impl MTL4LibraryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4LibraryDescriptor { return MTL4LibraryDescriptor { _obj: ptr }; }
 
     fn source(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("source\0")));

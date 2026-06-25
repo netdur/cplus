@@ -561,38 +561,14 @@ fn blend_operation_from_raw(raw: i64) -> BlendOperation {
     return BlendOperation::Add;
 }
 
-// `MTLColorWriteMask` (NS_ENUM)
-enum ColorWriteMask {
-    None,
-    Red,
-    Green,
-    Blue,
-    Alpha,
-    All,
-    Unspecialized,
-}
-
-fn color_write_mask_raw(v: ColorWriteMask) -> i64 {
-    return match v {
-        ColorWriteMask::None => { 0 as i64 },
-        ColorWriteMask::Red => { 8 as i64 },
-        ColorWriteMask::Green => { 4 as i64 },
-        ColorWriteMask::Blue => { 2 as i64 },
-        ColorWriteMask::Alpha => { 1 as i64 },
-        ColorWriteMask::All => { 15 as i64 },
-        ColorWriteMask::Unspecialized => { 16 as i64 },
-    };
-}
-
-fn color_write_mask_from_raw(raw: i64) -> ColorWriteMask {
-    if raw == (8 as i64) { return ColorWriteMask::Red; }
-    if raw == (4 as i64) { return ColorWriteMask::Green; }
-    if raw == (2 as i64) { return ColorWriteMask::Blue; }
-    if raw == (1 as i64) { return ColorWriteMask::Alpha; }
-    if raw == (15 as i64) { return ColorWriteMask::All; }
-    if raw == (16 as i64) { return ColorWriteMask::Unspecialized; }
-    return ColorWriteMask::None;
-}
+// `MTLColorWriteMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const color_write_mask_none: u64 = 0 as u64;
+const color_write_mask_red: u64 = 8 as u64;
+const color_write_mask_green: u64 = 4 as u64;
+const color_write_mask_blue: u64 = 2 as u64;
+const color_write_mask_alpha: u64 = 1 as u64;
+const color_write_mask_all: u64 = 15 as u64;
+const color_write_mask_unspecialized: u64 = 16 as u64;
 
 // `MTL4AlphaToCoverageState` (NS_ENUM)
 enum MTL4AlphaToCoverageState {
@@ -698,6 +674,8 @@ struct MTL4FunctionDescriptor {
 impl MTL4FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4StaticLinkingDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -708,6 +686,8 @@ struct MTL4StaticLinkingDescriptor {
 impl MTL4StaticLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4StaticLinkingDescriptor { return MTL4StaticLinkingDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4RenderPipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -717,6 +697,8 @@ struct MTL4RenderPipelineColorAttachmentDescriptor {
 
 impl MTL4RenderPipelineColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineColorAttachmentDescriptor { return MTL4RenderPipelineColorAttachmentDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
@@ -762,8 +744,8 @@ impl MTL4RenderPipelineColorAttachmentDescriptor {
     }
 
     // SKIPPED `setAlphaBlendOperation:`: (return, arg) shape not yet modelled
-    fn write_mask(this) -> ColorWriteMask {
-        return color_write_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("writeMask\0"))));
+    fn write_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("writeMask\0")));
     }
 
     // SKIPPED `setWriteMask:`: (return, arg) shape not yet modelled
@@ -776,6 +758,8 @@ struct MTL4RenderPipelineColorAttachmentDescriptorArray {
 
 impl MTL4RenderPipelineColorAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineColorAttachmentDescriptorArray { return MTL4RenderPipelineColorAttachmentDescriptorArray { _obj: ptr }; }
 
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
@@ -796,6 +780,8 @@ struct VertexDescriptor {
 impl VertexDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VertexDescriptor { return VertexDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4RenderPipelineBinaryFunctionsDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -805,6 +791,8 @@ struct MTL4RenderPipelineBinaryFunctionsDescriptor {
 
 impl MTL4RenderPipelineBinaryFunctionsDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineBinaryFunctionsDescriptor { return MTL4RenderPipelineBinaryFunctionsDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
@@ -829,6 +817,8 @@ struct MTL4RenderPipelineDescriptor {
 
 impl MTL4RenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineDescriptor { return MTL4RenderPipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

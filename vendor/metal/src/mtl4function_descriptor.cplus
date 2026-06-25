@@ -14,5 +14,7 @@ struct MTL4FunctionDescriptor {
 impl MTL4FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor { _obj: ptr }; }
+
 }
 

@@ -7,23 +7,9 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `MTL4PipelineDataSetSerializerConfiguration` (NS_ENUM)
-enum MTL4PipelineDataSetSerializerConfiguration {
-    CaptureDescriptors,
-    CaptureBinaries,
-}
-
-fn m_t_l4_pipeline_data_set_serializer_configuration_raw(v: MTL4PipelineDataSetSerializerConfiguration) -> i64 {
-    return match v {
-        MTL4PipelineDataSetSerializerConfiguration::CaptureDescriptors => { 1 as i64 },
-        MTL4PipelineDataSetSerializerConfiguration::CaptureBinaries => { 2 as i64 },
-    };
-}
-
-fn m_t_l4_pipeline_data_set_serializer_configuration_from_raw(raw: i64) -> MTL4PipelineDataSetSerializerConfiguration {
-    if raw == (2 as i64) { return MTL4PipelineDataSetSerializerConfiguration::CaptureBinaries; }
-    return MTL4PipelineDataSetSerializerConfiguration::CaptureDescriptors;
-}
+// `MTL4PipelineDataSetSerializerConfiguration` (NS_OPTIONS) — bitfield; combine with `|`.
+const m_t_l4_pipeline_data_set_serializer_configuration_capture_descriptors: u64 = 1 as u64;
+const m_t_l4_pipeline_data_set_serializer_configuration_capture_binaries: u64 = 2 as u64;
 
 // `MTL4PipelineDataSetSerializerDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4PipelineDataSetSerializerDescriptor {
@@ -33,8 +19,10 @@ struct MTL4PipelineDataSetSerializerDescriptor {
 impl MTL4PipelineDataSetSerializerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn configuration(this) -> MTL4PipelineDataSetSerializerConfiguration {
-        return m_t_l4_pipeline_data_set_serializer_configuration_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("configuration\0"))));
+    fn from_raw(ptr: *u8) -> MTL4PipelineDataSetSerializerDescriptor { return MTL4PipelineDataSetSerializerDescriptor { _obj: ptr }; }
+
+    fn configuration(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("configuration\0")));
     }
 
     // SKIPPED `setConfiguration:`: (return, arg) shape not yet modelled

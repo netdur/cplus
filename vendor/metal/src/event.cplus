@@ -15,6 +15,8 @@ struct SharedEventListener {
 impl SharedEventListener {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharedEventListener { return SharedEventListener { _obj: ptr }; }
+
     fn new() -> SharedEventListener {
         let cls: *u8 = rt::get_class(#str_ptr("MTLSharedEventListener\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -39,6 +41,8 @@ struct SharedEventHandle {
 
 impl SharedEventHandle {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SharedEventHandle { return SharedEventHandle { _obj: ptr }; }
 
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
@@ -109,43 +113,43 @@ fn create_Event(ctx: *Event) -> *u8 {
 // SKIPPED `waitUntilSignaledValue:timeoutMS:`: arg shape (only <=5 object args modelled)
 // SKIPPED `signaledValue`: return `uint64_t` not modelled
 // SKIPPED `setSignaledValue:`: arg shape (only <=5 object args modelled)
-fn SharedEvent_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
+fn SharedEventProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
 
-struct SharedEvent {
+struct SharedEventProtocol {
     new_shared_event_handle: fn(*u8) -> *u8,
     opaque user: *u8,
 }
 
-fn SharedEvent_new(user: *u8) -> SharedEvent {
-    return SharedEvent { new_shared_event_handle: SharedEvent_noop_id_0, user: user };
+fn SharedEventProtocol_new(user: *u8) -> SharedEventProtocol {
+    return SharedEventProtocol { new_shared_event_handle: SharedEventProtocol_noop_id_0, user: user };
 }
 
-impl SharedEvent {
+impl SharedEventProtocol {
     fn set_new_shared_event_handle(ref this, handler: fn(*u8) -> *u8) {
         this.new_shared_event_handle = handler;
         return;
     }
 }
 
-fn SharedEvent_key() -> *u8 { return { 28673 as *u8 }; }
+fn SharedEventProtocol_key() -> *u8 { return { 28673 as *u8 }; }
 
-fn SharedEvent_new_shared_event_handle_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *SharedEvent = { synth::get_associated(self_obj, SharedEvent_key()) as *SharedEvent };
+fn SharedEventProtocol_new_shared_event_handle_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *SharedEventProtocol = { synth::get_associated(self_obj, SharedEventProtocol_key()) as *SharedEventProtocol };
     let f: fn(*u8) -> *u8 = { (*c).new_shared_event_handle };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_SharedEvent(ctx: *SharedEvent) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SharedEvent\0");
+fn create_SharedEventProtocol(ctx: *SharedEventProtocol) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SharedEventProtocol\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_new_shared_event_handle: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("newSharedEventHandle\0")), SharedEvent_new_shared_event_handle_imp, #str_ptr("@@:\0"));
+        let add_new_shared_event_handle: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("newSharedEventHandle\0")), SharedEventProtocol_new_shared_event_handle_imp, #str_ptr("@@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SharedEvent_key(), { ctx as *u8 });
+    synth::set_associated(d, SharedEventProtocol_key(), { ctx as *u8 });
     return d;
 }
 

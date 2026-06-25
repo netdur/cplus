@@ -14,6 +14,8 @@ struct MTL4LibraryFunctionDescriptor {
 impl MTL4LibraryFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4LibraryFunctionDescriptor { return MTL4LibraryFunctionDescriptor { _obj: ptr }; }
+
     fn name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text_option(ns);

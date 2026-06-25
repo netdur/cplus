@@ -215,6 +215,8 @@ struct VertexBufferLayoutDescriptor {
 impl VertexBufferLayoutDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VertexBufferLayoutDescriptor { return VertexBufferLayoutDescriptor { _obj: ptr }; }
+
     fn stride(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("stride\0")));
     }
@@ -240,6 +242,8 @@ struct VertexBufferLayoutDescriptorArray {
 impl VertexBufferLayoutDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VertexBufferLayoutDescriptorArray { return VertexBufferLayoutDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index);
     }
@@ -254,6 +258,8 @@ struct VertexAttributeDescriptor {
 
 impl VertexAttributeDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> VertexAttributeDescriptor { return VertexAttributeDescriptor { _obj: ptr }; }
 
     fn format(this) -> VertexFormat {
         return vertex_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("format\0"))));
@@ -280,6 +286,8 @@ struct VertexAttributeDescriptorArray {
 impl VertexAttributeDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VertexAttributeDescriptorArray { return VertexAttributeDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index);
     }
@@ -294,6 +302,8 @@ struct VertexDescriptor {
 
 impl VertexDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> VertexDescriptor { return VertexDescriptor { _obj: ptr }; }
 
     fn vertex_descriptor() -> VertexDescriptor {
         return VertexDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLVertexDescriptor\0")), rt::sel(#str_ptr("vertexDescriptor\0"))) };

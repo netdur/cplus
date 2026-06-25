@@ -390,6 +390,8 @@ struct RasterizationRateLayerDescriptor {
 impl RasterizationRateLayerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RasterizationRateLayerDescriptor { return RasterizationRateLayerDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLRasterizationRateMapDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -399,6 +401,8 @@ struct RasterizationRateMapDescriptor {
 
 impl RasterizationRateMapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RasterizationRateMapDescriptor { return RasterizationRateMapDescriptor { _obj: ptr }; }
 
 }
 
@@ -410,6 +414,8 @@ struct TileRenderPipelineDescriptor {
 impl TileRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TileRenderPipelineDescriptor { return TileRenderPipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLTilePipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -419,6 +425,8 @@ struct TilePipelineColorAttachmentDescriptor {
 
 impl TilePipelineColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TilePipelineColorAttachmentDescriptor { return TilePipelineColorAttachmentDescriptor { _obj: ptr }; }
 
 }
 
@@ -430,6 +438,8 @@ struct MeshRenderPipelineDescriptor {
 impl MeshRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MeshRenderPipelineDescriptor { return MeshRenderPipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLSamplerDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -439,6 +449,8 @@ struct SamplerDescriptor {
 
 impl SamplerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SamplerDescriptor { return SamplerDescriptor { _obj: ptr }; }
 
 }
 
@@ -450,6 +462,8 @@ struct RenderPipelineColorAttachmentDescriptor {
 impl RenderPipelineColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPipelineColorAttachmentDescriptor { return RenderPipelineColorAttachmentDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLDepthStencilDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -459,6 +473,8 @@ struct DepthStencilDescriptor {
 
 impl DepthStencilDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DepthStencilDescriptor { return DepthStencilDescriptor { _obj: ptr }; }
 
 }
 
@@ -470,6 +486,8 @@ struct TextureDescriptor {
 impl TextureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextureDescriptor { return TextureDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLCompileOptions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -479,6 +497,8 @@ struct CompileOptions {
 
 impl CompileOptions {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CompileOptions { return CompileOptions { _obj: ptr }; }
 
 }
 
@@ -490,6 +510,8 @@ struct RenderPipelineDescriptor {
 impl RenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPipelineDescriptor { return RenderPipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLRenderPassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -499,6 +521,8 @@ struct RenderPassDescriptor {
 
 impl RenderPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPassDescriptor { return RenderPassDescriptor { _obj: ptr }; }
 
 }
 
@@ -510,6 +534,8 @@ struct ComputePassDescriptor {
 impl ComputePassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComputePassDescriptor { return ComputePassDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLBlitPassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -519,6 +545,8 @@ struct BlitPassDescriptor {
 
 impl BlitPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BlitPassDescriptor { return BlitPassDescriptor { _obj: ptr }; }
 
 }
 
@@ -530,6 +558,8 @@ struct RenderPipelineReflection {
 impl RenderPipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPipelineReflection { return RenderPipelineReflection { _obj: ptr }; }
+
 }
 
 // `MTLComputePipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -539,6 +569,8 @@ struct ComputePipelineDescriptor {
 
 impl ComputePipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputePipelineDescriptor { return ComputePipelineDescriptor { _obj: ptr }; }
 
 }
 
@@ -550,6 +582,8 @@ struct ComputePipelineReflection {
 impl ComputePipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComputePipelineReflection { return ComputePipelineReflection { _obj: ptr }; }
+
 }
 
 // `MTLCommandQueueDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -559,6 +593,8 @@ struct CommandQueueDescriptor {
 
 impl CommandQueueDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandQueueDescriptor { return CommandQueueDescriptor { _obj: ptr }; }
 
 }
 
@@ -570,6 +606,8 @@ struct HeapDescriptor {
 impl HeapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> HeapDescriptor { return HeapDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLIndirectCommandBufferDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -579,6 +617,8 @@ struct IndirectCommandBufferDescriptor {
 
 impl IndirectCommandBufferDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IndirectCommandBufferDescriptor { return IndirectCommandBufferDescriptor { _obj: ptr }; }
 
 }
 
@@ -590,6 +630,8 @@ struct SharedTextureHandle {
 impl SharedTextureHandle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharedTextureHandle { return SharedTextureHandle { _obj: ptr }; }
+
 }
 
 // `MTLSharedEventHandle` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -599,6 +641,8 @@ struct SharedEventHandle {
 
 impl SharedEventHandle {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SharedEventHandle { return SharedEventHandle { _obj: ptr }; }
 
 }
 
@@ -610,6 +654,8 @@ struct BinaryArchiveDescriptor {
 impl BinaryArchiveDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BinaryArchiveDescriptor { return BinaryArchiveDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -619,6 +665,8 @@ struct AccelerationStructureDescriptor {
 
 impl AccelerationStructureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor { _obj: ptr }; }
 
 }
 
@@ -630,6 +678,8 @@ struct VisibleFunctionTableDescriptor {
 impl VisibleFunctionTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VisibleFunctionTableDescriptor { return VisibleFunctionTableDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLIntersectionFunctionTableDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -639,6 +689,8 @@ struct IntersectionFunctionTableDescriptor {
 
 impl IntersectionFunctionTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IntersectionFunctionTableDescriptor { return IntersectionFunctionTableDescriptor { _obj: ptr }; }
 
 }
 
@@ -650,6 +702,8 @@ struct StitchedLibraryDescriptor {
 impl StitchedLibraryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> StitchedLibraryDescriptor { return StitchedLibraryDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLLogStateDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -659,6 +713,8 @@ struct LogStateDescriptor {
 
 impl LogStateDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LogStateDescriptor { return LogStateDescriptor { _obj: ptr }; }
 
 }
 
@@ -670,6 +726,8 @@ struct ResidencySetDescriptor {
 impl ResidencySetDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ResidencySetDescriptor { return ResidencySetDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4CommandQueueDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -679,6 +737,8 @@ struct MTL4CommandQueueDescriptor {
 
 impl MTL4CommandQueueDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CommandQueueDescriptor { return MTL4CommandQueueDescriptor { _obj: ptr }; }
 
 }
 
@@ -690,6 +750,8 @@ struct MTL4CommandAllocatorDescriptor {
 impl MTL4CommandAllocatorDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4CommandAllocatorDescriptor { return MTL4CommandAllocatorDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4ArgumentTableDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -699,6 +761,8 @@ struct MTL4ArgumentTableDescriptor {
 
 impl MTL4ArgumentTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4ArgumentTableDescriptor { return MTL4ArgumentTableDescriptor { _obj: ptr }; }
 
 }
 
@@ -710,6 +774,8 @@ struct ResourceViewPoolDescriptor {
 impl ResourceViewPoolDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ResourceViewPoolDescriptor { return ResourceViewPoolDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4CompilerDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -719,6 +785,8 @@ struct MTL4CompilerDescriptor {
 
 impl MTL4CompilerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CompilerDescriptor { return MTL4CompilerDescriptor { _obj: ptr }; }
 
 }
 
@@ -730,6 +798,8 @@ struct MTL4PipelineDataSetSerializerDescriptor {
 impl MTL4PipelineDataSetSerializerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4PipelineDataSetSerializerDescriptor { return MTL4PipelineDataSetSerializerDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4CounterHeapDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -739,6 +809,8 @@ struct MTL4CounterHeapDescriptor {
 
 impl MTL4CounterHeapDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CounterHeapDescriptor { return MTL4CounterHeapDescriptor { _obj: ptr }; }
 
 }
 
@@ -750,6 +822,8 @@ struct IOCommandQueueDescriptor {
 impl IOCommandQueueDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IOCommandQueueDescriptor { return IOCommandQueueDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLArgumentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -759,6 +833,8 @@ struct ArgumentDescriptor {
 
 impl ArgumentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ArgumentDescriptor { return ArgumentDescriptor { _obj: ptr }; }
 
     fn argument_descriptor() -> ArgumentDescriptor {
         return ArgumentDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLArgumentDescriptor\0")), rt::sel(#str_ptr("argumentDescriptor\0"))) };
@@ -803,6 +879,8 @@ struct Architecture {
 
 impl Architecture {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Architecture { return Architecture { _obj: ptr }; }
 
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
@@ -937,11 +1015,11 @@ impl Architecture {
 // SKIPPED `supportsPrimitiveMotionBlur`: no `i8`-return / 0-arg IMP shape
 // SKIPPED `shouldMaximizeConcurrentCompilation`: no `i8`-return / 0-arg IMP shape
 // SKIPPED `setShouldMaximizeConcurrentCompilation:`: arg shape (only <=5 object args modelled)
-fn Device_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn Device_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn Device_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn DeviceProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
+fn DeviceProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+fn DeviceProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct Device {
+struct DeviceProtocol {
     sample_timestamps_gpu_timestamp: fn(*u8, *u8, *u8),
     name: fn(*u8) -> *u8,
     architecture: fn(*u8) -> *u8,
@@ -959,11 +1037,11 @@ struct Device {
     opaque user: *u8,
 }
 
-fn Device_new(user: *u8) -> Device {
-    return Device { sample_timestamps_gpu_timestamp: Device_noop_v_2, name: Device_noop_id_0, architecture: Device_noop_id_0, location: Device_noop_u64_0, location_number: Device_noop_u64_0, read_write_texture_support: Device_noop_u64_0, argument_buffers_support: Device_noop_u64_0, current_allocated_size: Device_noop_u64_0, max_threadgroup_memory_length: Device_noop_u64_0, max_argument_buffer_sampler_count: Device_noop_u64_0, sparse_tile_size_in_bytes: Device_noop_u64_0, max_buffer_length: Device_noop_u64_0, counter_sets: Device_noop_id_0, maximum_concurrent_compilation_task_count: Device_noop_u64_0, user: user };
+fn DeviceProtocol_new(user: *u8) -> DeviceProtocol {
+    return DeviceProtocol { sample_timestamps_gpu_timestamp: DeviceProtocol_noop_v_2, name: DeviceProtocol_noop_id_0, architecture: DeviceProtocol_noop_id_0, location: DeviceProtocol_noop_u64_0, location_number: DeviceProtocol_noop_u64_0, read_write_texture_support: DeviceProtocol_noop_u64_0, argument_buffers_support: DeviceProtocol_noop_u64_0, current_allocated_size: DeviceProtocol_noop_u64_0, max_threadgroup_memory_length: DeviceProtocol_noop_u64_0, max_argument_buffer_sampler_count: DeviceProtocol_noop_u64_0, sparse_tile_size_in_bytes: DeviceProtocol_noop_u64_0, max_buffer_length: DeviceProtocol_noop_u64_0, counter_sets: DeviceProtocol_noop_id_0, maximum_concurrent_compilation_task_count: DeviceProtocol_noop_u64_0, user: user };
 }
 
-impl Device {
+impl DeviceProtocol {
     fn set_sample_timestamps_gpu_timestamp(ref this, handler: fn(*u8, *u8, *u8)) {
         this.sample_timestamps_gpu_timestamp = handler;
         return;
@@ -1022,130 +1100,130 @@ impl Device {
     }
 }
 
-fn Device_key() -> *u8 { return { 28672 as *u8 }; }
+fn DeviceProtocol_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn Device_sample_timestamps_gpu_timestamp_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_sample_timestamps_gpu_timestamp_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8, *u8, *u8) = { (*c).sample_timestamps_gpu_timestamp };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn Device_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> *u8 = { (*c).name };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_architecture_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_architecture_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> *u8 = { (*c).architecture };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_location_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_location_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).location };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_location_number_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_location_number_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).location_number };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_read_write_texture_support_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_read_write_texture_support_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).read_write_texture_support };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_argument_buffers_support_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_argument_buffers_support_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).argument_buffers_support };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_current_allocated_size_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_current_allocated_size_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).current_allocated_size };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_max_threadgroup_memory_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_max_threadgroup_memory_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).max_threadgroup_memory_length };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_max_argument_buffer_sampler_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_max_argument_buffer_sampler_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).max_argument_buffer_sampler_count };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_sparse_tile_size_in_bytes_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_sparse_tile_size_in_bytes_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).sparse_tile_size_in_bytes };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_max_buffer_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_max_buffer_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).max_buffer_length };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_counter_sets_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_counter_sets_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> *u8 = { (*c).counter_sets };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn Device_maximum_concurrent_compilation_task_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Device = { synth::get_associated(self_obj, Device_key()) as *Device };
+fn DeviceProtocol_maximum_concurrent_compilation_task_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *DeviceProtocol = { synth::get_associated(self_obj, DeviceProtocol_key()) as *DeviceProtocol };
     let f: fn(*u8) -> u64 = { (*c).maximum_concurrent_compilation_task_count };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_Device(ctx: *Device) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Device\0");
+fn create_DeviceProtocol(ctx: *DeviceProtocol) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_DeviceProtocol\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_sample_timestamps_gpu_timestamp: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sampleTimestamps:gpuTimestamp:\0")), Device_sample_timestamps_gpu_timestamp_imp, #str_ptr("v@:@@\0"));
-        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), Device_name_imp, #str_ptr("@@:\0"));
-        let add_architecture: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("architecture\0")), Device_architecture_imp, #str_ptr("@@:\0"));
-        let add_location: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("location\0")), Device_location_imp, #str_ptr("Q@:\0"));
-        let add_location_number: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("locationNumber\0")), Device_location_number_imp, #str_ptr("Q@:\0"));
-        let add_read_write_texture_support: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("readWriteTextureSupport\0")), Device_read_write_texture_support_imp, #str_ptr("Q@:\0"));
-        let add_argument_buffers_support: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("argumentBuffersSupport\0")), Device_argument_buffers_support_imp, #str_ptr("Q@:\0"));
-        let add_current_allocated_size: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("currentAllocatedSize\0")), Device_current_allocated_size_imp, #str_ptr("Q@:\0"));
-        let add_max_threadgroup_memory_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxThreadgroupMemoryLength\0")), Device_max_threadgroup_memory_length_imp, #str_ptr("Q@:\0"));
-        let add_max_argument_buffer_sampler_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxArgumentBufferSamplerCount\0")), Device_max_argument_buffer_sampler_count_imp, #str_ptr("Q@:\0"));
-        let add_sparse_tile_size_in_bytes: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sparseTileSizeInBytes\0")), Device_sparse_tile_size_in_bytes_imp, #str_ptr("Q@:\0"));
-        let add_max_buffer_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxBufferLength\0")), Device_max_buffer_length_imp, #str_ptr("Q@:\0"));
-        let add_counter_sets: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("counterSets\0")), Device_counter_sets_imp, #str_ptr("@@:\0"));
-        let add_maximum_concurrent_compilation_task_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maximumConcurrentCompilationTaskCount\0")), Device_maximum_concurrent_compilation_task_count_imp, #str_ptr("Q@:\0"));
+        let add_sample_timestamps_gpu_timestamp: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sampleTimestamps:gpuTimestamp:\0")), DeviceProtocol_sample_timestamps_gpu_timestamp_imp, #str_ptr("v@:@@\0"));
+        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), DeviceProtocol_name_imp, #str_ptr("@@:\0"));
+        let add_architecture: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("architecture\0")), DeviceProtocol_architecture_imp, #str_ptr("@@:\0"));
+        let add_location: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("location\0")), DeviceProtocol_location_imp, #str_ptr("Q@:\0"));
+        let add_location_number: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("locationNumber\0")), DeviceProtocol_location_number_imp, #str_ptr("Q@:\0"));
+        let add_read_write_texture_support: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("readWriteTextureSupport\0")), DeviceProtocol_read_write_texture_support_imp, #str_ptr("Q@:\0"));
+        let add_argument_buffers_support: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("argumentBuffersSupport\0")), DeviceProtocol_argument_buffers_support_imp, #str_ptr("Q@:\0"));
+        let add_current_allocated_size: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("currentAllocatedSize\0")), DeviceProtocol_current_allocated_size_imp, #str_ptr("Q@:\0"));
+        let add_max_threadgroup_memory_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxThreadgroupMemoryLength\0")), DeviceProtocol_max_threadgroup_memory_length_imp, #str_ptr("Q@:\0"));
+        let add_max_argument_buffer_sampler_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxArgumentBufferSamplerCount\0")), DeviceProtocol_max_argument_buffer_sampler_count_imp, #str_ptr("Q@:\0"));
+        let add_sparse_tile_size_in_bytes: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sparseTileSizeInBytes\0")), DeviceProtocol_sparse_tile_size_in_bytes_imp, #str_ptr("Q@:\0"));
+        let add_max_buffer_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maxBufferLength\0")), DeviceProtocol_max_buffer_length_imp, #str_ptr("Q@:\0"));
+        let add_counter_sets: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("counterSets\0")), DeviceProtocol_counter_sets_imp, #str_ptr("@@:\0"));
+        let add_maximum_concurrent_compilation_task_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("maximumConcurrentCompilationTaskCount\0")), DeviceProtocol_maximum_concurrent_compilation_task_count_imp, #str_ptr("Q@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Device_key(), { ctx as *u8 });
+    synth::set_associated(d, DeviceProtocol_key(), { ctx as *u8 });
     return d;
 }
 

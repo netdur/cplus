@@ -15,6 +15,8 @@ struct MTL4RenderPassDescriptor {
 impl MTL4RenderPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4RenderPassDescriptor { return MTL4RenderPassDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4CommandBufferOptions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct MTL4CommandBufferOptions {
 
 impl MTL4CommandBufferOptions {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CommandBufferOptions { return MTL4CommandBufferOptions { _obj: ptr }; }
 
     // SKIPPED `logState`: return `id<MTLLogState> _Nullable` — generic collection
     // SKIPPED `setLogState:`: param `id<MTLLogState> _Nullable` — generic collection

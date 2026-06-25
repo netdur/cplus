@@ -6,23 +6,9 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `MTL4BinaryFunctionOptions` (NS_ENUM)
-enum MTL4BinaryFunctionOptions {
-    MTL4BinaryFunctionOptionNone,
-    MTL4BinaryFunctionOptionPipelineIndependent,
-}
-
-fn m_t_l4_binary_function_options_raw(v: MTL4BinaryFunctionOptions) -> i64 {
-    return match v {
-        MTL4BinaryFunctionOptions::MTL4BinaryFunctionOptionNone => { 0 as i64 },
-        MTL4BinaryFunctionOptions::MTL4BinaryFunctionOptionPipelineIndependent => { 2 as i64 },
-    };
-}
-
-fn m_t_l4_binary_function_options_from_raw(raw: i64) -> MTL4BinaryFunctionOptions {
-    if raw == (2 as i64) { return MTL4BinaryFunctionOptions::MTL4BinaryFunctionOptionPipelineIndependent; }
-    return MTL4BinaryFunctionOptions::MTL4BinaryFunctionOptionNone;
-}
+// `MTL4BinaryFunctionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const m_t_l4_binary_function_options_m_t_l4_binary_function_option_none: u64 = 0 as u64;
+const m_t_l4_binary_function_options_m_t_l4_binary_function_option_pipeline_independent: u64 = 2 as u64;
 
 // `MTL4BinaryFunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4BinaryFunctionDescriptor {
@@ -31,6 +17,8 @@ struct MTL4BinaryFunctionDescriptor {
 
 impl MTL4BinaryFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunctionDescriptor { return MTL4BinaryFunctionDescriptor { _obj: ptr }; }
 
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
@@ -49,8 +37,8 @@ impl MTL4BinaryFunctionDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionDescriptor:\0")), function_descriptor);
     }
 
-    fn options(this) -> MTL4BinaryFunctionOptions {
-        return m_t_l4_binary_function_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("options\0"))));
+    fn options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
     // SKIPPED `setOptions:`: (return, arg) shape not yet modelled

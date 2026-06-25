@@ -26,20 +26,8 @@ fn request_user_attention_type_from_raw(raw: i64) -> RequestUserAttentionType {
     return RequestUserAttentionType::NSCriticalRequest;
 }
 
-// `NSWindowListOptions` (NS_ENUM)
-enum WindowListOptions {
-    NSWindowListOrderedFrontToBack,
-}
-
-fn window_list_options_raw(v: WindowListOptions) -> i64 {
-    return match v {
-        WindowListOptions::NSWindowListOrderedFrontToBack => { 1 as i64 },
-    };
-}
-
-fn window_list_options_from_raw(raw: i64) -> WindowListOptions {
-    return WindowListOptions::NSWindowListOrderedFrontToBack;
-}
+// `NSWindowListOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const window_list_options_n_s_window_list_ordered_front_to_back: u64 = 1 as u64;
 
 // `NSApplicationActivationPolicy` (NS_ENUM)
 enum ApplicationActivationPolicy {
@@ -83,191 +71,61 @@ fn application_delegate_reply_from_raw(raw: i64) -> ApplicationDelegateReply {
     return ApplicationDelegateReply::Success;
 }
 
-// `NSApplicationPresentationOptions` (NS_ENUM)
-enum ApplicationPresentationOptions {
-    NSApplicationPresentationDefault,
-    NSApplicationPresentationAutoHideDock,
-    NSApplicationPresentationHideDock,
-    NSApplicationPresentationAutoHideMenuBar,
-    NSApplicationPresentationHideMenuBar,
-    NSApplicationPresentationDisableAppleMenu,
-    NSApplicationPresentationDisableProcessSwitching,
-    NSApplicationPresentationDisableForceQuit,
-    NSApplicationPresentationDisableSessionTermination,
-    NSApplicationPresentationDisableHideApplication,
-    NSApplicationPresentationDisableMenuBarTransparency,
-    NSApplicationPresentationFullScreen,
-    NSApplicationPresentationAutoHideToolbar,
-    NSApplicationPresentationDisableCursorLocationAssistance,
-}
+// `NSApplicationPresentationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const application_presentation_options_n_s_application_presentation_default: u64 = 0 as u64;
+const application_presentation_options_n_s_application_presentation_auto_hide_dock: u64 = 1 as u64;
+const application_presentation_options_n_s_application_presentation_hide_dock: u64 = 2 as u64;
+const application_presentation_options_n_s_application_presentation_auto_hide_menu_bar: u64 = 4 as u64;
+const application_presentation_options_n_s_application_presentation_hide_menu_bar: u64 = 8 as u64;
+const application_presentation_options_n_s_application_presentation_disable_apple_menu: u64 = 16 as u64;
+const application_presentation_options_n_s_application_presentation_disable_process_switching: u64 = 32 as u64;
+const application_presentation_options_n_s_application_presentation_disable_force_quit: u64 = 64 as u64;
+const application_presentation_options_n_s_application_presentation_disable_session_termination: u64 = 128 as u64;
+const application_presentation_options_n_s_application_presentation_disable_hide_application: u64 = 256 as u64;
+const application_presentation_options_n_s_application_presentation_disable_menu_bar_transparency: u64 = 512 as u64;
+const application_presentation_options_n_s_application_presentation_full_screen: u64 = 1024 as u64;
+const application_presentation_options_n_s_application_presentation_auto_hide_toolbar: u64 = 2048 as u64;
+const application_presentation_options_n_s_application_presentation_disable_cursor_location_assistance: u64 = 4096 as u64;
 
-fn application_presentation_options_raw(v: ApplicationPresentationOptions) -> i64 {
-    return match v {
-        ApplicationPresentationOptions::NSApplicationPresentationDefault => { 0 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationAutoHideDock => { 1 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationHideDock => { 2 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationAutoHideMenuBar => { 4 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationHideMenuBar => { 8 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableAppleMenu => { 16 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableProcessSwitching => { 32 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableForceQuit => { 64 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableSessionTermination => { 128 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableHideApplication => { 256 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableMenuBarTransparency => { 512 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationFullScreen => { 1024 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationAutoHideToolbar => { 2048 as i64 },
-        ApplicationPresentationOptions::NSApplicationPresentationDisableCursorLocationAssistance => { 4096 as i64 },
-    };
-}
+// `NSApplicationOcclusionState` (NS_OPTIONS) — bitfield; combine with `|`.
+const application_occlusion_state_visible: u64 = 2 as u64;
 
-fn application_presentation_options_from_raw(raw: i64) -> ApplicationPresentationOptions {
-    if raw == (1 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationAutoHideDock; }
-    if raw == (2 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationHideDock; }
-    if raw == (4 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationAutoHideMenuBar; }
-    if raw == (8 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationHideMenuBar; }
-    if raw == (16 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableAppleMenu; }
-    if raw == (32 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableProcessSwitching; }
-    if raw == (64 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableForceQuit; }
-    if raw == (128 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableSessionTermination; }
-    if raw == (256 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableHideApplication; }
-    if raw == (512 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableMenuBarTransparency; }
-    if raw == (1024 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationFullScreen; }
-    if raw == (2048 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationAutoHideToolbar; }
-    if raw == (4096 as i64) { return ApplicationPresentationOptions::NSApplicationPresentationDisableCursorLocationAssistance; }
-    return ApplicationPresentationOptions::NSApplicationPresentationDefault;
-}
-
-// `NSApplicationOcclusionState` (NS_ENUM)
-enum ApplicationOcclusionState {
-    Visible,
-}
-
-fn application_occlusion_state_raw(v: ApplicationOcclusionState) -> i64 {
-    return match v {
-        ApplicationOcclusionState::Visible => { 2 as i64 },
-    };
-}
-
-fn application_occlusion_state_from_raw(raw: i64) -> ApplicationOcclusionState {
-    return ApplicationOcclusionState::Visible;
-}
-
-// `NSEventMask` (NS_ENUM)
-enum EventMask {
-    LeftMouseDown,
-    LeftMouseUp,
-    RightMouseDown,
-    RightMouseUp,
-    MouseMoved,
-    LeftMouseDragged,
-    RightMouseDragged,
-    MouseEntered,
-    MouseExited,
-    KeyDown,
-    KeyUp,
-    FlagsChanged,
-    AppKitDefined,
-    SystemDefined,
-    ApplicationDefined,
-    Periodic,
-    CursorUpdate,
-    ScrollWheel,
-    TabletPoint,
-    TabletProximity,
-    OtherMouseDown,
-    OtherMouseUp,
-    OtherMouseDragged,
-    Gesture,
-    Magnify,
-    Swipe,
-    Rotate,
-    BeginGesture,
-    EndGesture,
-    SmartMagnify,
-    Pressure,
-    DirectTouch,
-    ChangeMode,
-    MouseCancelled,
-    Any,
-}
-
-fn event_mask_raw(v: EventMask) -> i64 {
-    return match v {
-        EventMask::LeftMouseDown => { 2 as i64 },
-        EventMask::LeftMouseUp => { 4 as i64 },
-        EventMask::RightMouseDown => { 8 as i64 },
-        EventMask::RightMouseUp => { 16 as i64 },
-        EventMask::MouseMoved => { 32 as i64 },
-        EventMask::LeftMouseDragged => { 64 as i64 },
-        EventMask::RightMouseDragged => { 128 as i64 },
-        EventMask::MouseEntered => { 256 as i64 },
-        EventMask::MouseExited => { 512 as i64 },
-        EventMask::KeyDown => { 1024 as i64 },
-        EventMask::KeyUp => { 2048 as i64 },
-        EventMask::FlagsChanged => { 4096 as i64 },
-        EventMask::AppKitDefined => { 8192 as i64 },
-        EventMask::SystemDefined => { 16384 as i64 },
-        EventMask::ApplicationDefined => { 32768 as i64 },
-        EventMask::Periodic => { 65536 as i64 },
-        EventMask::CursorUpdate => { 131072 as i64 },
-        EventMask::ScrollWheel => { 4194304 as i64 },
-        EventMask::TabletPoint => { 8388608 as i64 },
-        EventMask::TabletProximity => { 16777216 as i64 },
-        EventMask::OtherMouseDown => { 33554432 as i64 },
-        EventMask::OtherMouseUp => { 67108864 as i64 },
-        EventMask::OtherMouseDragged => { 134217728 as i64 },
-        EventMask::Gesture => { 536870912 as i64 },
-        EventMask::Magnify => { 1073741824 as i64 },
-        EventMask::Swipe => { 2147483648 as i64 },
-        EventMask::Rotate => { 262144 as i64 },
-        EventMask::BeginGesture => { 524288 as i64 },
-        EventMask::EndGesture => { 1048576 as i64 },
-        EventMask::SmartMagnify => { 4294967296 as i64 },
-        EventMask::Pressure => { 17179869184 as i64 },
-        EventMask::DirectTouch => { 137438953472 as i64 },
-        EventMask::ChangeMode => { 274877906944 as i64 },
-        EventMask::MouseCancelled => { 1099511627776 as i64 },
-        EventMask::Any => { 9223372036854775807 as i64 },
-    };
-}
-
-fn event_mask_from_raw(raw: i64) -> EventMask {
-    if raw == (4 as i64) { return EventMask::LeftMouseUp; }
-    if raw == (8 as i64) { return EventMask::RightMouseDown; }
-    if raw == (16 as i64) { return EventMask::RightMouseUp; }
-    if raw == (32 as i64) { return EventMask::MouseMoved; }
-    if raw == (64 as i64) { return EventMask::LeftMouseDragged; }
-    if raw == (128 as i64) { return EventMask::RightMouseDragged; }
-    if raw == (256 as i64) { return EventMask::MouseEntered; }
-    if raw == (512 as i64) { return EventMask::MouseExited; }
-    if raw == (1024 as i64) { return EventMask::KeyDown; }
-    if raw == (2048 as i64) { return EventMask::KeyUp; }
-    if raw == (4096 as i64) { return EventMask::FlagsChanged; }
-    if raw == (8192 as i64) { return EventMask::AppKitDefined; }
-    if raw == (16384 as i64) { return EventMask::SystemDefined; }
-    if raw == (32768 as i64) { return EventMask::ApplicationDefined; }
-    if raw == (65536 as i64) { return EventMask::Periodic; }
-    if raw == (131072 as i64) { return EventMask::CursorUpdate; }
-    if raw == (4194304 as i64) { return EventMask::ScrollWheel; }
-    if raw == (8388608 as i64) { return EventMask::TabletPoint; }
-    if raw == (16777216 as i64) { return EventMask::TabletProximity; }
-    if raw == (33554432 as i64) { return EventMask::OtherMouseDown; }
-    if raw == (67108864 as i64) { return EventMask::OtherMouseUp; }
-    if raw == (134217728 as i64) { return EventMask::OtherMouseDragged; }
-    if raw == (536870912 as i64) { return EventMask::Gesture; }
-    if raw == (1073741824 as i64) { return EventMask::Magnify; }
-    if raw == (2147483648 as i64) { return EventMask::Swipe; }
-    if raw == (262144 as i64) { return EventMask::Rotate; }
-    if raw == (524288 as i64) { return EventMask::BeginGesture; }
-    if raw == (1048576 as i64) { return EventMask::EndGesture; }
-    if raw == (4294967296 as i64) { return EventMask::SmartMagnify; }
-    if raw == (17179869184 as i64) { return EventMask::Pressure; }
-    if raw == (137438953472 as i64) { return EventMask::DirectTouch; }
-    if raw == (274877906944 as i64) { return EventMask::ChangeMode; }
-    if raw == (1099511627776 as i64) { return EventMask::MouseCancelled; }
-    if raw == (9223372036854775807 as i64) { return EventMask::Any; }
-    return EventMask::LeftMouseDown;
-}
+// `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_mask_left_mouse_down: u64 = 2 as u64;
+const event_mask_left_mouse_up: u64 = 4 as u64;
+const event_mask_right_mouse_down: u64 = 8 as u64;
+const event_mask_right_mouse_up: u64 = 16 as u64;
+const event_mask_mouse_moved: u64 = 32 as u64;
+const event_mask_left_mouse_dragged: u64 = 64 as u64;
+const event_mask_right_mouse_dragged: u64 = 128 as u64;
+const event_mask_mouse_entered: u64 = 256 as u64;
+const event_mask_mouse_exited: u64 = 512 as u64;
+const event_mask_key_down: u64 = 1024 as u64;
+const event_mask_key_up: u64 = 2048 as u64;
+const event_mask_flags_changed: u64 = 4096 as u64;
+const event_mask_app_kit_defined: u64 = 8192 as u64;
+const event_mask_system_defined: u64 = 16384 as u64;
+const event_mask_application_defined: u64 = 32768 as u64;
+const event_mask_periodic: u64 = 65536 as u64;
+const event_mask_cursor_update: u64 = 131072 as u64;
+const event_mask_scroll_wheel: u64 = 4194304 as u64;
+const event_mask_tablet_point: u64 = 8388608 as u64;
+const event_mask_tablet_proximity: u64 = 16777216 as u64;
+const event_mask_other_mouse_down: u64 = 33554432 as u64;
+const event_mask_other_mouse_up: u64 = 67108864 as u64;
+const event_mask_other_mouse_dragged: u64 = 134217728 as u64;
+const event_mask_gesture: u64 = 536870912 as u64;
+const event_mask_magnify: u64 = 1073741824 as u64;
+const event_mask_swipe: u64 = 2147483648 as u64;
+const event_mask_rotate: u64 = 262144 as u64;
+const event_mask_begin_gesture: u64 = 524288 as u64;
+const event_mask_end_gesture: u64 = 1048576 as u64;
+const event_mask_smart_magnify: u64 = 4294967296 as u64;
+const event_mask_pressure: u64 = 17179869184 as u64;
+const event_mask_direct_touch: u64 = 137438953472 as u64;
+const event_mask_change_mode: u64 = 274877906944 as u64;
+const event_mask_mouse_cancelled: u64 = 1099511627776 as u64;
+const event_mask_any: u64 = 9223372036854775807 as u64;
 
 // `NSUserInterfaceLayoutDirection` (NS_ENUM)
 enum UserInterfaceLayoutDirection {
@@ -287,29 +145,11 @@ fn user_interface_layout_direction_from_raw(raw: i64) -> UserInterfaceLayoutDire
     return UserInterfaceLayoutDirection::LeftToRight;
 }
 
-// `NSRemoteNotificationType` (NS_ENUM)
-enum RemoteNotificationType {
-    None,
-    Badge,
-    Sound,
-    Alert,
-}
-
-fn remote_notification_type_raw(v: RemoteNotificationType) -> i64 {
-    return match v {
-        RemoteNotificationType::None => { 0 as i64 },
-        RemoteNotificationType::Badge => { 1 as i64 },
-        RemoteNotificationType::Sound => { 2 as i64 },
-        RemoteNotificationType::Alert => { 4 as i64 },
-    };
-}
-
-fn remote_notification_type_from_raw(raw: i64) -> RemoteNotificationType {
-    if raw == (1 as i64) { return RemoteNotificationType::Badge; }
-    if raw == (2 as i64) { return RemoteNotificationType::Sound; }
-    if raw == (4 as i64) { return RemoteNotificationType::Alert; }
-    return RemoteNotificationType::None;
-}
+// `NSRemoteNotificationType` (NS_OPTIONS) — bitfield; combine with `|`.
+const remote_notification_type_none: u64 = 0 as u64;
+const remote_notification_type_badge: u64 = 1 as u64;
+const remote_notification_type_sound: u64 = 2 as u64;
+const remote_notification_type_alert: u64 = 4 as u64;
 
 // `NSDate` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Date {
@@ -318,6 +158,8 @@ struct Date {
 
 impl Date {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Date { return Date { _obj: ptr }; }
 
 }
 
@@ -329,6 +171,8 @@ struct Dictionary {
 impl Dictionary {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Dictionary { return Dictionary { _obj: ptr }; }
+
 }
 
 // `NSError` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -338,6 +182,8 @@ struct Error {
 
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
 
 }
 
@@ -349,6 +195,8 @@ struct Exception {
 impl Exception {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Exception { return Exception { _obj: ptr }; }
+
 }
 
 // `NSNotification` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -358,6 +206,8 @@ struct Notification {
 
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
 
 }
 
@@ -369,6 +219,8 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -378,6 +230,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -389,6 +243,8 @@ struct Pasteboard {
 impl Pasteboard {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Pasteboard { return Pasteboard { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -398,6 +254,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
 }
 
@@ -409,6 +267,8 @@ struct DockTile {
 impl DockTile {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DockTile { return DockTile { _obj: ptr }; }
+
 }
 
 // `NSUserActivity` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -418,6 +278,8 @@ struct UserActivity {
 
 impl UserActivity {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UserActivity { return UserActivity { _obj: ptr }; }
 
 }
 
@@ -429,6 +291,8 @@ struct CKShareMetadata {
 impl CKShareMetadata {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CKShareMetadata { return CKShareMetadata { _obj: ptr }; }
+
 }
 
 // `INIntent` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -439,6 +303,8 @@ struct INIntent {
 impl INIntent {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> INIntent { return INIntent { _obj: ptr }; }
+
 }
 
 // `NSApplication` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -448,6 +314,8 @@ struct Application {
 
 impl Application {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Application { return Application { _obj: ptr }; }
 
     fn hide(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("hide:\0")), sender);
@@ -542,7 +410,10 @@ impl Application {
         return application_activation_policy_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("activationPolicy\0"))));
     }
 
-    // SKIPPED `setActivationPolicy:`: (return, arg) shape not yet modelled
+    fn set_activation_policy(this, activation_policy: ApplicationActivationPolicy) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("setActivationPolicy:\0")), application_activation_policy_raw(activation_policy)) != (0 as i8);
+    }
+
     fn report_exception(this, exception: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reportException:\0")), exception);
     }
@@ -557,8 +428,8 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontCharacterPalette:\0")), sender);
     }
 
-    fn shared_application() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")), rt::sel(#str_ptr("sharedApplication\0")));
+    fn shared_application() -> Application {
+        return Application { _obj: rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")), rt::sel(#str_ptr("sharedApplication\0"))) };
     }
 
     // SKIPPED `delegate`: return `id<NSApplicationDelegate> _Nullable` — generic collection
@@ -624,17 +495,17 @@ impl Application {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("dockTile\0")));
     }
 
-    fn presentation_options(this) -> ApplicationPresentationOptions {
-        return application_presentation_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("presentationOptions\0"))));
+    fn presentation_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("presentationOptions\0")));
     }
 
     // SKIPPED `setPresentationOptions:`: (return, arg) shape not yet modelled
-    fn current_system_presentation_options(this) -> ApplicationPresentationOptions {
-        return application_presentation_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("currentSystemPresentationOptions\0"))));
+    fn current_system_presentation_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("currentSystemPresentationOptions\0")));
     }
 
-    fn occlusion_state(this) -> ApplicationOcclusionState {
-        return application_occlusion_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("occlusionState\0"))));
+    fn occlusion_state(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("occlusionState\0")));
     }
 
     fn is_protected_data_available(this) -> bool {
@@ -750,8 +621,8 @@ impl Application {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isRegisteredForRemoteNotifications\0"))) != (0 as i8);
     }
 
-    fn enabled_remote_notification_types(this) -> RemoteNotificationType {
-        return remote_notification_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("enabledRemoteNotificationTypes\0"))));
+    fn enabled_remote_notification_types(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("enabledRemoteNotificationTypes\0")));
     }
 
     // SKIPPED `runModalForWindow:relativeToWindow:`: (return, arg) shape not yet modelled

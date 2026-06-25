@@ -6,26 +6,10 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `MTLStitchedLibraryOptions` (NS_ENUM)
-enum StitchedLibraryOptions {
-    MTLStitchedLibraryOptionNone,
-    MTLStitchedLibraryOptionFailOnBinaryArchiveMiss,
-    MTLStitchedLibraryOptionStoreLibraryInMetalPipelinesScript,
-}
-
-fn stitched_library_options_raw(v: StitchedLibraryOptions) -> i64 {
-    return match v {
-        StitchedLibraryOptions::MTLStitchedLibraryOptionNone => { 0 as i64 },
-        StitchedLibraryOptions::MTLStitchedLibraryOptionFailOnBinaryArchiveMiss => { 1 as i64 },
-        StitchedLibraryOptions::MTLStitchedLibraryOptionStoreLibraryInMetalPipelinesScript => { 2 as i64 },
-    };
-}
-
-fn stitched_library_options_from_raw(raw: i64) -> StitchedLibraryOptions {
-    if raw == (1 as i64) { return StitchedLibraryOptions::MTLStitchedLibraryOptionFailOnBinaryArchiveMiss; }
-    if raw == (2 as i64) { return StitchedLibraryOptions::MTLStitchedLibraryOptionStoreLibraryInMetalPipelinesScript; }
-    return StitchedLibraryOptions::MTLStitchedLibraryOptionNone;
-}
+// `MTLStitchedLibraryOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const stitched_library_options_m_t_l_stitched_library_option_none: u64 = 0 as u64;
+const stitched_library_options_m_t_l_stitched_library_option_fail_on_binary_archive_miss: u64 = 1 as u64;
+const stitched_library_options_m_t_l_stitched_library_option_store_library_in_metal_pipelines_script: u64 = 2 as u64;
 
 // `MTLFunctionStitchingAttributeAlwaysInline` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FunctionStitchingAttributeAlwaysInline {
@@ -34,6 +18,8 @@ struct FunctionStitchingAttributeAlwaysInline {
 
 impl FunctionStitchingAttributeAlwaysInline {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingAttributeAlwaysInline { return FunctionStitchingAttributeAlwaysInline { _obj: ptr }; }
 
 }
 
@@ -44,6 +30,8 @@ struct FunctionStitchingInputNode {
 
 impl FunctionStitchingInputNode {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingInputNode { return FunctionStitchingInputNode { _obj: ptr }; }
 
     fn new(argument: u64) -> FunctionStitchingInputNode {
         let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingInputNode\0"));
@@ -68,6 +56,8 @@ struct FunctionStitchingFunctionNode {
 
 impl FunctionStitchingFunctionNode {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: ptr }; }
 
     // SKIPPED `initWithName:arguments:controlDependencies:`: param `NSArray<id<MTLFunctionStitchingNode>> * _Nonnull` — generic collection
     fn name(this) -> text::Text {
@@ -95,6 +85,8 @@ struct FunctionStitchingGraph {
 
 impl FunctionStitchingGraph {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingGraph { return FunctionStitchingGraph { _obj: ptr }; }
 
     // SKIPPED `initWithFunctionName:nodes:outputNode:attributes:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     fn function_name(this) -> text::Text {
@@ -132,14 +124,16 @@ struct StitchedLibraryDescriptor {
 impl StitchedLibraryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> StitchedLibraryDescriptor { return StitchedLibraryDescriptor { _obj: ptr }; }
+
     // SKIPPED `functionGraphs`: return `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
     // SKIPPED `setFunctionGraphs:`: param `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
     // SKIPPED `functions`: return `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
     // SKIPPED `setFunctions:`: param `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
     // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nonnull` — generic collection
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nonnull` — generic collection
-    fn options(this) -> StitchedLibraryOptions {
-        return stitched_library_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("options\0"))));
+    fn options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
     // SKIPPED `setOptions:`: (return, arg) shape not yet modelled

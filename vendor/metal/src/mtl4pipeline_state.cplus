@@ -27,26 +27,10 @@ fn shader_validation_from_raw(raw: i64) -> ShaderValidation {
     return ShaderValidation::Default;
 }
 
-// `MTL4ShaderReflection` (NS_ENUM)
-enum MTL4ShaderReflection {
-    None,
-    BindingInfo,
-    BufferTypeInfo,
-}
-
-fn m_t_l4_shader_reflection_raw(v: MTL4ShaderReflection) -> i64 {
-    return match v {
-        MTL4ShaderReflection::None => { 0 as i64 },
-        MTL4ShaderReflection::BindingInfo => { 1 as i64 },
-        MTL4ShaderReflection::BufferTypeInfo => { 2 as i64 },
-    };
-}
-
-fn m_t_l4_shader_reflection_from_raw(raw: i64) -> MTL4ShaderReflection {
-    if raw == (1 as i64) { return MTL4ShaderReflection::BindingInfo; }
-    if raw == (2 as i64) { return MTL4ShaderReflection::BufferTypeInfo; }
-    return MTL4ShaderReflection::None;
-}
+// `MTL4ShaderReflection` (NS_OPTIONS) — bitfield; combine with `|`.
+const m_t_l4_shader_reflection_none: u64 = 0 as u64;
+const m_t_l4_shader_reflection_binding_info: u64 = 1 as u64;
+const m_t_l4_shader_reflection_buffer_type_info: u64 = 2 as u64;
 
 // `MTL4PipelineOptions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4PipelineOptions {
@@ -56,13 +40,15 @@ struct MTL4PipelineOptions {
 impl MTL4PipelineOptions {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4PipelineOptions { return MTL4PipelineOptions { _obj: ptr }; }
+
     fn shader_validation(this) -> ShaderValidation {
         return shader_validation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("shaderValidation\0"))));
     }
 
     // SKIPPED `setShaderValidation:`: (return, arg) shape not yet modelled
-    fn shader_reflection(this) -> MTL4ShaderReflection {
-        return m_t_l4_shader_reflection_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("shaderReflection\0"))));
+    fn shader_reflection(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("shaderReflection\0")));
     }
 
     // SKIPPED `setShaderReflection:`: (return, arg) shape not yet modelled
@@ -75,6 +61,8 @@ struct MTL4PipelineDescriptor {
 
 impl MTL4PipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor { _obj: ptr }; }
 
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));

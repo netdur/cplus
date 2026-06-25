@@ -15,6 +15,8 @@ struct MTL4MachineLearningPipelineDescriptor {
 impl MTL4MachineLearningPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineDescriptor { return MTL4MachineLearningPipelineDescriptor { _obj: ptr }; }
+
     // SKIPPED `setInputDimensions:atBufferIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `setInputDimensions:withRange:`: param `NSArray<MTLTensorExtents *> * _Nonnull` — generic collection
     fn input_dimensions_at_buffer_index(this, buffer_index: i64) -> option::Option[*u8] {
@@ -53,6 +55,8 @@ struct MTL4MachineLearningPipelineReflection {
 
 impl MTL4MachineLearningPipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineReflection { return MTL4MachineLearningPipelineReflection { _obj: ptr }; }
 
     // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
 }

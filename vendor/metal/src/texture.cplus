@@ -439,80 +439,26 @@ fn pixel_format_from_raw(raw: i64) -> PixelFormat {
     return PixelFormat::Invalid;
 }
 
-// `MTLResourceOptions` (NS_ENUM)
-enum ResourceOptions {
-    MTLResourceCPUCacheModeDefaultCache,
-    MTLResourceCPUCacheModeWriteCombined,
-    MTLResourceStorageModeShared,
-    MTLResourceStorageModeManaged,
-    MTLResourceStorageModePrivate,
-    MTLResourceStorageModeMemoryless,
-    MTLResourceHazardTrackingModeDefault,
-    MTLResourceHazardTrackingModeUntracked,
-    MTLResourceHazardTrackingModeTracked,
-    MTLResourceOptionCPUCacheModeDefault,
-    MTLResourceOptionCPUCacheModeWriteCombined,
-}
+// `MTLResourceOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const resource_options_m_t_l_resource_c_p_u_cache_mode_default_cache: u64 = 0 as u64;
+const resource_options_m_t_l_resource_c_p_u_cache_mode_write_combined: u64 = 1 as u64;
+const resource_options_m_t_l_resource_storage_mode_shared: u64 = 0 as u64;
+const resource_options_m_t_l_resource_storage_mode_managed: u64 = 16 as u64;
+const resource_options_m_t_l_resource_storage_mode_private: u64 = 32 as u64;
+const resource_options_m_t_l_resource_storage_mode_memoryless: u64 = 48 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_default: u64 = 0 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_untracked: u64 = 256 as u64;
+const resource_options_m_t_l_resource_hazard_tracking_mode_tracked: u64 = 512 as u64;
+const resource_options_m_t_l_resource_option_c_p_u_cache_mode_default: u64 = 0 as u64;
+const resource_options_m_t_l_resource_option_c_p_u_cache_mode_write_combined: u64 = 1 as u64;
 
-fn resource_options_raw(v: ResourceOptions) -> i64 {
-    return match v {
-        ResourceOptions::MTLResourceCPUCacheModeDefaultCache => { 0 as i64 },
-        ResourceOptions::MTLResourceCPUCacheModeWriteCombined => { 1 as i64 },
-        ResourceOptions::MTLResourceStorageModeShared => { 0 as i64 },
-        ResourceOptions::MTLResourceStorageModeManaged => { 16 as i64 },
-        ResourceOptions::MTLResourceStorageModePrivate => { 32 as i64 },
-        ResourceOptions::MTLResourceStorageModeMemoryless => { 48 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeDefault => { 0 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeUntracked => { 256 as i64 },
-        ResourceOptions::MTLResourceHazardTrackingModeTracked => { 512 as i64 },
-        ResourceOptions::MTLResourceOptionCPUCacheModeDefault => { 0 as i64 },
-        ResourceOptions::MTLResourceOptionCPUCacheModeWriteCombined => { 1 as i64 },
-    };
-}
-
-fn resource_options_from_raw(raw: i64) -> ResourceOptions {
-    if raw == (1 as i64) { return ResourceOptions::MTLResourceCPUCacheModeWriteCombined; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceStorageModeShared; }
-    if raw == (16 as i64) { return ResourceOptions::MTLResourceStorageModeManaged; }
-    if raw == (32 as i64) { return ResourceOptions::MTLResourceStorageModePrivate; }
-    if raw == (48 as i64) { return ResourceOptions::MTLResourceStorageModeMemoryless; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeDefault; }
-    if raw == (256 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeUntracked; }
-    if raw == (512 as i64) { return ResourceOptions::MTLResourceHazardTrackingModeTracked; }
-    if raw == (0 as i64) { return ResourceOptions::MTLResourceOptionCPUCacheModeDefault; }
-    if raw == (1 as i64) { return ResourceOptions::MTLResourceOptionCPUCacheModeWriteCombined; }
-    return ResourceOptions::MTLResourceCPUCacheModeDefaultCache;
-}
-
-// `MTLTextureUsage` (NS_ENUM)
-enum TextureUsage {
-    Unknown,
-    ShaderRead,
-    ShaderWrite,
-    RenderTarget,
-    PixelFormatView,
-    ShaderAtomic,
-}
-
-fn texture_usage_raw(v: TextureUsage) -> i64 {
-    return match v {
-        TextureUsage::Unknown => { 0 as i64 },
-        TextureUsage::ShaderRead => { 1 as i64 },
-        TextureUsage::ShaderWrite => { 2 as i64 },
-        TextureUsage::RenderTarget => { 4 as i64 },
-        TextureUsage::PixelFormatView => { 16 as i64 },
-        TextureUsage::ShaderAtomic => { 32 as i64 },
-    };
-}
-
-fn texture_usage_from_raw(raw: i64) -> TextureUsage {
-    if raw == (1 as i64) { return TextureUsage::ShaderRead; }
-    if raw == (2 as i64) { return TextureUsage::ShaderWrite; }
-    if raw == (4 as i64) { return TextureUsage::RenderTarget; }
-    if raw == (16 as i64) { return TextureUsage::PixelFormatView; }
-    if raw == (32 as i64) { return TextureUsage::ShaderAtomic; }
-    return TextureUsage::Unknown;
-}
+// `MTLTextureUsage` (NS_OPTIONS) — bitfield; combine with `|`.
+const texture_usage_unknown: u64 = 0 as u64;
+const texture_usage_shader_read: u64 = 1 as u64;
+const texture_usage_shader_write: u64 = 2 as u64;
+const texture_usage_render_target: u64 = 4 as u64;
+const texture_usage_pixel_format_view: u64 = 16 as u64;
+const texture_usage_shader_atomic: u64 = 32 as u64;
 
 // `MTLTextureType` (NS_ENUM)
 enum TextureType {
@@ -666,6 +612,8 @@ struct SharedTextureHandle {
 impl SharedTextureHandle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharedTextureHandle { return SharedTextureHandle { _obj: ptr }; }
+
     // SKIPPED `device`: return `id<MTLDevice> _Nonnull` — generic collection
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
@@ -681,6 +629,8 @@ struct TextureDescriptor {
 
 impl TextureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextureDescriptor { return TextureDescriptor { _obj: ptr }; }
 
     // SKIPPED `texture2DDescriptorWithPixelFormat:width:height:mipmapped:`: (return, arg) shape not yet modelled
     // SKIPPED `textureCubeDescriptorWithPixelFormat:size:mipmapped:`: (return, arg) shape not yet modelled
@@ -725,8 +675,8 @@ impl TextureDescriptor {
     }
 
     // SKIPPED `setArrayLength:`: (return, arg) shape not yet modelled
-    fn resource_options(this) -> ResourceOptions {
-        return resource_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("resourceOptions\0"))));
+    fn resource_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("resourceOptions\0")));
     }
 
     // SKIPPED `setResourceOptions:`: (return, arg) shape not yet modelled
@@ -745,8 +695,8 @@ impl TextureDescriptor {
     }
 
     // SKIPPED `setHazardTrackingMode:`: (return, arg) shape not yet modelled
-    fn usage(this) -> TextureUsage {
-        return texture_usage_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("usage\0"))));
+    fn usage(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("usage\0")));
     }
 
     // SKIPPED `setUsage:`: (return, arg) shape not yet modelled
@@ -779,6 +729,8 @@ struct TextureViewDescriptor {
 
 impl TextureViewDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextureViewDescriptor { return TextureViewDescriptor { _obj: ptr }; }
 
     fn pixel_format(this) -> PixelFormat {
         return pixel_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));

@@ -541,38 +541,14 @@ fn blend_operation_from_raw(raw: i64) -> BlendOperation {
     return BlendOperation::Add;
 }
 
-// `MTLColorWriteMask` (NS_ENUM)
-enum ColorWriteMask {
-    None,
-    Red,
-    Green,
-    Blue,
-    Alpha,
-    All,
-    Unspecialized,
-}
-
-fn color_write_mask_raw(v: ColorWriteMask) -> i64 {
-    return match v {
-        ColorWriteMask::None => { 0 as i64 },
-        ColorWriteMask::Red => { 8 as i64 },
-        ColorWriteMask::Green => { 4 as i64 },
-        ColorWriteMask::Blue => { 2 as i64 },
-        ColorWriteMask::Alpha => { 1 as i64 },
-        ColorWriteMask::All => { 15 as i64 },
-        ColorWriteMask::Unspecialized => { 16 as i64 },
-    };
-}
-
-fn color_write_mask_from_raw(raw: i64) -> ColorWriteMask {
-    if raw == (8 as i64) { return ColorWriteMask::Red; }
-    if raw == (4 as i64) { return ColorWriteMask::Green; }
-    if raw == (2 as i64) { return ColorWriteMask::Blue; }
-    if raw == (1 as i64) { return ColorWriteMask::Alpha; }
-    if raw == (15 as i64) { return ColorWriteMask::All; }
-    if raw == (16 as i64) { return ColorWriteMask::Unspecialized; }
-    return ColorWriteMask::None;
-}
+// `MTLColorWriteMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const color_write_mask_none: u64 = 0 as u64;
+const color_write_mask_red: u64 = 8 as u64;
+const color_write_mask_green: u64 = 4 as u64;
+const color_write_mask_blue: u64 = 2 as u64;
+const color_write_mask_alpha: u64 = 1 as u64;
+const color_write_mask_all: u64 = 15 as u64;
+const color_write_mask_unspecialized: u64 = 16 as u64;
 
 // `MTLPrimitiveTopologyClass` (NS_ENUM)
 enum PrimitiveTopologyClass {
@@ -729,6 +705,8 @@ struct VertexDescriptor {
 impl VertexDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VertexDescriptor { return VertexDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLRenderPipelineColorAttachmentDescriptorArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -738,6 +716,8 @@ struct RenderPipelineColorAttachmentDescriptorArray {
 
 impl RenderPipelineColorAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineColorAttachmentDescriptorArray { return RenderPipelineColorAttachmentDescriptorArray { _obj: ptr }; }
 
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
@@ -753,6 +733,8 @@ struct RenderPipelineColorAttachmentDescriptor {
 
 impl RenderPipelineColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineColorAttachmentDescriptor { return RenderPipelineColorAttachmentDescriptor { _obj: ptr }; }
 
     fn pixel_format(this) -> PixelFormat {
         return pixel_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));
@@ -797,8 +779,8 @@ impl RenderPipelineColorAttachmentDescriptor {
     }
 
     // SKIPPED `setAlphaBlendOperation:`: (return, arg) shape not yet modelled
-    fn write_mask(this) -> ColorWriteMask {
-        return color_write_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("writeMask\0"))));
+    fn write_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("writeMask\0")));
     }
 
     // SKIPPED `setWriteMask:`: (return, arg) shape not yet modelled
@@ -811,6 +793,8 @@ struct LogicalToPhysicalColorAttachmentMap {
 
 impl LogicalToPhysicalColorAttachmentMap {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LogicalToPhysicalColorAttachmentMap { return LogicalToPhysicalColorAttachmentMap { _obj: ptr }; }
 
     // SKIPPED `setPhysicalIndex:forLogicalIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `getPhysicalIndexForLogicalIndex:`: (return, arg) shape not yet modelled
@@ -827,6 +811,8 @@ struct RenderPipelineReflection {
 
 impl RenderPipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineReflection { return RenderPipelineReflection { _obj: ptr }; }
 
     // SKIPPED `vertexBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
     // SKIPPED `fragmentBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
@@ -845,6 +831,8 @@ struct RenderPipelineDescriptor {
 
 impl RenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineDescriptor { return RenderPipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
@@ -1047,6 +1035,8 @@ struct RenderPipelineFunctionsDescriptor {
 impl RenderPipelineFunctionsDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RenderPipelineFunctionsDescriptor { return RenderPipelineFunctionsDescriptor { _obj: ptr }; }
+
     // SKIPPED `vertexAdditionalBinaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
     // SKIPPED `setVertexAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
     // SKIPPED `fragmentAdditionalBinaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
@@ -1063,6 +1053,8 @@ struct MTL4RenderPipelineBinaryFunctionsDescriptor {
 impl MTL4RenderPipelineBinaryFunctionsDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4RenderPipelineBinaryFunctionsDescriptor { return MTL4RenderPipelineBinaryFunctionsDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4PipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -1073,6 +1065,8 @@ struct MTL4PipelineDescriptor {
 impl MTL4PipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLTileRenderPipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -1082,6 +1076,8 @@ struct TileRenderPipelineColorAttachmentDescriptor {
 
 impl TileRenderPipelineColorAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TileRenderPipelineColorAttachmentDescriptor { return TileRenderPipelineColorAttachmentDescriptor { _obj: ptr }; }
 
     fn pixel_format(this) -> PixelFormat {
         return pixel_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));
@@ -1098,6 +1094,8 @@ struct TileRenderPipelineColorAttachmentDescriptorArray {
 impl TileRenderPipelineColorAttachmentDescriptorArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TileRenderPipelineColorAttachmentDescriptorArray { return TileRenderPipelineColorAttachmentDescriptorArray { _obj: ptr }; }
+
     fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
         return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
     }
@@ -1112,6 +1110,8 @@ struct TileRenderPipelineDescriptor {
 
 impl TileRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TileRenderPipelineDescriptor { return TileRenderPipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
@@ -1195,6 +1195,8 @@ struct MeshRenderPipelineDescriptor {
 
 impl MeshRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MeshRenderPipelineDescriptor { return MeshRenderPipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

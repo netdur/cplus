@@ -6,35 +6,13 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `MTLFunctionOptions` (NS_ENUM)
-enum FunctionOptions {
-    MTLFunctionOptionNone,
-    MTLFunctionOptionCompileToBinary,
-    MTLFunctionOptionStoreFunctionInMetalPipelinesScript,
-    MTLFunctionOptionStoreFunctionInMetalScript,
-    MTLFunctionOptionFailOnBinaryArchiveMiss,
-    MTLFunctionOptionPipelineIndependent,
-}
-
-fn function_options_raw(v: FunctionOptions) -> i64 {
-    return match v {
-        FunctionOptions::MTLFunctionOptionNone => { 0 as i64 },
-        FunctionOptions::MTLFunctionOptionCompileToBinary => { 1 as i64 },
-        FunctionOptions::MTLFunctionOptionStoreFunctionInMetalPipelinesScript => { 2 as i64 },
-        FunctionOptions::MTLFunctionOptionStoreFunctionInMetalScript => { 2 as i64 },
-        FunctionOptions::MTLFunctionOptionFailOnBinaryArchiveMiss => { 4 as i64 },
-        FunctionOptions::MTLFunctionOptionPipelineIndependent => { 8 as i64 },
-    };
-}
-
-fn function_options_from_raw(raw: i64) -> FunctionOptions {
-    if raw == (1 as i64) { return FunctionOptions::MTLFunctionOptionCompileToBinary; }
-    if raw == (2 as i64) { return FunctionOptions::MTLFunctionOptionStoreFunctionInMetalPipelinesScript; }
-    if raw == (2 as i64) { return FunctionOptions::MTLFunctionOptionStoreFunctionInMetalScript; }
-    if raw == (4 as i64) { return FunctionOptions::MTLFunctionOptionFailOnBinaryArchiveMiss; }
-    if raw == (8 as i64) { return FunctionOptions::MTLFunctionOptionPipelineIndependent; }
-    return FunctionOptions::MTLFunctionOptionNone;
-}
+// `MTLFunctionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const function_options_m_t_l_function_option_none: u64 = 0 as u64;
+const function_options_m_t_l_function_option_compile_to_binary: u64 = 1 as u64;
+const function_options_m_t_l_function_option_store_function_in_metal_pipelines_script: u64 = 2 as u64;
+const function_options_m_t_l_function_option_store_function_in_metal_script: u64 = 2 as u64;
+const function_options_m_t_l_function_option_fail_on_binary_archive_miss: u64 = 4 as u64;
+const function_options_m_t_l_function_option_pipeline_independent: u64 = 8 as u64;
 
 // `MTLFunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FunctionDescriptor {
@@ -43,6 +21,8 @@ struct FunctionDescriptor {
 
 impl FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionDescriptor { return FunctionDescriptor { _obj: ptr }; }
 
     fn function_descriptor() -> FunctionDescriptor {
         return FunctionDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLFunctionDescriptor\0")), rt::sel(#str_ptr("functionDescriptor\0"))) };
@@ -75,8 +55,8 @@ impl FunctionDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setConstantValues:\0")), constant_values);
     }
 
-    fn options(this) -> FunctionOptions {
-        return function_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("options\0"))));
+    fn options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
     // SKIPPED `setOptions:`: (return, arg) shape not yet modelled
@@ -91,6 +71,8 @@ struct IntersectionFunctionDescriptor {
 
 impl IntersectionFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IntersectionFunctionDescriptor { return IntersectionFunctionDescriptor { _obj: ptr }; }
 
 }
 

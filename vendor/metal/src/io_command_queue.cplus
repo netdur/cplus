@@ -54,6 +54,8 @@ struct IOCommandQueueDescriptor {
 impl IOCommandQueueDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IOCommandQueueDescriptor { return IOCommandQueueDescriptor { _obj: ptr }; }
+
     fn max_command_buffer_count(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxCommandBufferCount\0")));
     }

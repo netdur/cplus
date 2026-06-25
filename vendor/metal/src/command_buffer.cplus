@@ -7,23 +7,9 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `MTLCommandBufferErrorOption` (NS_ENUM)
-enum CommandBufferErrorOption {
-    None,
-    EncoderExecutionStatus,
-}
-
-fn command_buffer_error_option_raw(v: CommandBufferErrorOption) -> i64 {
-    return match v {
-        CommandBufferErrorOption::None => { 0 as i64 },
-        CommandBufferErrorOption::EncoderExecutionStatus => { 1 as i64 },
-    };
-}
-
-fn command_buffer_error_option_from_raw(raw: i64) -> CommandBufferErrorOption {
-    if raw == (1 as i64) { return CommandBufferErrorOption::EncoderExecutionStatus; }
-    return CommandBufferErrorOption::None;
-}
+// `MTLCommandBufferErrorOption` (NS_OPTIONS) — bitfield; combine with `|`.
+const command_buffer_error_option_none: u64 = 0 as u64;
+const command_buffer_error_option_encoder_execution_status: u64 = 1 as u64;
 
 // `MTLRenderPassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct RenderPassDescriptor {
@@ -32,6 +18,8 @@ struct RenderPassDescriptor {
 
 impl RenderPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPassDescriptor { return RenderPassDescriptor { _obj: ptr }; }
 
 }
 
@@ -43,6 +31,8 @@ struct ComputePassDescriptor {
 impl ComputePassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComputePassDescriptor { return ComputePassDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLBlitPassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -52,6 +42,8 @@ struct BlitPassDescriptor {
 
 impl BlitPassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BlitPassDescriptor { return BlitPassDescriptor { _obj: ptr }; }
 
 }
 
@@ -63,6 +55,8 @@ struct ResourceStatePassDescriptor {
 impl ResourceStatePassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ResourceStatePassDescriptor { return ResourceStatePassDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLAccelerationStructurePassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -72,6 +66,8 @@ struct AccelerationStructurePassDescriptor {
 
 impl AccelerationStructurePassDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructurePassDescriptor { return AccelerationStructurePassDescriptor { _obj: ptr }; }
 
 }
 
@@ -83,6 +79,8 @@ struct CommandBufferDescriptor {
 impl CommandBufferDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CommandBufferDescriptor { return CommandBufferDescriptor { _obj: ptr }; }
+
     fn retained_references(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("retainedReferences\0"))) != (0 as i8);
     }
@@ -91,8 +89,8 @@ impl CommandBufferDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setRetainedReferences:\0")), retained_references as i8);
     }
 
-    fn error_options(this) -> CommandBufferErrorOption {
-        return command_buffer_error_option_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("errorOptions\0"))));
+    fn error_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("errorOptions\0")));
     }
 
     // SKIPPED `setErrorOptions:`: (return, arg) shape not yet modelled
@@ -197,12 +195,12 @@ fn create_CommandBufferEncoderInfo(ctx: *CommandBufferEncoderInfo) -> *u8 {
 // SKIPPED `logs`: return `id<MTLLogContainer> _Nonnull` not modelled
 // SKIPPED `GPUStartTime`: return `CFTimeInterval` not modelled
 // SKIPPED `GPUEndTime`: return `CFTimeInterval` not modelled
-fn CommandBuffer_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn CommandBuffer_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn CommandBuffer_noop_v_0(user: *u8) { return; }
-fn CommandBuffer_noop_v_1(user: *u8, a0: *u8) { return; }
+fn CommandBufferProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
+fn CommandBufferProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+fn CommandBufferProtocol_noop_v_0(user: *u8) { return; }
+fn CommandBufferProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct CommandBuffer {
+struct CommandBufferProtocol {
     enqueue: fn(*u8),
     commit: fn(*u8),
     wait_until_scheduled: fn(*u8),
@@ -217,11 +215,11 @@ struct CommandBuffer {
     opaque user: *u8,
 }
 
-fn CommandBuffer_new(user: *u8) -> CommandBuffer {
-    return CommandBuffer { enqueue: CommandBuffer_noop_v_0, commit: CommandBuffer_noop_v_0, wait_until_scheduled: CommandBuffer_noop_v_0, wait_until_completed: CommandBuffer_noop_v_0, push_debug_group: CommandBuffer_noop_v_1, pop_debug_group: CommandBuffer_noop_v_0, error_options: CommandBuffer_noop_u64_0, label: CommandBuffer_noop_id_0, set_label: CommandBuffer_noop_v_1, status: CommandBuffer_noop_u64_0, error: CommandBuffer_noop_id_0, user: user };
+fn CommandBufferProtocol_new(user: *u8) -> CommandBufferProtocol {
+    return CommandBufferProtocol { enqueue: CommandBufferProtocol_noop_v_0, commit: CommandBufferProtocol_noop_v_0, wait_until_scheduled: CommandBufferProtocol_noop_v_0, wait_until_completed: CommandBufferProtocol_noop_v_0, push_debug_group: CommandBufferProtocol_noop_v_1, pop_debug_group: CommandBufferProtocol_noop_v_0, error_options: CommandBufferProtocol_noop_u64_0, label: CommandBufferProtocol_noop_id_0, set_label: CommandBufferProtocol_noop_v_1, status: CommandBufferProtocol_noop_u64_0, error: CommandBufferProtocol_noop_id_0, user: user };
 }
 
-impl CommandBuffer {
+impl CommandBufferProtocol {
     fn set_enqueue(ref this, handler: fn(*u8)) {
         this.enqueue = handler;
         return;
@@ -268,112 +266,112 @@ impl CommandBuffer {
     }
 }
 
-fn CommandBuffer_key() -> *u8 { return { 28673 as *u8 }; }
+fn CommandBufferProtocol_key() -> *u8 { return { 28673 as *u8 }; }
 
-fn CommandBuffer_enqueue_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_enqueue_imp(self_obj: *u8, cmd: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) = { (*c).enqueue };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn CommandBuffer_commit_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_commit_imp(self_obj: *u8, cmd: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) = { (*c).commit };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn CommandBuffer_wait_until_scheduled_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_wait_until_scheduled_imp(self_obj: *u8, cmd: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) = { (*c).wait_until_scheduled };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn CommandBuffer_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) = { (*c).wait_until_completed };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn CommandBuffer_push_debug_group_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_push_debug_group_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8, *u8) = { (*c).push_debug_group };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn CommandBuffer_pop_debug_group_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_pop_debug_group_imp(self_obj: *u8, cmd: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) = { (*c).pop_debug_group };
     let u: *u8 = { (*c).user };
     f(u);
     return;
 }
 
-fn CommandBuffer_error_options_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_error_options_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) -> u64 = { (*c).error_options };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn CommandBuffer_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) -> *u8 = { (*c).label };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn CommandBuffer_set_label_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_set_label_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8, *u8) = { (*c).set_label };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn CommandBuffer_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) -> u64 = { (*c).status };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn CommandBuffer_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBuffer = { synth::get_associated(self_obj, CommandBuffer_key()) as *CommandBuffer };
+fn CommandBufferProtocol_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
     let f: fn(*u8) -> *u8 = { (*c).error };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_CommandBuffer(ctx: *CommandBuffer) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CommandBuffer\0");
+fn create_CommandBufferProtocol(ctx: *CommandBufferProtocol) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_CommandBufferProtocol\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_enqueue: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("enqueue\0")), CommandBuffer_enqueue_imp, #str_ptr("v@:\0"));
-        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), CommandBuffer_commit_imp, #str_ptr("v@:\0"));
-        let add_wait_until_scheduled: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilScheduled\0")), CommandBuffer_wait_until_scheduled_imp, #str_ptr("v@:\0"));
-        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), CommandBuffer_wait_until_completed_imp, #str_ptr("v@:\0"));
-        let add_push_debug_group: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pushDebugGroup:\0")), CommandBuffer_push_debug_group_imp, #str_ptr("v@:@\0"));
-        let add_pop_debug_group: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("popDebugGroup\0")), CommandBuffer_pop_debug_group_imp, #str_ptr("v@:\0"));
-        let add_error_options: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("errorOptions\0")), CommandBuffer_error_options_imp, #str_ptr("Q@:\0"));
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), CommandBuffer_label_imp, #str_ptr("@@:\0"));
-        let add_set_label: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setLabel:\0")), CommandBuffer_set_label_imp, #str_ptr("v@:@\0"));
-        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), CommandBuffer_status_imp, #str_ptr("Q@:\0"));
-        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), CommandBuffer_error_imp, #str_ptr("@@:\0"));
+        let add_enqueue: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("enqueue\0")), CommandBufferProtocol_enqueue_imp, #str_ptr("v@:\0"));
+        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), CommandBufferProtocol_commit_imp, #str_ptr("v@:\0"));
+        let add_wait_until_scheduled: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilScheduled\0")), CommandBufferProtocol_wait_until_scheduled_imp, #str_ptr("v@:\0"));
+        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), CommandBufferProtocol_wait_until_completed_imp, #str_ptr("v@:\0"));
+        let add_push_debug_group: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pushDebugGroup:\0")), CommandBufferProtocol_push_debug_group_imp, #str_ptr("v@:@\0"));
+        let add_pop_debug_group: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("popDebugGroup\0")), CommandBufferProtocol_pop_debug_group_imp, #str_ptr("v@:\0"));
+        let add_error_options: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("errorOptions\0")), CommandBufferProtocol_error_options_imp, #str_ptr("Q@:\0"));
+        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), CommandBufferProtocol_label_imp, #str_ptr("@@:\0"));
+        let add_set_label: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setLabel:\0")), CommandBufferProtocol_set_label_imp, #str_ptr("v@:@\0"));
+        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), CommandBufferProtocol_status_imp, #str_ptr("Q@:\0"));
+        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), CommandBufferProtocol_error_imp, #str_ptr("@@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CommandBuffer_key(), { ctx as *u8 });
+    synth::set_associated(d, CommandBufferProtocol_key(), { ctx as *u8 });
     return d;
 }
 

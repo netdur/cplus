@@ -32,6 +32,8 @@ struct MTL4FunctionDescriptor {
 impl MTL4FunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLComputePipelineReflection` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -41,6 +43,8 @@ struct ComputePipelineReflection {
 
 impl ComputePipelineReflection {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputePipelineReflection { return ComputePipelineReflection { _obj: ptr }; }
 
 }
 
@@ -52,6 +56,8 @@ struct MTL4StaticLinkingDescriptor {
 impl MTL4StaticLinkingDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MTL4StaticLinkingDescriptor { return MTL4StaticLinkingDescriptor { _obj: ptr }; }
+
 }
 
 // `MTL4ComputePipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -61,6 +67,8 @@ struct MTL4ComputePipelineDescriptor {
 
 impl MTL4ComputePipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4ComputePipelineDescriptor { return MTL4ComputePipelineDescriptor { _obj: ptr }; }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

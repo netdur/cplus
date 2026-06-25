@@ -15,6 +15,8 @@ struct ComputePipelineDescriptor {
 impl ComputePipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComputePipelineDescriptor { return ComputePipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLRenderPipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct RenderPipelineDescriptor {
 
 impl RenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineDescriptor { return RenderPipelineDescriptor { _obj: ptr }; }
 
 }
 
@@ -35,6 +39,8 @@ struct TileRenderPipelineDescriptor {
 impl TileRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TileRenderPipelineDescriptor { return TileRenderPipelineDescriptor { _obj: ptr }; }
+
 }
 
 // `MTLBinaryArchiveDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,6 +50,8 @@ struct BinaryArchiveDescriptor {
 
 impl BinaryArchiveDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BinaryArchiveDescriptor { return BinaryArchiveDescriptor { _obj: ptr }; }
 
     fn url(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("url\0")));

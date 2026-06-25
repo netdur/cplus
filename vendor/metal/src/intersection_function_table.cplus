@@ -14,6 +14,8 @@ struct IntersectionFunctionTableDescriptor {
 impl IntersectionFunctionTableDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IntersectionFunctionTableDescriptor { return IntersectionFunctionTableDescriptor { _obj: ptr }; }
+
     fn intersection_function_table_descriptor() -> IntersectionFunctionTableDescriptor {
         return IntersectionFunctionTableDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLIntersectionFunctionTableDescriptor\0")), rt::sel(#str_ptr("intersectionFunctionTableDescriptor\0"))) };
     }
