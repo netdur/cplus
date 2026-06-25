@@ -1,0 +1,4 @@
+{
+  "_comment": "cpc-bindgen naming overrides for Accelerate. Add `types` / `methods` / `skip` entries to refine the mechanical snake_case names.",
+  "methods": {}
+}
