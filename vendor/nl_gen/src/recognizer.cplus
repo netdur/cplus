@@ -56,7 +56,10 @@ impl LanguageRecognizer {
         return out;
     }
 
-    // SKIPPED `setLanguageConstraints:`: param `NSArray<NLLanguage> * _Nonnull` — generic collection
+    fn set_language_constraints(this, language_constraints: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLanguageConstraints:\0")), bridge::nsarray_of_text(language_constraints));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

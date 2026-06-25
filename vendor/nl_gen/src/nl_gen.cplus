@@ -35,6 +35,35 @@ fn generated_recognizer_instance_detects_english() {
     return;
 }
 
+// Collection PARAM side: Vec[Text] -> NSArray bridge. Set constraints to
+// ["fr","es"], read them back, and confirm both strings survived the round trip
+// (order-independent). Exercises the generated set_language_constraints.
+#[test]
+fn generated_recognizer_constraints_roundtrip() {
+    let rec: recognizer::LanguageRecognizer = recognizer::LanguageRecognizer::new();
+    var wanted: vec::Vec[text::Text] = vec::Vec[text::Text]::new();
+    wanted.append("fr".to_text());
+    wanted.append("es".to_text());
+    rec.set_language_constraints(wanted);
+
+    let got: vec::Vec[text::Text] = rec.language_constraints();
+    assert got.count() == (2 as usize);
+    var matched: i64 = 0;
+    var i: usize = 0 as usize;
+    while i < got.count() {
+        match got.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                if { (*tp).equals("fr") } { matched = matched +% (1 as i64); }
+                if { (*tp).equals("es") } { matched = matched +% (1 as i64); }
+            }
+            option::Option[*text::Text]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    assert matched == (2 as i64);
+    return;
+}
+
 #[test]
 fn generated_tokenizer_segments_words() {
     let tok: tokenizer::Tokenizer = tokenizer::Tokenizer::new(tokenizer::TokenUnit::Word);

@@ -6,6 +6,7 @@
 import "./runtime" as rt;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // NSUTF8StringEncoding = 4. C+ has no top-level const; a fn folds the same.
 fn ns_utf8() -> u64 { return 4 as u64; }
@@ -41,6 +42,35 @@ fn to_text_option(ns: *u8) -> option::Option[text::Text] {
         return option::Option[text::Text]::None;
     }
     return option::some(to_text(ns));
+}
+
+// `Vec[Text]` -> `NSArray<NSString *> *` (the collection-param direction; the
+// reverse of `to_text` over an array). Builds an autoreleased NSMutableArray and
+// fills it with NSStrings; each `stringWithBytes:` copies, so the caller's `Vec`
+// (and its `Text`s) may drop freely afterward. Elements are read in place via
+// `at_ptr` since `Text` is not `Copy`.
+fn nsarray_of_text(items: vec::Vec[text::Text]) -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSMutableArray\0"));
+    let arr: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("array\0")));
+    let add: *u8 = rt::sel(#str_ptr("addObject:\0"));
+    let n: usize = items.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match items.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                match (*tp).c_str() {
+                    option::Option[text::CString]::Some(cs) => {
+                        let view: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+                        rt::msg_void_id(arr, add, nsstring(view));
+                    }
+                    option::Option[text::CString]::None => {}
+                }
+            }
+            option::Option[*text::Text]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return arr;
 }
 
 // Nilable object handle -> `Option[*u8]`: `nil` -> `None`, else `Some(handle)`.

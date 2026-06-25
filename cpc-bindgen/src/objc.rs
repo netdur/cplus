@@ -819,6 +819,10 @@ impl ObjcEmitter {
         if self.is_nsstring(base_ty) {
             return Arg::Id(format!("bridge::nsstring({pname})"));
         }
+        if self.is_string_array(base_ty) {
+            self.needs_vec = true;
+            return Arg::Id(format!("bridge::nsarray_of_text({pname})"));
+        }
         if let Some(objc_enum) = self.enum_of(base_ty) {
             if !self.used_enums.contains(&objc_enum) {
                 self.used_enums.push(objc_enum.clone());
@@ -858,6 +862,9 @@ impl ObjcEmitter {
         }
         if self.is_nsstring(b) {
             return "str".to_string();
+        }
+        if self.is_string_array(b) {
+            return "vec::Vec[text::Text]".to_string();
         }
         if let Some(objc_enum) = self.enum_of(b) {
             return self.enums.get(&objc_enum).unwrap().cplus_name.clone();
