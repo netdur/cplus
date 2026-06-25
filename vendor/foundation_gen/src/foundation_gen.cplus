@@ -3,6 +3,7 @@
 
 import "./scanner" as scanner;
 import "./timezone" as timezone;
+import "./date" as date;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
@@ -34,6 +35,17 @@ fn generated_scanner_category_is_at_end() {
 fn generated_timezone_string_array() {
     let names: vec::Vec[text::Text] = timezone::TimeZone::known_time_zone_names();
     assert names.count() > (100 as usize);
+    return;
+}
+
+// Float/double scalars (params + returns): +dateWithTimeIntervalSince1970:
+// takes an f64, -timeIntervalSince1970 returns one. Round-trip 1000.0s.
+#[test]
+fn generated_date_f64_roundtrip() {
+    let d: date::Date = date::Date::date_with_time_interval_since1970(1000.0 as f64);
+    let secs: f64 = d.time_interval_since1970();
+    assert secs > (999.5 as f64);
+    assert secs < (1000.5 as f64);
     return;
 }
 

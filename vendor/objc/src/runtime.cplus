@@ -80,6 +80,18 @@ extern fn objc_msg_id_i64(recv: *u8, sel: *u8, a: i64) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64) -> *u8;
 
+// Floating-point sends. `double` (CGFloat / NSTimeInterval on 64-bit Apple)
+// rides the xmm registers; plain `objc_msgSend` handles fp returns on both
+// arm64 and x86_64 (no `_fpret` needed there for `double`).
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f64(recv: *u8, sel: *u8, a: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f64(recv: *u8, sel: *u8, a: f64);
+
 // NSRange-valued / NSRange-taking sends (e.g. `-tokenRangeAtIndex:`,
 // `-tokensForRange:`, `-[NSValue rangeValue]`). NSRange is two integer
 // eightbytes, so it rides registers in and out under the SysV ABI.
@@ -162,6 +174,18 @@ fn msg_id_i64(recv: *u8, selector: *u8, a: i64) -> *u8 {
 
 fn msg_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: u64) -> *u8 {
     return { objc_msg_id_id_u64(recv, selector, a, b) };
+}
+
+fn msg_f64(recv: *u8, selector: *u8) -> f64 {
+    return { objc_msg_f64(recv, selector) };
+}
+
+fn msg_id_f64(recv: *u8, selector: *u8, a: f64) -> *u8 {
+    return { objc_msg_id_f64(recv, selector, a) };
+}
+
+fn msg_void_f64(recv: *u8, selector: *u8, a: f64) {
+    { objc_msg_void_f64(recv, selector, a); };
 }
 
 fn msg_range(recv: *u8, selector: *u8) -> Range {
