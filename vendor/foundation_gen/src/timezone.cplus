@@ -134,20 +134,20 @@ impl TimeZone {
     // SKIPPED `abbreviationDictionary`: return `NSDictionary<NSString *,NSString *> * _Nonnull` — generic collection
     // SKIPPED `isEqualToTimeZone:`: (return, arg) shape not yet modelled
     // SKIPPED `localizedName:locale:`: (return, arg) shape not yet modelled
-    fn system_time_zone() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("systemTimeZone\0")));
+    fn system_time_zone() -> TimeZone {
+        return TimeZone { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("systemTimeZone\0")))) };
     }
 
-    fn default_time_zone() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("defaultTimeZone\0")));
+    fn default_time_zone() -> TimeZone {
+        return TimeZone { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("defaultTimeZone\0")))) };
     }
 
     fn set_default_time_zone(default_time_zone: *u8) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("setDefaultTimeZone:\0")), default_time_zone);
     }
 
-    fn local_time_zone() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("localTimeZone\0")));
+    fn local_time_zone() -> TimeZone {
+        return TimeZone { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("localTimeZone\0")))) };
     }
 
     fn known_time_zone_names() -> vec::Vec[text::Text] {
@@ -194,8 +194,12 @@ impl TimeZone {
         return bridge::to_text(ns);
     }
 
-    fn time_zone_with_name(tz_name: str) -> *u8 {
-        return rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneWithName:\0")), bridge::nsstring(tz_name));
+    fn time_zone_with_name(tz_name: str) -> option::Option[TimeZone] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneWithName:\0")), bridge::nsstring(tz_name));
+        if obj == { 0 as *u8 } {
+            return option::Option[TimeZone]::None;
+        }
+        return option::some(TimeZone { _obj: rt::retain(obj) });
     }
 
     // SKIPPED `timeZoneWithName:data:`: (return, arg) shape not yet modelled
@@ -206,12 +210,16 @@ impl TimeZone {
     }
 
     // SKIPPED `initWithName:data:`: extra init variant (one `new` per type)
-    fn time_zone_for_seconds_from_g_m_t(seconds: i64) -> *u8 {
-        return rt::msg_id_i64(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneForSecondsFromGMT:\0")), seconds);
+    fn time_zone_for_seconds_from_g_m_t(seconds: i64) -> TimeZone {
+        return TimeZone { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneForSecondsFromGMT:\0")), seconds)) };
     }
 
-    fn time_zone_with_abbreviation(abbreviation: str) -> *u8 {
-        return rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneWithAbbreviation:\0")), bridge::nsstring(abbreviation));
+    fn time_zone_with_abbreviation(abbreviation: str) -> option::Option[TimeZone] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")), rt::sel(#str_ptr("timeZoneWithAbbreviation:\0")), bridge::nsstring(abbreviation));
+        if obj == { 0 as *u8 } {
+            return option::Option[TimeZone]::None;
+        }
+        return option::some(TimeZone { _obj: rt::retain(obj) });
     }
 
     fn drop(ref this) {

@@ -5,6 +5,7 @@ import "./scanner" as scanner;
 import "./timezone" as timezone;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/option" as option;
 
 #[test]
 fn generated_scanner_bool_roundtrip() {
@@ -33,6 +34,21 @@ fn generated_scanner_category_is_at_end() {
 fn generated_timezone_string_array() {
     let names: vec::Vec[text::Text] = timezone::TimeZone::known_time_zone_names();
     assert names.count() > (100 as usize);
+    return;
+}
+
+// Nullable factory -> Option[Self]: +timeZoneWithName: returns a wrapped
+// TimeZone for a real zone, None for a bogus name.
+#[test]
+fn generated_timezone_nullable_factory() {
+    match timezone::TimeZone::time_zone_with_name("America/New_York") {
+        option::Option[timezone::TimeZone]::Some(tz) => { assert true; }
+        option::Option[timezone::TimeZone]::None => { assert false; }
+    }
+    match timezone::TimeZone::time_zone_with_name("Bogus/Nonsense-Zone") {
+        option::Option[timezone::TimeZone]::Some(tz) => { assert false; }
+        option::Option[timezone::TimeZone]::None => { assert true; }
+    }
     return;
 }
 

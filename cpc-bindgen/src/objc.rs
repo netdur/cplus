@@ -401,18 +401,30 @@ impl ObjcEmitter {
         let name = ov_name.clone().unwrap_or_else(|| mechanical_name(&sel));
 
         // A class factory returning the class's own type (`instancetype` or
-        // `Class *`) -> a wrapped `Self`. Factories hand back a +0 autoreleased
-        // object, so for an owned wrapper we `retain` it to balance `drop`.
-        let (ret_base, _) = strip_nullability(ret_qt);
+        // `Class *`) -> a wrapped `Self` (or `Option[Self]` if nullable).
+        // Factories hand back a +0 autoreleased object, so for an owned wrapper
+        // we `retain` it to balance `drop`.
+        let (ret_base, ret_nullable) = strip_nullability(ret_qt);
         let returns_self = !is_instance
-            && matches!(ret, Ret::Object)
+            && matches!(ret, Ret::Object | Ret::ObjectOption)
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
             if let Some(send) = self.send_expr(&recv, &sel, &Ret::Object, &args) {
-                let handle = if owned { format!("rt::retain({send})") } else { send };
-                self.body.push_str(&format!(
-                    "    fn {name}({sig_param}) -> {ty} {{\n        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
-                ));
+                if ret_nullable {
+                    let wrapped = if owned {
+                        format!("{ty} {{ _obj: rt::retain(obj) }}")
+                    } else {
+                        format!("{ty} {{ _obj: obj }}")
+                    };
+                    self.body.push_str(&format!(
+                        "    fn {name}({sig_param}) -> option::Option[{ty}] {{\n        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{ty}]::None;\n        }}\n        return option::some({wrapped});\n    }}\n\n"
+                    ));
+                } else {
+                    let handle = if owned { format!("rt::retain({send})") } else { send };
+                    self.body.push_str(&format!(
+                        "    fn {name}({sig_param}) -> {ty} {{\n        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
+                    ));
+                }
                 return;
             }
         }
