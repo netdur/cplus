@@ -34,6 +34,13 @@ pub struct ObjcEmitter {
     typedefs: HashMap<String, String>,
     enums: HashMap<String, EnumInfo>,
     used_enums: Vec<String>,
+    // C+ method names already emitted in the current impl. Several ObjC selectors
+    // can collapse to one C+ name (`-open` / `-open:`, `-init` / `+new`); C+ has no
+    // overloading, so the second becomes a SKIP rather than a duplicate-method error.
+    seen_methods: HashSet<String>,
+    // Emitted struct / type names. A class and a protocol can share a name
+    // (NSObject, NSTextAttachmentCell); the later one is renamed, not duplicated.
+    seen_types: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -124,6 +131,8 @@ impl ObjcEmitter {
             typedefs: HashMap::new(),
             enums: HashMap::new(),
             used_enums: Vec::new(),
+            seen_methods: HashSet::new(),
+            seen_types: HashSet::new(),
         }
     }
 
@@ -352,6 +361,7 @@ impl ObjcEmitter {
             None => return,
         };
         let ty = self.cplus_type_name(&objc_name);
+        self.seen_types.insert(ty.clone());
         // Methods from the @interface plus every category that extends it,
         // deduped by selector (a property may be redeclared across them).
         let mut methods: Vec<serde_json::Value> = Vec::new();
@@ -385,6 +395,14 @@ impl ObjcEmitter {
         self.body.push_str(&format!("struct {ty} {{\n    {field},\n}}\n\n"));
         self.body.push_str(&format!("impl {ty} {{\n"));
         self.body.push_str("    fn raw(this) -> *u8 { return this._obj; }\n\n");
+
+        // Fresh method-name scope per impl; `raw` is always emitted above and
+        // `drop` below (owned), so reserve them so a selector can't collide.
+        self.seen_methods.clear();
+        self.seen_methods.insert("raw".to_string());
+        if owned {
+            self.seen_methods.insert("drop".to_string());
+        }
 
         let mut init_done = false;
         for m in &methods {
@@ -420,7 +438,20 @@ impl ObjcEmitter {
             Some(n) => n.to_string(),
             None => return,
         };
-        let proto_ty = self.cplus_type_name(&proto_objc);
+        let mut proto_ty = self.cplus_type_name(&proto_objc);
+        // A class and a protocol can carry the same name (NSObject,
+        // NSTextAttachmentCell). The class wrapper already claimed it, so the
+        // protocol's synthesis helper takes a suffixed name rather than collide.
+        if self.seen_types.contains(&proto_ty) {
+            let mut disambig = format!("{proto_ty}Protocol");
+            let mut n = 2;
+            while self.seen_types.contains(&disambig) {
+                disambig = format!("{proto_ty}Protocol{n}");
+                n += 1;
+            }
+            proto_ty = disambig;
+        }
+        self.seen_types.insert(proto_ty.clone());
         let methods: Vec<serde_json::Value> = proto
             .get("inner")
             .and_then(|v| v.as_array())
@@ -712,6 +743,10 @@ impl ObjcEmitter {
                     return;
                 }
             };
+            if !self.seen_methods.insert("new".to_string()) {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: `new` already defined (extra constructor)\n"));
+                return;
+            }
             let header = if sig_param.is_empty() { String::new() } else { sig_param.clone() };
             self.body.push_str(&format!(
                 "    fn new({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n        return {ty} {{ _obj: {send} }};\n    }}\n\n"
@@ -732,6 +767,12 @@ impl ObjcEmitter {
         };
         let receiver = if is_instance { "this" } else { "" };
         let name = crate::sanitize_ident(&ov_name.clone().unwrap_or_else(|| mechanical_name(&sel)));
+        // C+ has no overloading: if this name is taken (`-open` then `-open:`, or
+        // `-init` then `+new`), skip rather than emit a duplicate method.
+        if !self.seen_methods.insert(name.clone()) {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: method `{name}` already defined\n"));
+            return;
+        }
 
         // A class factory returning the class's own type (`instancetype` or
         // `Class *`) -> a wrapped `Self` (or `Option[Self]` if nullable).
@@ -1648,5 +1689,46 @@ mod tests {
         assert!(out.contains("type_: fn"), "field escaped:\n{out}");
         assert!(out.contains("fn set_type_(ref this"), "setter escaped:\n{out}");
         assert!(!out.contains("\n    type: fn"), "no bare keyword field:\n{out}");
+    }
+
+    #[test]
+    fn colliding_selectors_emit_one_method_then_skip() {
+        // `-open` and `-open:` both map to `open`; C+ has no overloading, so the
+        // first wins and the second is SKIPPED. (AppKit's NSDrawer surfaced this,
+        // along with a cascade `undefined name sender` from the rejected dup.)
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCInterfaceDecl",
+                "name": "NSThing",
+                "loc": { "file": "test.h" },
+                "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "open", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "void" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "open:", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "sender", "type": { "qualType": "id" } }] }
+                ]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert_eq!(out.matches("    fn open(").count(), 1, "exactly one `open`:\n{out}");
+        assert!(out.contains("// SKIPPED `open:`: method `open` already defined"), "{out}");
+    }
+
+    #[test]
+    fn class_and_protocol_sharing_a_name_do_not_collide() {
+        // NSTextAttachmentCell is both a class and a protocol; the protocol's
+        // synthesis helper must not redefine the class's struct.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "NSThing", "loc": { "file": "test.h" },
+                  "inner": [{ "kind": "ObjCMethodDecl", "name": "tick", "instance": true,
+                    "loc": { "file": "test.h" }, "returnType": { "qualType": "NSUInteger" }, "inner": [] }] }
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert_eq!(out.matches("struct Thing {").count(), 1, "one class struct:\n{out}");
+        assert!(out.contains("struct ThingProtocol {"), "protocol renamed:\n{out}");
     }
 }
