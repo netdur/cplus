@@ -384,6 +384,10 @@ impl ObjcEmitter {
                         .collect()
                 })
                 .unwrap_or_default();
+            if self.is_skipped(&proto_objc, &sel) {
+                skips.push(format!("// SKIPPED `{sel}`: override\n"));
+                continue;
+            }
             let (rb, _) = strip_nullability(ret_qt);
             if rb.trim() != "void" {
                 skips.push(format!("// SKIPPED `{sel}`: non-void delegate callback\n"));
@@ -393,7 +397,15 @@ impl ObjcEmitter {
                 skips.push(format!("// SKIPPED `{sel}`: arg shape (only <=5 object args modelled)\n"));
                 continue;
             }
-            callbacks.push((sel.clone(), selector_ident(&sel), params.len()));
+            // Override file supplies a short callback name; else the full
+            // selector, snake-cased (long but unambiguous).
+            let mid = self
+                .method_override(&proto_objc, &sel)
+                .and_then(|o| o.get("name"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| selector_ident(&sel));
+            callbacks.push((sel.clone(), mid, params.len()));
         }
         if callbacks.is_empty() {
             return;

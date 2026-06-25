@@ -88,8 +88,8 @@ fn generated_xml_delegate_counts_elements() {
     let up: *u8 = { #addr_of(counts) as *u8 };
     // Install only the two callbacks we implement; the other ~17 stay noops.
     var ctx: xml::XMLParserDelegate = xml::XMLParserDelegate_new(up);
-    ctx.set_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(gen_count_start);
-    ctx.set_parser_did_end_element_namespace_u_r_i_qualified_name(gen_count_end);
+    ctx.set_did_start_element(gen_count_start);   // short names via overrides.json
+    ctx.set_did_end_element(gen_count_end);
     let delegate: *u8 = xml::create_XMLParserDelegate(#addr_of(ctx));
 
     let parser_cls: *u8 = rt::get_class(#str_ptr("NSXMLParser\0"));
