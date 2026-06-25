@@ -20,6 +20,7 @@ pub struct ObjcEmitter {
     prefix: String,
     overrides: serde_json::Value,
     body: String,
+    block_helpers: String,
     needs_vec: bool,
     typedefs: HashMap<String, String>,
     enums: HashMap<String, EnumInfo>,
@@ -66,6 +67,7 @@ impl ObjcEmitter {
             prefix: prefix.to_string(),
             overrides,
             body: String::new(),
+            block_helpers: String::new(),
             needs_vec: false,
             typedefs: HashMap::new(),
             enums: HashMap::new(),
@@ -159,6 +161,7 @@ impl ObjcEmitter {
                 out.push_str(&self.render_enum(&info));
             }
         }
+        out.push_str(&self.block_helpers);
         out.push_str(&self.body);
         out
     }
@@ -343,6 +346,12 @@ impl ObjcEmitter {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
+        // A `usingBlock:` parameter -> dedicated block-literal emission.
+        if let Some(bidx) = params.iter().position(|(_, qt)| qt.contains("(^")) {
+            self.emit_block_method(objc_class, &ty, &sel, is_instance, ret_qt, &params, bidx, &ov_name, &ov_params);
+            return;
+        }
+
         // Lower every argument: `sig_param` is the public C+ parameter list
         // (labels = override or AST param names, types = enum/str/Range/scalar),
         // `args` are the wire expressions (raw int / bridged NSString / ...).
@@ -501,6 +510,194 @@ impl ObjcEmitter {
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
     }
 
+    /// A method with a trailing `usingBlock:` param: emit a per-method
+    /// Block_literal struct + `invoke` trampoline (into `block_helpers`) and a
+    /// wrapper taking a C+ `fn(*u8, ...block args)` + `*u8` ctx.
+    fn emit_block_method(
+        &mut self,
+        objc_class: &str,
+        ty: &str,
+        sel: &str,
+        is_instance: bool,
+        ret_qt: &str,
+        params: &[(String, String)],
+        bidx: usize,
+        ov_name: &Option<String>,
+        ov_params: &[String],
+    ) {
+        let (mret, _) = strip_nullability(ret_qt);
+        if mret.trim() != "void" {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with non-void return\n"));
+            return;
+        }
+        if bidx != params.len() - 1 {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: params after the block not modelled\n"));
+            return;
+        }
+        let block_args = match self.parse_block_args(&params[bidx].1) {
+            Some(a) => a,
+            None => {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: unparseable block signature\n"));
+                return;
+            }
+        };
+        let block_sig = block_args.join(", ");
+        let fn_ty = if block_sig.is_empty() {
+            "fn(*u8)".to_string()
+        } else {
+            format!("fn(*u8, {block_sig})")
+        };
+
+        // Leading (non-block) params.
+        let mut sig_parts: Vec<String> = Vec::new();
+        let mut send_args: Vec<Arg> = Vec::new();
+        for (idx, (pname, pqt)) in params[..bidx].iter().enumerate() {
+            let pn = ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname));
+            let a = self.map_arg(pqt, &pn);
+            if let Arg::Unsupported(why) = &a {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: leading param `{pqt}` — {why}\n"));
+                return;
+            }
+            sig_parts.push(format!("{pn}: {}", self.param_sig_type(pqt)));
+            send_args.push(a);
+        }
+        send_args.push(Arg::Id("bp".to_string()));
+
+        let recv = if is_instance {
+            "this._obj".to_string()
+        } else {
+            format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
+        };
+        let send = match self.send_expr(&recv, sel, &Ret::Void, &send_args) {
+            Some(s) => s,
+            None => {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: block-method msgSend shape not modelled\n"));
+                return;
+            }
+        };
+
+        let name = ov_name.clone().unwrap_or_else(|| mechanical_name(sel));
+        let struct_name = format!("{ty}_{name}_block");
+        let invoke_name = format!("{ty}_{name}_invoke");
+
+        let named: Vec<String> = block_args.iter().enumerate().map(|(i, t)| format!("a{i}: {t}")).collect();
+        let invoke_params = if named.is_empty() {
+            "block: *u8".to_string()
+        } else {
+            format!("block: *u8, {}", named.join(", "))
+        };
+        let arg_names: Vec<String> = (0..block_args.len()).map(|i| format!("a{i}")).collect();
+        let call_tail = if arg_names.is_empty() { String::new() } else { format!(", {}", arg_names.join(", ")) };
+
+        // Top-level struct + trampoline.
+        self.block_helpers.push_str(&format!(
+            "#[repr(C)]\nstruct {struct_name} {{\n    opaque isa: *u8,\n    flags: i32,\n    reserved: i32,\n    invoke: {fn_ty},\n    opaque descriptor: *u8,\n    user_fn: {fn_ty},\n    opaque ctx: *u8,\n}}\n\n"
+        ));
+        self.block_helpers.push_str(&format!(
+            "fn {invoke_name}({invoke_params}) {{\n    let bl: *{struct_name} = {{ block as *{struct_name} }};\n    let f: {fn_ty} = {{ (*bl).user_fn }};\n    let ctx: *u8 = {{ (*bl).ctx }};\n    f(ctx{call_tail});\n    return;\n}}\n\n"
+        ));
+
+        // Wrapper method.
+        let receiver = if is_instance { "this" } else { "" };
+        let mut sig = String::new();
+        if !receiver.is_empty() {
+            sig.push_str(receiver);
+        }
+        for part in &sig_parts {
+            if !sig.is_empty() {
+                sig.push_str(", ");
+            }
+            sig.push_str(part);
+        }
+        if !sig.is_empty() {
+            sig.push_str(", ");
+        }
+        sig.push_str(&format!("cb: {fn_ty}, ctx: *u8"));
+        self.body.push_str(&format!(
+            "    fn {name}({sig}) {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n        {send};\n        return;\n    }}\n\n"
+        ));
+    }
+
+    /// Parse a block parameter's C signature `RET (^...)(A0, A1, ...)` into the
+    /// C+ wire types of its arguments. `None` if the shape doesn't parse.
+    fn parse_block_args(&self, qt: &str) -> Option<Vec<String>> {
+        let bytes = qt.as_bytes();
+        let open1 = qt.find('(')?;
+        let mut depth = 0i32;
+        let mut i = open1;
+        let mut close1 = None;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close1 = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let close1 = close1?;
+        let open2 = qt[close1 + 1..].find('(')? + close1 + 1;
+        let close2 = qt.rfind(')')?;
+        if close2 <= open2 {
+            return None;
+        }
+        let inside = &qt[open2 + 1..close2];
+        let mut out: Vec<String> = Vec::new();
+        let mut d = 0i32;
+        let mut cur = String::new();
+        for c in inside.chars() {
+            match c {
+                '<' | '(' => {
+                    d += 1;
+                    cur.push(c);
+                }
+                '>' | ')' => {
+                    d -= 1;
+                    cur.push(c);
+                }
+                ',' if d == 0 => {
+                    let t = cur.trim().to_string();
+                    if !t.is_empty() {
+                        out.push(t);
+                    }
+                    cur.clear();
+                }
+                _ => cur.push(c),
+            }
+        }
+        let last = cur.trim().to_string();
+        if !last.is_empty() {
+            out.push(last);
+        }
+        if out.len() == 1 && out[0] == "void" {
+            out.clear();
+        }
+        Some(out.iter().map(|a| self.map_block_arg(a)).collect())
+    }
+
+    /// C+ wire type for one block-callback argument (what ObjC passes in).
+    fn map_block_arg(&self, qt: &str) -> String {
+        let (b, _) = strip_nullability(qt);
+        let b = b.trim();
+        if b == "NSRange" {
+            return "rt::Range".to_string();
+        }
+        if b.ends_with('*') {
+            return "*u8".to_string();
+        }
+        match b {
+            "NSUInteger" | "unsigned long" => "u64".to_string(),
+            "BOOL" => "i8".to_string(),
+            // NSInteger, NS_ENUM/NS_OPTIONS, and other 8-byte scalars.
+            _ => "i64".to_string(),
+        }
+    }
+
     /// The `rt::msg_*` call expression for a (receiver, selector, return, args)
     /// combination. The runtime wrappers are named `msg_<ret>_<arg>…` by their
     /// ABI signature, so the name is derived mechanically and works for any
@@ -536,9 +733,9 @@ impl ObjcEmitter {
         // Grow this in lockstep with vendor/objc/src/runtime.cplus.
         let suffix = tags.join("_");
         const KNOWN: &[&str] = &[
-            "void", "void_id", "void_i8", "id", "id_id", "id_i64", "id_u64",
-            "id_id_u64", "id_range", "i8", "i64", "u64", "range", "range_u64",
-            "range_range",
+            "void", "void_id", "void_i8", "void_range_id", "id", "id_id",
+            "id_i64", "id_u64", "id_id_u64", "id_range", "i8", "i64", "u64",
+            "range", "range_u64", "range_range",
         ];
         if !KNOWN.contains(&suffix.as_str()) {
             return None;

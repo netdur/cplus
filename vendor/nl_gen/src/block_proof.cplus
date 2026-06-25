@@ -1,75 +1,13 @@
-// Proof: invoke an Objective-C `usingBlock:` method with a C+ function as the
-// block body — no C/ObjC shim, no build changes.
-//
-// An ObjC block is a struct starting with { isa, flags, reserved, invoke,
-// descriptor }, followed by captured variables. For a synchronous NS_NOESCAPE
-// block (NLTokenizer.enumerateTokensInRange:usingBlock:) we build one on the
-// stack: `invoke` points at a C+ trampoline, and we capture the caller's
-// `fn` + context after the header. When ObjC calls invoke(block, args...), the
-// trampoline reads the captured fn/ctx back out of the block and calls them.
-// `_NSConcreteStackBlock` (the stack-block isa) is resolved with dlsym, so no
-// extern-global is needed. This is the generalizable shape a generator emits.
+// Tests the cpc-bindgen-GENERATED block binding: NLTokenizer.enumerate_tokens
+// (from enumerateTokensInRange:usingBlock:) drives a C+ callback once per token.
+// The generator emits the Block_literal struct + invoke trampoline + wrapper;
+// here we just supply the callback.
 
 import "objc/runtime" as rt;
 import "./tokenizer" as tokenizer;
 
-#[link_name = "dlsym"]
-extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
-
-#[repr(C)]
-struct BlockDescriptor {
-    reserved: u64,
-    size: u64,
-}
-
-// Header (5 fields) + captures (user_fn, ctx). sizeof = 48 on 64-bit.
-#[repr(C)]
-struct BlockLiteral {
-    opaque isa: *u8,
-    flags: i32,
-    reserved: i32,
-    invoke: fn(*u8, rt::Range, u64, *u8),
-    opaque descriptor: *u8,
-    user_fn: fn(*u8, rt::Range, u64, *u8),
-    opaque ctx: *u8,
-}
-
-// The trampoline ObjC calls per token: recover the captured fn + ctx from the
-// block and dispatch to them.
-fn token_block_invoke(block: *u8, range: rt::Range, flags: u64, stop: *u8) {
-    let bl: *BlockLiteral = { block as *BlockLiteral };
-    let f: fn(*u8, rt::Range, u64, *u8) = { (*bl).user_fn };
-    let ctx: *u8 = { (*bl).ctx };
-    f(ctx, range, flags, stop);
-    return;
-}
-
-fn stack_block_isa() -> *u8 {
-    // RTLD_DEFAULT = (void *)-2 on macOS.
-    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
-    return { dlsym(rtld_default, #str_ptr("_NSConcreteStackBlock\0")) };
-}
-
-// Ergonomic wrapper: enumerate `tok`'s tokens in `range`, calling `cb(ctx, ...)`
-// for each. (The shape a generated binding would expose.)
-fn enumerate_tokens(tok: *u8, range: rt::Range, cb: fn(*u8, rt::Range, u64, *u8), ctx: *u8) {
-    var desc: BlockDescriptor = BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-    var block: BlockLiteral = BlockLiteral {
-        isa: stack_block_isa(),
-        flags: 0 as i32,
-        reserved: 0 as i32,
-        invoke: token_block_invoke,
-        descriptor: { #addr_of(desc) as *u8 },
-        user_fn: cb,
-        ctx: ctx,
-    };
-    let bp: *u8 = { #addr_of(block) as *u8 };
-    rt::msg_void_range_id(tok, rt::sel(#str_ptr("enumerateTokensInRange:usingBlock:\0")), range, bp);
-    return;
-}
-
-// A user callback: count tokens through a `*i64` context.
-fn count_tokens(ctx: *u8, range: rt::Range, flags: u64, stop: *u8) {
+// Block body: count tokens through a `*i64` context.
+fn count_tokens(ctx: *u8, range: rt::Range, flags: i64, stop: *u8) {
     let counter: *i64 = { ctx as *i64 };
     { *counter = (*counter) +% (1 as i64); };
     return;
@@ -78,11 +16,11 @@ fn count_tokens(ctx: *u8, range: rt::Range, flags: u64, stop: *u8) {
 #[test]
 fn generated_tokenizer_enumerate_block() {
     let tok: tokenizer::Tokenizer = tokenizer::Tokenizer::new(tokenizer::TokenUnit::Word);
-    tok.set_text("the quick brown fox");          // 4 word tokens
+    tok.set_text("the quick brown fox");                 // 4 word tokens
     var count: i64 = 0;
     let cp: *u8 = { #addr_of(count) as *u8 };
     let full: rt::Range = rt::Range { location: 0 as u64, length: 19 as u64 };
-    enumerate_tokens(tok.raw(), full, count_tokens, cp);
+    tok.enumerate_tokens(full, count_tokens, cp);
     assert count == (4 as i64);
     return;
 }

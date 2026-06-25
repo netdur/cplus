@@ -7,6 +7,26 @@
 extern fn objc_getClass(name: *u8) -> *u8;
 extern fn sel_registerName(name: *u8) -> *u8;
 
+// Objective-C block support. A block passed to a synchronous NS_NOESCAPE method
+// is a `#[repr(C)]` struct { isa, flags, reserved, invoke, descriptor, captures }
+// built on the stack; generated bindings emit the per-signature struct and an
+// `invoke` trampoline, and use these shared helpers for the isa + descriptor.
+#[link_name = "dlsym"]
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+
+#[repr(C)]
+struct BlockDescriptor {
+    reserved: u64,
+    size: u64,
+}
+
+// The isa for a stack block (`_NSConcreteStackBlock`), resolved at runtime via
+// dlsym(RTLD_DEFAULT, ...) so no extern global is needed.
+fn stack_block_isa() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_NSConcreteStackBlock\0")) };
+}
+
 // ARC primitives (libobjc) — the same reference-counting calls ARC emits,
 // invoked by hand for the +1/`drop` ownership model.
 #[link_name = "objc_retain"]

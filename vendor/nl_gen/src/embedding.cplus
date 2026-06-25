@@ -50,16 +50,16 @@ impl Embedding {
     }
 
     // SKIPPED `embeddingWithContentsOfURL:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `containsString:`: return `BOOL` — unmapped type `BOOL`
+    // SKIPPED `containsString:`: (return, arg) shape not yet modelled
     // SKIPPED `distanceBetweenString:andString:distanceType:`: return `NLDistance` — unmapped type `NLDistance`
-    // SKIPPED `enumerateNeighborsForString:maximumCount:distanceType:usingBlock:`: param `void (^ _Nonnull)(NSString * _Nonnull, NLDistance, BOOL * _Nonnull)` — block
-    // SKIPPED `enumerateNeighborsForString:maximumCount:maximumDistance:distanceType:usingBlock:`: param `NLDistance` — unmapped type `NLDistance`
-    // SKIPPED `neighborsForString:maximumCount:distanceType:`: return `NSArray<NSString *> * _Nullable` — generic collection
+    // SKIPPED `enumerateNeighborsForString:maximumCount:distanceType:usingBlock:`: block-method msgSend shape not modelled
+    // SKIPPED `enumerateNeighborsForString:maximumCount:maximumDistance:distanceType:usingBlock:`: leading param `NLDistance` — unmapped type `NLDistance`
+    // SKIPPED `neighborsForString:maximumCount:distanceType:`: NSArray<NSString> arg shape not modelled
     // SKIPPED `neighborsForString:maximumCount:maximumDistance:distanceType:`: param `NLDistance` — unmapped type `NLDistance`
     // SKIPPED `vectorForString:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
-    // SKIPPED `getVector:forString:`: return `BOOL` — unmapped type `BOOL`
-    // SKIPPED `enumerateNeighborsForVector:maximumCount:distanceType:usingBlock:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
-    // SKIPPED `enumerateNeighborsForVector:maximumCount:maximumDistance:distanceType:usingBlock:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    // SKIPPED `getVector:forString:`: (return, arg) shape not yet modelled
+    // SKIPPED `enumerateNeighborsForVector:maximumCount:distanceType:usingBlock:`: leading param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    // SKIPPED `enumerateNeighborsForVector:maximumCount:maximumDistance:distanceType:usingBlock:`: leading param `NSArray<NSNumber *> * _Nonnull` — generic collection
     // SKIPPED `neighborsForVector:maximumCount:distanceType:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
     // SKIPPED `neighborsForVector:maximumCount:maximumDistance:distanceType:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
     fn supported_revisions_for_language(language: str) -> *u8 {

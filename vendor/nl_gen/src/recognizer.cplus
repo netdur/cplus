@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NLLanguageRecognizer` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct LanguageRecognizer {
@@ -41,7 +42,20 @@ impl LanguageRecognizer {
 
     // SKIPPED `languageHints`: return `NS_REFINED_FOR_SWIFT NSDictionary<NLLanguage,NSNumber *> *` — generic collection
     // SKIPPED `setLanguageHints:`: param `NS_REFINED_FOR_SWIFT NSDictionary<NLLanguage,NSNumber *> *` — generic collection
-    // SKIPPED `languageConstraints`: return `NSArray<NLLanguage> * _Nonnull` — generic collection
+    fn language_constraints(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("languageConstraints\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setLanguageConstraints:`: param `NSArray<NLLanguage> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);

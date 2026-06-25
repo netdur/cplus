@@ -9,7 +9,8 @@
       "setString:":          { "name": "set_text", "params": ["text"] },
       "string":              { "name": "text" },
       "tokenRangeAtIndex:":  { "name": "token_range", "params": ["at"] },
-      "tokensForRange:":     { "name": "tokens" }
+      "tokensForRange:":     { "name": "tokens" },
+      "enumerateTokensInRange:usingBlock:": { "name": "enumerate_tokens" }
     },
     "NLEmbedding": {
       "wordEmbeddingForLanguage:revision:": { "name": "word_embedding", "params": ["for_language", "revision"] }
