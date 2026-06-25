@@ -1,0 +1,26 @@
+// Hello, World! in AppKit — a native NSAlert dialog, driven from C+.
+//
+// The generated `appkit` package binds NSApplication, so the shared app handle
+// comes straight from it. Its singleton / value-type constructors aren't wrapped
+// yet (`sharedApplication` returns a raw handle, NSAlert's `init` is inherited
+// from NSObject so the generator never saw it, NSRect is SKIPPED), so the alert
+// itself is built on the objc runtime that appkit is generated against.
+import "appkit/application" as application;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+
+fn main() -> i32 {
+    // Bring up the shared NSApplication (via the appkit binding) and foreground it.
+    let app: *u8 = application::Application::shared_application();
+    rt::msg_void_i8(app, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), 1 as i8);
+
+    // [[NSAlert alloc] init], give it text, and run it modally.
+    let alert_cls: *u8 = rt::get_class(#str_ptr("NSAlert\0"));
+    let alert: *u8 = rt::msg_id(rt::msg_id(alert_cls, rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+    rt::msg_void_id(alert, rt::sel(#str_ptr("setMessageText:\0")), bridge::nsstring("Hello, World!"));
+    rt::msg_void_id(alert, rt::sel(#str_ptr("setInformativeText:\0")), bridge::nsstring("Greetings from C+ and AppKit."));
+    rt::msg_i64(alert, rt::sel(#str_ptr("runModal\0")));
+
+    rt::release(alert);
+    return 0;
+}

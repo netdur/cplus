@@ -1,0 +1,13 @@
+[package]
+name    = "hello_appkit"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "hello_appkit"
+path = "src/main.cplus"
+
+[dependencies]
+appkit = "*"
+objc   = "*"
+stdlib = "*"
