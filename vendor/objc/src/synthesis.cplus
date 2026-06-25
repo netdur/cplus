@@ -26,6 +26,38 @@ extern fn class_addMethod_v_4id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, 
 #[link_name = "class_addMethod"]
 extern fn class_addMethod_v_5id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
 
+// Value-returning IMPs (data-source style: the callback hands a value back to
+// the framework). `<ret>_Nid` = returns <ret>, N trailing object args. Covers
+// the common delegate/data-source return types; grow as needed.
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_3id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_4id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i64_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i64_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i64_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_u64_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_u64_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i16_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i16, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i8_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i8_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i8_3id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
 // Associated objects carry the C+ handler context on the synthesized instance.
 // OBJC_ASSOCIATION_ASSIGN = 0 (the context is a raw pointer we keep alive).
 #[link_name = "objc_setAssociatedObject"]
@@ -63,6 +95,49 @@ fn add_method_v_4id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u
 
 fn add_method_v_5id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8 {
     return { class_addMethod_v_5id(cls, selector, imp, types) };
+}
+
+fn add_method_id_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8) -> *u8, types: *u8) -> i8 {
+    return { class_addMethod_id_0id(cls, selector, imp, types) };
+}
+fn add_method_id_1id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+    return { class_addMethod_id_1id(cls, selector, imp, types) };
+}
+fn add_method_id_2id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+    return { class_addMethod_id_2id(cls, selector, imp, types) };
+}
+fn add_method_id_3id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+    return { class_addMethod_id_3id(cls, selector, imp, types) };
+}
+fn add_method_id_4id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+    return { class_addMethod_id_4id(cls, selector, imp, types) };
+}
+fn add_method_i64_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8) -> i64, types: *u8) -> i8 {
+    return { class_addMethod_i64_0id(cls, selector, imp, types) };
+}
+fn add_method_i64_1id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8 {
+    return { class_addMethod_i64_1id(cls, selector, imp, types) };
+}
+fn add_method_i64_2id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i64, types: *u8) -> i8 {
+    return { class_addMethod_i64_2id(cls, selector, imp, types) };
+}
+fn add_method_u64_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8) -> u64, types: *u8) -> i8 {
+    return { class_addMethod_u64_0id(cls, selector, imp, types) };
+}
+fn add_method_u64_1id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> u64, types: *u8) -> i8 {
+    return { class_addMethod_u64_1id(cls, selector, imp, types) };
+}
+fn add_method_i16_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8) -> i16, types: *u8) -> i8 {
+    return { class_addMethod_i16_0id(cls, selector, imp, types) };
+}
+fn add_method_i8_1id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8 {
+    return { class_addMethod_i8_1id(cls, selector, imp, types) };
+}
+fn add_method_i8_2id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8 {
+    return { class_addMethod_i8_2id(cls, selector, imp, types) };
+}
+fn add_method_i8_3id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8 {
+    return { class_addMethod_i8_3id(cls, selector, imp, types) };
 }
 
 fn set_associated(object: *u8, key: *u8, value: *u8) {

@@ -10,6 +10,7 @@ import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "./xmlparser" as xml;
 import "./decimal_proof" as decimal_proof;
+import "./decimal_gen" as decimal_gen;
 
 // Stable per-object key for the associated handler context (identity only —
 // never dereferenced by the runtime).
@@ -102,5 +103,38 @@ fn generated_xml_delegate_counts_elements() {
     assert ok != (0 as i8);
     assert counts.starts == (3 as i64);   // <root>, <child>, <child>
     assert counts.ends == (3 as i64);     // matching close tags
+    return;
+}
+
+// Non-void callbacks through the GENERATED synthesizer (decimal_gen): the
+// generated DecimalNumberBehaviors installs C+ scale (-> i16) and roundingMode
+// (-> u64) IMPs that NSDecimalNumber consults during division.
+#[link_name = "objc_msgSend"]
+extern fn send_id2b(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+
+fn gen_rounding(user: *u8) -> u64 {
+    return 0 as u64; // NSRoundPlain
+}
+
+fn gen_scale(user: *u8) -> i16 {
+    return 0 as i16; // integer result
+}
+
+#[test]
+fn generated_decimal_behavior_scale_fires() {
+    var beh: decimal_gen::DecimalNumberBehaviors = decimal_gen::DecimalNumberBehaviors_new({ 0 as *u8 });
+    beh.set_rounding_mode(gen_rounding);
+    beh.set_scale(gen_scale);
+    let behavior: *u8 = decimal_gen::create_DecimalNumberBehaviors(#addr_of(beh));
+
+    let dn: *u8 = rt::get_class(#str_ptr("NSDecimalNumber\0"));
+    let with_str: *u8 = rt::sel(#str_ptr("decimalNumberWithString:\0"));
+    let ten: *u8 = rt::msg_id_id(dn, with_str, bridge::nsstring("10"));
+    let three: *u8 = rt::msg_id_id(dn, with_str, bridge::nsstring("3"));
+    let result: *u8 = { send_id2b(ten, rt::sel(#str_ptr("decimalNumberByDividingBy:withBehavior:\0")), three, behavior) };
+    let dv: f64 = rt::msg_f64(result, rt::sel(#str_ptr("doubleValue\0")));
+
+    assert dv > (2.95 as f64);   // scale 0 -> 3.0, not full-precision 3.333
+    assert dv < (3.05 as f64);
     return;
 }
