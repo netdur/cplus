@@ -680,7 +680,7 @@ impl ObjcEmitter {
         let mut sig_parts: Vec<String> = Vec::new();
         let mut args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params.iter().enumerate() {
-            let pn = escape_keyword(ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
+            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: param `{pqt}` — {why}\n"));
@@ -720,7 +720,7 @@ impl ObjcEmitter {
             format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
         };
         let receiver = if is_instance { "this" } else { "" };
-        let name = escape_keyword(ov_name.clone().unwrap_or_else(|| mechanical_name(&sel)));
+        let name = crate::sanitize_ident(&ov_name.clone().unwrap_or_else(|| mechanical_name(&sel)));
 
         // A class factory returning the class's own type (`instancetype` or
         // `Class *`) -> a wrapped `Self` (or `Option[Self]` if nullable).
@@ -930,7 +930,7 @@ impl ObjcEmitter {
         let mut sig_parts: Vec<String> = Vec::new();
         let mut send_args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params[..bidx].iter().enumerate() {
-            let pn = escape_keyword(ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
+            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: leading param `{pqt}` — {why}\n"));
@@ -1379,7 +1379,7 @@ fn base(p: &str) -> String {
 
 /// clang's `loc` puts the file directly, or (for macro-expanded decls like
 /// NS_ENUM) under `expansionLoc`/`spellingLoc`. Prefer the expansion site.
-fn loc_file(loc: &serde_json::Value) -> Option<String> {
+pub(crate) fn loc_file(loc: &serde_json::Value) -> Option<String> {
     loc.get("file")
         .and_then(|f| f.as_str())
         .or_else(|| loc.get("expansionLoc").and_then(|e| e.get("file")).and_then(|f| f.as_str()))
@@ -1482,24 +1482,6 @@ fn selector_ident(sel: &str) -> String {
         .join("_")
 }
 
-/// Append `_` when a generated identifier collides with a C+ keyword. An ObjC
-/// method or parameter named `type` / `for` / `in` / ... is legal there but
-/// reserved here, so `type` becomes `type_`.
-fn escape_keyword(name: String) -> String {
-    const KW: &[&str] = &[
-        "as", "async", "await", "borrow", "break", "const", "continue", "defer",
-        "else", "enum", "extern", "false", "fn", "for", "gen", "if", "impl",
-        "import", "in", "let", "loop", "match", "move", "mut", "opaque", "pub",
-        "ref", "restrict", "return", "self", "static", "struct", "take", "this",
-        "true", "type", "unsafe", "var", "while",
-    ];
-    if KW.contains(&name.as_str()) {
-        format!("{name}_")
-    } else {
-        name
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1593,11 +1575,13 @@ mod tests {
 
     #[test]
     fn escapes_cplus_keyword_identifiers() {
-        // An ObjC param/method named `type`/`for` is legal there, reserved here.
-        assert_eq!(escape_keyword("type".to_string()), "type_");
-        assert_eq!(escape_keyword("for".to_string()), "for_");
+        // ObjC `type`/`for` param/method, or a C `opaque` field: legal there,
+        // reserved here. One shared escaper (crate::sanitize_ident).
+        assert_eq!(crate::sanitize_ident("type"), "type_");
+        assert_eq!(crate::sanitize_ident("for"), "for_");
+        assert_eq!(crate::sanitize_ident("opaque"), "opaque_");
         // Non-keywords pass through untouched.
-        assert_eq!(escape_keyword("language".to_string()), "language");
-        assert_eq!(escape_keyword("token_range".to_string()), "token_range");
+        assert_eq!(crate::sanitize_ident("language"), "language");
+        assert_eq!(crate::sanitize_ident("token_range"), "token_range");
     }
 }

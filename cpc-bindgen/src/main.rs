@@ -192,6 +192,9 @@ struct Emitter {
     header_path: String,
     out: String,
     seen_records: std::collections::HashSet<String>,
+    // Function names already emitted — some headers (clapack.h) redeclare a
+    // symbol; we bind it once.
+    seen_fns: std::collections::HashSet<String>,
     // Functions / typedefs deferred until structs they depend on are emitted.
     deferred_fns: Vec<String>,
     /// Cached top-level decls so emit_typedef can resolve an anonymous
@@ -215,6 +218,7 @@ impl Emitter {
             header_path: header_path.to_string(),
             out,
             seen_records: std::collections::HashSet::new(),
+            seen_fns: std::collections::HashSet::new(),
             deferred_fns: Vec::new(),
             last_tu_inner: None,
             typedefs: std::collections::HashMap::new(),
@@ -335,6 +339,11 @@ impl Emitter {
         // `static`/`static inline` functions (e.g. Foundation's NS_INLINE
         // NSMakeRange) have no external symbol to link against — skip them.
         if decl.get("storageClass").and_then(|v| v.as_str()) == Some("static") {
+            return;
+        }
+        // Some headers (e.g. clapack.h) declare a symbol more than once; bind it
+        // only the first time.
+        if !self.seen_fns.insert(name.clone()) {
             return;
         }
         let qual_type = decl
@@ -494,11 +503,7 @@ impl Emitter {
             if field.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
                 continue;
             }
-            let fname = field
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("")
-                .to_string();
+            let fname = sanitize_ident(field.get("name").and_then(|n| n.as_str()).unwrap_or(""));
             let qt = field
                 .get("type")
                 .and_then(|t| t.get("qualType"))
@@ -926,15 +931,18 @@ fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
     None
 }
 
-fn sanitize_ident(name: &str) -> String {
+/// Append `_` when a C / Objective-C identifier collides with a C+ keyword (an
+/// ObjC `type`/`for` param, a C `void *opaque` field, ...). Shared by both the C
+/// and ObjC front-ends.
+pub(crate) fn sanitize_ident(name: &str) -> String {
     if name.is_empty() {
         return "_".to_string();
     }
-    // C+ reserved keywords that might collide with C identifiers.
     const RESERVED: &[&str] = &[
-        "fn", "let", "mut", "if", "else", "return", "while", "for", "loop", "match", "struct",
-        "enum", "impl", "pub", "export", "extern", "import", "as", "self", "Self", "true", "false",
-        "unsafe", "guard", "type",
+        "as", "async", "await", "borrow", "break", "const", "continue", "defer", "else", "enum",
+        "export", "extern", "false", "fn", "for", "gen", "guard", "if", "impl", "import", "in",
+        "let", "loop", "match", "move", "mut", "opaque", "pub", "ref", "restrict", "return", "self",
+        "Self", "static", "struct", "take", "this", "true", "type", "unsafe", "var", "while",
     ];
     if RESERVED.iter().any(|r| *r == name) {
         return format!("{name}_");

@@ -5,7 +5,8 @@
 // module (imports + type re-exports), a `Cplus.toml` populated from the
 // framework metadata, and a starter `overrides.json`.
 
-use crate::objc::ObjcEmitter;
+use crate::objc::{loc_file, ObjcEmitter};
+use crate::Emitter;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,23 +27,15 @@ pub fn generate(
     let fw_dir = Path::new(&sdk)
         .join("System/Library/Frameworks")
         .join(format!("{name}.framework"));
-    let headers_dir = fw_dir.join("Headers");
-    if !headers_dir.is_dir() {
+    if !fw_dir.join("Headers").is_dir() {
         eprintln!(
             "cpc-bindgen: framework `{name}` not found at {}",
             fw_dir.display()
         );
         return 1;
     }
-
-    // Public headers come from the framework umbrella header's `#import`s; if it
-    // has none (or is absent), fall back to every header except the umbrella.
-    let umbrella = headers_dir.join(format!("{name}.h"));
-    let mut headers = public_headers(&umbrella, name);
-    if headers.is_empty() {
-        headers = list_headers(&headers_dir, name);
-    }
-    if headers.is_empty() {
+    let header_paths = discover_headers(&fw_dir, name);
+    if header_paths.is_empty() {
         eprintln!("cpc-bindgen: framework `{name}` exposes no headers");
         return 1;
     }
@@ -72,34 +65,52 @@ pub fn generate(
         return 1;
     }
 
-    // One module per header. `modules` keeps (module name, its exported types)
-    // so the umbrella can re-export them.
+    // One module per header. Detect Objective-C vs C per header (a header is
+    // ObjC iff it defines an ObjC interface/protocol/category of its own) and
+    // dispatch to the matching emitter, so C frameworks (Accelerate) bind too.
+    // `any_objc` decides whether the package needs the `objc` runtime dep.
     let mut modules: Vec<(String, Vec<String>)> = Vec::new();
-    for h in &headers {
-        let header_path = headers_dir.join(h);
-        let ast = match clang_ast(&header_path, &sdk) {
+    let mut any_objc = false;
+    for hp in &header_paths {
+        let fname = hp.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let ast = match clang_ast(hp, &sdk) {
             Some(a) => a,
             None => {
-                eprintln!("cpc-bindgen:   {h}: clang failed, skipping");
+                eprintln!("cpc-bindgen:   {fname}: clang failed, skipping");
                 continue;
             }
         };
-        let emitter = ObjcEmitter::new(&header_path.to_string_lossy(), prefix, overrides.clone());
-        let text = emitter.run(&ast);
-        let module = module_name(h, prefix);
+        let is_objc = header_is_objc(&ast, fname);
+        let hp_str = hp.to_string_lossy();
+        let text = if is_objc {
+            any_objc = true;
+            ObjcEmitter::new(&hp_str, prefix, overrides.clone()).run(&ast)
+        } else {
+            let mut e = Emitter::new(&hp_str);
+            e.walk(&ast);
+            e.finish()
+        };
+        let module = module_name(fname, if is_objc { prefix } else { "" });
+        if modules.iter().any(|(m, _)| *m == module) {
+            continue; // two headers snaked to the same module name; keep the first
+        }
         let types = exported_types(&text);
         if let Err(e) = std::fs::write(src.join(format!("{module}.cplus")), &text) {
-            eprintln!("cpc-bindgen:   {h}: write failed: {e}");
+            eprintln!("cpc-bindgen:   {fname}: write failed: {e}");
             continue;
         }
-        eprintln!("  {h} -> src/{module}.cplus ({} types)", types.len());
+        eprintln!(
+            "  {fname} -> src/{module}.cplus ({}, {} types)",
+            if is_objc { "objc" } else { "c" },
+            types.len()
+        );
         modules.push((module, types));
     }
 
     std::fs::write(src.join(format!("{pkg}.cplus")), build_umbrella(name, &modules)).ok();
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(), modules.len()),
+        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(), modules.len(), any_objc),
     )
     .ok();
     if overrides_path.is_none() {
@@ -115,6 +126,67 @@ pub fn generate(
         out.display()
     );
     0
+}
+
+/// Absolute paths to a framework's public leaf headers. Handles two shapes: a
+/// flat framework (headers under `Headers/`, listed by the umbrella's
+/// `#import <Name/...>`) and an umbrella-of-subframeworks (Accelerate), whose
+/// real headers live under `Frameworks/<Sub>.framework/Headers/`.
+fn discover_headers(fw_dir: &Path, name: &str) -> Vec<PathBuf> {
+    let headers_dir = fw_dir.join("Headers");
+    let mut paths: Vec<PathBuf> = public_headers(&headers_dir.join(format!("{name}.h")), name)
+        .into_iter()
+        .map(|h| headers_dir.join(h))
+        .collect();
+
+    // Umbrella-of-subframeworks: recurse one level into each sub-framework's
+    // `Headers/`, taking every header except that sub-framework's own umbrella.
+    let subs = fw_dir.join("Frameworks");
+    if subs.is_dir() {
+        for entry in std::fs::read_dir(&subs).into_iter().flatten().flatten() {
+            let p = entry.path();
+            if let Some(sub) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".framework")) {
+                let sub_headers = p.join("Headers");
+                for h in list_headers(&sub_headers, sub) {
+                    paths.push(sub_headers.join(h));
+                }
+            }
+        }
+    }
+
+    // Fallback: the framework's own headers (minus its umbrella).
+    if paths.is_empty() {
+        for h in list_headers(&headers_dir, name) {
+            paths.push(headers_dir.join(h));
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// A header is Objective-C iff it declares an ObjC interface / protocol /
+/// category *of its own* (decls from `#import`ed system headers don't count, so
+/// we match the decl's `loc` file against this header). Everything else is C.
+fn header_is_objc(tu: &serde_json::Value, header_basename: &str) -> bool {
+    let Some(inner) = tu.get("inner").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    for decl in inner {
+        let kind = decl.get("kind").and_then(|v| v.as_str());
+        if matches!(
+            kind,
+            Some("ObjCInterfaceDecl") | Some("ObjCProtocolDecl") | Some("ObjCCategoryDecl")
+        ) {
+            if let Some(f) = decl.get("loc").and_then(loc_file) {
+                if Path::new(&f).file_name().and_then(|n| n.to_str()) == Some(header_basename) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn sdk_path() -> Option<String> {
@@ -251,7 +323,14 @@ fn cplus_toml(
     overrides_used: bool,
     sdk_version: &str,
     n_headers: usize,
+    any_objc: bool,
 ) -> String {
+    // A pure-C framework (Accelerate) needs no `objc` runtime dependency.
+    let deps = if any_objc {
+        "stdlib = \"*\"\nobjc   = \"*\""
+    } else {
+        "stdlib = \"*\""
+    };
     // Reproduce line: the exact command that regenerates this package.
     let mut repro = format!("cpc-bindgen --framework {name}");
     if !prefix.is_empty() {
@@ -270,7 +349,7 @@ fn cplus_toml(
          # reproduce = \"{repro}\"\n\
          \n\
          [package]\nname    = \"{pkg}\"\nversion = \"0.0.0\"\nedition = \"2026\"\n\n\
-         [dependencies]\nstdlib = \"*\"\nobjc   = \"*\"\n\n\
+         [dependencies]\n{deps}\n\n\
          [link]\nframeworks = [\"{name}\", \"Foundation\"]\nlibs       = [\"objc\"]\n",
         ver = env!("CARGO_PKG_VERSION"),
     )
