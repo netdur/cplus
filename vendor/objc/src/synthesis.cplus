@@ -1,0 +1,80 @@
+// Objective-C class SYNTHESIS: build a class at runtime and install C+ functions
+// as its method IMPs. This is how a generated binding implements a delegate or
+// data source with no Objective-C source — the same machinery vendor/appkit
+// uses for target/action and delegate objects. A synthesized delegate stores
+// its C+ handler context as an associated object; each IMP trampoline reads it
+// back and dispatches.
+
+import "./runtime" as rt;
+
+extern fn objc_allocateClassPair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8;
+extern fn objc_registerClassPair(cls: *u8);
+
+// `class_addMethod`, one extern per IMP ABI. Every IMP receives (self, _cmd, ...);
+// delegate methods that take only object args use the `v_Nid` shapes (void
+// return, N trailing `id` arguments after self/_cmd).
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_3id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_4id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_v_5id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+// Associated objects carry the C+ handler context on the synthesized instance.
+// OBJC_ASSOCIATION_ASSIGN = 0 (the context is a raw pointer we keep alive).
+#[link_name = "objc_setAssociatedObject"]
+extern fn objc_setAssociatedObject(object: *u8, key: *u8, value: *u8, policy: usize);
+#[link_name = "objc_getAssociatedObject"]
+extern fn objc_getAssociatedObject(object: *u8, key: *u8) -> *u8;
+
+fn allocate_class_pair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8 {
+    return { objc_allocateClassPair(superclass, name, extra_bytes) };
+}
+
+fn register_class_pair(cls: *u8) {
+    { objc_registerClassPair(cls); };
+}
+
+fn add_method_v_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_0id(cls, selector, imp, types) };
+}
+
+fn add_method_v_1id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_1id(cls, selector, imp, types) };
+}
+
+fn add_method_v_2id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_2id(cls, selector, imp, types) };
+}
+
+fn add_method_v_3id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_3id(cls, selector, imp, types) };
+}
+
+fn add_method_v_4id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_4id(cls, selector, imp, types) };
+}
+
+fn add_method_v_5id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8 {
+    return { class_addMethod_v_5id(cls, selector, imp, types) };
+}
+
+fn set_associated(object: *u8, key: *u8, value: *u8) {
+    { objc_setAssociatedObject(object, key, value, 0 as usize); };
+}
+
+fn get_associated(object: *u8, key: *u8) -> *u8 {
+    return { objc_getAssociatedObject(object, key) };
+}
+
+// alloc + init on a class OBJECT (not a name) — instantiates a synthesized class.
+fn alloc_init_class(cls: *u8) -> *u8 {
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    return rt::msg_id(alloced, rt::sel(#str_ptr("init\0")));
+}
