@@ -132,6 +132,10 @@ struct Lower {
     /// name. A name may map to several overloads across types; for a `v.m(..)`
     /// call the labels / arity usually single one out (lower has no type info).
     method_params: std::collections::HashMap<String, Vec<Vec<ParamInfo>>>,
+    /// Parameters for receiver-less associated functions, keyed by their
+    /// `Type::function` suffix. A qualified call such as `json::Value::parse`
+    /// uses the final two path segments to select this table.
+    assoc_params: std::collections::HashMap<String, Vec<Vec<ParamInfo>>>,
 }
 
 impl Lower {
@@ -155,6 +159,7 @@ impl Lower {
             diags: vec![],
             fn_params: std::collections::HashMap::new(),
             method_params: std::collections::HashMap::new(),
+            assoc_params: std::collections::HashMap::new(),
         }
     }
 
@@ -178,10 +183,18 @@ impl Lower {
                 ItemKind::Impl(b) => {
                     for m in &b.methods {
                         self.validate_param_defaults(&m.params, false);
-                        self.method_params
-                            .entry(m.name.name.clone())
-                            .or_default()
-                            .push(m.params.iter().map(param_info).collect());
+                        let params: Vec<ParamInfo> = m.params.iter().map(param_info).collect();
+                        if m.receiver.is_some() {
+                            self.method_params
+                                .entry(m.name.name.clone())
+                                .or_default()
+                                .push(params);
+                        } else {
+                            self.assoc_params
+                                .entry(format!("{}::{}", b.target.name, m.name.name))
+                                .or_default()
+                                .push(params);
+                        }
                     }
                 }
                 _ => {}
@@ -227,6 +240,16 @@ impl Lower {
                 .method_params
                 .get(&name.name)
                 .is_some_and(|cs| cs.iter().any(|p| p.len() > n_args)),
+            ExprKind::Path { segments } if segments.len() >= 2 => {
+                let key = format!(
+                    "{}::{}",
+                    segments[segments.len() - 2].name,
+                    segments[segments.len() - 1].name
+                );
+                self.assoc_params
+                    .get(&key)
+                    .is_some_and(|cs| cs.iter().any(|p| p.len() > n_args))
+            }
             _ => false,
         }
     }
@@ -258,7 +281,18 @@ impl Lower {
                 Some(c) => c.clone(),
                 None => return, // unknown method — sema handles
             },
-            _ => return, // assoc (Path) etc. — sema's E1002 guard reports it
+            ExprKind::Path { segments } if segments.len() >= 2 => {
+                let key = format!(
+                    "{}::{}",
+                    segments[segments.len() - 2].name,
+                    segments[segments.len() - 1].name
+                );
+                match self.assoc_params.get(&key) {
+                    Some(c) => c.clone(),
+                    None => return,
+                }
+            }
+            _ => return,
         };
         let mut results: Vec<(usize, Vec<ArgSlot>)> = Vec::new();
         let mut first_err: Option<(&'static str, String, Span)> = None;

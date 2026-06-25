@@ -81,6 +81,28 @@ fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
     return { memcmp(a, needle, n) } == (0 as i32);
 }
 
+// FNV-1a over the `n` bytes at `p`. The single hash core behind both
+// `Text::hash` and the `str`-keyed `hash_str` below, so a `Text` key and an
+// equal `str` lookup always land in the same bucket (see `stdlib/string_map`).
+// `n == 0` returns the FNV offset basis without dereferencing `p` (which may be
+// null for an empty Text).
+fn hash_bytes(p: *u8, n: usize) -> u64 {
+    var h: u64 = 14695981039346656037 as u64;
+    var i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = { p[i] };
+        h = (h ^ (b as u64)) *% (1099511628211 as u64);
+        i = i +% (1 as usize);
+    }
+    return h;
+}
+
+// FNV-1a hash of a `str`'s bytes, in the same domain as `Text::hash`. This is
+// the lookup-side hash a `Text`-keyed map uses when queried by a `str` key.
+fn hash_str(s: str) -> u64 {
+    return hash_bytes({ #str_ptr(s) }, #str_len(s));
+}
+
 fn new() -> Text {
     return Text {
         _ptr: { 0 as *u8 },
@@ -192,9 +214,9 @@ impl Text {
         return;
     }
 
-    fn truncate(ref this, count: usize) {
-        if count < this._len {
-            this._len = count;
+    fn truncate(ref this, to: usize) {
+        if to < this._len {
+            this._len = to;
         }
         return;
     }
@@ -451,8 +473,9 @@ impl Text {
         return this._copy_range(this._len -% n, this._len);
     }
 
-    // Owned copy with the first `count` bytes dropped (Swift `dropFirst`).
-    fn drop_first(this, count: usize) -> Text {
+    // Owned copy with the first `count` bytes dropped (Swift `dropFirst`,
+    // which defaults to 1).
+    fn drop_first(this, count: usize = 1) -> Text {
         var n: usize = count;
         if n > this._len {
             n = this._len;
@@ -460,8 +483,9 @@ impl Text {
         return this._copy_range(n, this._len);
     }
 
-    // Owned copy with the last `count` bytes dropped (Swift `dropLast`).
-    fn drop_last(this, count: usize) -> Text {
+    // Owned copy with the last `count` bytes dropped (Swift `dropLast`,
+    // which defaults to 1).
+    fn drop_last(this, count: usize = 1) -> Text {
         var n: usize = count;
         if n > this._len {
             n = this._len;
@@ -576,6 +600,37 @@ impl Text {
             { free(this._ptr); }
         }
         return;
+    }
+}
+
+// Byte-exact value equality and a content hash. Together these make `Text` a
+// usable associative-container key (see `stdlib/string_map`), the role `str`
+// already fills for `HashMap`. Both borrow their receiver (and `eq` borrows its
+// argument): neither moves nor drops a `Text`, so they are safe to call on keys
+// that stay live inside a table.
+impl Text: Eq {
+    // True iff `this` and `other` hold the same bytes. Length is checked first
+    // so the `memcmp` only runs on equal-length buffers; two empty Texts (which
+    // may hold null `_ptr`s) compare equal without dereferencing.
+    fn eq(this, other: Text) -> bool {
+        if this._len != other._len {
+            return false;
+        }
+        if this._len == (0 as usize) {
+            return true;
+        }
+        return { memcmp(this._ptr, other._ptr, this._len) } == (0 as i32);
+    }
+}
+
+impl Text: Hash {
+    // FNV-1a over the raw bytes. Deterministic and allocation-free. The only
+    // contract a map relies on is hash/eq agreement: equal Texts (same bytes)
+    // produce the same hash. Shares its core with the free `hash_str`, so a
+    // `Text` key and an equal `str` lookup hash identically. The empty Text
+    // hashes to the FNV offset basis.
+    fn hash(this) -> u64 {
+        return hash_bytes(this._ptr, this._len);
     }
 }
 
@@ -850,6 +905,9 @@ fn text_drop_first_last() {
     let t: Text = from_str("hello");
     assert t.drop_first(count: 2 as usize).equals("llo");
     assert t.drop_last(count: 2 as usize).equals("hel");
+    // default count is 1 (Swift dropFirst()/dropLast())
+    assert t.drop_first().equals("ello");
+    assert t.drop_last().equals("hell");
 }
 
 #[test]
@@ -899,4 +957,73 @@ fn text_c_str_counts_without_nul() {
         option::Option[CString]::None => { assert false; }
     }
     return;
+}
+
+// ── Eq / Hash (key role for stdlib/string_map) ──
+
+#[test]
+fn text_eq_same_bytes() {
+    let a: Text = from_str("hello");
+    let b: Text = from_str("hello");
+    assert a.eq(b);
+}
+
+#[test]
+fn text_eq_differs_on_content() {
+    let a: Text = from_str("hello");
+    let b: Text = from_str("world");
+    assert a.eq(b) == false;
+}
+
+#[test]
+fn text_eq_differs_on_length() {
+    let a: Text = from_str("hi");
+    let b: Text = from_str("hii");
+    assert a.eq(b) == false;
+}
+
+#[test]
+fn text_eq_empty_pair() {
+    let a: Text = new();
+    let b: Text = new();
+    assert a.eq(b);
+}
+
+#[test]
+fn text_eq_empty_vs_nonempty() {
+    let a: Text = new();
+    let b: Text = from_str("x");
+    assert a.eq(b) == false;
+}
+
+#[test]
+fn text_hash_agrees_with_eq() {
+    let a: Text = from_str("language");
+    let b: Text = from_str("language");
+    assert a.eq(b);
+    assert a.hash() == b.hash();
+}
+
+#[test]
+fn text_hash_distinguishes_content() {
+    let a: Text = from_str("en");
+    let b: Text = from_str("fr");
+    // Not a hard guarantee in general, but FNV-1a separates these short keys;
+    // the test pins the property the map relies on for spread.
+    assert a.hash() != b.hash();
+}
+
+#[test]
+fn text_hash_empty_is_offset_basis() {
+    let e: Text = new();
+    assert e.hash() == (14695981039346656037 as u64);
+}
+
+#[test]
+fn text_hash_str_agrees_with_text_hash() {
+    // The load-bearing cross-type property for a Text-keyed map queried by str.
+    let t: Text = from_str("language");
+    assert t.hash() == hash_str("language");
+    let e: Text = new();
+    assert e.hash() == hash_str("");
 }

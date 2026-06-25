@@ -4,6 +4,9 @@ a.out
 
 /proves
 
+# Local backup of vendored sources (not tracked)
+/vendor_backup/
+
 # Per-user Claude Code local state
 /.claude/
 .DS_Store

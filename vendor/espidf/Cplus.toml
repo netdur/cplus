@@ -1,9 +1,0 @@
-[package]
-name    = "espidf"
-version = "0.0.1"
-edition = "2026"
-
-# C+ bindings for ESP-IDF (esp32-xtensa target). No `[link]` metadata: the
-# bound symbols (driver/gpio, esp_timer, newlib) live in ESP-IDF components,
-# and the ESP-IDF/CMake build owns the firmware link — cpc stops at the
-# staticlib handoff.

@@ -6,33 +6,47 @@
 // enum's derived Drop — no `value_free` needed.
 
 import "json/json" as json;
+import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/io" as io;
 import "stdlib/text" as text;
 
 fn main() -> i32 {
     let src: str = "{\"name\":\"alice\",\"age\":30,\"flags\":[true,false,null]}";
-    let r: result::Result[json::Value, json::ParseError] = json::parse(src);
+    let r: result::Result[json::Value, json::ParseError] = json::Value::parse(source: src);
     guard let result::Result[json::Value, json::ParseError]::Ok(root) = r else {
         io::println("parse FAIL");
         return 1;
     };
 
-    let name_v: json::Value = json::object_get(root, "name");
-    let age_v: json::Value = json::object_get(root, "age");
-    let flags_v: json::Value = json::object_get(root, "flags");
+    guard let option::Option[json::Value]::Some(name_v) = root.value(for_key: "name") else {
+        return 2;
+    };
+    guard let option::Option[json::Value]::Some(age_v) = root.value(for_key: "age") else {
+        return 2;
+    };
+    guard let option::Option[json::Value]::Some(flags_v) = root.value(for_key: "flags") else {
+        return 2;
+    };
 
-    io::print("name="); io::println({ json::as_str(name_v) });
-    let n: f64 = json::as_number(age_v);
+    guard let option::Option[text::Text]::Some(name) = name_v.as_text() else {
+        return 2;
+    };
+    io::print("name="); io::println({ name });
+    guard let option::Option[f64]::Some(n) = age_v.as_number() else {
+        return 2;
+    };
     if n >= 30.0f64 && n < 30.5f64 { io::println("age=30 ok"); } else { io::println("age FAIL"); }
 
-    let alen: usize = json::array_len(flags_v);
+    let alen: usize = flags_v.item_count();
     if alen != (3 as usize) { io::println("array_len FAIL"); return 2; }
 
-    let f0: json::Value = json::array_at(flags_v, 0 as usize);
-    let f1: json::Value = json::array_at(flags_v, 1 as usize);
-    let f2: json::Value = json::array_at(flags_v, 2 as usize);
-    if !(json::as_bool(f0) && !json::as_bool(f1) && f2.is_null()) {
+    guard let option::Option[json::Value]::Some(f0) = flags_v.item(at: 0 as usize) else { return 3; };
+    guard let option::Option[json::Value]::Some(f1) = flags_v.item(at: 1 as usize) else { return 3; };
+    guard let option::Option[json::Value]::Some(f2) = flags_v.item(at: 2 as usize) else { return 3; };
+    guard let option::Option[bool]::Some(first) = f0.as_boolean() else { return 3; };
+    guard let option::Option[bool]::Some(second) = f1.as_boolean() else { return 3; };
+    if !(first && !second && f2.is_null()) {
         io::println("flag values FAIL");
         return 3;
     }

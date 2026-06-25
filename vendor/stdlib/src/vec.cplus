@@ -232,14 +232,14 @@ impl Vec[T] {
         return option::Option[T]::Some(value);
     }
 
-    fn swap_remove(ref this, i: usize) -> option::Option[T] {
-        if i >= this._len {
+    fn swap_remove(ref this, at: usize) -> option::Option[T] {
+        if at >= this._len {
             return option::Option[T]::None;
         }
         let last: usize = this._len -% (1 as usize);
-        let slot: *T = { this._ptr + i };
+        let slot: *T = { this._ptr + at };
         let value: T = { *slot };
-        if i != last {
+        if at != last {
             let last_slot: *T = { this._ptr + last };
             { *slot = *last_slot; }
         }
@@ -258,17 +258,17 @@ impl Vec[T] {
         return;
     }
 
-    fn truncate(ref this, new_len: usize) {
-        if new_len >= this._len {
+    fn truncate(ref this, to: usize) {
+        if to >= this._len {
             return;
         }
-        var i: usize = new_len;
+        var i: usize = to;
         while i < this._len {
             let elem: *T = { this._ptr + i };
             { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        this._len = new_len;
+        this._len = to;
         return;
     }
 
@@ -329,7 +329,7 @@ impl Vec[T] {
     // the function returns, the vec is left unchanged, nothing leaks — and `Ok`
     // on success. On success the previous element's Drop runs before the new
     // value is moved in, so there is no leak and no double free.
-    fn set(ref this, at: usize, take value: T) -> status::Status {
+    fn set(ref this, take value: T, at: usize) -> status::Status {
         if at >= this._len {
             return status::Status::OutOfBounds;
         }
@@ -599,7 +599,7 @@ fn vec_set_replaces() {
     var v: Vec[i32] = new::[i32]();
     v.append(1);
     v.append(2);
-    assert v.set(0 as usize, 99) == status::Status::Ok;
+    assert v.set(99, at: 0 as usize) == status::Status::Ok;
     match v.at(0 as usize) {
         option::Option[i32]::Some(x) => { assert x == 99; }
         option::Option[i32]::None => { assert false; }
@@ -611,7 +611,7 @@ fn vec_set_replaces() {
 fn vec_set_out_of_bounds() {
     var v: Vec[i32] = new::[i32]();
     v.append(1);
-    assert v.set(5 as usize, 99) == status::Status::OutOfBounds;
+    assert v.set(99, at: 5 as usize) == status::Status::OutOfBounds;
 }
 
 #[test]

@@ -1,0 +1,444 @@
+// stdlib/string_map.cplus — `StringMap[V]`: a `Text`-keyed associative map.
+//
+// The owning counterpart to `HashMap[K, V]` for the one key type `HashMap`
+// cannot take: `Text`. `HashMap` requires `K: Copy` because it bitwise-copies
+// keys into its table; `Text` owns a heap buffer and has `drop`, so it is not
+// `Copy` and `HashMap[Text, V]` does not type-check. `StringMap` fixes the key
+// type to `Text` and *owns* both keys and values — it drops a value when it is
+// overwritten and drops every live key and value when the map itself drops — so
+// the value type `V` is unconstrained (any `Copy` or owning type works).
+//
+// This is the target type for bridging Foundation's `NSDictionary<NSString*,V>`
+// (cpc-bindgen `Ret::TextMap`): string-keyed dictionaries map to a `StringMap`
+// whose values are the bridged `V` (e.g. `f64` for `NSNumber*`, `Text` for
+// `NSString*`).
+//
+// **Storage** (parallel arrays, same shape as `HashMap` — open addressing with
+// linear probing, doubling at 0.75 load factor):
+//
+//   _keys:     *Text   — cap slots; an owned Text per occupied slot
+//   _vals:     *V       — cap slots; an owned V per occupied slot
+//   _occupied: *u8      — cap slots; 0 = empty, 1 = occupied
+//   _cap, _len: usize
+//
+// **Hashing / equality.** Keys hash via `Text::hash` (FNV-1a over the bytes).
+// Lookups take a `str` and hash it via `text::hash_str`, which shares `Text`'s
+// hash core, so a stored `Text` key and an equal `str` lookup always agree
+// (`vendor/stdlib/src/text.cplus`). Stored keys are compared in place through a
+// `*Text` (`(*kp).equals(key)`) — a borrow, never a move — so a probe never
+// disturbs the key it walks past.
+//
+// **API.**
+//
+//   string_map::new::[V]() -> StringMap[V]
+//   StringMap[V]::count(this) -> usize
+//   StringMap[V]::capacity(this) -> usize
+//   StringMap[V]::is_empty(this) -> bool
+//   StringMap[V]::insert(ref this, take key: Text, take value: V) -> status::Status
+//   StringMap[V]::get_ptr(this, key: str) -> option::Option[*V]   // any V
+//   StringMap[V]::contains_key(this, key: str) -> bool
+//   StringMap[V: Copy]::get(this, key: str) -> option::Option[V]   // copy-out door
+//
+// `get` (value copy-out) is gated on `V: Copy`, mirroring `Vec`'s `at`. For a
+// non-Copy `V` (e.g. `Text` values), read in place through `get_ptr` and clone
+// what you need — exactly the `Vec::at` / `Vec::at_ptr` split.
+
+import "./text" as text;
+import "./option" as option;
+import "./status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
+
+struct StringMap[V] {
+    _keys: *text::Text,
+    _vals: *V,
+    _occupied: *u8,
+    _cap: usize,
+    _len: usize,
+}
+
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
+}
+
+// Empty map; first insert allocates.
+fn new[V]() -> StringMap[V] {
+    return StringMap[V] {
+        _keys: { 0 as *text::Text },
+        _vals: { 0 as *V },
+        _occupied: { 0 as *u8 },
+        _cap: 0 as usize,
+        _len: 0 as usize,
+    };
+}
+
+impl StringMap[V] {
+    fn count(this) -> usize {
+        return this._len;
+    }
+
+    fn capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn is_empty(this) -> bool {
+        return this._len == (0 as usize);
+    }
+
+    // Insert or overwrite `key -> value`. The map takes ownership of both.
+    //
+    // On a fresh key the key and value are moved into a slot. On an overwrite
+    // the previous value is dropped before the new one is moved in, and the
+    // *incoming* `key` (a duplicate of the one already stored) is dropped as the
+    // function returns — so neither leaks and nothing is double-freed. Returns
+    // `OutOfMemory` (map unchanged, `key` and `value` dropped) if a needed grow
+    // fails.
+    fn insert(ref this, take key: text::Text, take value: V) -> status::Status {
+        if this._cap == (0 as usize) {
+            let st: status::Status = this.grow_to(16 as usize);
+            if st != status::Status::Ok {
+                return st;          // alloc failed; key + value drop on return
+            }
+        }
+        // Grow at 0.75 load factor.
+        if (this._len *% (4 as usize)) >= (this._cap *% (3 as usize)) {
+            let st: status::Status = this.grow_to(this._cap *% (2 as usize));
+            if st != status::Status::Ok {
+                return st;          // grow failed; key + value drop on return
+            }
+        }
+        // Locate the target slot first, then store exactly once outside the
+        // loop. Keeping the move out of the probe loop keeps each owned param
+        // moved on a single, unambiguous path.
+        let h: u64 = key.hash();
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        var overwrite: bool = false;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                break;                      // `slot` is the empty target
+            }
+            let kp: *text::Text = { this._keys + slot };
+            if { (*kp).eq(key) } {
+                overwrite = true;           // `slot` holds an equal key
+                break;
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return status::Status::OutOfMemory; // full; cannot happen post-grow
+            }
+        }
+        let vslot: *V = { this._vals + slot };
+        if overwrite {
+            { #drop_in_place::[V](vslot); }
+            { *vslot = value; }
+            return status::Status::Ok;       // `key` drops here (duplicate)
+        }
+        let kslot: *text::Text = { this._keys + slot };
+        { *kslot = key; }
+        { *vslot = value; }
+        { this._occupied[slot] = 1 as u8; }
+        this._len = this._len +% (1 as usize);
+        return status::Status::Ok;
+    }
+
+    // Raw pointer to the value for `key`, or None on a miss. The read door for
+    // ANY `V`: it hands back a `*V` into live storage (no copy-out, no drop), so
+    // the map keeps sole ownership. Valid only while the map is alive and not
+    // regrown by a later insert. Read through it like `Vec::at_ptr`:
+    //
+    //     match m.get_ptr("en") {
+    //         option::Option[*Text]::Some(p) => { let v = { (*p).clone() }; ... }
+    //         option::Option[*Text]::None    => { ... }
+    //     }
+    fn get_ptr(this, key: str) -> option::Option[*V] {
+        if this._cap == (0 as usize) {
+            return option::Option[*V]::None;
+        }
+        let h: u64 = text::hash_str(key);
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                return option::Option[*V]::None;
+            }
+            let kp: *text::Text = { this._keys + slot };
+            if { (*kp).equals(key) } {
+                return option::Option[*V]::Some({ this._vals + slot });
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return option::Option[*V]::None;
+            }
+        }
+        return option::Option[*V]::None;  // unreachable
+    }
+
+    fn contains_key(this, key: str) -> bool {
+        return match this.get_ptr(key) {
+            option::Option[*V]::Some(_) => true,
+            option::Option[*V]::None => false,
+        };
+    }
+
+    // Grow capacity to at least `new_cap`, relocating every live entry. Open
+    // addressing positions depend on `cap`, so each entry is re-probed into the
+    // new table. Entries are relocated by copying their raw key/value bytes
+    // (a move: the old arrays are freed without running per-entry drops, so no
+    // double free) — this also sidesteps materializing owning `Text`/`V` locals.
+    // Internal helper; not part of the public surface.
+    fn grow_to(ref this, new_cap: usize) -> status::Status {
+        let old_keys: *text::Text = this._keys;
+        let old_vals: *V = this._vals;
+        let old_occ: *u8 = this._occupied;
+        let old_cap: usize = this._cap;
+
+        let ksize: usize = #size_of::[text::Text]();
+        let vsize: usize = #size_of::[V]();
+        // Overflow-checked byte sizes; on overflow leave the map unchanged.
+        if ksize != (0 as usize) && new_cap > (max_usize() / ksize) {
+            return status::Status::OutOfMemory;
+        }
+        if vsize != (0 as usize) && new_cap > (max_usize() / vsize) {
+            return status::Status::OutOfMemory;
+        }
+        let keys_bytes: usize = new_cap *% ksize;
+        let vals_bytes: usize = new_cap *% vsize;
+        let occ_bytes: usize = new_cap;
+
+        // Allocate all three arrays; if any fails, free what we got and leave
+        // the map exactly as it was (still valid at its old capacity).
+        let nk_raw: *u8 = { malloc(keys_bytes) };
+        if nk_raw.is_null() {
+            return status::Status::OutOfMemory;
+        }
+        let nv_raw: *u8 = { malloc(vals_bytes) };
+        if nv_raw.is_null() {
+            { free(nk_raw); }
+            return status::Status::OutOfMemory;
+        }
+        let no_raw: *u8 = { malloc(occ_bytes) };
+        if no_raw.is_null() {
+            { free(nk_raw); }
+            { free(nv_raw); }
+            return status::Status::OutOfMemory;
+        }
+        { memset(no_raw, 0 as i32, occ_bytes); }
+        this._keys = { nk_raw as *text::Text };
+        this._vals = { nv_raw as *V };
+        this._occupied = { no_raw as *u8 };
+        this._cap = new_cap;
+        this._len = 0 as usize;
+
+        // Re-probe every old live entry into the fresh table.
+        var j: usize = 0 as usize;
+        while j < old_cap {
+            let occ_j: u8 = { old_occ[j] };
+            if occ_j != (0 as u8) {
+                let src_k: *text::Text = { old_keys + j };
+                let src_v: *V = { old_vals + j };
+                let h: u64 = { (*src_k).hash() };
+                let start: usize = (h as usize) % this._cap;
+                var slot: usize = start;
+                // The fresh table is sized for every entry, so an empty slot is
+                // guaranteed; the loop has a single exit that relocates the bytes.
+                loop {
+                    let cur: u8 = { this._occupied[slot] };
+                    if cur == (0 as u8) {
+                        let dst_k: *text::Text = { this._keys + slot };
+                        let dst_v: *V = { this._vals + slot };
+                        { memcpy(dst_k as *u8, src_k as *u8, ksize); }
+                        { memcpy(dst_v as *u8, src_v as *u8, vsize); }
+                        { this._occupied[slot] = 1 as u8; }
+                        this._len = this._len +% (1 as usize);
+                        break;
+                    }
+                    slot = (slot +% (1 as usize)) % this._cap;
+                }
+            }
+            j = j +% (1 as usize);
+        }
+        if old_cap > (0 as usize) {
+            { free(old_keys as *u8); }
+            { free(old_vals as *u8); }
+            { free(old_occ); }
+        }
+        return status::Status::Ok;
+    }
+
+    // Drop every live key and value, then free the parallel storage arrays.
+    fn drop(ref this) {
+        if this._cap == (0 as usize) { return; }
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ != (0 as u8) {
+                let kp: *text::Text = { this._keys + i };
+                let vp: *V = { this._vals + i };
+                { #drop_in_place::[text::Text](kp); }
+                { #drop_in_place::[V](vp); }
+            }
+            i = i +% (1 as usize);
+        }
+        { free(this._keys as *u8); }
+        { free(this._vals as *u8); }
+        { free(this._occupied); }
+        return;
+    }
+}
+
+// Copy-out read door, available only when `V: Copy`. Mirrors `Vec::at`: the
+// value crosses by an independent bitwise copy, never an alias into storage.
+impl StringMap[V: Copy] {
+    fn get(this, key: str) -> option::Option[V] {
+        return match this.get_ptr(key) {
+            option::Option[*V]::Some(p) => option::Option[V]::Some({ *p }),
+            option::Option[*V]::None => option::Option[V]::None,
+        };
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn string_map_new_is_empty() {
+    let m: StringMap[i32] = new::[i32]();
+    assert m.count() == (0 as usize);
+    assert m.is_empty();
+    assert m.capacity() == (0 as usize);
+}
+
+#[test]
+fn string_map_insert_and_get_scalar() {
+    var m: StringMap[i32] = new::[i32]();
+    assert m.insert(text::from_str("apple"), 1) == status::Status::Ok;
+    assert m.insert(text::from_str("banana"), 2) == status::Status::Ok;
+    assert m.count() == (2 as usize);
+    match m.get("banana") {
+        option::Option[i32]::Some(v) => { assert v == 2; }
+        option::Option[i32]::None => { assert false; }
+    }
+    match m.get("apple") {
+        option::Option[i32]::Some(v) => { assert v == 1; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_get_missing_is_none() {
+    var m: StringMap[i32] = new::[i32]();
+    m.insert(text::from_str("apple"), 1);
+    match m.get("durian") {
+        option::Option[i32]::Some(v) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_get_on_empty_is_none() {
+    let m: StringMap[i32] = new::[i32]();
+    match m.get("anything") {
+        option::Option[i32]::Some(v) => { assert false; }
+        option::Option[i32]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_overwrite_updates_value() {
+    var m: StringMap[i32] = new::[i32]();
+    m.insert(text::from_str("k"), 100);
+    m.insert(text::from_str("k"), 999);
+    assert m.count() == (1 as usize);          // overwrite, not a second entry
+    match m.get("k") {
+        option::Option[i32]::Some(v) => { assert v == 999; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_contains_key() {
+    var m: StringMap[i32] = new::[i32]();
+    m.insert(text::from_str("yes"), 1);
+    assert m.contains_key("yes");
+    assert m.contains_key("no") == false;
+}
+
+#[test]
+fn string_map_empty_string_key() {
+    var m: StringMap[i32] = new::[i32]();
+    m.insert(text::new(), 7);                   // empty Text as key
+    assert m.contains_key("");
+    match m.get("") {
+        option::Option[i32]::Some(v) => { assert v == 7; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_grows_past_load_factor() {
+    var m: StringMap[i32] = new::[i32]();
+    var i: i32 = 0;
+    while i < 100 {
+        // Distinct keys "k0".."k99" via repeated single-char Texts.
+        var key: text::Text = text::from_str("k");
+        key.append("x");
+        // Vary the key length so the 100 keys differ; value encodes the index.
+        var j: i32 = 0;
+        while j < i {
+            key.append("x");
+            j = j +% 1;
+        }
+        m.insert(key, i *% (10 as i32));
+        i = i +% 1;
+    }
+    assert m.count() == (100 as usize);
+    // Key for index 5 is "k" + 6 'x' = "kxxxxxx".
+    match m.get("kxxxxxx") {
+        option::Option[i32]::Some(v) => { assert v == 50; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_text_values_via_get_ptr() {
+    // Non-Copy V: values are owned Text, read in place through get_ptr.
+    var m: StringMap[text::Text] = new::[text::Text]();
+    m.insert(text::from_str("greeting"), text::from_str("hello"));
+    m.insert(text::from_str("farewell"), text::from_str("goodbye"));
+    assert m.count() == (2 as usize);
+    match m.get_ptr("greeting") {
+        option::Option[*text::Text]::Some(p) => { assert { (*p).equals("hello") }; }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+    match m.get_ptr("missing") {
+        option::Option[*text::Text]::Some(p) => { assert false; }
+        option::Option[*text::Text]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn string_map_text_value_overwrite_drops_old() {
+    // Overwriting a Text value must drop the previous Text (no leak, no double
+    // free); the map drop then frees the surviving key + value.
+    var m: StringMap[text::Text] = new::[text::Text]();
+    m.insert(text::from_str("k"), text::from_str("first"));
+    m.insert(text::from_str("k"), text::from_str("second"));
+    assert m.count() == (1 as usize);
+    match m.get_ptr("k") {
+        option::Option[*text::Text]::Some(p) => { assert { (*p).equals("second") }; }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+    return;
+}
