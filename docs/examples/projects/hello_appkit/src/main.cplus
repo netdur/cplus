@@ -1,26 +1,50 @@
-// Hello, World! in AppKit — a native NSAlert dialog, driven from C+.
+// Hello, World! in AppKit — a real titled NSWindow with a centered label.
 //
-// The generated `appkit` package binds NSApplication, so the shared app handle
-// comes straight from it. Its singleton / value-type constructors aren't wrapped
-// yet (`sharedApplication` returns a raw handle, NSAlert's `init` is inherited
-// from NSObject so the generator never saw it, NSRect is SKIPPED), so the alert
-// itself is built on the objc runtime that appkit is generated against.
+// NSWindow / NSTextField are created over objc_msgSend directly: their
+// constructors take an NSRect by value, the struct shape the mechanical appkit
+// binding SKIPs. On arm64 an NSRect (four doubles) is a homogeneous float
+// aggregate passed in v0-v3 — identical to four separate f64 arguments — so the
+// typed shims below hand the rectangle across as four f64s. (On x86_64 you would
+// pass an actual #[repr(C)] NSRect struct instead.) The shared NSApplication
+// still comes from the appkit binding.
 import "appkit/application" as application;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 
+#[link_name = "objc_msgSend"]
+extern fn msg_init_window(recv: *u8, sel: *u8, x: f64, y: f64, w: f64, h: f64, style: u64, backing: u64, deferred: i8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_init_frame(recv: *u8, sel: *u8, x: f64, y: f64, w: f64, h: f64) -> *u8;
+
 fn main() -> i32 {
-    // Bring up the shared NSApplication (via the appkit binding) and foreground it.
+    // Promote this unbundled binary to a regular UI app (policy 0 = Regular).
     let app: *u8 = application::Application::shared_application();
+    let _promoted: *u8 = rt::msg_id_i64(app, rt::sel(#str_ptr("setActivationPolicy:\0")), 0 as i64);
+
+    // NSWindow, content 420x180: titled|closable|miniaturizable|resizable = 15,
+    // backing store buffered = 2.
+    let win_alloc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("alloc\0")));
+    let win: *u8 = { msg_init_window(win_alloc, rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")), 0.0f64, 0.0f64, 420.0f64, 180.0f64, 15 as u64, 2 as u64, 0 as i8) };
+    rt::msg_void_id(win, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring("C+ AppKit"));
+
+    // A borderless, non-editable NSTextField used as a label.
+    let tf_alloc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSTextField\0")), rt::sel(#str_ptr("alloc\0")));
+    let label: *u8 = { msg_init_frame(tf_alloc, rt::sel(#str_ptr("initWithFrame:\0")), 40.0f64, 70.0f64, 340.0f64, 40.0f64) };
+    rt::msg_void_id(label, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring("Hello, World!"));
+    rt::msg_void_i8(label, rt::sel(#str_ptr("setEditable:\0")), 0 as i8);
+    rt::msg_void_i8(label, rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
+    rt::msg_void_i8(label, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8);
+
+    // Add the label to the window's content view, center it, and show it.
+    let content: *u8 = rt::msg_id(win, rt::sel(#str_ptr("contentView\0")));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), label);
+    rt::msg_void(win, rt::sel(#str_ptr("center\0")));
+    rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), { 0 as *u8 });
     rt::msg_void_i8(app, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), 1 as i8);
 
-    // [[NSAlert alloc] init], give it text, and run it modally.
-    let alert_cls: *u8 = rt::get_class(#str_ptr("NSAlert\0"));
-    let alert: *u8 = rt::msg_id(rt::msg_id(alert_cls, rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
-    rt::msg_void_id(alert, rt::sel(#str_ptr("setMessageText:\0")), bridge::nsstring("Hello, World!"));
-    rt::msg_void_id(alert, rt::sel(#str_ptr("setInformativeText:\0")), bridge::nsstring("Greetings from C+ and AppKit."));
-    rt::msg_i64(alert, rt::sel(#str_ptr("runModal\0")));
-
-    rt::release(alert);
+    // Run the event loop. The window stays up until you quit it — Ctrl-C in this
+    // terminal, since a bare binary has no app menu for Cmd-Q.
+    rt::msg_void(app, rt::sel(#str_ptr("run\0")));
     return 0;
 }
