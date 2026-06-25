@@ -92,6 +92,36 @@ extern fn objc_msg_id_f64(recv: *u8, sel: *u8, a: f64) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_f64(recv: *u8, sel: *u8, a: f64);
 
+// 32-bit scalar sends. `int`/`unsigned int` ride the GPR low halves and `float`
+// the fp register class; each width needs its own typed prototype — a 32-bit
+// value cannot be routed through the 64-bit (`i64`/`u64`/`f64`) shims.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i32(recv: *u8, sel: *u8) -> i32;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u32(recv: *u8, sel: *u8) -> u32;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f32(recv: *u8, sel: *u8) -> f32;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i32(recv: *u8, sel: *u8, a: i32);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u32(recv: *u8, sel: *u8, a: u32);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f32(recv: *u8, sel: *u8, a: f32);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i32(recv: *u8, sel: *u8, a: i32) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u32(recv: *u8, sel: *u8, a: u32) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f32(recv: *u8, sel: *u8, a: f32) -> *u8;
+
 // NSRange-valued / NSRange-taking sends (e.g. `-tokenRangeAtIndex:`,
 // `-tokensForRange:`, `-[NSValue rangeValue]`). NSRange is two integer
 // eightbytes, so it rides registers in and out under the SysV ABI.
@@ -186,6 +216,42 @@ fn msg_id_f64(recv: *u8, selector: *u8, a: f64) -> *u8 {
 
 fn msg_void_f64(recv: *u8, selector: *u8, a: f64) {
     { objc_msg_void_f64(recv, selector, a); };
+}
+
+fn msg_i32(recv: *u8, selector: *u8) -> i32 {
+    return { objc_msg_i32(recv, selector) };
+}
+
+fn msg_u32(recv: *u8, selector: *u8) -> u32 {
+    return { objc_msg_u32(recv, selector) };
+}
+
+fn msg_f32(recv: *u8, selector: *u8) -> f32 {
+    return { objc_msg_f32(recv, selector) };
+}
+
+fn msg_void_i32(recv: *u8, selector: *u8, a: i32) {
+    { objc_msg_void_i32(recv, selector, a); };
+}
+
+fn msg_void_u32(recv: *u8, selector: *u8, a: u32) {
+    { objc_msg_void_u32(recv, selector, a); };
+}
+
+fn msg_void_f32(recv: *u8, selector: *u8, a: f32) {
+    { objc_msg_void_f32(recv, selector, a); };
+}
+
+fn msg_id_i32(recv: *u8, selector: *u8, a: i32) -> *u8 {
+    return { objc_msg_id_i32(recv, selector, a) };
+}
+
+fn msg_id_u32(recv: *u8, selector: *u8, a: u32) -> *u8 {
+    return { objc_msg_id_u32(recv, selector, a) };
+}
+
+fn msg_id_f32(recv: *u8, selector: *u8, a: f32) -> *u8 {
+    return { objc_msg_id_f32(recv, selector, a) };
 }
 
 fn msg_range(recv: *u8, selector: *u8) -> Range {

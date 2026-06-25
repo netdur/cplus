@@ -16,8 +16,8 @@
 // wrong code.
 //
 // Remaining gaps and how to close them are documented in cpc-bindgen/LIMITATIONS.md
-// (NSDictionary returns are blocked on a stdlib Text-keyed map; 32-bit int/float
-// scalars are deferred). SKIP sites point back to that file.
+// (the remaining gap is NSDictionary *params* — returns are done). SKIP sites
+// point back to that file.
 
 use std::collections::{HashMap, HashSet};
 
@@ -28,6 +28,7 @@ pub struct ObjcEmitter {
     body: String,
     block_helpers: String,
     needs_vec: bool,
+    needs_string_map: bool,
     needs_synth: bool,
     synth_key: u64,
     typedefs: HashMap<String, String>,
@@ -75,11 +76,24 @@ enum Ret {
     ScalarI64,
     ScalarU64,
     ScalarF64, // double / CGFloat / NSTimeInterval
+    ScalarI32, // int
+    ScalarU32, // unsigned int
+    ScalarF32, // float
     EnumTy(String),
     Range,
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
+    TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
     Unsupported(String),
+}
+
+// The value side of a string-keyed `NSDictionary` the bindgen can bridge.
+// (Keys are always `NSString` -> `Text`.) Numbers come out as `f64` via
+// `-doubleValue`; nested strings come out as owned `Text`.
+#[derive(Clone, Copy)]
+enum MapVal {
+    Text,      // NSString * value -> Text
+    ScalarF64, // NSNumber * value -> f64 (via doubleValue)
 }
 
 enum Arg {
@@ -88,6 +102,9 @@ enum Arg {
     ScalarI64(String),
     ScalarU64(String),
     ScalarF64(String), // double / CGFloat / NSTimeInterval
+    ScalarI32(String), // int
+    ScalarU32(String), // unsigned int
+    ScalarF32(String), // float
     Range(String),
     Unsupported(String),
 }
@@ -101,6 +118,7 @@ impl ObjcEmitter {
             body: String::new(),
             block_helpers: String::new(),
             needs_vec: false,
+            needs_string_map: false,
             needs_synth: false,
             synth_key: 0x7000,
             typedefs: HashMap::new(),
@@ -237,6 +255,9 @@ impl ObjcEmitter {
         p.push_str("import \"stdlib/option\" as option;\n");
         if self.needs_vec {
             p.push_str("import \"stdlib/vec\" as vec;\n");
+        }
+        if self.needs_string_map {
+            p.push_str("import \"stdlib/string_map\" as string_map;\n");
         }
         if self.needs_synth {
             p.push_str("import \"objc/synthesis\" as synth;\n");
@@ -786,6 +807,44 @@ impl ObjcEmitter {
             return;
         }
 
+        if let Ret::TextMap(val) = ret {
+            let dict_call = match self.send_expr(&recv, &sel, &Ret::Object, &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSDictionary arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_string_map = true;
+            // Key is always NSString -> Text; the value bridge depends on V.
+            let (val_ty, val_bridge): (&str, String) = match val {
+                MapVal::Text => ("text::Text", "bridge::to_text(nsval)".to_string()),
+                MapVal::ScalarF64 => (
+                    "f64",
+                    "rt::msg_f64(nsval, rt::sel(#str_ptr(\"doubleValue\\0\")))".to_string(),
+                ),
+            };
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> string_map::StringMap[{val_ty}] {{\n\
+                 \x20       let dict: *u8 = {dict_call};\n\
+                 \x20       let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr(\"allKeys\\0\")));\n\
+                 \x20       let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: string_map::StringMap[{val_ty}] = string_map::new::[{val_ty}]();\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       let obj_sel: *u8 = rt::sel(#str_ptr(\"objectForKey:\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);\n\
+                 \x20           let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);\n\
+                 \x20           out.insert(bridge::to_text(nskey), {val_bridge});\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
         let send = match self.send_expr(&recv, &sel, &ret, &args) {
             Some(s) => s,
             None => {
@@ -806,6 +865,9 @@ impl ObjcEmitter {
             Ret::ScalarI64 => (" -> i64".into(), format!("        return {send};\n")),
             Ret::ScalarU64 => (" -> u64".into(), format!("        return {send};\n")),
             Ret::ScalarF64 => (" -> f64".into(), format!("        return {send};\n")),
+            Ret::ScalarI32 => (" -> i32".into(), format!("        return {send};\n")),
+            Ret::ScalarU32 => (" -> u32".into(), format!("        return {send};\n")),
+            Ret::ScalarF32 => (" -> f32".into(), format!("        return {send};\n")),
             Ret::Range => (" -> rt::Range".into(), format!("        return {send};\n")),
             Ret::Text { nullable } => {
                 if *nullable {
@@ -818,7 +880,9 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::Unsupported(_) => unreachable!(),
+            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => {
+                unreachable!()
+            }
         };
 
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
@@ -1026,8 +1090,13 @@ impl ObjcEmitter {
             Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
             Ret::ScalarU64 => "u64",
             Ret::ScalarF64 => "f64",
+            Ret::ScalarI32 => "i32",
+            Ret::ScalarU32 => "u32",
+            Ret::ScalarF32 => "f32",
             Ret::Range => "range",
-            Ret::ValueArray | Ret::TextArray | Ret::Unsupported(_) => return None,
+            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => {
+                return None
+            }
         };
         let mut tags: Vec<&str> = vec![ret_tag];
         let mut exprs: Vec<String> = Vec::new();
@@ -1038,6 +1107,9 @@ impl ObjcEmitter {
                 Arg::ScalarI64(e) => ("i64", e.clone()),
                 Arg::ScalarU64(e) => ("u64", e.clone()),
                 Arg::ScalarF64(e) => ("f64", e.clone()),
+                Arg::ScalarI32(e) => ("i32", e.clone()),
+                Arg::ScalarU32(e) => ("u32", e.clone()),
+                Arg::ScalarF32(e) => ("f32", e.clone()),
                 Arg::Range(e) => ("range", e.clone()),
                 Arg::Unsupported(_) => return None,
             };
@@ -1052,6 +1124,9 @@ impl ObjcEmitter {
             "void", "void_id", "void_i8", "void_f64", "void_range_id", "id",
             "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
             "i8", "i64", "u64", "f64", "range", "range_u64", "range_range",
+            // 32-bit scalars (int / unsigned / float)
+            "i32", "u32", "f32", "void_i32", "void_u32", "void_f32",
+            "id_i32", "id_u32", "id_f32",
         ];
         if !KNOWN.contains(&suffix.as_str()) {
             return None;
@@ -1098,17 +1173,30 @@ impl ObjcEmitter {
             }
             // CGFloat / NSTimeInterval are `double` on 64-bit Apple.
             "double" | "CGFloat" | "NSTimeInterval" => return Ret::ScalarF64,
-            // 32-bit scalars need their own msgSend widths; deferred (see
-            // LIMITATIONS.md "32-bit int/float scalars").
-            "int" | "unsigned int" | "unsigned" | "float" => {
-                return Ret::Unsupported(format!("scalar `{base_ty}` deferred (see LIMITATIONS.md)"))
-            }
+            // 32-bit scalars ride their own msgSend widths (vendor/objc shims).
+            "int" => return Ret::ScalarI32,
+            "unsigned int" | "unsigned" => return Ret::ScalarU32,
+            "float" => return Ret::ScalarF32,
             _ => {}
         }
-        // NSDictionary returns are blocked on stdlib (no Text-keyed map yet) —
-        // see LIMITATIONS.md "NSDictionary returns" before wiring this.
-        if base_ty.contains("NSDictionary<") || base_ty.contains("NSMutableDictionary<") {
-            return Ret::Unsupported("NSDictionary -> map blocked on stdlib (see LIMITATIONS.md)".into());
+        // String-keyed `NSDictionary` -> `StringMap[V]` (`stdlib/string_map`).
+        // Only string keys are supported (the only `Text`-keyed map we have);
+        // values bridge as `Text` (NSString) or `f64` (NSNumber).
+        if let Some((k, v)) = self.parse_dict(base_ty) {
+            if !self.is_nsstring(&k) {
+                return Ret::Unsupported(format!("NSDictionary with non-string key `{k}`"));
+            }
+            if self.is_nsstring(&v) {
+                self.needs_string_map = true;
+                return Ret::TextMap(MapVal::Text);
+            }
+            if self.is_nsnumber(&v) {
+                self.needs_string_map = true;
+                return Ret::TextMap(MapVal::ScalarF64);
+            }
+            return Ret::Unsupported(format!(
+                "NSDictionary value `{v}` not modelled (NSString / NSNumber only)"
+            ));
         }
         if base_ty.contains('<') {
             return Ret::Unsupported("generic collection".into());
@@ -1148,9 +1236,9 @@ impl ObjcEmitter {
             "BOOL" | "_Bool" | "bool" => return Arg::Bool(pname.to_string()),
             "id" => return Arg::Id(pname.to_string()),
             "double" | "CGFloat" | "NSTimeInterval" => return Arg::ScalarF64(pname.to_string()),
-            "int" | "unsigned int" | "unsigned" | "float" => {
-                return Arg::Unsupported(format!("scalar `{base_ty}` not yet modelled"))
-            }
+            "int" => return Arg::ScalarI32(pname.to_string()),
+            "unsigned int" | "unsigned" => return Arg::ScalarU32(pname.to_string()),
+            "float" => return Arg::ScalarF32(pname.to_string()),
             _ => {}
         }
         if base_ty.contains('^') {
@@ -1189,6 +1277,7 @@ impl ObjcEmitter {
             "BOOL" | "_Bool" | "bool" => "bool".to_string(),
             "int" => "i32".to_string(),
             "unsigned int" | "unsigned" => "u32".to_string(),
+            "float" => "f32".to_string(),
             _ => "*u8".to_string(),
         }
     }
@@ -1226,6 +1315,40 @@ impl ObjcEmitter {
             }
         }
         false
+    }
+
+    /// `NSDictionary<K, V> *` / `NSMutableDictionary<K, V> *` -> the (key, value)
+    /// element spellings. The split is on the top-level comma so a generic value
+    /// (`NSArray<NSString *> *`) doesn't get cut at its own inner comma. None for
+    /// anything that isn't a two-parameter dictionary.
+    fn parse_dict(&self, ty: &str) -> Option<(String, String)> {
+        let t = ty.trim();
+        let rest = t
+            .strip_prefix("NSDictionary<")
+            .or_else(|| t.strip_prefix("NSMutableDictionary<"))?;
+        let inner = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"))?;
+        let mut depth: i32 = 0;
+        let mut comma: Option<usize> = None;
+        for (i, c) in inner.char_indices() {
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                ',' if depth == 0 => {
+                    comma = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let idx = comma?;
+        let k = inner[..idx].trim().to_string();
+        let v = inner[idx + 1..].trim().to_string();
+        Some((k, v))
+    }
+
+    fn is_nsnumber(&self, ty: &str) -> bool {
+        let t = ty.trim();
+        t == "NSNumber *" || t == "NSNumber*"
     }
 
     fn is_nsstring(&self, ty: &str) -> bool {
@@ -1349,4 +1472,75 @@ fn selector_ident(sel: &str) -> String {
         .map(snake)
         .collect::<Vec<_>>()
         .join("_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn emitter() -> ObjcEmitter {
+        ObjcEmitter::new("test.h", "", serde_json::json!({}))
+    }
+
+    #[test]
+    fn maps_32bit_scalar_returns_to_i32_u32_f32() {
+        let mut e = emitter();
+        assert!(matches!(e.map_ret("int"), Ret::ScalarI32));
+        assert!(matches!(e.map_ret("unsigned int"), Ret::ScalarU32));
+        assert!(matches!(e.map_ret("unsigned"), Ret::ScalarU32));
+        assert!(matches!(e.map_ret("float"), Ret::ScalarF32));
+    }
+
+    #[test]
+    fn maps_32bit_scalar_args_to_i32_u32_f32() {
+        let mut e = emitter();
+        assert!(matches!(e.map_arg("int", "n"), Arg::ScalarI32(_)));
+        assert!(matches!(e.map_arg("unsigned int", "n"), Arg::ScalarU32(_)));
+        assert!(matches!(e.map_arg("float", "x"), Arg::ScalarF32(_)));
+    }
+
+    #[test]
+    fn param_sig_types_for_32bit_scalars() {
+        let e = emitter();
+        assert_eq!(e.param_sig_type("int"), "i32");
+        assert_eq!(e.param_sig_type("unsigned int"), "u32");
+        assert_eq!(e.param_sig_type("unsigned"), "u32");
+        assert_eq!(e.param_sig_type("float"), "f32");
+    }
+
+    #[test]
+    fn send_expr_emits_32bit_msgsend_shapes() {
+        let e = emitter();
+        // `int` getter -> rt::msg_i32
+        let g = e
+            .send_expr("this._obj", "scale", &Ret::ScalarI32, &[])
+            .expect("i32 getter shape is KNOWN");
+        assert!(g.contains("rt::msg_i32("), "{g}");
+        // `float` setter -> rt::msg_void_f32
+        let s = e
+            .send_expr("this._obj", "setAlpha:", &Ret::Void, &[Arg::ScalarF32("alpha".into())])
+            .expect("void_f32 setter shape is KNOWN");
+        assert!(s.contains("rt::msg_void_f32("), "{s}");
+        // id-returning factory with an `unsigned` arg -> rt::msg_id_u32
+        let f = e
+            .send_expr("cls", "withCount:", &Ret::Object, &[Arg::ScalarU32("count".into())])
+            .expect("id_u32 factory shape is KNOWN");
+        assert!(f.contains("rt::msg_id_u32("), "{f}");
+    }
+
+    #[test]
+    fn unmodelled_widths_and_shapes_stay_unsupported() {
+        let mut e = emitter();
+        // `short` is still not a modelled width -> Unsupported (negative case).
+        assert!(matches!(e.map_ret("short"), Ret::Unsupported(_)));
+        assert!(matches!(e.map_arg("short", "n"), Arg::Unsupported(_)));
+        // A shape with no msgSend shim (two i32 args) has no KNOWN tag -> None.
+        let none = e.send_expr(
+            "r",
+            "a:b:",
+            &Ret::Void,
+            &[Arg::ScalarI32("a".into()), Arg::ScalarI32("b".into())],
+        );
+        assert!(none.is_none());
+    }
 }
