@@ -938,6 +938,12 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
     if name.is_empty() {
         return "_".to_string();
     }
+    // A leading digit is not a valid identifier start. Stripping an enum's common
+    // prefix can expose one (NS_ENUM `NSDateFormatterBehavior10_0` -> `10_0`), so
+    // prefix `_` to keep it spellable.
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return format!("_{name}");
+    }
     const RESERVED: &[&str] = &[
         "as", "async", "await", "borrow", "break", "const", "continue", "defer", "else", "enum",
         "export", "extern", "false", "fn", "for", "gen", "guard", "if", "impl", "import", "in",

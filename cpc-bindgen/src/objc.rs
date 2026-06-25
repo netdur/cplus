@@ -287,7 +287,7 @@ impl ObjcEmitter {
             }
             let val = read_int(&c).unwrap_or(next);
             let variant = strip_prefix(cname, &objc_name);
-            variants.push((pascal(&variant), val));
+            variants.push((crate::sanitize_ident(&pascal(&variant)), val));
             next = val + 1;
         }
         if variants.is_empty() {
@@ -1580,8 +1580,36 @@ mod tests {
         assert_eq!(crate::sanitize_ident("type"), "type_");
         assert_eq!(crate::sanitize_ident("for"), "for_");
         assert_eq!(crate::sanitize_ident("opaque"), "opaque_");
+        // A leading digit (an enum constant `...10_0` stripped to `10_0`) is not
+        // a valid identifier start; prefix `_`.
+        assert_eq!(crate::sanitize_ident("10_0"), "_10_0");
         // Non-keywords pass through untouched.
         assert_eq!(crate::sanitize_ident("language"), "language");
         assert_eq!(crate::sanitize_ident("token_range"), "token_range");
+    }
+
+    #[test]
+    fn enum_constant_starting_with_a_digit_is_escaped() {
+        // NS_ENUM `NSDateFormatterBehavior` has `...Behavior10_0` / `...10_4`;
+        // stripping the common prefix leaves `10_0`, which can't open an
+        // identifier. (Foundation's NSDateFormatter surfaced this.)
+        let mut e = emitter();
+        let decl = serde_json::json!({
+            "kind": "EnumDecl",
+            "name": "NSDateFormatterBehavior",
+            "inner": [
+                { "kind": "EnumConstantDecl", "name": "NSDateFormatterBehaviorDefault" },
+                { "kind": "EnumConstantDecl", "name": "NSDateFormatterBehavior10_0" },
+                { "kind": "EnumConstantDecl", "name": "NSDateFormatterBehavior10_4" },
+            ],
+        });
+        e.collect_enum(&decl);
+        let info = e.enums.get("NSDateFormatterBehavior").cloned().expect("enum collected");
+        let names: Vec<&str> = info.variants.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["Default", "_10_0", "_10_4"]);
+        // Rendered body is spellable: `_10_0,`, never a bare `10_0,`.
+        let rendered = e.render_enum(&info);
+        assert!(rendered.contains("_10_0,"), "{rendered}");
+        assert!(!rendered.contains("    10_0,"), "{rendered}");
     }
 }
