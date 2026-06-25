@@ -47,12 +47,37 @@ construction and a `drop` that releases. The SDK sysroot is resolved
 automatically via `xcrun --show-sdk-path`; pass your own `-isysroot ...` after
 `--` to override it.
 
+### Whole frameworks (`--framework`)
+
+```
+cpc-bindgen --framework NaturalLanguage --prefix NL --overrides overrides.json
+```
+
+Generates an entire package from an Apple system framework in one step, instead
+of one header at a time. It reads the framework's umbrella header to discover the
+public headers, emits one binding module per header, and writes the package
+skeleton the single-header mode leaves to you:
+
+- `src/<module>.cplus` per header (mechanical snake_case names),
+- `src/<pkg>.cplus`, the umbrella that imports the modules and re-exports their types,
+- `Cplus.toml`, populated from the framework metadata (name, `[link]` frameworks,
+  `stdlib`/`objc` deps) with a provenance header recording the framework, SDK
+  version, generator version, header count, and the exact reproduce command,
+- a starter `overrides.json` if you did not pass one.
+
+`overrides.json` stays a hand-authored input (the curated names); everything
+mechanical is regenerated. Output goes to `--out DIR` (default: the lowercased
+framework name).
+
 ## Flags
 
 - `--objc`: Objective-C mode. Without it the input is treated as C.
 - `--prefix P`: strip a class-name prefix from emitted type names. `--prefix NS`
   turns `NSTimeZone` into `TimeZone`.
 - `--overrides FILE`: a JSON file of naming overrides (see below).
+- `--framework <Name>`: generate a whole package from an Apple system framework
+  (see above); implies Objective-C, no single header needed.
+- `--out DIR`: output directory for `--framework` (default: lowercased framework name).
 - `-- <clang args>`: everything after `--` is passed to clang.
 
 ## Generated output depends on the `objc` runtime

@@ -17,6 +17,7 @@
 // - Functions taking/returning unsupported C types (long double, vector,
 //   complex, etc.) are emitted with a `// SKIPPED: <reason>` comment.
 
+mod framework;
 mod objc;
 
 use std::process::Command;
@@ -27,6 +28,8 @@ fn main() {
     let mut objc_mode = false;
     let mut prefix = String::new();
     let mut overrides_path: Option<String> = None;
+    let mut framework: Option<String> = None;
+    let mut out_dir: Option<String> = None;
     let mut header: Option<String> = None;
     let mut clang_args: Vec<String> = Vec::new();
     let mut seen_dashdash = false;
@@ -64,6 +67,26 @@ fn main() {
                 i += 1;
                 continue;
             }
+            if a == "--framework" {
+                framework = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--framework=") {
+                framework = Some(p.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--out" {
+                out_dir = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--out=") {
+                out_dir = Some(p.to_string());
+                i += 1;
+                continue;
+            }
             if header.is_none() && !a.starts_with('-') {
                 header = Some(a.clone());
                 i += 1;
@@ -73,12 +96,24 @@ fn main() {
         clang_args.push(a.clone());
         i += 1;
     }
+    // Framework mode: generate a whole package from an Apple system framework
+    // (no single header — the framework's umbrella header drives discovery).
+    if let Some(fw) = &framework {
+        std::process::exit(framework::generate(
+            fw,
+            &prefix,
+            overrides_path.as_deref(),
+            out_dir.as_deref(),
+        ));
+    }
+
     let header = match header {
         Some(h) => h,
         None => {
             eprintln!("cpc-bindgen — native header → C+ binding");
             eprintln!();
             eprintln!("usage: cpc-bindgen [--objc] [--prefix P] <header.h> [-- <clang args>...]");
+            eprintln!("       cpc-bindgen --framework <Name> [--prefix P] [--overrides F] [--out DIR]");
             std::process::exit(2);
         }
     };
