@@ -58,12 +58,24 @@ fn synthesized_xml_delegate_counts_elements() {
     return;
 }
 
-// Same proof, but through the cpc-bindgen-GENERATED delegate synthesizer
-// (xmlparser.cplus). The generator emits the ctx struct, its constructor, the
-// IMP trampoline, and create_<Proto>_<sel>; here we only supply the handler.
+// Same proof, but through the cpc-bindgen-GENERATED multi-method synthesizer
+// (xmlparser.cplus). One create_XMLParserDelegate installs BOTH callbacks; each
+// routes to its own handler via the shared, caller-owned handler table. The
+// counters live in a `Counts` the handlers reach through the `user` pointer.
+struct Counts {
+    starts: i64,
+    ends: i64,
+}
+
 fn gen_count_start(user: *u8, parser: *u8, name: *u8, ns: *u8, qname: *u8, attrs: *u8) {
-    let counter: *i64 = { user as *i64 };
-    { *counter = (*counter) +% (1 as i64); };
+    let c: *Counts = { user as *Counts };
+    { (*c).starts = (*c).starts +% (1 as i64); };
+    return;
+}
+
+fn gen_count_end(user: *u8, parser: *u8, name: *u8, ns: *u8, qname: *u8) {
+    let c: *Counts = { user as *Counts };
+    { (*c).ends = (*c).ends +% (1 as i64); };
     return;
 }
 
@@ -72,11 +84,13 @@ fn generated_xml_delegate_counts_elements() {
     let xml_str: *u8 = bridge::nsstring("<root><child/><child/></root>");
     let data: *u8 = rt::msg_id_u64(xml_str, rt::sel(#str_ptr("dataUsingEncoding:\0")), 4 as u64);
 
-    var count: i64 = 0;
-    let cp: *u8 = { #addr_of(count) as *u8 };
-    var ctx: xml::XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx =
-        xml::XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx_new(gen_count_start, cp);
-    let delegate: *u8 = xml::create_XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(#addr_of(ctx));
+    var counts: Counts = Counts { starts: 0, ends: 0 };
+    let up: *u8 = { #addr_of(counts) as *u8 };
+    // Install only the two callbacks we implement; the other ~17 stay noops.
+    var ctx: xml::XMLParserDelegate = xml::XMLParserDelegate_new(up);
+    ctx.set_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(gen_count_start);
+    ctx.set_parser_did_end_element_namespace_u_r_i_qualified_name(gen_count_end);
+    let delegate: *u8 = xml::create_XMLParserDelegate(#addr_of(ctx));
 
     let parser_cls: *u8 = rt::get_class(#str_ptr("NSXMLParser\0"));
     let alloced: *u8 = rt::msg_id(parser_cls, rt::sel(#str_ptr("alloc\0")));
@@ -85,6 +99,7 @@ fn generated_xml_delegate_counts_elements() {
     let ok: i8 = rt::msg_i8(parser, rt::sel(#str_ptr("parse\0")));
 
     assert ok != (0 as i8);
-    assert count == (3 as i64);
+    assert counts.starts == (3 as i64);   // <root>, <child>, <child>
+    assert counts.ends == (3 as i64);     // matching close tags
     return;
 }

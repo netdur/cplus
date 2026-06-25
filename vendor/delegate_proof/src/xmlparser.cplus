@@ -186,671 +186,302 @@ impl XMLParser {
     }
 }
 
-// `NSXMLParserDelegate` delegate protocol -> runtime class-synthesis helpers.
-// `NSXMLParserDelegate` callback `parserDidStartDocument:` (1 object arg(s)).
-struct XMLParserDelegate_parser_did_start_document_ctx {
-    handler: fn(*u8, *u8),
+// `NSXMLParserDelegate` delegate protocol -> runtime class-synthesis helper.
+// SKIPPED `parser:resolveExternalEntityName:systemID:`: non-void delegate callback
+fn XMLParserDelegate_noop_1(user: *u8, a0: *u8) { return; }
+fn XMLParserDelegate_noop_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn XMLParserDelegate_noop_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn XMLParserDelegate_noop_4(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
+fn XMLParserDelegate_noop_5(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) { return; }
+
+struct XMLParserDelegate {
+    parser_did_start_document: fn(*u8, *u8),
+    parser_did_end_document: fn(*u8, *u8),
+    parser_found_notation_declaration_with_name_public_i_d_system_i_d: fn(*u8, *u8, *u8, *u8, *u8),
+    parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name: fn(*u8, *u8, *u8, *u8, *u8, *u8),
+    parser_found_attribute_declaration_with_name_for_element_type_default_value: fn(*u8, *u8, *u8, *u8, *u8, *u8),
+    parser_found_element_declaration_with_name_model: fn(*u8, *u8, *u8, *u8),
+    parser_found_internal_entity_declaration_with_name_value: fn(*u8, *u8, *u8, *u8),
+    parser_found_external_entity_declaration_with_name_public_i_d_system_i_d: fn(*u8, *u8, *u8, *u8, *u8),
+    parser_did_start_element_namespace_u_r_i_qualified_name_attributes: fn(*u8, *u8, *u8, *u8, *u8, *u8),
+    parser_did_end_element_namespace_u_r_i_qualified_name: fn(*u8, *u8, *u8, *u8, *u8),
+    parser_did_start_mapping_prefix_to_u_r_i: fn(*u8, *u8, *u8, *u8),
+    parser_did_end_mapping_prefix: fn(*u8, *u8, *u8),
+    parser_found_characters: fn(*u8, *u8, *u8),
+    parser_found_ignorable_whitespace: fn(*u8, *u8, *u8),
+    parser_found_processing_instruction_with_target_data: fn(*u8, *u8, *u8, *u8),
+    parser_found_comment: fn(*u8, *u8, *u8),
+    parser_found_c_d_a_t_a: fn(*u8, *u8, *u8),
+    parser_parse_error_occurred: fn(*u8, *u8, *u8),
+    parser_validation_error_occurred: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn XMLParserDelegate_parser_did_start_document_ctx_new(handler: fn(*u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_start_document_ctx {
-    return XMLParserDelegate_parser_did_start_document_ctx { handler: handler, user: user };
+fn XMLParserDelegate_new(user: *u8) -> XMLParserDelegate {
+    return XMLParserDelegate { parser_did_start_document: XMLParserDelegate_noop_1, parser_did_end_document: XMLParserDelegate_noop_1, parser_found_notation_declaration_with_name_public_i_d_system_i_d: XMLParserDelegate_noop_4, parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name: XMLParserDelegate_noop_5, parser_found_attribute_declaration_with_name_for_element_type_default_value: XMLParserDelegate_noop_5, parser_found_element_declaration_with_name_model: XMLParserDelegate_noop_3, parser_found_internal_entity_declaration_with_name_value: XMLParserDelegate_noop_3, parser_found_external_entity_declaration_with_name_public_i_d_system_i_d: XMLParserDelegate_noop_4, parser_did_start_element_namespace_u_r_i_qualified_name_attributes: XMLParserDelegate_noop_5, parser_did_end_element_namespace_u_r_i_qualified_name: XMLParserDelegate_noop_4, parser_did_start_mapping_prefix_to_u_r_i: XMLParserDelegate_noop_3, parser_did_end_mapping_prefix: XMLParserDelegate_noop_2, parser_found_characters: XMLParserDelegate_noop_2, parser_found_ignorable_whitespace: XMLParserDelegate_noop_2, parser_found_processing_instruction_with_target_data: XMLParserDelegate_noop_3, parser_found_comment: XMLParserDelegate_noop_2, parser_found_c_d_a_t_a: XMLParserDelegate_noop_2, parser_parse_error_occurred: XMLParserDelegate_noop_2, parser_validation_error_occurred: XMLParserDelegate_noop_2, user: user };
 }
 
-fn XMLParserDelegate_parser_did_start_document_key() -> *u8 {
-    return { 28672 as *u8 };
+impl XMLParserDelegate {
+    fn set_parser_did_start_document(ref this, handler: fn(*u8, *u8)) {
+        this.parser_did_start_document = handler;
+        return;
+    }
+    fn set_parser_did_end_document(ref this, handler: fn(*u8, *u8)) {
+        this.parser_did_end_document = handler;
+        return;
+    }
+    fn set_parser_found_notation_declaration_with_name_public_i_d_system_i_d(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
+        this.parser_found_notation_declaration_with_name_public_i_d_system_i_d = handler;
+        return;
+    }
+    fn set_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8, *u8)) {
+        this.parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name = handler;
+        return;
+    }
+    fn set_parser_found_attribute_declaration_with_name_for_element_type_default_value(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8, *u8)) {
+        this.parser_found_attribute_declaration_with_name_for_element_type_default_value = handler;
+        return;
+    }
+    fn set_parser_found_element_declaration_with_name_model(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
+        this.parser_found_element_declaration_with_name_model = handler;
+        return;
+    }
+    fn set_parser_found_internal_entity_declaration_with_name_value(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
+        this.parser_found_internal_entity_declaration_with_name_value = handler;
+        return;
+    }
+    fn set_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
+        this.parser_found_external_entity_declaration_with_name_public_i_d_system_i_d = handler;
+        return;
+    }
+    fn set_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8, *u8)) {
+        this.parser_did_start_element_namespace_u_r_i_qualified_name_attributes = handler;
+        return;
+    }
+    fn set_parser_did_end_element_namespace_u_r_i_qualified_name(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
+        this.parser_did_end_element_namespace_u_r_i_qualified_name = handler;
+        return;
+    }
+    fn set_parser_did_start_mapping_prefix_to_u_r_i(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
+        this.parser_did_start_mapping_prefix_to_u_r_i = handler;
+        return;
+    }
+    fn set_parser_did_end_mapping_prefix(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_did_end_mapping_prefix = handler;
+        return;
+    }
+    fn set_parser_found_characters(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_found_characters = handler;
+        return;
+    }
+    fn set_parser_found_ignorable_whitespace(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_found_ignorable_whitespace = handler;
+        return;
+    }
+    fn set_parser_found_processing_instruction_with_target_data(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
+        this.parser_found_processing_instruction_with_target_data = handler;
+        return;
+    }
+    fn set_parser_found_comment(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_found_comment = handler;
+        return;
+    }
+    fn set_parser_found_c_d_a_t_a(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_found_c_d_a_t_a = handler;
+        return;
+    }
+    fn set_parser_parse_error_occurred(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_parse_error_occurred = handler;
+        return;
+    }
+    fn set_parser_validation_error_occurred(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.parser_validation_error_occurred = handler;
+        return;
+    }
 }
+
+fn XMLParserDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
 fn XMLParserDelegate_parser_did_start_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *XMLParserDelegate_parser_did_start_document_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_start_document_key()) as *XMLParserDelegate_parser_did_start_document_ctx };
-    let f: fn(*u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8) = { (*c).parser_did_start_document };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
-}
-
-fn create_XMLParserDelegate_parser_did_start_document(ctx: *XMLParserDelegate_parser_did_start_document_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_start_document\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("parserDidStartDocument:\0")), XMLParserDelegate_parser_did_start_document_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_start_document_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parserDidEndDocument:` (1 object arg(s)).
-struct XMLParserDelegate_parser_did_end_document_ctx {
-    handler: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_did_end_document_ctx_new(handler: fn(*u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_end_document_ctx {
-    return XMLParserDelegate_parser_did_end_document_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_did_end_document_key() -> *u8 {
-    return { 28673 as *u8 };
 }
 
 fn XMLParserDelegate_parser_did_end_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *XMLParserDelegate_parser_did_end_document_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_end_document_key()) as *XMLParserDelegate_parser_did_end_document_ctx };
-    let f: fn(*u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8) = { (*c).parser_did_end_document };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_XMLParserDelegate_parser_did_end_document(ctx: *XMLParserDelegate_parser_did_end_document_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_end_document\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("parserDidEndDocument:\0")), XMLParserDelegate_parser_did_end_document_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_end_document_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundNotationDeclarationWithName:publicID:systemID:` (4 object arg(s)).
-struct XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx {
-    return XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_key() -> *u8 {
-    return { 28674 as *u8 };
-}
-
 fn XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
-    let c: *XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_key()) as *XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).parser_found_notation_declaration_with_name_public_i_d_system_i_d };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d(ctx: *XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:foundNotationDeclarationWithName:publicID:systemID:\0")), XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_imp, #str_ptr("v@:@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundUnparsedEntityDeclarationWithName:publicID:systemID:notationName:` (5 object arg(s)).
-struct XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx {
-    return XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_key() -> *u8 {
-    return { 28675 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) {
-    let c: *XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_key()) as *XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3, a4);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name(ctx: *XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:foundUnparsedEntityDeclarationWithName:publicID:systemID:notationName:\0")), XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_imp, #str_ptr("v@:@@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundAttributeDeclarationWithName:forElement:type:defaultValue:` (5 object arg(s)).
-struct XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx {
-    return XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_key() -> *u8 {
-    return { 28676 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) {
-    let c: *XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_key()) as *XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).parser_found_attribute_declaration_with_name_for_element_type_default_value };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3, a4);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value(ctx: *XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:foundAttributeDeclarationWithName:forElement:type:defaultValue:\0")), XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_imp, #str_ptr("v@:@@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundElementDeclarationWithName:model:` (3 object arg(s)).
-struct XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx {
-    handler: fn(*u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx_new(handler: fn(*u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx {
-    return XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_element_declaration_with_name_model_key() -> *u8 {
-    return { 28677 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_element_declaration_with_name_model_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_element_declaration_with_name_model_key()) as *XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx };
-    let f: fn(*u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8) = { (*c).parser_found_element_declaration_with_name_model };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_element_declaration_with_name_model(ctx: *XMLParserDelegate_parser_found_element_declaration_with_name_model_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_element_declaration_with_name_model\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundElementDeclarationWithName:model:\0")), XMLParserDelegate_parser_found_element_declaration_with_name_model_imp, #str_ptr("v@:@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_element_declaration_with_name_model_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundInternalEntityDeclarationWithName:value:` (3 object arg(s)).
-struct XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx {
-    handler: fn(*u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx_new(handler: fn(*u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx {
-    return XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_key() -> *u8 {
-    return { 28678 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_key()) as *XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx };
-    let f: fn(*u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8) = { (*c).parser_found_internal_entity_declaration_with_name_value };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn create_XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value(ctx: *XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundInternalEntityDeclarationWithName:value:\0")), XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_imp, #str_ptr("v@:@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundExternalEntityDeclarationWithName:publicID:systemID:` (4 object arg(s)).
-struct XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx {
-    return XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_key() -> *u8 {
-    return { 28679 as *u8 };
-}
-
 fn XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
-    let c: *XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_key()) as *XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).parser_found_external_entity_declaration_with_name_public_i_d_system_i_d };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3);
     return;
 }
 
-fn create_XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d(ctx: *XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:foundExternalEntityDeclarationWithName:publicID:systemID:\0")), XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_imp, #str_ptr("v@:@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:didStartElement:namespaceURI:qualifiedName:attributes:` (5 object arg(s)).
-struct XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx {
-    return XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_key() -> *u8 {
-    return { 28680 as *u8 };
-}
-
 fn XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) {
-    let c: *XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_key()) as *XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) = { (*c).parser_did_start_element_namespace_u_r_i_qualified_name_attributes };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3, a4);
     return;
 }
 
-fn create_XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(ctx: *XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:didStartElement:namespaceURI:qualifiedName:attributes:\0")), XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_imp, #str_ptr("v@:@@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:didEndElement:namespaceURI:qualifiedName:` (4 object arg(s)).
-struct XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx {
-    handler: fn(*u8, *u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx_new(handler: fn(*u8, *u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx {
-    return XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_key() -> *u8 {
-    return { 28681 as *u8 };
-}
-
 fn XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
-    let c: *XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_key()) as *XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx };
-    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).parser_did_end_element_namespace_u_r_i_qualified_name };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3);
     return;
 }
 
-fn create_XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name(ctx: *XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:didEndElement:namespaceURI:qualifiedName:\0")), XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_imp, #str_ptr("v@:@@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:didStartMappingPrefix:toURI:` (3 object arg(s)).
-struct XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx {
-    handler: fn(*u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx_new(handler: fn(*u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx {
-    return XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_key() -> *u8 {
-    return { 28682 as *u8 };
-}
-
 fn XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_key()) as *XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx };
-    let f: fn(*u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8) = { (*c).parser_did_start_mapping_prefix_to_u_r_i };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
-}
-
-fn create_XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i(ctx: *XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:didStartMappingPrefix:toURI:\0")), XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_imp, #str_ptr("v@:@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:didEndMappingPrefix:` (2 object arg(s)).
-struct XMLParserDelegate_parser_did_end_mapping_prefix_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_did_end_mapping_prefix_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_did_end_mapping_prefix_ctx {
-    return XMLParserDelegate_parser_did_end_mapping_prefix_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_did_end_mapping_prefix_key() -> *u8 {
-    return { 28683 as *u8 };
 }
 
 fn XMLParserDelegate_parser_did_end_mapping_prefix_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_did_end_mapping_prefix_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_did_end_mapping_prefix_key()) as *XMLParserDelegate_parser_did_end_mapping_prefix_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_did_end_mapping_prefix };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
-}
-
-fn create_XMLParserDelegate_parser_did_end_mapping_prefix(ctx: *XMLParserDelegate_parser_did_end_mapping_prefix_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_did_end_mapping_prefix\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:didEndMappingPrefix:\0")), XMLParserDelegate_parser_did_end_mapping_prefix_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_did_end_mapping_prefix_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundCharacters:` (2 object arg(s)).
-struct XMLParserDelegate_parser_found_characters_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_characters_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_characters_ctx {
-    return XMLParserDelegate_parser_found_characters_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_characters_key() -> *u8 {
-    return { 28684 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_characters_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_found_characters_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_characters_key()) as *XMLParserDelegate_parser_found_characters_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_found_characters };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_characters(ctx: *XMLParserDelegate_parser_found_characters_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_characters\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundCharacters:\0")), XMLParserDelegate_parser_found_characters_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_characters_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundIgnorableWhitespace:` (2 object arg(s)).
-struct XMLParserDelegate_parser_found_ignorable_whitespace_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_ignorable_whitespace_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_ignorable_whitespace_ctx {
-    return XMLParserDelegate_parser_found_ignorable_whitespace_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_ignorable_whitespace_key() -> *u8 {
-    return { 28685 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_ignorable_whitespace_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_found_ignorable_whitespace_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_ignorable_whitespace_key()) as *XMLParserDelegate_parser_found_ignorable_whitespace_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_found_ignorable_whitespace };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_XMLParserDelegate_parser_found_ignorable_whitespace(ctx: *XMLParserDelegate_parser_found_ignorable_whitespace_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_ignorable_whitespace\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundIgnorableWhitespace:\0")), XMLParserDelegate_parser_found_ignorable_whitespace_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_ignorable_whitespace_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundProcessingInstructionWithTarget:data:` (3 object arg(s)).
-struct XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx {
-    handler: fn(*u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx_new(handler: fn(*u8, *u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx {
-    return XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_processing_instruction_with_target_data_key() -> *u8 {
-    return { 28686 as *u8 };
-}
-
 fn XMLParserDelegate_parser_found_processing_instruction_with_target_data_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_processing_instruction_with_target_data_key()) as *XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx };
-    let f: fn(*u8, *u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8, *u8) = { (*c).parser_found_processing_instruction_with_target_data };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn create_XMLParserDelegate_parser_found_processing_instruction_with_target_data(ctx: *XMLParserDelegate_parser_found_processing_instruction_with_target_data_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_processing_instruction_with_target_data\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundProcessingInstructionWithTarget:data:\0")), XMLParserDelegate_parser_found_processing_instruction_with_target_data_imp, #str_ptr("v@:@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_processing_instruction_with_target_data_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundComment:` (2 object arg(s)).
-struct XMLParserDelegate_parser_found_comment_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_comment_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_comment_ctx {
-    return XMLParserDelegate_parser_found_comment_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_comment_key() -> *u8 {
-    return { 28687 as *u8 };
-}
-
 fn XMLParserDelegate_parser_found_comment_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_found_comment_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_comment_key()) as *XMLParserDelegate_parser_found_comment_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_found_comment };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_comment(ctx: *XMLParserDelegate_parser_found_comment_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_comment\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundComment:\0")), XMLParserDelegate_parser_found_comment_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_comment_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:foundCDATA:` (2 object arg(s)).
-struct XMLParserDelegate_parser_found_c_d_a_t_a_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_found_c_d_a_t_a_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_found_c_d_a_t_a_ctx {
-    return XMLParserDelegate_parser_found_c_d_a_t_a_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_found_c_d_a_t_a_key() -> *u8 {
-    return { 28688 as *u8 };
 }
 
 fn XMLParserDelegate_parser_found_c_d_a_t_a_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_found_c_d_a_t_a_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_found_c_d_a_t_a_key()) as *XMLParserDelegate_parser_found_c_d_a_t_a_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_found_c_d_a_t_a };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
-}
-
-fn create_XMLParserDelegate_parser_found_c_d_a_t_a(ctx: *XMLParserDelegate_parser_found_c_d_a_t_a_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_found_c_d_a_t_a\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundCDATA:\0")), XMLParserDelegate_parser_found_c_d_a_t_a_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_found_c_d_a_t_a_key(), { ctx as *u8 });
-    return d;
-}
-
-    // SKIPPED `parser:resolveExternalEntityName:systemID:`: non-void delegate callback
-// `NSXMLParserDelegate` callback `parser:parseErrorOccurred:` (2 object arg(s)).
-struct XMLParserDelegate_parser_parse_error_occurred_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_parse_error_occurred_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_parse_error_occurred_ctx {
-    return XMLParserDelegate_parser_parse_error_occurred_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_parse_error_occurred_key() -> *u8 {
-    return { 28689 as *u8 };
 }
 
 fn XMLParserDelegate_parser_parse_error_occurred_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_parse_error_occurred_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_parse_error_occurred_key()) as *XMLParserDelegate_parser_parse_error_occurred_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_parse_error_occurred };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
-}
-
-fn create_XMLParserDelegate_parser_parse_error_occurred(ctx: *XMLParserDelegate_parser_parse_error_occurred_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_parse_error_occurred\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:parseErrorOccurred:\0")), XMLParserDelegate_parser_parse_error_occurred_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_parse_error_occurred_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSXMLParserDelegate` callback `parser:validationErrorOccurred:` (2 object arg(s)).
-struct XMLParserDelegate_parser_validation_error_occurred_ctx {
-    handler: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn XMLParserDelegate_parser_validation_error_occurred_ctx_new(handler: fn(*u8, *u8, *u8), user: *u8) -> XMLParserDelegate_parser_validation_error_occurred_ctx {
-    return XMLParserDelegate_parser_validation_error_occurred_ctx { handler: handler, user: user };
-}
-
-fn XMLParserDelegate_parser_validation_error_occurred_key() -> *u8 {
-    return { 28690 as *u8 };
 }
 
 fn XMLParserDelegate_parser_validation_error_occurred_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *XMLParserDelegate_parser_validation_error_occurred_ctx = { synth::get_associated(self_obj, XMLParserDelegate_parser_validation_error_occurred_key()) as *XMLParserDelegate_parser_validation_error_occurred_ctx };
-    let f: fn(*u8, *u8, *u8) = { (*c).handler };
+    let c: *XMLParserDelegate = { synth::get_associated(self_obj, XMLParserDelegate_key()) as *XMLParserDelegate };
+    let f: fn(*u8, *u8, *u8) = { (*c).parser_validation_error_occurred };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_XMLParserDelegate_parser_validation_error_occurred(ctx: *XMLParserDelegate_parser_validation_error_occurred_ctx) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate_parser_validation_error_occurred\0");
+fn create_XMLParserDelegate(ctx: *XMLParserDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_XMLParserDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:validationErrorOccurred:\0")), XMLParserDelegate_parser_validation_error_occurred_imp, #str_ptr("v@:@@\0"));
+        let add_parser_did_start_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("parserDidStartDocument:\0")), XMLParserDelegate_parser_did_start_document_imp, #str_ptr("v@:@\0"));
+        let add_parser_did_end_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("parserDidEndDocument:\0")), XMLParserDelegate_parser_did_end_document_imp, #str_ptr("v@:@\0"));
+        let add_parser_found_notation_declaration_with_name_public_i_d_system_i_d: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:foundNotationDeclarationWithName:publicID:systemID:\0")), XMLParserDelegate_parser_found_notation_declaration_with_name_public_i_d_system_i_d_imp, #str_ptr("v@:@@@@\0"));
+        let add_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:foundUnparsedEntityDeclarationWithName:publicID:systemID:notationName:\0")), XMLParserDelegate_parser_found_unparsed_entity_declaration_with_name_public_i_d_system_i_d_notation_name_imp, #str_ptr("v@:@@@@@\0"));
+        let add_parser_found_attribute_declaration_with_name_for_element_type_default_value: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:foundAttributeDeclarationWithName:forElement:type:defaultValue:\0")), XMLParserDelegate_parser_found_attribute_declaration_with_name_for_element_type_default_value_imp, #str_ptr("v@:@@@@@\0"));
+        let add_parser_found_element_declaration_with_name_model: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundElementDeclarationWithName:model:\0")), XMLParserDelegate_parser_found_element_declaration_with_name_model_imp, #str_ptr("v@:@@@\0"));
+        let add_parser_found_internal_entity_declaration_with_name_value: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundInternalEntityDeclarationWithName:value:\0")), XMLParserDelegate_parser_found_internal_entity_declaration_with_name_value_imp, #str_ptr("v@:@@@\0"));
+        let add_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:foundExternalEntityDeclarationWithName:publicID:systemID:\0")), XMLParserDelegate_parser_found_external_entity_declaration_with_name_public_i_d_system_i_d_imp, #str_ptr("v@:@@@@\0"));
+        let add_parser_did_start_element_namespace_u_r_i_qualified_name_attributes: i8 = synth::add_method_v_5id(cls, rt::sel(#str_ptr("parser:didStartElement:namespaceURI:qualifiedName:attributes:\0")), XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_imp, #str_ptr("v@:@@@@@\0"));
+        let add_parser_did_end_element_namespace_u_r_i_qualified_name: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("parser:didEndElement:namespaceURI:qualifiedName:\0")), XMLParserDelegate_parser_did_end_element_namespace_u_r_i_qualified_name_imp, #str_ptr("v@:@@@@\0"));
+        let add_parser_did_start_mapping_prefix_to_u_r_i: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:didStartMappingPrefix:toURI:\0")), XMLParserDelegate_parser_did_start_mapping_prefix_to_u_r_i_imp, #str_ptr("v@:@@@\0"));
+        let add_parser_did_end_mapping_prefix: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:didEndMappingPrefix:\0")), XMLParserDelegate_parser_did_end_mapping_prefix_imp, #str_ptr("v@:@@\0"));
+        let add_parser_found_characters: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundCharacters:\0")), XMLParserDelegate_parser_found_characters_imp, #str_ptr("v@:@@\0"));
+        let add_parser_found_ignorable_whitespace: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundIgnorableWhitespace:\0")), XMLParserDelegate_parser_found_ignorable_whitespace_imp, #str_ptr("v@:@@\0"));
+        let add_parser_found_processing_instruction_with_target_data: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("parser:foundProcessingInstructionWithTarget:data:\0")), XMLParserDelegate_parser_found_processing_instruction_with_target_data_imp, #str_ptr("v@:@@@\0"));
+        let add_parser_found_comment: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundComment:\0")), XMLParserDelegate_parser_found_comment_imp, #str_ptr("v@:@@\0"));
+        let add_parser_found_c_d_a_t_a: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:foundCDATA:\0")), XMLParserDelegate_parser_found_c_d_a_t_a_imp, #str_ptr("v@:@@\0"));
+        let add_parser_parse_error_occurred: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:parseErrorOccurred:\0")), XMLParserDelegate_parser_parse_error_occurred_imp, #str_ptr("v@:@@\0"));
+        let add_parser_validation_error_occurred: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("parser:validationErrorOccurred:\0")), XMLParserDelegate_parser_validation_error_occurred_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, XMLParserDelegate_parser_validation_error_occurred_key(), { ctx as *u8 });
+    synth::set_associated(d, XMLParserDelegate_key(), { ctx as *u8 });
     return d;
 }
-
 
