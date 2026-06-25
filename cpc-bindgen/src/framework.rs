@@ -358,7 +358,10 @@ fn cplus_toml(
          \n\
          [package]\nname    = \"{pkg}\"\nversion = \"0.0.0\"\nedition = \"2026\"\n\n\
          [dependencies]\n{deps}\n\n\
-         [link]\nframeworks = [\"{name}\", \"Foundation\"]\nlibs       = [\"objc\"]\n",
+         [link]\nframeworks = [\"{name}\"]\n",
+        // Foundation + `-lobjc` come from the `objc` dependency (ObjC packages);
+        // re-listing them here just makes the linker pass `-lobjc` twice. A pure-C
+        // framework links only itself.
         ver = env!("CARGO_PKG_VERSION"),
     )
 }
