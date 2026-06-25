@@ -5,13 +5,19 @@
 // `objc` runtime (`vendor/objc`): msgSend shims, the str/NSString bridge, the
 // `Range` (NSRange) value type, and the +1/`drop` ownership model.
 //
-// Modelled so far: classes with init / initWith… constructors; instance and
-// class methods over void / object / string / scalar / NSRange / enum types;
-// nullable string returns -> Option[Text]; NS_ENUM -> C+ enum (+ raw/from_raw);
-// NSArray<NSValue *> -> Vec[Range]. Everything else (blocks, multi-arg
-// selectors, generic collections) is emitted as a `// SKIPPED` comment rather
-// than wrong code. Naming is mechanical snake_case; guideline-level renames are
-// a later override file's job.
+// Modelled: classes with init / factory (incl. nullable -> Option[Self]);
+// instance/class methods over void / object / str / scalar (i64/u64/f64/BOOL) /
+// NSRange / enum; nullable object & string returns -> Option; NS_ENUM -> C+ enum;
+// NSArray<NSString*|NSValue*> <-> Vec (both directions); any-arity selectors;
+// categories; ObjC blocks (usingBlock:); and delegate/data-source PROTOCOLS ->
+// runtime class-synthesis helpers (void + non-void callbacks, multi-method,
+// override-named). Naming is mechanical snake_case unless the override file
+// renames it. Unmodelled constructs are emitted as `// SKIPPED` comments, never
+// wrong code.
+//
+// Remaining gaps and how to close them are documented in cpc-bindgen/LIMITATIONS.md
+// (NSDictionary returns are blocked on a stdlib Text-keyed map; 32-bit int/float
+// scalars are deferred). SKIP sites point back to that file.
 
 use std::collections::{HashMap, HashSet};
 
@@ -1092,11 +1098,17 @@ impl ObjcEmitter {
             }
             // CGFloat / NSTimeInterval are `double` on 64-bit Apple.
             "double" | "CGFloat" | "NSTimeInterval" => return Ret::ScalarF64,
-            // 32-bit scalars need their own msgSend widths; defer.
+            // 32-bit scalars need their own msgSend widths; deferred (see
+            // LIMITATIONS.md "32-bit int/float scalars").
             "int" | "unsigned int" | "unsigned" | "float" => {
-                return Ret::Unsupported(format!("scalar `{base_ty}` not yet modelled"))
+                return Ret::Unsupported(format!("scalar `{base_ty}` deferred (see LIMITATIONS.md)"))
             }
             _ => {}
+        }
+        // NSDictionary returns are blocked on stdlib (no Text-keyed map yet) —
+        // see LIMITATIONS.md "NSDictionary returns" before wiring this.
+        if base_ty.contains("NSDictionary<") || base_ty.contains("NSMutableDictionary<") {
+            return Ret::Unsupported("NSDictionary -> map blocked on stdlib (see LIMITATIONS.md)".into());
         }
         if base_ty.contains('<') {
             return Ret::Unsupported("generic collection".into());
