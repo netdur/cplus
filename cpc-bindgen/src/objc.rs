@@ -334,7 +334,16 @@ impl ObjcEmitter {
         if let Some(over) = self.type_override(objc_name) {
             return over;
         }
-        objc_name.strip_prefix(&self.prefix).unwrap_or(objc_name).to_string()
+        let stripped = objc_name.strip_prefix(&self.prefix).unwrap_or(objc_name);
+        // Keep the prefix when stripping it would open the name with a digit
+        // (`MTL4Archive` -> `4Archive`), which is not a valid type identifier.
+        // sanitize_ident is the final guard (residual digit / keyword collision).
+        let chosen = if stripped.starts_with(|c: char| c.is_ascii_digit()) {
+            objc_name
+        } else {
+            stripped
+        };
+        crate::sanitize_ident(chosen)
     }
 
     fn emit_interface(&mut self, itf: &serde_json::Value, categories: &[serde_json::Value]) {
@@ -477,7 +486,9 @@ impl ObjcEmitter {
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| selector_ident(&sel));
-            callbacks.push((sel.clone(), mid, params.len(), ret));
+            // The callback name becomes a struct field and accessor; escape it so
+            // a selector like `type` doesn't land on a keyword (`type` -> `type_`).
+            callbacks.push((sel.clone(), crate::sanitize_ident(&mid), params.len(), ret));
         }
         if callbacks.is_empty() {
             return;
@@ -1611,5 +1622,31 @@ mod tests {
         let rendered = e.render_enum(&info);
         assert!(rendered.contains("_10_0,"), "{rendered}");
         assert!(!rendered.contains("    10_0,"), "{rendered}");
+    }
+
+    #[test]
+    fn delegate_callback_named_type_escapes_to_a_valid_field() {
+        // A protocol method `type` becomes a synthesized struct field + accessor;
+        // it must not land on the `type` keyword. (Metal's MTL4CounterHeap, whose
+        // `type` getter is a 0-arg NSUInteger callback, surfaced this.)
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl",
+                "name": "MTLThing",
+                "loc": { "file": "test.h" },
+                "inner": [{
+                    "kind": "ObjCMethodDecl",
+                    "name": "type",
+                    "instance": true,
+                    "loc": { "file": "test.h" },
+                    "returnType": { "qualType": "NSUInteger" },
+                    "inner": []
+                }]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("type_: fn"), "field escaped:\n{out}");
+        assert!(out.contains("fn set_type_(ref this"), "setter escaped:\n{out}");
+        assert!(!out.contains("\n    type: fn"), "no bare keyword field:\n{out}");
     }
 }

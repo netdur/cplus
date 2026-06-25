@@ -262,8 +262,17 @@ fn clang_ast(header: &Path, sdk: &str) -> Option<serde_json::Value> {
 /// `language_recognizer`.
 fn module_name(header: &str, prefix: &str) -> String {
     let base = header.strip_suffix(".h").unwrap_or(header);
-    let base = base.strip_prefix(prefix).unwrap_or(base);
-    snake(base)
+    let stripped = base.strip_prefix(prefix).unwrap_or(base);
+    // Strip the framework prefix for a clean module name (`MTLDevice` -> `device`)
+    // — unless that exposes a leading digit (`MTL4Archive` -> `4Archive`), which
+    // can't open an identifier; keep the prefix so it stays spellable. sanitize_ident
+    // is the final guard (residual digit, or a name that lands on a keyword).
+    let chosen = if stripped.starts_with(|c: char| c.is_ascii_digit()) {
+        base
+    } else {
+        stripped
+    };
+    crate::sanitize_ident(&snake(chosen))
 }
 
 fn snake(s: &str) -> String {
@@ -381,4 +390,20 @@ fn overrides_stub(name: &str) -> String {
     format!(
         "{{\n  \"_comment\": \"cpc-bindgen naming overrides for {name}. Add `types` / `methods` / `skip` entries to refine the mechanical snake_case names.\",\n  \"methods\": {{}}\n}}\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_name_strips_prefix_but_stays_spellable() {
+        // Normal: the framework prefix is stripped.
+        assert_eq!(module_name("MTLDevice.h", "MTL"), "device");
+        // Stripping `MTL` from `MTL4Archive` would open with a digit; keep the
+        // prefix so the module reads `mtl4archive`, never `4archive`.
+        assert_eq!(module_name("MTL4Archive.h", "MTL"), "mtl4archive");
+        // A C header (no prefix) snakes as-is.
+        assert_eq!(module_name("MTLTypes.h", ""), "mtl_types");
+    }
 }
