@@ -9,6 +9,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "./xmlparser" as xml;
+import "./decimal_proof" as decimal_proof;
 
 // Stable per-object key for the associated handler context (identity only —
 // never dereferenced by the runtime).
