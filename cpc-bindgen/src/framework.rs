@@ -173,14 +173,22 @@ fn header_is_objc(tu: &serde_json::Value, header_basename: &str) -> bool {
     let Some(inner) = tu.get("inner").and_then(|v| v.as_array()) else {
         return false;
     };
+    // clang elides a decl's `loc` file when it repeats the previous decl's, so
+    // an `ObjCInterfaceDecl` right after a same-file enum has no file of its own.
+    // Track the current file stickily (the C emitter's `decl_in_header` does the
+    // same), else such headers are mis-detected as C and lose their class bindings.
+    let mut cur_file: Option<String> = None;
     for decl in inner {
+        if let Some(f) = decl.get("loc").and_then(loc_file) {
+            cur_file = Some(f);
+        }
         let kind = decl.get("kind").and_then(|v| v.as_str());
         if matches!(
             kind,
             Some("ObjCInterfaceDecl") | Some("ObjCProtocolDecl") | Some("ObjCCategoryDecl")
         ) {
-            if let Some(f) = decl.get("loc").and_then(loc_file) {
-                if Path::new(&f).file_name().and_then(|n| n.to_str()) == Some(header_basename) {
+            if let Some(f) = &cur_file {
+                if Path::new(f).file_name().and_then(|n| n.to_str()) == Some(header_basename) {
                     return true;
                 }
             }
