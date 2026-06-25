@@ -1394,7 +1394,15 @@ fn loc_included(loc: &serde_json::Value) -> bool {
 }
 
 fn strip_nullability(qt: &str) -> (String, bool) {
-    let s = qt.trim();
+    let mut s = qt.trim();
+    // Clang leaves some attribute macros in the type spelling. `NS_REFINED_FOR_SWIFT`
+    // in particular leaks as a leading token on properties (e.g.
+    // `NS_REFINED_FOR_SWIFT NSDictionary<...> *`), which would otherwise hide the
+    // real type from the dict / object matchers. Strip it so a property accessor's
+    // type normalizes to the same spelling as the equivalent method return.
+    if let Some(rest) = s.strip_prefix("NS_REFINED_FOR_SWIFT ") {
+        s = rest.trim();
+    }
     for (suf, nul) in [(" _Nullable", true), (" _Nonnull", false), (" _Null_unspecified", true)] {
         if let Some(stripped) = s.strip_suffix(suf) {
             return (stripped.to_string(), nul);
@@ -1542,5 +1550,26 @@ mod tests {
             &[Arg::ScalarI32("a".into()), Arg::ScalarI32("b".into())],
         );
         assert!(none.is_none());
+    }
+
+    #[test]
+    fn strips_ns_refined_for_swift_prefix() {
+        assert_eq!(
+            strip_nullability("NS_REFINED_FOR_SWIFT NSDictionary<NSString *, NSNumber *> *"),
+            ("NSDictionary<NSString *, NSNumber *> *".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn refined_dict_return_bridges_to_stringmap_like_a_method() {
+        // A property getter whose type carries the leaked `NS_REFINED_FOR_SWIFT`
+        // prefix must bridge a string-keyed dict return to StringMap, the same as
+        // a plain method return. (The NLLanguageRecognizer languageHints /
+        // languageHypotheses case.)
+        let mut e = emitter();
+        let plain = e.map_ret("NSDictionary<NSString *, NSNumber *> * _Nonnull");
+        let refined = e.map_ret("NS_REFINED_FOR_SWIFT NSDictionary<NSString *, NSNumber *> *");
+        assert!(matches!(plain, Ret::TextMap(MapVal::ScalarF64)));
+        assert!(matches!(refined, Ret::TextMap(MapVal::ScalarF64)));
     }
 }
