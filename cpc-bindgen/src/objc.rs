@@ -22,6 +22,8 @@ pub struct ObjcEmitter {
     body: String,
     block_helpers: String,
     needs_vec: bool,
+    needs_synth: bool,
+    synth_key: u64,
     typedefs: HashMap<String, String>,
     enums: HashMap<String, EnumInfo>,
     used_enums: Vec<String>,
@@ -71,6 +73,8 @@ impl ObjcEmitter {
             body: String::new(),
             block_helpers: String::new(),
             needs_vec: false,
+            needs_synth: false,
+            synth_key: 0x7000,
             typedefs: HashMap::new(),
             enums: HashMap::new(),
             used_enums: Vec::new(),
@@ -123,6 +127,7 @@ impl ObjcEmitter {
         let mut current_file: Option<String> = None;
         let mut interfaces: Vec<serde_json::Value> = Vec::new();
         let mut categories: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+        let mut protocols: Vec<serde_json::Value> = Vec::new();
         for decl in inner {
             if let Some(loc) = decl.get("loc") {
                 if let Some(f) = loc_file(loc) {
@@ -130,7 +135,10 @@ impl ObjcEmitter {
                 }
             }
             let kind = decl.get("kind").and_then(|v| v.as_str());
-            if kind != Some("ObjCInterfaceDecl") && kind != Some("ObjCCategoryDecl") {
+            if kind != Some("ObjCInterfaceDecl")
+                && kind != Some("ObjCCategoryDecl")
+                && kind != Some("ObjCProtocolDecl")
+            {
                 continue;
             }
             if decl.get("loc").map(loc_included).unwrap_or(false) {
@@ -141,6 +149,8 @@ impl ObjcEmitter {
             }
             if kind == Some("ObjCInterfaceDecl") {
                 interfaces.push(decl.clone());
+            } else if kind == Some("ObjCProtocolDecl") {
+                protocols.push(decl.clone());
             } else if let Some(cls) = decl
                 .get("interface")
                 .and_then(|i| i.get("name"))
@@ -154,6 +164,10 @@ impl ObjcEmitter {
             let cats: &[serde_json::Value] =
                 categories.get(cls).map(|v| v.as_slice()).unwrap_or(&[]);
             self.emit_interface(itf, cats);
+        }
+        // Delegate / data-source protocols -> runtime class-synthesis helpers.
+        for proto in &protocols {
+            self.emit_protocol_delegate(proto);
         }
 
         // Assemble: preamble + the enum defs actually used + interface bodies.
@@ -178,6 +192,9 @@ impl ObjcEmitter {
         p.push_str("import \"stdlib/option\" as option;\n");
         if self.needs_vec {
             p.push_str("import \"stdlib/vec\" as vec;\n");
+        }
+        if self.needs_synth {
+            p.push_str("import \"objc/synthesis\" as synth;\n");
         }
         p.push('\n');
         p
@@ -312,6 +329,140 @@ impl ObjcEmitter {
             self.body.push_str("    fn drop(ref this) {\n        rt::release(this._obj);\n    }\n");
         }
         self.body.push_str("}\n\n");
+    }
+
+    // A delegate / data-source protocol -> a runtime class-synthesis helper per
+    // callback: the user fills a caller-owned `<Proto>_<sel>_ctx` (handler fn +
+    // their state pointer) and `create_<Proto>_<sel>(ctx)` synthesizes a class
+    // whose IMP is a C+ trampoline that reads the ctx back off the instance (as
+    // an associated object) and calls the handler. Scoped to void-returning
+    // callbacks whose every argument is an object (the v_Nid IMP shapes); other
+    // shapes are listed as SKIPPED so coverage is explicit.
+    fn emit_protocol_delegate(&mut self, proto: &serde_json::Value) {
+        let proto_objc = match proto.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        let proto_ty = self.cplus_type_name(&proto_objc);
+        let methods: Vec<serde_json::Value> = proto
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|m| {
+                        m.get("kind").and_then(|k| k.as_str()) == Some("ObjCMethodDecl")
+                            && m.get("instance").and_then(|b| b.as_bool()).unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if methods.is_empty() {
+            return;
+        }
+        self.body.push_str(&format!(
+            "// `{proto_objc}` delegate protocol -> runtime class-synthesis helpers.\n"
+        ));
+        for m in &methods {
+            let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let ret_qt = m
+                .get("returnType")
+                .and_then(|t| t.get("qualType"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("void");
+            let params: Vec<(String, String)> = m
+                .get("inner")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter(|p| p.get("kind").and_then(|k| k.as_str()) == Some("ParmVarDecl"))
+                        .map(|p| {
+                            (
+                                p.get("name").and_then(|n| n.as_str()).unwrap_or("arg").to_string(),
+                                p.get("type").and_then(|t| t.get("qualType")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let (rb, _) = strip_nullability(ret_qt);
+            if rb.trim() != "void" {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: non-void delegate callback\n"));
+                continue;
+            }
+            if params.len() > 5 || !params.iter().all(|(_, qt)| self.is_object_arg(qt)) {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: arg shape (only <=5 object args modelled)\n"));
+                continue;
+            }
+            self.emit_delegate_callback(&proto_objc, &proto_ty, &sel, params.len());
+        }
+        self.body.push('\n');
+    }
+
+    fn emit_delegate_callback(&mut self, proto_objc: &str, proto_ty: &str, sel: &str, n: usize) {
+        self.needs_synth = true;
+        let key = self.synth_key;
+        self.synth_key += 1;
+        let mid = selector_ident(sel);
+        let ctx_ty = format!("{proto_ty}_{mid}_ctx");
+        let key_fn = format!("{proto_ty}_{mid}_key");
+        let imp_fn = format!("{proto_ty}_{mid}_imp");
+        let class_name = format!("Cplus_{proto_ty}_{mid}");
+        // handler: fn(user, <n object args>); every arg crosses as *u8.
+        let handler_ty = format!("fn(*u8{})", ", *u8".repeat(n));
+        let imp_params = {
+            let mut v = vec!["self_obj: *u8".to_string(), "cmd: *u8".to_string()];
+            for i in 0..n {
+                v.push(format!("a{i}: *u8"));
+            }
+            v.join(", ")
+        };
+        let call_args = {
+            let mut v = vec!["u".to_string()];
+            for i in 0..n {
+                v.push(format!("a{i}"));
+            }
+            v.join(", ")
+        };
+        let types = format!("v@:{}", "@".repeat(n)); // void, self, _cmd, n objects
+
+        let mut s = String::new();
+        s.push_str(&format!("// `{proto_objc}` callback `{sel}` ({n} object arg(s)).\n"));
+        s.push_str(&format!("struct {ctx_ty} {{\n    handler: {handler_ty},\n    opaque user: *u8,\n}}\n\n"));
+        s.push_str(&format!(
+            "fn {ctx_ty}_new(handler: {handler_ty}, user: *u8) -> {ctx_ty} {{\n    return {ctx_ty} {{ handler: handler, user: user }};\n}}\n\n"
+        ));
+        s.push_str(&format!("fn {key_fn}() -> *u8 {{\n    return {{ {key} as *u8 }};\n}}\n\n"));
+        s.push_str(&format!("fn {imp_fn}({imp_params}) {{\n"));
+        s.push_str(&format!("    let c: *{ctx_ty} = {{ synth::get_associated(self_obj, {key_fn}()) as *{ctx_ty} }};\n"));
+        s.push_str(&format!("    let f: {handler_ty} = {{ (*c).handler }};\n"));
+        s.push_str("    let u: *u8 = { (*c).user };\n");
+        s.push_str(&format!("    f({call_args});\n"));
+        s.push_str("    return;\n}\n\n");
+        s.push_str(&format!("fn create_{proto_ty}_{mid}(ctx: *{ctx_ty}) -> *u8 {{\n"));
+        s.push_str(&format!("    let name: *u8 = #str_ptr(\"{class_name}\\0\");\n"));
+        s.push_str("    var cls: *u8 = rt::get_class(name);\n");
+        s.push_str("    if cls == { 0 as *u8 } {\n");
+        s.push_str("        cls = synth::allocate_class_pair(rt::get_class(#str_ptr(\"NSObject\\0\")), name, 0 as usize);\n");
+        s.push_str(&format!(
+            "        let added: i8 = synth::add_method_v_{n}id(cls, rt::sel(#str_ptr(\"{sel}\\0\")), {imp_fn}, #str_ptr(\"{types}\\0\"));\n"
+        ));
+        s.push_str("        synth::register_class_pair(cls);\n");
+        s.push_str("    }\n");
+        s.push_str("    let d: *u8 = synth::alloc_init_class(cls);\n");
+        s.push_str(&format!("    synth::set_associated(d, {key_fn}(), {{ ctx as *u8 }});\n"));
+        s.push_str("    return d;\n}\n\n");
+        self.body.push_str(&s);
+    }
+
+    fn is_object_arg(&self, qt: &str) -> bool {
+        let (b, _) = strip_nullability(qt);
+        let b = b.trim();
+        if b.contains('^') {
+            return false;
+        }
+        b == "id" || b.ends_with('*')
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool) {
@@ -1034,4 +1185,14 @@ fn snake(s: &str) -> String {
         }
     }
     out
+}
+
+/// A snake_case identifier for a whole selector (joining every keyword), e.g.
+/// `parser:didStartElement:` -> `parser_did_start_element`.
+fn selector_ident(sel: &str) -> String {
+    sel.split(':')
+        .filter(|s| !s.is_empty())
+        .map(snake)
+        .collect::<Vec<_>>()
+        .join("_")
 }

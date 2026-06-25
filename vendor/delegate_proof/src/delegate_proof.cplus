@@ -8,6 +8,7 @@
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
+import "./xmlparser" as xml;
 
 // Stable per-object key for the associated handler context (identity only —
 // never dereferenced by the runtime).
@@ -46,6 +47,37 @@ fn synthesized_xml_delegate_counts_elements() {
     synth::set_associated(delegate, assoc_key(), cp);
 
     // Drive a real NSXMLParser; parse() fires the IMP synchronously per element.
+    let parser_cls: *u8 = rt::get_class(#str_ptr("NSXMLParser\0"));
+    let alloced: *u8 = rt::msg_id(parser_cls, rt::sel(#str_ptr("alloc\0")));
+    let parser: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithData:\0")), data);
+    rt::msg_void_id(parser, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    let ok: i8 = rt::msg_i8(parser, rt::sel(#str_ptr("parse\0")));
+
+    assert ok != (0 as i8);
+    assert count == (3 as i64);
+    return;
+}
+
+// Same proof, but through the cpc-bindgen-GENERATED delegate synthesizer
+// (xmlparser.cplus). The generator emits the ctx struct, its constructor, the
+// IMP trampoline, and create_<Proto>_<sel>; here we only supply the handler.
+fn gen_count_start(user: *u8, parser: *u8, name: *u8, ns: *u8, qname: *u8, attrs: *u8) {
+    let counter: *i64 = { user as *i64 };
+    { *counter = (*counter) +% (1 as i64); };
+    return;
+}
+
+#[test]
+fn generated_xml_delegate_counts_elements() {
+    let xml_str: *u8 = bridge::nsstring("<root><child/><child/></root>");
+    let data: *u8 = rt::msg_id_u64(xml_str, rt::sel(#str_ptr("dataUsingEncoding:\0")), 4 as u64);
+
+    var count: i64 = 0;
+    let cp: *u8 = { #addr_of(count) as *u8 };
+    var ctx: xml::XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx =
+        xml::XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes_ctx_new(gen_count_start, cp);
+    let delegate: *u8 = xml::create_XMLParserDelegate_parser_did_start_element_namespace_u_r_i_qualified_name_attributes(#addr_of(ctx));
+
     let parser_cls: *u8 = rt::get_class(#str_ptr("NSXMLParser\0"));
     let alloced: *u8 = rt::msg_id(parser_cls, rt::sel(#str_ptr("alloc\0")));
     let parser: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithData:\0")), data);
