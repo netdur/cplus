@@ -1,0 +1,21 @@
+[package]
+name    = "cblas"
+version = "0.0.1"
+edition = "2026"
+
+# Reference CBLAS bindings — the cross-platform CPU-numerics fallback
+# (docs/GPU.md): "no GPU available", or problems small enough that
+# host<->device transfer would dominate. On Apple Silicon prefer
+# vendor/accelerate (Apple hand-tunes it); everywhere else, link a CBLAS
+# provider here.
+#
+# `openblas` is the common high-performance choice and ships the CBLAS
+# interface (cblas_sgemm, ...). It's on the default linker path on most
+# distros (Debian/Ubuntu: libopenblas-dev, which also registers as the
+# system libblas). Swap `libs` for your provider if needed — e.g.
+# ["cblas", "blas"] for Netlib reference BLAS, or an MKL config. If the
+# provider lives outside the default path, add `search-paths = ["..."]`.
+[link]
+libs = ["openblas"]
+
+[dependencies]
