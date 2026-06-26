@@ -1,0 +1,213 @@
+// vendor/rt/src/pool.cplus — fixed-capacity object pool.
+//
+// An allocation-free slot allocator: a fixed array of `u64` cells plus an
+// intrusive free-list threaded through a parallel index array. `acquire`
+// hands out a free slot index in O(1); `release` returns it in O(1). No
+// `malloc`, no `free`, no blocking — so the whole API is `#[no_alloc]` +
+// `#[no_block]` and usable from a real-time hot path that needs to recycle
+// fixed-size objects (voice handles, event records, particle slots).
+//
+// Single-owner: unlike `SpscRingU64` this pool is not internally
+// synchronized — one thread owns it (or the caller adds external
+// synchronization). That keeps `acquire`/`release` branch-free of atomics.
+//
+// Capacity is a fixed 1024 (const-generic struct params aren't available
+// yet). A `u64` cell carries a value, an index, or a bit-cast `f64`; for
+// richer payloads, store an index into a parallel caller-owned array.
+//
+// The public surface follows naming_guideline.md: the slot array, the
+// free-list links, the free-list head, and the occupancy counter are all
+// hidden behind `_`-fields; occupancy reads through `count()` (the name
+// the ring and `Text`/`Vec` use); slot access reads as a phrase
+// (`p.get(at: slot)` / `p.set(value, at: slot)`); fullness is an
+// assertion (`is_full`); and `acquire` reports exhaustion as
+// `Option::None`.
+
+import "stdlib/option" as option;
+
+// Sentinel for "no slot" in the free-list links and `_free_head`. u32 max.
+#[no_alloc] #[no_block]
+fn pool_none() -> u32 { return 4294967295 as u32; }
+
+struct FixedPoolU64 {
+    // Slot storage — payload for each index.
+    _slots: [u64; 1024],
+    // Intrusive free-list: `_links[i]` is the next free slot after `i`
+    // (only meaningful while `i` is free), or the sentinel at the tail.
+    _links: [u32; 1024],
+    // Index of the first free slot, or the sentinel when the pool is full.
+    _free_head: u32,
+    _in_use: usize,
+}
+
+impl FixedPoolU64 {
+    // Build a pool with every slot free, linked 0 → 1 → … → 1023 → sentinel.
+    #[no_alloc] #[no_block]
+    fn new() -> FixedPoolU64 {
+        var p: FixedPoolU64 = FixedPoolU64 {
+            _slots: [0u64; 1024],
+            _links: [0u32; 1024],
+            _free_head: 0 as u32,
+            _in_use: 0 as usize,
+        };
+        var i: usize = 0 as usize;
+        while i < (1024 as usize) {
+            // Last slot points at the sentinel; every other at its successor.
+            if i == ((1024 as usize) -% (1 as usize)) {
+                p._links[i] = pool_none();
+            } else {
+                p._links[i] = (i +% (1 as usize)) as u32;
+            }
+            i = i +% (1 as usize);
+        }
+        return p;
+    }
+
+    fn capacity(this) -> usize { return 1024 as usize; }
+
+    // Number of slots currently handed out (acquired but not yet released).
+    // Named `count()` to match the ring's occupancy reader and `Text`/`Vec`.
+    #[no_alloc] #[no_block]
+    fn count(this) -> usize { return this._in_use; }
+
+    // Slots still free to acquire — `capacity() - count()`.
+    #[no_alloc] #[no_block]
+    fn available(this) -> usize { return (1024 as usize) -% this._in_use; }
+
+    #[no_alloc] #[no_block]
+    fn is_full(this) -> bool { return this._free_head == pool_none(); }
+
+    #[no_alloc] #[no_block]
+    fn is_empty(this) -> bool { return this._in_use == (0 as usize); }
+
+    // Claim a free slot. Returns its index, or `None` (without blocking)
+    // when the pool is exhausted.
+    #[no_alloc] #[no_block]
+    fn acquire(ref this) -> option::Option[u32] {
+        if this._free_head == pool_none() {
+            return option::Option[u32]::None;
+        }
+        let idx: u32 = this._free_head;
+        this._free_head = this._links[idx as usize];
+        this._in_use = this._in_use +% (1 as usize);
+        return option::Option[u32]::Some(idx);
+    }
+
+    // Return a slot to the free list. The caller must not reuse `at` after
+    // release; releasing a slot that is not in use corrupts the free list,
+    // so callers are responsible for release-once discipline.
+    #[no_alloc] #[no_block]
+    fn release(ref this, at: u32) {
+        this._links[at as usize] = this._free_head;
+        this._free_head = at;
+        this._in_use = this._in_use -% (1 as usize);
+        return;
+    }
+
+    // Read the payload stored in an acquired slot. Reads as "get at slot".
+    #[no_alloc] #[no_block]
+    fn get(this, at: u32) -> u64 { return this._slots[at as usize]; }
+
+    // Store a payload into an acquired slot. Reads as "set value at slot".
+    #[no_alloc] #[no_block]
+    fn set(ref this, value: u64, at: u32) { this._slots[at as usize] = value; return; }
+}
+
+// ---------------- Unit tests ----------------
+
+#[test]
+fn test_pool_new_all_available() {
+    let p: FixedPoolU64 = FixedPoolU64::new();
+    assert p.capacity() == (1024 as usize);
+    assert p.available() == (1024 as usize);
+    assert p.count() == (0 as usize);
+    assert p.is_empty();
+    assert (p.is_full()) == false;
+}
+
+#[test]
+fn test_pool_acquire_distinct_indices() {
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    guard let option::Option[u32]::Some(a) = p.acquire() else { assert false; return; };
+    guard let option::Option[u32]::Some(b) = p.acquire() else { assert false; return; };
+    assert a != b;
+    assert p.count() == (2 as usize);
+    assert p.available() == (1022 as usize);
+    assert (p.is_empty()) == false;
+}
+
+#[test]
+fn test_pool_get_set_round_trip() {
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    guard let option::Option[u32]::Some(slot) = p.acquire() else { assert false; return; };
+    p.set(1234 as u64, at: slot);
+    assert p.get(at: slot) == (1234 as u64);
+}
+
+#[test]
+fn test_pool_set_labels_free_order() {
+    // Labeled params are order-independent.
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    guard let option::Option[u32]::Some(slot) = p.acquire() else { assert false; return; };
+    p.set(at: slot, value: 99 as u64);
+    assert p.get(at: slot) == (99 as u64);
+}
+
+#[test]
+fn test_pool_release_recovers_slot() {
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    guard let option::Option[u32]::Some(a) = p.acquire() else { assert false; return; };
+    assert p.count() == (1 as usize);
+    p.release(a);
+    assert p.count() == (0 as usize);
+    assert p.is_empty();
+    assert p.available() == (1024 as usize);
+    // The freed slot is handed back on the next acquire (LIFO free list).
+    guard let option::Option[u32]::Some(b) = p.acquire() else { assert false; return; };
+    assert b == a;
+}
+
+#[test]
+fn test_pool_exhaustion_returns_none() {
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    var i: usize = 0 as usize;
+    while i < (1024 as usize) {
+        match p.acquire() {
+            option::Option[u32]::Some(_) => { assert true; }
+            option::Option[u32]::None => { assert false; }
+        };
+        i = i +% (1 as usize);
+    }
+    assert p.is_full();
+    assert p.available() == (0 as usize);
+    // The 1025th acquire fails without blocking.
+    match p.acquire() {
+        option::Option[u32]::Some(_) => { assert false; }
+        option::Option[u32]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_pool_drain_refill_cycle() {
+    var p: FixedPoolU64 = FixedPoolU64::new();
+    // Acquire all, then release all, then acquire all again.
+    var i: usize = 0 as usize;
+    while i < (1024 as usize) {
+        let _slot: option::Option[u32] = p.acquire();
+        i = i +% (1 as usize);
+    }
+    assert p.is_full();
+    var j: u32 = 0 as u32;
+    while j < (1024 as u32) {
+        p.release(j);
+        j = j +% (1 as u32);
+    }
+    assert p.count() == (0 as usize);
+    // Refill must succeed for every slot.
+    var k: usize = 0 as usize;
+    while k < (1024 as usize) {
+        guard let option::Option[u32]::Some(_idx) = p.acquire() else { assert false; return; };
+        k = k +% (1 as usize);
+    }
+    assert p.is_full();
+}
