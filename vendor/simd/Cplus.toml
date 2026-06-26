@@ -1,0 +1,24 @@
+[package]
+name    = "simd"
+version = "0.0.1"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+
+# v0.0.8 Phase 2: blessed `vendor/simd` package. Wraps the v0.0.7 SIMD
+# method matrix (`f32x4`, `f64x2`, etc.) into a clean 3D-math API:
+# Vec3 / Vec4 / Mat4x4 with `dot`, `cross`, `length`, `normalize`,
+# `reflect`, `refract`, `lerp`, `min`, `max`, `clamp`.
+#
+# Library-only — no compiler changes. Validates that the v0.0.7 SIMD
+# surface is sufficient for a real consumer to write a vector-math
+# library in pure C+.
+#
+# Convention: `f32x4` lane 3 is zero for `Vec3` so dot/cross math
+# stays correct without per-call masking. Documented at every site
+# where the invariant is load-bearing.
+
+# No `[link]` section needed — pure C+ source, no FFI symbols beyond
+# what cpc already wires in via the f32x4 LLVM intrinsics
+# (`llvm.fma.v4f32`, `llvm.sqrt.v4f32`, etc.).

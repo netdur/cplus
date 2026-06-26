@@ -1,0 +1,233 @@
+// simd/vec4.cplus — 4D float vector backed by `f32x4`.
+//
+// Unlike `Vec3`, `Vec4` uses every lane — no invariant. Convenient
+// for homogeneous coordinates (x, y, z, w) and as the row/column type
+// of `Mat4x4`. Dot product is straight `mul.sum()` over all 4 lanes;
+// no swizzle gymnastics needed.
+//
+// Naming-guideline notes (naming_guideline.md):
+//   - The raw `f32x4` handle is hidden behind `_v`; read it through
+//     `raw()`, build from one with `from_raw(_)`.
+//   - `clamp(min:, max:)` and `lerp(_, at:)` take labeled parameters so
+//     the call reads as a phrase.
+//   - `normalize()` returns `None` for a zero-length vector.
+
+import "stdlib/option" as option;
+
+struct Vec4 {
+    _v: f32x4,
+}
+
+impl Vec4 {
+    // Construction --------------------------------------------------
+
+    fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+        return Vec4 { _v: f32x4::new(x, y, z, w) };
+    }
+
+    fn splat(s: f32) -> Vec4 {
+        return Vec4 { _v: f32x4::splat(s) };
+    }
+
+    fn zero() -> Vec4 {
+        return Vec4 { _v: f32x4::splat(0.0f32) };
+    }
+
+    // Lane accessors ------------------------------------------------
+
+    fn x(this) -> f32 { return this._v.lane(0 as u32); }
+    fn y(this) -> f32 { return this._v.lane(1 as u32); }
+    fn z(this) -> f32 { return this._v.lane(2 as u32); }
+    fn w(this) -> f32 { return this._v.lane(3 as u32); }
+
+    // Arithmetic ----------------------------------------------------
+
+    fn add(this, o: Vec4) -> Vec4 {
+        return Vec4 { _v: this._v.add(o._v) };
+    }
+
+    fn sub(this, o: Vec4) -> Vec4 {
+        return Vec4 { _v: this._v.sub(o._v) };
+    }
+
+    fn mul(this, o: Vec4) -> Vec4 {
+        return Vec4 { _v: this._v.mul(o._v) };
+    }
+
+    fn scale(this, s: f32) -> Vec4 {
+        return Vec4 { _v: this._v.mul(f32x4::splat(s)) };
+    }
+
+    fn neg(this) -> Vec4 {
+        return Vec4 { _v: this._v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
+    }
+
+    // Geometric ops -------------------------------------------------
+
+    fn dot(this, o: Vec4) -> f32 {
+        return this._v.mul(o._v).sum();
+    }
+
+    fn len2(this) -> f32 {
+        return this.dot(this);
+    }
+
+    fn length(this) -> f32 {
+        return f_sqrt(this.dot(this));
+    }
+
+    // Unit vector in the same direction, or `None` for a zero-length
+    // vector (its direction is undefined).
+    fn normalize(this) -> option::Option[Vec4] {
+        let len: f32 = this.length();
+        if len == 0.0f32 {
+            return option::Option[Vec4]::None;
+        }
+        let inv: f32 = 1.0f32 / len;
+        return option::some::[Vec4](this.scale(inv));
+    }
+
+    // Lane-wise helpers ---------------------------------------------
+
+    fn min(this, o: Vec4) -> Vec4 {
+        return Vec4 { _v: this._v.min(o._v) };
+    }
+
+    fn max(this, o: Vec4) -> Vec4 {
+        return Vec4 { _v: this._v.max(o._v) };
+    }
+
+    // Clamp each lane into [min, max]: `v.clamp(min: lo, max: hi)`.
+    fn clamp(this, min: Vec4, max: Vec4) -> Vec4 {
+        return this.max(min).min(max);
+    }
+
+    // Linear interpolation `this + t * (o - this)`: `a.lerp(b, at: t)`.
+    fn lerp(this, o: Vec4, at: f32) -> Vec4 {
+        let diff: f32x4 = o._v.sub(this._v);
+        let tv: f32x4 = f32x4::splat(at);
+        return Vec4 { _v: diff.fma(tv, this._v) };
+    }
+
+    // Inner accessor for `mat4x4` cross-module use ------------------
+
+    fn raw(this) -> f32x4 {
+        return this._v;
+    }
+
+    fn from_raw(v: f32x4) -> Vec4 {
+        return Vec4 { _v: v };
+    }
+}
+
+extern fn sqrtf(x: f32) -> f32;
+fn f_sqrt(x: f32) -> f32 {
+    return { sqrtf(x) };
+}
+
+// ---------------- in-package tests (cpc test) ------------------------
+
+fn approx4(a: f32, b: f32) -> bool {
+    let d: f32 = a - b;
+    if d < 0.0f32 { return (0.0f32 - d) < 0.0001f32; }
+    return d < 0.0001f32;
+}
+
+#[test]
+fn test_v4_new_all_lanes() {
+    let v: Vec4 = Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+    assert v.x() == 1.0f32 && v.y() == 2.0f32;
+    assert v.z() == 3.0f32 && v.w() == 4.0f32;
+}
+
+#[test]
+fn test_v4_splat_zero() {
+    let s: Vec4 = Vec4::splat(9.0f32);
+    assert s.x() == 9.0f32 && s.w() == 9.0f32;
+    let z: Vec4 = Vec4::zero();
+    assert z.x() == 0.0f32 && z.w() == 0.0f32;
+}
+
+#[test]
+fn test_v4_raw_roundtrip() {
+    let v: Vec4 = Vec4::new(2.0f32, 4.0f32, 6.0f32, 8.0f32);
+    let r: Vec4 = Vec4::from_raw(v.raw());
+    assert r.x() == 2.0f32 && r.w() == 8.0f32;
+}
+
+#[test]
+fn test_v4_add_sub_mul_scale_neg() {
+    let a: Vec4 = Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+    let b: Vec4 = Vec4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32);
+    let s: Vec4 = a.add(b);
+    assert s.x() == 6.0f32 && s.w() == 12.0f32;
+    let d: Vec4 = b.sub(a);
+    assert d.x() == 4.0f32 && d.w() == 4.0f32;
+    let h: Vec4 = a.mul(b);
+    assert h.x() == 5.0f32 && h.w() == 32.0f32;
+    let sc: Vec4 = a.scale(3.0f32);
+    assert sc.x() == 3.0f32 && sc.w() == 12.0f32;
+    let n: Vec4 = a.neg();
+    assert n.x() == (0.0f32 - 1.0f32) && n.w() == (0.0f32 - 4.0f32);
+}
+
+#[test]
+fn test_v4_dot_uses_all_lanes() {
+    let a: Vec4 = Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+    let b: Vec4 = Vec4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32);
+    // 5 + 12 + 21 + 32 = 70 — the w lane participates.
+    assert a.dot(b) == 70.0f32;
+}
+
+#[test]
+fn test_v4_len2_length() {
+    let v: Vec4 = Vec4::new(1.0f32, 2.0f32, 2.0f32, 4.0f32);
+    // 1 + 4 + 4 + 16 = 25.
+    assert v.len2() == 25.0f32;
+    assert v.length() == 5.0f32;
+}
+
+#[test]
+fn test_v4_normalize_unit() {
+    let v: Vec4 = Vec4::new(0.0f32, 0.0f32, 6.0f32, 8.0f32);
+    guard let option::Option[Vec4]::Some(u) = v.normalize() else {
+        assert false;
+        return;
+    };
+    assert approx4(u.length(), 1.0f32);
+    assert approx4(u.z(), 0.6f32);
+    assert approx4(u.w(), 0.8f32);
+}
+
+#[test]
+fn test_v4_normalize_zero_is_none() {
+    // Negative case.
+    match Vec4::zero().normalize() {
+        option::Option[Vec4]::Some(_) => { assert false; }
+        option::Option[Vec4]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_v4_min_max_clamp() {
+    let a: Vec4 = Vec4::new(1.0f32, 5.0f32, 3.0f32, 9.0f32);
+    let b: Vec4 = Vec4::new(4.0f32, 2.0f32, 6.0f32, 7.0f32);
+    let mn: Vec4 = a.min(b);
+    assert mn.x() == 1.0f32 && mn.y() == 2.0f32 && mn.w() == 7.0f32;
+    let mx: Vec4 = a.max(b);
+    assert mx.x() == 4.0f32 && mx.y() == 5.0f32 && mx.w() == 9.0f32;
+    let lo: Vec4 = Vec4::splat(2.0f32);
+    let hi: Vec4 = Vec4::splat(4.0f32);
+    let c: Vec4 = a.clamp(min: lo, max: hi);
+    assert c.x() == 2.0f32 && c.y() == 4.0f32 && c.z() == 3.0f32 && c.w() == 4.0f32;
+}
+
+#[test]
+fn test_v4_lerp() {
+    let a: Vec4 = Vec4::zero();
+    let b: Vec4 = Vec4::new(10.0f32, 20.0f32, 30.0f32, 40.0f32);
+    let mid: Vec4 = a.lerp(b, at: 0.5f32);
+    assert approx4(mid.x(), 5.0f32) && approx4(mid.w(), 20.0f32);
+    let end: Vec4 = a.lerp(b, at: 1.0f32);
+    assert approx4(end.x(), 10.0f32) && approx4(end.w(), 40.0f32);
+}

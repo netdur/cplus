@@ -1,0 +1,191 @@
+// simd/mat4x4.cplus — 4x4 float matrix as 4 columns of `Vec4`.
+//
+// Column-major: column 0 is the first column (the x basis vector
+// in a typical world-from-model transform). Matches OpenGL / Metal /
+// most graphics APIs and gives a clean SIMD-friendly mat-vec product:
+//
+//   M * v  =  col0 * v.x  +  col1 * v.y  +  col2 * v.z  +  col3 * v.w
+//
+// Each scalar-times-column step is one `fmul <4 x float>`; summing
+// four of them is three `fma <4 x float>` operations (or three
+// `fadd` + three `fmul` if the FMA fold doesn't fire).
+//
+// 3D linear ops use the upper-left 3×3 submatrix; the last row/column
+// carries homogeneous-coordinate / translation data. No separate
+// Mat3x3 — see the v0.0.8 plan rationale (3×3 either pads to 3×4 or
+// hand-unrolls, both of which beat the purpose).
+//
+// Naming-guideline notes (naming_guideline.md): the `[Vec4; 4]` column
+// store is hidden behind `_cols`; columns are read through the
+// role-named `col(at:)` accessor, and `mul_vec(_)` reads as
+// "multiply by vector".
+
+import "./vec4" as vec4;
+
+struct Mat4x4 {
+    _cols: [vec4::Vec4; 4],
+}
+
+impl Mat4x4 {
+    // Construction --------------------------------------------------
+
+    fn new(c0: vec4::Vec4, c1: vec4::Vec4, c2: vec4::Vec4, c3: vec4::Vec4) -> Mat4x4 {
+        return Mat4x4 { _cols: [c0, c1, c2, c3] };
+    }
+
+    fn zero() -> Mat4x4 {
+        let z: vec4::Vec4 = vec4::Vec4::zero();
+        return Mat4x4 { _cols: [z, z, z, z] };
+    }
+
+    fn identity() -> Mat4x4 {
+        return Mat4x4 {
+            _cols: [
+                vec4::Vec4::new(1.0f32, 0.0f32, 0.0f32, 0.0f32),
+                vec4::Vec4::new(0.0f32, 1.0f32, 0.0f32, 0.0f32),
+                vec4::Vec4::new(0.0f32, 0.0f32, 1.0f32, 0.0f32),
+                vec4::Vec4::new(0.0f32, 0.0f32, 0.0f32, 1.0f32),
+            ],
+        };
+    }
+
+    // Column access -------------------------------------------------
+
+    // The column at index 0..=3, read as `m.col(at: 2)`. Out-of-range
+    // traps at the array bounds-check (cpc inserts those).
+    fn col(this, at: u32) -> vec4::Vec4 {
+        return this._cols[at as usize];
+    }
+
+    // Matrix * vector (column-major) --------------------------------
+
+    fn mul_vec(this, v: vec4::Vec4) -> vec4::Vec4 {
+        // result = col0 * splat(v.x) + col1 * splat(v.y) + ...
+        // Built with FMA so each step is one `fma <4 x float>`.
+        let c0: f32x4 = this._cols[0 as usize].raw();
+        let c1: f32x4 = this._cols[1 as usize].raw();
+        let c2: f32x4 = this._cols[2 as usize].raw();
+        let c3: f32x4 = this._cols[3 as usize].raw();
+        let acc0: f32x4 = c0.mul(f32x4::splat(v.x()));
+        let acc1: f32x4 = c1.fma(f32x4::splat(v.y()), acc0);
+        let acc2: f32x4 = c2.fma(f32x4::splat(v.z()), acc1);
+        let acc3: f32x4 = c3.fma(f32x4::splat(v.w()), acc2);
+        return vec4::Vec4::from_raw(acc3);
+    }
+
+    // Matrix * matrix -----------------------------------------------
+
+    fn mul(this, o: Mat4x4) -> Mat4x4 {
+        // (M1 * M2).col_i  =  M1 * (M2.col_i).
+        let r0: vec4::Vec4 = this.mul_vec(o._cols[0 as usize]);
+        let r1: vec4::Vec4 = this.mul_vec(o._cols[1 as usize]);
+        let r2: vec4::Vec4 = this.mul_vec(o._cols[2 as usize]);
+        let r3: vec4::Vec4 = this.mul_vec(o._cols[3 as usize]);
+        return Mat4x4 { _cols: [r0, r1, r2, r3] };
+    }
+
+    // Element-wise add / sub (rarely useful but cheap) --------------
+
+    fn add(this, o: Mat4x4) -> Mat4x4 {
+        return Mat4x4 {
+            _cols: [
+                this._cols[0 as usize].add(o._cols[0 as usize]),
+                this._cols[1 as usize].add(o._cols[1 as usize]),
+                this._cols[2 as usize].add(o._cols[2 as usize]),
+                this._cols[3 as usize].add(o._cols[3 as usize]),
+            ],
+        };
+    }
+
+    fn scale(this, s: f32) -> Mat4x4 {
+        return Mat4x4 {
+            _cols: [
+                this._cols[0 as usize].scale(s),
+                this._cols[1 as usize].scale(s),
+                this._cols[2 as usize].scale(s),
+                this._cols[3 as usize].scale(s),
+            ],
+        };
+    }
+}
+
+// ---------------- in-package tests (cpc test) ------------------------
+
+#[test]
+fn test_identity_col() {
+    let m: Mat4x4 = Mat4x4::identity();
+    let c0: vec4::Vec4 = m.col(at: 0 as u32);
+    assert c0.x() == 1.0f32 && c0.y() == 0.0f32;
+    let c2: vec4::Vec4 = m.col(at: 2 as u32);
+    assert c2.z() == 1.0f32 && c2.w() == 0.0f32;
+}
+
+#[test]
+fn test_zero_matrix() {
+    let m: Mat4x4 = Mat4x4::zero();
+    let c1: vec4::Vec4 = m.col(at: 1 as u32);
+    assert c1.x() == 0.0f32 && c1.y() == 0.0f32;
+    assert c1.z() == 0.0f32 && c1.w() == 0.0f32;
+}
+
+#[test]
+fn test_new_preserves_columns() {
+    let m: Mat4x4 = Mat4x4::new(
+        vec4::Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32),
+        vec4::Vec4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32),
+        vec4::Vec4::new(9.0f32, 10.0f32, 11.0f32, 12.0f32),
+        vec4::Vec4::new(13.0f32, 14.0f32, 15.0f32, 16.0f32),
+    );
+    assert m.col(at: 0 as u32).x() == 1.0f32;
+    assert m.col(at: 3 as u32).w() == 16.0f32;
+}
+
+#[test]
+fn test_identity_times_vector_is_vector() {
+    let m: Mat4x4 = Mat4x4::identity();
+    let v: vec4::Vec4 = vec4::Vec4::new(2.0f32, 3.0f32, 4.0f32, 5.0f32);
+    let r: vec4::Vec4 = m.mul_vec(v);
+    assert r.x() == 2.0f32 && r.y() == 3.0f32;
+    assert r.z() == 4.0f32 && r.w() == 5.0f32;
+}
+
+#[test]
+fn test_scale_matrix_times_vector() {
+    // A diagonal scale matrix: x*2, y*3, z*4, w*1.
+    let m: Mat4x4 = Mat4x4::new(
+        vec4::Vec4::new(2.0f32, 0.0f32, 0.0f32, 0.0f32),
+        vec4::Vec4::new(0.0f32, 3.0f32, 0.0f32, 0.0f32),
+        vec4::Vec4::new(0.0f32, 0.0f32, 4.0f32, 0.0f32),
+        vec4::Vec4::new(0.0f32, 0.0f32, 0.0f32, 1.0f32),
+    );
+    let v: vec4::Vec4 = vec4::Vec4::new(1.0f32, 1.0f32, 1.0f32, 1.0f32);
+    let r: vec4::Vec4 = m.mul_vec(v);
+    assert r.x() == 2.0f32 && r.y() == 3.0f32 && r.z() == 4.0f32 && r.w() == 1.0f32;
+}
+
+#[test]
+fn test_identity_times_matrix_is_matrix() {
+    let id: Mat4x4 = Mat4x4::identity();
+    let m: Mat4x4 = Mat4x4::new(
+        vec4::Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32),
+        vec4::Vec4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32),
+        vec4::Vec4::new(9.0f32, 10.0f32, 11.0f32, 12.0f32),
+        vec4::Vec4::new(13.0f32, 14.0f32, 15.0f32, 16.0f32),
+    );
+    let p: Mat4x4 = id.mul(m);
+    assert p.col(at: 0 as u32).x() == 1.0f32;
+    assert p.col(at: 2 as u32).z() == 11.0f32;
+    assert p.col(at: 3 as u32).w() == 16.0f32;
+}
+
+#[test]
+fn test_add_and_scale() {
+    let a: Mat4x4 = Mat4x4::identity();
+    let b: Mat4x4 = Mat4x4::identity();
+    let s: Mat4x4 = a.add(b);
+    assert s.col(at: 0 as u32).x() == 2.0f32;
+    assert s.col(at: 1 as u32).y() == 2.0f32;
+    let h: Mat4x4 = a.scale(5.0f32);
+    assert h.col(at: 0 as u32).x() == 5.0f32;
+    assert h.col(at: 2 as u32).z() == 5.0f32;
+}

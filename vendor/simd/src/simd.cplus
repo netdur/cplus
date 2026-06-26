@@ -1,0 +1,13 @@
+// simd.cplus — umbrella entry for `cpc test`.
+//
+// simd is a library package with no bin target, so `cpc test` falls back to
+// `src/<package-name>.cplus` (this file) as the entry. Importing a module
+// compiles it and makes its `#[test]` functions discoverable.
+//
+// Run the whole simd unit suite, standalone, with:
+//     cd vendor/simd && cpc test
+
+import "./vec3" as vec3;
+import "./vec4" as vec4;
+import "./mat4x4" as mat4x4;
+import "./integer" as integer;
