@@ -1,0 +1,465 @@
+// jni-min: Core JNI interop types for C+
+// Maps the JVM's jni.h to C+ types using #[repr(C)] and TypeKind::FnPtr.
+//
+// Naming-guideline notes (naming_guideline.md):
+//   - `JValue` hides its raw argument word behind `_bits`; build a value with
+//     a role-named constructor that takes its content — `JValue::of_object(o)`,
+//     `of_int(n)`, `of_bool(b)`, `of_long(n)` — and read the raw word back with
+//     `bits()`. The package-level `arg_object` / `arg_int` / `arg_bool` /
+//     `arg_long` functions remain as thin shims: they are the cross-package
+//     surface the `android_view` package already calls by name, so they are
+//     kept for source compatibility.
+//   - DEFERRED (deliberately): the fn-pointer fields of `JNINativeInterface`
+//     and `JNIInvokeInterface` keep their exact `jni.h` C names (`FindClass`,
+//     `GetVersion`, `NewObjectA`, ...). These two structs are a byte-for-byte
+//     layout mirror of the JVM's interface tables, accessed by both position
+//     and field name from `android_view`; renaming them would break that
+//     documented "must exactly match jni.h" contract and the consumers. They
+//     are a thin C-ABI mirror, not an imperative API surface to re-skin.
+
+type jint = i32;
+type jlong = i64;
+type jbyte = i8;
+type jboolean = u8;
+type jchar = u16;
+type jshort = i16;
+type jfloat = f32;
+type jdouble = f64;
+type jsize = i32;
+
+// Opaque pointers to Java objects/classes
+type jobject = *u8;
+type jclass = *u8;
+type jstring = *u8;
+type jarray = *u8;
+type jobjectArray = *u8;
+type jbooleanArray = *u8;
+type jbyteArray = *u8;
+type jcharArray = *u8;
+type jshortArray = *u8;
+type jintArray = *u8;
+type jlongArray = *u8;
+type jfloatArray = *u8;
+type jdoubleArray = *u8;
+type jthrowable = *u8;
+type jweak = *u8;
+
+type jfieldID = *u8;
+type jmethodID = *u8;
+
+// In C, `JNIEnv` is `const JNINativeInterface*` and native methods receive
+// `JNIEnv *env` — a pointer to the thread-local table pointer. JNI functions
+// must be called with that double pointer (ART derives the thread state from
+// it); passing the bare table pointer trips an ART CHECK and aborts.
+type JNIEnv = *JNINativeInterface;
+type JavaVM = *JNIInvokeInterface;
+
+// JNI's `jvalue` is a C union. C+ does not expose C unions yet, so this
+// binding models each argument slot as the union's ABI size: one 8-byte word.
+// This is enough for object/int/boolean arguments used by the first Android
+// View wrapper slice. Float/double helpers should be added with real bit casts
+// when the package needs them.
+//
+// The raw 8-byte word is hidden behind `_bits`; construct a `JValue` through a
+// role-named constructor that takes its content, and read the word back with
+// `bits()`.
+#[repr(C)]
+struct JValue {
+    _bits: jlong,
+}
+
+impl JValue {
+    // A `jvalue` carrying an object reference. The reference's address is
+    // stored as the argument word; a null `jobject` becomes a zero word.
+    fn of_object(obj: jobject) -> JValue {
+        return JValue { _bits: { #addr(obj) as jlong } };
+    }
+
+    // A `jvalue` carrying a 32-bit Java `int`, sign-extended into the word.
+    fn of_int(value: jint) -> JValue {
+        return JValue { _bits: value as jlong };
+    }
+
+    // A `jvalue` carrying a Java `boolean` (0 or 1) in the low byte.
+    fn of_bool(value: jboolean) -> JValue {
+        return JValue { _bits: value as jlong };
+    }
+
+    // A `jvalue` carrying a 64-bit Java `long` directly as the word.
+    fn of_long(value: jlong) -> JValue {
+        return JValue { _bits: value };
+    }
+
+    // The raw 8-byte argument word as the JVM ABI sees it.
+    fn bits(this) -> jlong {
+        return this._bits;
+    }
+}
+
+// Cross-package shims: `android_view` calls these by name. Each forwards to the
+// matching `JValue::of_*` constructor.
+fn arg_object(obj: jobject) -> JValue {
+    return JValue::of_object(obj);
+}
+
+fn arg_int(v: jint) -> JValue {
+    return JValue::of_int(v);
+}
+
+fn arg_bool(v: jboolean) -> JValue {
+    return JValue::of_bool(v);
+}
+
+fn arg_long(v: jlong) -> JValue {
+    return JValue::of_long(v);
+}
+
+// The core JNI environment struct.
+// Note: This struct must exactly match the memory layout of JNINativeInterface_ in jni.h.
+// Since we only *read* from the JVM-provided pointer, we only need to define 
+// the fields up to the methods we actually intend to call.
+#[repr(C)]
+struct JNINativeInterface {
+    opaque reserved0: *u8,
+    opaque reserved1: *u8,
+    opaque reserved2: *u8,
+    opaque reserved3: *u8,
+    GetVersion: fn(*JNIEnv) -> jint,
+    DefineClass: fn(*JNIEnv, *u8, jobject, *u8, jsize) -> jclass,
+    FindClass: fn(*JNIEnv, *u8) -> jclass,
+    FromReflectedMethod: fn(*JNIEnv, jobject) -> jmethodID,
+    FromReflectedField: fn(*JNIEnv, jobject) -> jfieldID,
+    ToReflectedMethod: fn(*JNIEnv, jclass, jmethodID, jboolean) -> jobject,
+    GetSuperclass: fn(*JNIEnv, jclass) -> jclass,
+    IsAssignableFrom: fn(*JNIEnv, jclass, jclass) -> jboolean,
+    ToReflectedField: fn(*JNIEnv, jclass, jfieldID, jboolean) -> jobject,
+    Throw: fn(*JNIEnv, jthrowable) -> jint,
+    ThrowNew: fn(*JNIEnv, jclass, *u8) -> jint,
+    ExceptionOccurred: fn(*JNIEnv) -> jthrowable,
+    ExceptionDescribe: fn(*JNIEnv),
+    ExceptionClear: fn(*JNIEnv),
+    FatalError: fn(*JNIEnv, *u8),
+    PushLocalFrame: fn(*JNIEnv, jint) -> jint,
+    PopLocalFrame: fn(*JNIEnv, jobject) -> jobject,
+    NewGlobalRef: fn(*JNIEnv, jobject) -> jobject,
+    DeleteGlobalRef: fn(*JNIEnv, jobject),
+    DeleteLocalRef: fn(*JNIEnv, jobject),
+    IsSameObject: fn(*JNIEnv, jobject, jobject) -> jboolean,
+    NewLocalRef: fn(*JNIEnv, jobject) -> jobject,
+    EnsureLocalCapacity: fn(*JNIEnv, jint) -> jint,
+    AllocObject: fn(*JNIEnv, jclass) -> jobject,
+    NewObject: fn(*JNIEnv, jclass, jmethodID) -> jobject, // varargs conceptually
+    NewObjectV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jobject,
+    NewObjectA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jobject,
+    GetObjectClass: fn(*JNIEnv, jobject) -> jclass,
+    IsInstanceOf: fn(*JNIEnv, jobject, jclass) -> jboolean,
+    GetMethodID: fn(*JNIEnv, jclass, *u8, *u8) -> jmethodID,
+    CallObjectMethod: fn(*JNIEnv, jobject, jmethodID) -> jobject,
+    CallObjectMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    CallObjectMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    CallBooleanMethod: fn(*JNIEnv, jobject, jmethodID) -> jboolean,
+    CallBooleanMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    CallBooleanMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    CallByteMethod: fn(*JNIEnv, jobject, jmethodID) -> jbyte,
+    CallByteMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    CallByteMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    opaque reserved_call_char_method: *u8,
+    opaque reserved_call_char_method_v: *u8,
+    opaque reserved_call_char_method_a: *u8,
+    opaque reserved_call_short_method: *u8,
+    opaque reserved_call_short_method_v: *u8,
+    opaque reserved_call_short_method_a: *u8,
+    CallIntMethod: fn(*JNIEnv, jobject, jmethodID) -> jint,
+    CallIntMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jint,
+    CallIntMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jint,
+    opaque reserved_call_long_method: *u8,
+    opaque reserved_call_long_method_v: *u8,
+    opaque reserved_call_long_method_a: *u8,
+    opaque reserved_call_float_method: *u8,
+    opaque reserved_call_float_method_v: *u8,
+    opaque reserved_call_float_method_a: *u8,
+    opaque reserved_call_double_method: *u8,
+    opaque reserved_call_double_method_v: *u8,
+    opaque reserved_call_double_method_a: *u8,
+    CallVoidMethod: fn(*JNIEnv, jobject, jmethodID),
+    CallVoidMethodV: fn(*JNIEnv, jobject, jmethodID, *u8),
+    CallVoidMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue),
+    opaque reserved_call_nonvirtual_object_method: *u8,
+    opaque reserved_call_nonvirtual_object_method_v: *u8,
+    opaque reserved_call_nonvirtual_object_method_a: *u8,
+    opaque reserved_call_nonvirtual_boolean_method: *u8,
+    opaque reserved_call_nonvirtual_boolean_method_v: *u8,
+    opaque reserved_call_nonvirtual_boolean_method_a: *u8,
+    opaque reserved_call_nonvirtual_byte_method: *u8,
+    opaque reserved_call_nonvirtual_byte_method_v: *u8,
+    opaque reserved_call_nonvirtual_byte_method_a: *u8,
+    opaque reserved_call_nonvirtual_char_method: *u8,
+    opaque reserved_call_nonvirtual_char_method_v: *u8,
+    opaque reserved_call_nonvirtual_char_method_a: *u8,
+    opaque reserved_call_nonvirtual_short_method: *u8,
+    opaque reserved_call_nonvirtual_short_method_v: *u8,
+    opaque reserved_call_nonvirtual_short_method_a: *u8,
+    opaque reserved_call_nonvirtual_int_method: *u8,
+    opaque reserved_call_nonvirtual_int_method_v: *u8,
+    opaque reserved_call_nonvirtual_int_method_a: *u8,
+    opaque reserved_call_nonvirtual_long_method: *u8,
+    opaque reserved_call_nonvirtual_long_method_v: *u8,
+    opaque reserved_call_nonvirtual_long_method_a: *u8,
+    opaque reserved_call_nonvirtual_float_method: *u8,
+    opaque reserved_call_nonvirtual_float_method_v: *u8,
+    opaque reserved_call_nonvirtual_float_method_a: *u8,
+    opaque reserved_call_nonvirtual_double_method: *u8,
+    opaque reserved_call_nonvirtual_double_method_v: *u8,
+    opaque reserved_call_nonvirtual_double_method_a: *u8,
+    opaque reserved_call_nonvirtual_void_method: *u8,
+    opaque reserved_call_nonvirtual_void_method_v: *u8,
+    opaque reserved_call_nonvirtual_void_method_a: *u8,
+    opaque reserved_get_field_id: *u8,
+    opaque reserved_get_object_field: *u8,
+    opaque reserved_get_boolean_field: *u8,
+    opaque reserved_get_byte_field: *u8,
+    opaque reserved_get_char_field: *u8,
+    opaque reserved_get_short_field: *u8,
+    opaque reserved_get_int_field: *u8,
+    opaque reserved_get_long_field: *u8,
+    opaque reserved_get_float_field: *u8,
+    opaque reserved_get_double_field: *u8,
+    opaque reserved_set_object_field: *u8,
+    opaque reserved_set_boolean_field: *u8,
+    opaque reserved_set_byte_field: *u8,
+    opaque reserved_set_char_field: *u8,
+    opaque reserved_set_short_field: *u8,
+    opaque reserved_set_int_field: *u8,
+    opaque reserved_set_long_field: *u8,
+    opaque reserved_set_float_field: *u8,
+    opaque reserved_set_double_field: *u8,
+    opaque reserved_get_static_method_id: *u8,
+    opaque reserved_call_static_object_method: *u8,
+    opaque reserved_call_static_object_method_v: *u8,
+    opaque reserved_call_static_object_method_a: *u8,
+    opaque reserved_call_static_boolean_method: *u8,
+    opaque reserved_call_static_boolean_method_v: *u8,
+    opaque reserved_call_static_boolean_method_a: *u8,
+    opaque reserved_call_static_byte_method: *u8,
+    opaque reserved_call_static_byte_method_v: *u8,
+    opaque reserved_call_static_byte_method_a: *u8,
+    opaque reserved_call_static_char_method: *u8,
+    opaque reserved_call_static_char_method_v: *u8,
+    opaque reserved_call_static_char_method_a: *u8,
+    opaque reserved_call_static_short_method: *u8,
+    opaque reserved_call_static_short_method_v: *u8,
+    opaque reserved_call_static_short_method_a: *u8,
+    opaque reserved_call_static_int_method: *u8,
+    opaque reserved_call_static_int_method_v: *u8,
+    opaque reserved_call_static_int_method_a: *u8,
+    opaque reserved_call_static_long_method: *u8,
+    opaque reserved_call_static_long_method_v: *u8,
+    opaque reserved_call_static_long_method_a: *u8,
+    opaque reserved_call_static_float_method: *u8,
+    opaque reserved_call_static_float_method_v: *u8,
+    opaque reserved_call_static_float_method_a: *u8,
+    opaque reserved_call_static_double_method: *u8,
+    opaque reserved_call_static_double_method_v: *u8,
+    opaque reserved_call_static_double_method_a: *u8,
+    opaque reserved_call_static_void_method: *u8,
+    opaque reserved_call_static_void_method_v: *u8,
+    opaque reserved_call_static_void_method_a: *u8,
+    opaque reserved_get_static_field_id: *u8,
+    opaque reserved_get_static_object_field: *u8,
+    opaque reserved_get_static_boolean_field: *u8,
+    opaque reserved_get_static_byte_field: *u8,
+    opaque reserved_get_static_char_field: *u8,
+    opaque reserved_get_static_short_field: *u8,
+    opaque reserved_get_static_int_field: *u8,
+    opaque reserved_get_static_long_field: *u8,
+    opaque reserved_get_static_float_field: *u8,
+    opaque reserved_get_static_double_field: *u8,
+    opaque reserved_set_static_object_field: *u8,
+    opaque reserved_set_static_boolean_field: *u8,
+    opaque reserved_set_static_byte_field: *u8,
+    opaque reserved_set_static_char_field: *u8,
+    opaque reserved_set_static_short_field: *u8,
+    opaque reserved_set_static_int_field: *u8,
+    opaque reserved_set_static_long_field: *u8,
+    opaque reserved_set_static_float_field: *u8,
+    opaque reserved_set_static_double_field: *u8,
+    opaque reserved_new_string: *u8,
+    opaque reserved_get_string_length: *u8,
+    opaque reserved_get_string_chars: *u8,
+    opaque reserved_release_string_chars: *u8,
+    NewStringUTF: fn(*JNIEnv, *u8) -> jstring,
+    GetStringUTFLength: fn(*JNIEnv, jstring) -> jsize,
+    GetStringUTFChars: fn(*JNIEnv, jstring, *jboolean) -> *u8,
+    ReleaseStringUTFChars: fn(*JNIEnv, jstring, *u8),
+    // Object arrays (slots 171-174 in jni.h).
+    GetArrayLength: fn(*JNIEnv, jarray) -> jsize,
+    NewObjectArray: fn(*JNIEnv, jsize, jclass, jobject) -> jobjectArray,
+    GetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize) -> jobject,
+    SetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize, jobject),
+    // Primitive arrays (175-214): 8 New<P>Array, 8 Get<P>ArrayElements,
+    // 8 Release<P>ArrayElements, 8 Get<P>ArrayRegion, 8 Set<P>ArrayRegion.
+    opaque reserved_new_prim_array_0: *u8,
+    opaque reserved_new_prim_array_1: *u8,
+    opaque reserved_new_prim_array_2: *u8,
+    opaque reserved_new_prim_array_3: *u8,
+    opaque reserved_new_prim_array_4: *u8,
+    opaque reserved_new_prim_array_5: *u8,
+    opaque reserved_new_prim_array_6: *u8,
+    opaque reserved_new_prim_array_7: *u8,
+    opaque reserved_get_prim_elems_0: *u8,
+    opaque reserved_get_prim_elems_1: *u8,
+    opaque reserved_get_prim_elems_2: *u8,
+    opaque reserved_get_prim_elems_3: *u8,
+    opaque reserved_get_prim_elems_4: *u8,
+    opaque reserved_get_prim_elems_5: *u8,
+    opaque reserved_get_prim_elems_6: *u8,
+    opaque reserved_get_prim_elems_7: *u8,
+    opaque reserved_release_prim_elems_0: *u8,
+    opaque reserved_release_prim_elems_1: *u8,
+    opaque reserved_release_prim_elems_2: *u8,
+    opaque reserved_release_prim_elems_3: *u8,
+    opaque reserved_release_prim_elems_4: *u8,
+    opaque reserved_release_prim_elems_5: *u8,
+    opaque reserved_release_prim_elems_6: *u8,
+    opaque reserved_release_prim_elems_7: *u8,
+    opaque reserved_get_prim_region_0: *u8,
+    opaque reserved_get_prim_region_1: *u8,
+    opaque reserved_get_prim_region_2: *u8,
+    opaque reserved_get_prim_region_3: *u8,
+    opaque reserved_get_prim_region_4: *u8,
+    opaque reserved_get_prim_region_5: *u8,
+    opaque reserved_get_prim_region_6: *u8,
+    opaque reserved_get_prim_region_7: *u8,
+    opaque reserved_set_prim_region_0: *u8,
+    opaque reserved_set_prim_region_1: *u8,
+    opaque reserved_set_prim_region_2: *u8,
+    opaque reserved_set_prim_region_3: *u8,
+    opaque reserved_set_prim_region_4: *u8,
+    opaque reserved_set_prim_region_5: *u8,
+    opaque reserved_set_prim_region_6: *u8,
+    opaque reserved_set_prim_region_7: *u8,
+    // 215: explicit native-method binding. `methods` is a pointer to
+    // `count` packed records { name, signature, fnPtr } — callers define
+    // the record with a concretely-typed fn field (see
+    // android_view/listener). Required for classes from
+    // InMemoryDexClassLoader: ART resolves `native` methods by symbol
+    // only through a classloader's own native-lib namespace, which an
+    // in-memory loader does not have.
+    RegisterNatives: fn(*JNIEnv, jclass, *u8, jint) -> jint,
+    opaque reserved_unregister_natives: *u8,
+    opaque reserved_monitor_enter: *u8,
+    opaque reserved_monitor_exit: *u8,
+    opaque reserved_get_java_vm: *u8,
+    opaque reserved_get_string_region: *u8,
+    opaque reserved_get_string_utf_region: *u8,
+    opaque reserved_get_prim_critical: *u8,
+    opaque reserved_release_prim_critical: *u8,
+    opaque reserved_get_string_critical: *u8,
+    opaque reserved_release_string_critical: *u8,
+    opaque reserved_new_weak_global_ref: *u8,
+    opaque reserved_delete_weak_global_ref: *u8,
+    // 228: pending-exception predicate (cheaper than ExceptionOccurred —
+    // no local ref).
+    ExceptionCheck: fn(*JNIEnv) -> jboolean,
+    // 229: wrap native memory as a java.nio.ByteBuffer. The memory must
+    // outlive the buffer; `#include_bytes` blobs (static lifetime) qualify.
+    NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
+    opaque reserved_get_direct_buffer_address: *u8,
+    opaque reserved_get_direct_buffer_capacity: *u8,
+    opaque reserved_get_object_ref_type: *u8,
+}
+
+#[repr(C)]
+struct JNIInvokeInterface {
+    opaque reserved0: *u8,
+    opaque reserved1: *u8,
+    opaque reserved2: *u8,
+    DestroyJavaVM: fn(*JavaVM) -> jint,
+    AttachCurrentThread: fn(*JavaVM, *u8, *u8) -> jint,
+    DetachCurrentThread: fn(*JavaVM) -> jint,
+    GetEnv: fn(*JavaVM, *u8, jint) -> jint,
+    AttachCurrentThreadAsDaemon: fn(*JavaVM, *u8, *u8) -> jint,
+}
+
+// Layout sanity: the binding's correctness rests entirely on every function
+// pointer sitting at its `jni.h` offset, so pin the total size. A dropped,
+// added, or mistyped field shifts every later offset and changes the size.
+// 64-bit: the full JNI 1.6 table is 233 slots (GetVersion at index 4
+// through GetObjectRefType at 232, verified against the NDK r29 jni.h),
+// 233 * 8 = 1864. JNIInvokeInterface = 3 reserved + 5 fn-ptrs = 64.
+#[test]
+fn jni_interface_layout_sizes() {
+    assert #size_of::[JNINativeInterface]() == (1864 as usize);
+    assert #size_of::[JNIInvokeInterface]() == (64 as usize);
+    assert #align_of::[JNINativeInterface]() == (8 as usize);
+}
+
+// ---------------- JValue constructor / accessor tests ----------------
+
+// `JValue` is a one-word `#[repr(C)]` mirror of `jvalue`; pin its size so a
+// future field can't silently widen the argument slot.
+#[test]
+fn jvalue_is_one_word() {
+    assert #size_of::[JValue]() == (8 as usize);
+    assert #align_of::[JValue]() == (8 as usize);
+}
+
+#[test]
+fn jvalue_of_int_round_trips() {
+    let v: JValue = JValue::of_int(12345 as jint);
+    assert v.bits() == (12345 as jlong);
+}
+
+#[test]
+fn jvalue_of_int_sign_extends_negative() {
+    // A negative 32-bit int must sign-extend into the 64-bit word, not appear
+    // as a large positive value.
+    let neg_one: jint = (0 as jint) -% (1 as jint);   // -1
+    let v: JValue = JValue::of_int(neg_one);
+    let expected: jlong = (0 as jlong) -% (1 as jlong);
+    assert v.bits() == expected;
+}
+
+#[test]
+fn jvalue_of_bool_true_and_false() {
+    let t: JValue = JValue::of_bool(1 as jboolean);
+    assert t.bits() == (1 as jlong);
+    // Negative case: false carries a zero word, not a sentinel.
+    let f: JValue = JValue::of_bool(0 as jboolean);
+    assert f.bits() == (0 as jlong);
+}
+
+#[test]
+fn jvalue_of_long_round_trips() {
+    // A value that needs the full 64 bits — would be truncated by `of_int`.
+    let big: jlong = 4294967297 as jlong;   // 2^32 + 1
+    let v: JValue = JValue::of_long(big);
+    assert v.bits() == big;
+}
+
+#[test]
+fn jvalue_of_object_null_is_zero_word() {
+    // Negative case: a null object reference must encode as a zero word so the
+    // JVM sees a Java `null`, not a stray address.
+    let v: JValue = JValue::of_object({ 0 as jobject });
+    assert v.bits() == (0 as jlong);
+}
+
+#[test]
+fn jvalue_of_object_carries_address() {
+    var sentinel: jint = 7 as jint;
+    let p: jobject = { #addr_of(sentinel) as jobject };
+    let v: JValue = JValue::of_object(p);
+    assert v.bits() == ({ #addr(p) } as jlong);
+    assert v.bits() != (0 as jlong);
+}
+
+// The `arg_*` package shims must produce exactly what the `JValue::of_*`
+// constructors do — `android_view` relies on the equivalence.
+#[test]
+fn arg_shims_match_constructors() {
+    assert arg_int(99 as jint).bits() == JValue::of_int(99 as jint).bits();
+    assert arg_bool(1 as jboolean).bits() == JValue::of_bool(1 as jboolean).bits();
+    assert arg_long(123456789 as jlong).bits() == JValue::of_long(123456789 as jlong).bits();
+    assert arg_object({ 0 as jobject }).bits() == JValue::of_object({ 0 as jobject }).bits();
+}
