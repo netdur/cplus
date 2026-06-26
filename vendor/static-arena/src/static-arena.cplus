@@ -1,0 +1,462 @@
+// vendor/static-arena/src/static-arena.cplus — fixed-size stack arena.
+//
+// A bump-pointer arena whose buffer lives entirely on the stack (or
+// in `static` storage). No `malloc`, no `free`. Composes with the
+// v0.0.10 `#[no_alloc]` real-time contract.
+//
+// Why several types? C+ doesn't yet have const-generic struct params
+// (`struct Arena[const N: usize]`), so we ship two fixed-size shapes
+// covering common buffer sizes. If your workload needs a different
+// size, copy one of these structs and swap the `[u8; N]` constants
+// (the `_buf` field length and the `capacity` constant).
+//
+// **Size ceiling**: ~128 KiB. By-value struct returns from `new()`
+// trigger multiple stack copies (~3-4× the struct size) in the
+// current codegen, so a `StaticArena256K` constructed via `new()`
+// overflows the default 8 MiB stack. The proper fix is sret for
+// large returns (a compiler improvement); until then, anything
+// bigger than 64 KiB should live in `static` storage and be
+// referenced by pointer rather than constructed on the stack.
+//
+// The public surface follows naming_guideline.md and mirrors its
+// heap sibling `arena`: the buffer/cursor are hidden behind `_buf` /
+// `_used`, the alignment/zeroing overload family is collapsed into one
+// signature with default-valued labeled parameters — `alloc_bytes(16,
+// aligned_to: 64, zeroed: true)` replaces alloc_bytes /
+// alloc_bytes_aligned / alloc_zeroed_bytes — and `capacity()` / `used()`
+// / `remaining()` name the same quantities `Text`/`Vec` do.
+//
+// **API contract.**
+//   - `StaticArenaNK::new()` returns an empty arena with all `N` bytes
+//     available.
+//   - `alloc_bytes(count, aligned_to: usize = 8, zeroed: bool = false)`
+//     returns `count` bytes at the requested alignment, optionally
+//     memset to zero. `aligned_to == 0` is normalized to 1 (otherwise
+//     the `% align` math would trap on SIGFPE). Returns `None` when the
+//     request does not fit in the remaining buffer.
+//   - **OOM / overflow** is a `None` return — unlike the heap `arena`,
+//     the static arena's native result type is already `Option[*u8]`
+//     (the buffer is owned in-struct, so there is no raw-pointer C-ABI
+//     form to preserve), so the guideline's `Option` rule applies with
+//     no null-sentinel exception.
+//   - `alloc[T](value)` is restricted to **Copy `T`**: the arena does
+//     NOT run per-slot Drop on reset, so a non-Copy `T` (e.g. `Vec[U]`)
+//     would leak its inner heap storage. Returns `None` if `T` does not
+//     fit. The returned `*T` borrows the arena's storage.
+//   - `reset(mut this)` rewinds the cursor to zero, making the whole
+//     buffer available again. It does NOT run Drop on what was
+//     allocated.
+//   - `capacity()` is the fixed buffer size, `used()` is the current
+//     high-water mark, `remaining()` is `capacity() -% used()`.
+//   - `alloc_str(s)` copies `s.bytes()` into the arena and returns a
+//     `str` view; `None` on overflow. The returned view borrows the
+//     arena's storage — same lifetime convention as every other
+//     allocator.
+
+import "stdlib/option" as option;
+
+extern fn memset(dst: *u8, c: i32, n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+// ---- StaticArena16K (16 KiB) ----
+
+struct StaticArena16K {
+    _buf: [u8; 16384],
+    _used: usize,
+}
+
+impl StaticArena16K {
+    fn new() -> StaticArena16K {
+        return StaticArena16K { _buf: [0u8; 16384], _used: 0 as usize };
+    }
+
+    // Fixed buffer size — names the same quantity `Text`/`Vec` call
+    // `capacity()`.
+    fn capacity(this) -> usize { return 16384 as usize; }
+    // Current high-water mark (bytes handed out, including alignment
+    // padding).
+    fn used(this) -> usize { return this._used; }
+    fn remaining(this) -> usize { return (16384 as usize) -% this._used; }
+    // Rewind the cursor — the whole buffer is available again. Does NOT
+    // run Drop on what was allocated.
+    fn reset(ref this) { this._used = 0 as usize; return; }
+
+    // The one workhorse: bump `count` bytes at `aligned_to`, optionally
+    // zeroed. Returns `None` when the request does not fit. The
+    // alignment and zeroing overloads are folded in as default-valued
+    // labeled parameters so the call site reads as a phrase —
+    // `a.alloc_bytes(16, aligned_to: 64)`.
+    fn alloc_bytes(ref this, count: usize, aligned_to: usize = 8, zeroed: bool = false) -> option::Option[*u8] {
+        // Normalize `aligned_to == 0` to 1-byte alignment — the `% align`
+        // math below would trap on SIGFPE otherwise.
+        var align: usize = aligned_to;
+        if align == (0 as usize) { align = 1 as usize; }
+        let buf_base: usize = { #addr(#addr_of(this)) };
+        let cursor: usize = buf_base +% this._used;
+        let remainder: usize = cursor % align;
+        let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
+        let new_offset: usize = (aligned -% buf_base) +% count;
+        if new_offset > (16384 as usize) {
+            return option::Option[*u8]::None;
+        }
+        this._used = new_offset;
+        let p: *u8 = { aligned as *u8 };
+        if zeroed {
+            { memset(p, 0 as i32, count); }
+        }
+        return option::Option[*u8]::Some(p);
+    }
+
+    fn alloc[T](ref this, take value: T) -> option::Option[*T] {
+        let bytes: usize = #size_of::[T]();
+        let align: usize = #align_of::[T]();
+        let opt: option::Option[*u8] = this.alloc_bytes(bytes, aligned_to: align);
+        guard let option::Option[*u8]::Some(ptr) = opt else {
+            return option::Option[*T]::None;
+        };
+        let typed_ptr: *T = { ptr as *T };
+        { *typed_ptr = value; }
+        return option::Option[*T]::Some(typed_ptr);
+    }
+
+    fn alloc_str(ref this, s: str) -> option::Option[str] {
+        let n: usize = #str_len(s);
+        let opt: option::Option[*u8] = this.alloc_bytes(n, aligned_to: 1 as usize);
+        guard let option::Option[*u8]::Some(p) = opt else {
+            return option::Option[str]::None;
+        };
+        { memcpy(p, #str_ptr(s), n); }
+        return option::Option[str]::Some({ #str_from_raw_parts(p, n) });
+    }
+}
+
+// ---- StaticArena64K (64 KiB) ----
+
+struct StaticArena64K {
+    _buf: [u8; 65536],
+    _used: usize,
+}
+
+impl StaticArena64K {
+    fn new() -> StaticArena64K {
+        return StaticArena64K { _buf: [0u8; 65536], _used: 0 as usize };
+    }
+
+    fn capacity(this) -> usize { return 65536 as usize; }
+    fn used(this) -> usize { return this._used; }
+    fn remaining(this) -> usize { return (65536 as usize) -% this._used; }
+    fn reset(ref this) { this._used = 0 as usize; return; }
+
+    fn alloc_bytes(ref this, count: usize, aligned_to: usize = 8, zeroed: bool = false) -> option::Option[*u8] {
+        var align: usize = aligned_to;
+        if align == (0 as usize) { align = 1 as usize; }
+        let buf_base: usize = { #addr(#addr_of(this)) };
+        let cursor: usize = buf_base +% this._used;
+        let remainder: usize = cursor % align;
+        let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
+        let new_offset: usize = (aligned -% buf_base) +% count;
+        if new_offset > (65536 as usize) {
+            return option::Option[*u8]::None;
+        }
+        this._used = new_offset;
+        let p: *u8 = { aligned as *u8 };
+        if zeroed {
+            { memset(p, 0 as i32, count); }
+        }
+        return option::Option[*u8]::Some(p);
+    }
+
+    fn alloc[T](ref this, take value: T) -> option::Option[*T] {
+        let bytes: usize = #size_of::[T]();
+        let align: usize = #align_of::[T]();
+        let opt: option::Option[*u8] = this.alloc_bytes(bytes, aligned_to: align);
+        guard let option::Option[*u8]::Some(ptr) = opt else {
+            return option::Option[*T]::None;
+        };
+        let typed_ptr: *T = { ptr as *T };
+        { *typed_ptr = value; }
+        return option::Option[*T]::Some(typed_ptr);
+    }
+
+    fn alloc_str(ref this, s: str) -> option::Option[str] {
+        let n: usize = #str_len(s);
+        let opt: option::Option[*u8] = this.alloc_bytes(n, aligned_to: 1 as usize);
+        guard let option::Option[*u8]::Some(p) = opt else {
+            return option::Option[str]::None;
+        };
+        { memcpy(p, #str_ptr(s), n); }
+        return option::Option[str]::Some({ #str_from_raw_parts(p, n) });
+    }
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+
+#[test]
+fn test_16k_new_starts_empty() {
+    let a: StaticArena16K = StaticArena16K::new();
+    assert a.used() == (0 as usize);
+    assert a.capacity() == (16384 as usize);
+    assert a.remaining() == (16384 as usize);
+}
+
+#[test]
+fn test_16k_alloc_bytes_advances_cursor() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(64 as usize);
+    guard let option::Option[*u8]::Some(_p) = opt else {
+        assert false;
+        return;
+    };
+    assert a.used() >= (64 as usize);
+    // remaining() tracks used(): together they sum to capacity().
+    assert (a.used() +% a.remaining()) == a.capacity();
+}
+
+#[test]
+fn test_16k_alloc_bytes_8_aligned_by_default() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(7 as usize);
+    guard let option::Option[*u8]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert ({ #addr(p) } % (8 as usize)) == (0 as usize);
+}
+
+#[test]
+fn test_16k_alloc_bytes_aligned_to_64() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let _p1: option::Option[*u8] = a.alloc_bytes(1 as usize);   // bump past base
+    let opt: option::Option[*u8] = a.alloc_bytes(8 as usize, aligned_to: 64 as usize);
+    guard let option::Option[*u8]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert ({ #addr(p) } % (64 as usize)) == (0 as usize);
+}
+
+#[test]
+fn test_16k_alloc_bytes_aligned_to_zero_normalized() {
+    // aligned_to==0 must NOT trap (sigfpe on the % math); the API
+    // normalizes it to 1-byte alignment.
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(8 as usize, aligned_to: 0 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert true; }
+        option::Option[*u8]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_16k_alloc_returns_none_on_overflow() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(20000 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert false; }
+        option::Option[*u8]::None => { assert true; }
+    };
+    // A failed alloc must not advance the cursor.
+    assert a.used() == (0 as usize);
+}
+
+#[test]
+fn test_16k_alloc_exact_capacity_succeeds() {
+    // Allocating exactly `capacity` bytes at 1-byte alignment from a
+    // fresh arena must succeed (boundary: new_offset == capacity).
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(16384 as usize, aligned_to: 1 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert true; }
+        option::Option[*u8]::None => { assert false; }
+    };
+    assert a.remaining() == (0 as usize);
+    // One more byte must now fail.
+    let opt2: option::Option[*u8] = a.alloc_bytes(1 as usize, aligned_to: 1 as usize);
+    match opt2 {
+        option::Option[*u8]::Some(_) => { assert false; }
+        option::Option[*u8]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_16k_reset_recovers_capacity() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let _p1: option::Option[*u8] = a.alloc_bytes(100 as usize);
+    let _p2: option::Option[*u8] = a.alloc_bytes(200 as usize);
+    assert a.used() > (0 as usize);
+    a.reset();
+    assert a.used() == (0 as usize);
+    assert a.remaining() == (16384 as usize);
+    // Allocation after reset works again.
+    let opt: option::Option[*u8] = a.alloc_bytes(64 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert true; }
+        option::Option[*u8]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_16k_alloc_zeroed_writes_zeros() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(32 as usize, zeroed: true);
+    guard let option::Option[*u8]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    var i: usize = 0 as usize;
+    while i < (32 as usize) {
+        assert { *(p + i) } == (0 as u8);
+        i = i +% (1 as usize);
+    }
+}
+
+#[test]
+fn test_16k_alloc_aligned_and_zeroed() {
+    // Both labeled defaults supplied together, in either order.
+    var a: StaticArena16K = StaticArena16K::new();
+    let _p1: option::Option[*u8] = a.alloc_bytes(1 as usize);   // bump past base
+    let opt: option::Option[*u8] = a.alloc_bytes(32 as usize, zeroed: true, aligned_to: 64 as usize);
+    guard let option::Option[*u8]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert ({ #addr(p) } % (64 as usize)) == (0 as usize);
+    var i: usize = 0 as usize;
+    while i < (32 as usize) {
+        assert { *(p + i) } == (0 as u8);
+        i = i +% (1 as usize);
+    }
+}
+
+#[test]
+fn test_16k_alloc_typed_round_trip() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[*i32] = a.alloc::[i32](12345 as i32);
+    guard let option::Option[*i32]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert { *p } == (12345 as i32);
+    // alloc[T] aligns to T's alignment.
+    assert ({ #addr(p) } % #align_of::[i32]()) == (0 as usize);
+}
+
+#[test]
+fn test_16k_alloc_typed_none_on_overflow() {
+    // With the buffer all but full, a 4-byte i32 (after alignment) no
+    // longer fits.
+    var a: StaticArena16K = StaticArena16K::new();
+    let _fill: option::Option[*u8] = a.alloc_bytes(16383 as usize, aligned_to: 1 as usize);
+    let opt: option::Option[*i32] = a.alloc::[i32](7 as i32);
+    match opt {
+        option::Option[*i32]::Some(_) => { assert false; }
+        option::Option[*i32]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_16k_alloc_str_round_trip() {
+    var a: StaticArena16K = StaticArena16K::new();
+    let opt: option::Option[str] = a.alloc_str("hello");
+    guard let option::Option[str]::Some(s) = opt else {
+        assert false;
+        return;
+    };
+    assert #str_len(s) == (5 as usize);
+    let p: *u8 = #str_ptr(s);
+    assert { *p } == ('h' as u8);
+    assert { *(p + 4) } == ('o' as u8);
+}
+
+#[test]
+fn test_16k_alloc_str_none_on_overflow() {
+    // A string longer than the buffer cannot be copied in.
+    var a: StaticArena16K = StaticArena16K::new();
+    let _fill: option::Option[*u8] = a.alloc_bytes(16380 as usize, aligned_to: 1 as usize);
+    let opt: option::Option[str] = a.alloc_str("this string will not fit");
+    match opt {
+        option::Option[str]::Some(_) => { assert false; }
+        option::Option[str]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_64k_new_starts_empty() {
+    let a: StaticArena64K = StaticArena64K::new();
+    assert a.used() == (0 as usize);
+    assert a.capacity() == (65536 as usize);
+    assert a.remaining() == (65536 as usize);
+}
+
+#[test]
+fn test_64k_alloc_bytes_advances_cursor() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(128 as usize);
+    guard let option::Option[*u8]::Some(_p) = opt else {
+        assert false;
+        return;
+    };
+    assert a.used() >= (128 as usize);
+}
+
+#[test]
+fn test_64k_alloc_returns_none_on_overflow() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let opt: option::Option[*u8] = a.alloc_bytes(70000 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert false; }
+        option::Option[*u8]::None => { assert true; }
+    };
+    assert a.used() == (0 as usize);
+}
+
+#[test]
+fn test_64k_alloc_zeroed_and_aligned() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let _p1: option::Option[*u8] = a.alloc_bytes(1 as usize);   // bump past base
+    let opt: option::Option[*u8] = a.alloc_bytes(16 as usize, aligned_to: 64 as usize, zeroed: true);
+    guard let option::Option[*u8]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert ({ #addr(p) } % (64 as usize)) == (0 as usize);
+    var i: usize = 0 as usize;
+    while i < (16 as usize) {
+        assert { *(p + i) } == (0 as u8);
+        i = i +% (1 as usize);
+    }
+}
+
+#[test]
+fn test_64k_alloc_typed_round_trip() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let opt: option::Option[*i32] = a.alloc::[i32](777 as i32);
+    guard let option::Option[*i32]::Some(p) = opt else {
+        assert false;
+        return;
+    };
+    assert { *p } == (777 as i32);
+}
+
+#[test]
+fn test_64k_alloc_str_round_trip() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let opt: option::Option[str] = a.alloc_str("world");
+    guard let option::Option[str]::Some(s) = opt else {
+        assert false;
+        return;
+    };
+    assert #str_len(s) == (5 as usize);
+    let p: *u8 = #str_ptr(s);
+    assert { *p } == ('w' as u8);
+}
+
+#[test]
+fn test_64k_reset_recovers_capacity() {
+    var a: StaticArena64K = StaticArena64K::new();
+    let _p1: option::Option[*u8] = a.alloc_bytes(500 as usize);
+    assert a.used() > (0 as usize);
+    a.reset();
+    assert a.used() == (0 as usize);
+    assert a.remaining() == (65536 as usize);
+}
