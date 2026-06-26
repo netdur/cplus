@@ -595,16 +595,27 @@ pub struct BridgeFiles {
 ///   stay opaque handles, but each case gets a constructor `Enum_case() ->
 ///   Option[Enum]` so C+ can build a value to pass on. Use this for an enum a
 ///   method consumes when the enum has no `RawValue`.
+/// - `noncopyable_owners`: types the author vouches are `~Copyable` (move-only).
+///   Their box uses optional storage, and a member read becomes a consuming
+///   `take_<member>` (single-use; the C+ handle is invalidated after) — because
+///   reading any member through the box otherwise consumes a borrowed value.
+/// - `view_copy`: for a handle type with a `view(as:)`/`mutableView(as:)` over a
+///   `~Escapable` element view, emit bulk-copy accessors (`<Type>_copy_<elem>` /
+///   `_fill_<elem>`) that take the view *inside* the thunk and memcpy to/from a
+///   caller buffer — the view never escapes, so it never needs to be boxed.
 #[derive(Default)]
 pub struct BridgeSpec {
     pub copyable: std::collections::BTreeSet<String>,
     pub raw_enums: std::collections::BTreeSet<String>,
     pub enum_cases: std::collections::BTreeSet<String>,
+    pub noncopyable_owners: std::collections::BTreeSet<String>,
+    pub view_copy: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl BridgeSpec {
     /// Parse a `--bridge-spec` JSON object: `{ "copyable": [...],
-    /// "raw_enums": [...], "enum_cases": [...] }`.
+    /// "raw_enums": [...], "enum_cases": [...], "noncopyable_owners": [...],
+    /// "view_copy": { "NDArray": ["Float", "Int32"] } }`.
     pub fn from_json(v: &Value) -> Self {
         let str_set = |key: &str| {
             v.get(key)
@@ -616,10 +627,30 @@ impl BridgeSpec {
                 })
                 .unwrap_or_default()
         };
+        let view_copy = v
+            .get("view_copy")
+            .and_then(|o| o.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, val)| {
+                        val.as_array().map(|a| {
+                            (
+                                k.clone(),
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         BridgeSpec {
             copyable: str_set("copyable"),
             raw_enums: str_set("raw_enums"),
             enum_cases: str_set("enum_cases"),
+            noncopyable_owners: str_set("noncopyable_owners"),
+            view_copy,
         }
     }
 }
@@ -814,6 +845,7 @@ fn emit_member(
     types: &std::collections::BTreeSet<String>,
     copy_safe: &std::collections::BTreeSet<String>,
     raw_enums: &std::collections::BTreeSet<String>,
+    noncopyable_owner: bool,
 ) -> Result<MemberEmit, String> {
     let kind = kind_of(sym);
     let decl = frags(sym);
@@ -853,6 +885,33 @@ fn emit_member(
                 .unwrap_or(&[]),
         );
         let g = sanitize_ident(&base);
+        // A `~Copyable` owner can't expose a borrow-read getter (reading any
+        // member through the box consumes it). Instead, a `take_<member>` thunk
+        // moves the value out of the box's optional slot once and reads the
+        // member off the owned local — the C+ handle becomes an empty husk.
+        if noncopyable_owner {
+            let (t, optional) = match marshal_of(&pty, types, raw_enums) {
+                Some(Marshal::Handle(t)) => (t, false),
+                Some(Marshal::OptHandle(t)) => (t, true),
+                _ => return Err("~Copyable owner: take_ supports only handle properties".into()),
+            };
+            let ct = cident(&t);
+            let tb = box_name(&t);
+            let cn = format!("{prefix}_{owner}_take_{g}");
+            let read = if optional {
+                format!("if let _v = iv.{base} {{ return cpRetained({tb}(_v)) }} else {{ return nil }}")
+            } else {
+                format!("let _v = iv.{base}\n    return cpRetained({tb}(_v))")
+            };
+            let thunk = format!(
+                "@_cdecl(\"{cn}\")\npublic func {cn}(_ self_: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {{\n    guard let _box = cpObject(self_, as: {owner_box}.self) else {{ return nil }}\n    guard let iv = cpTakeOut(&_box.value) else {{ cpSetError(\"value already taken\"); return nil }}\n    {read}\n}}\n\n"
+            );
+            let extern_line = format!("#[link_name = \"{cn}\"]\nextern fn {cn}(receiver: *u8) -> *u8;\n");
+            let wrapper = format!(
+                "    fn take_{g}(this) -> option::Option[{ct}] {{\n        let raw: *u8 = {{ {cn}(this._raw) }};\n        if is_null(raw) {{ return option::Option[{ct}]::None; }}\n        return option::some({ct} {{ _raw: raw }});\n    }}\n"
+            );
+            return Ok(MemberEmit { thunk, extern_line, wrapper, uses_text: false });
+        }
         let cget = format!("{prefix}_{owner}_{g}");
         let cset = format!("{prefix}_{owner}_set_{g}");
         // A stored `var` is settable; `let` and computed `{ get }` are not.
@@ -1486,10 +1545,19 @@ pub fn generate_bridge(
         // `consuming` on the init param lets the box hold a noncopyable
         // (`~Copyable`) value too — noncopyability is not detectable from the
         // symbol graph, and copyable types accept a consuming param unchanged.
-        boxes.push_str(&format!(
-            "private final class {b} {{ var value: {name}; init(_ v: consuming {name}) {{ value = v }} }}\n",
-            b = box_name(name)
-        ));
+        // A spec-declared `~Copyable` owner uses OPTIONAL storage so a member
+        // read can move the value out (`cpTakeOut`) exactly once.
+        if spec.noncopyable_owners.contains(name) {
+            boxes.push_str(&format!(
+                "private final class {b} {{ var value: {name}?; init(_ v: consuming {name}) {{ value = consume v }} }}\n",
+                b = box_name(name)
+            ));
+        } else {
+            boxes.push_str(&format!(
+                "private final class {b} {{ var value: {name}; init(_ v: consuming {name}) {{ value = v }} }}\n",
+                b = box_name(name)
+            ));
+        }
         handle_structs.push_str(&format!("struct {ident} {{\n    _raw: *u8,\n}}\n\n"));
 
         let mut impl_body = String::new();
@@ -1505,7 +1573,7 @@ pub fn generate_bridge(
                     skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
                     continue;
                 }
-                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums) {
+                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums, spec.noncopyable_owners.contains(name)) {
                     Ok(e) => {
                         thunks.push_str(&e.thunk);
                         externs.push_str(&e.extern_line);
@@ -1643,6 +1711,51 @@ pub fn generate_bridge(
         }
     }
 
+    // `view_copy`: bulk data extraction over a `~Escapable` element view. For a
+    // handle type with `view(as:)`, emit `<Type>_copy_<elem>` that takes the
+    // view *inside* the thunk and memcpy's a contiguous run into a caller buffer
+    // — the view never escapes, so it never has to be boxed. The owner must be a
+    // bound, Copyable handle (the read binds a local copy of it); a non-scalar
+    // element is skipped. (Write-back via `mutableView` is deferred — the mutable
+    // view is lifetime-bound and can't be held across the size/copy steps.)
+    for (owner, elems) in &spec.view_copy {
+        if !type_names.contains(owner) || !copy_safe.contains(owner) {
+            continue;
+        }
+        let ident = cident(owner);
+        let bx = box_name(owner);
+        let mut wrappers = String::new();
+        for elem in elems {
+            let c = match map_swift_type(elem) {
+                Ok(c) if c != "()" && !c.starts_with('*') => c,
+                _ => continue, // non-scalar element has no C representation
+            };
+            let suf = cident(&c);
+            let copy = format!("{prefix}_{ident}_copy_{suf}");
+            thunks.push_str(&format!(
+                "@_cdecl(\"{copy}\")\npublic func {copy}(_ self_: UnsafeMutableRawPointer?, _ dest: UnsafeMutablePointer<{elem}>?, _ count: Int64) -> Int64 {{\n\
+                 \x20   guard let _self = cpObject(self_, as: {bx}.self), let dest else {{ cpSetError(\"null handle/dest\"); return -1 }}\n\
+                 \x20   let tmp = _self.value\n\
+                 \x20   let view = tmp.view(as: {elem}.self)\n\
+                 \x20   var n = 1; for i in 0..<view.shape.count {{ n *= view.shape[i] }}\n\
+                 \x20   guard n <= Int(count) else {{ cpSetError(\"destination too small\"); return -1 }}\n\
+                 \x20   guard view.isContiguous else {{ cpSetError(\"non-contiguous view unsupported\"); return -1 }}\n\
+                 \x20   do {{ try view.withUnsafePointer {{ p, _, _ in for i in 0..<n {{ dest[i] = p[i] }} }} }} catch {{ cpSetError(\"\\(error)\"); return -1 }}\n\
+                 \x20   return Int64(n)\n}}\n\n"
+            ));
+            externs.push_str(&format!(
+                "#[link_name = \"{copy}\"]\nextern fn {copy}(receiver: *u8, dest: *{c}, count: i64) -> i64;\n"
+            ));
+            wrappers.push_str(&format!(
+                "    fn copy_{suf}(this, dest: {c}[]) -> i64 {{\n        return {{ {copy}(this._raw, #slice_ptr(dest), #slice_len(dest) as i64) }};\n    }}\n"
+            ));
+            emitted += 1;
+        }
+        if !wrappers.is_empty() {
+            impls.push_str(&format!("impl {ident} {{\n{wrappers}}}\n\n"));
+        }
+    }
+
     // Pre-existing @_cdecl / @convention(c) free functions: bind the C symbol
     // directly (no thunk needed — they already export a flat C ABI).
     for s in &symbols {
@@ -1675,6 +1788,12 @@ pub fn generate_bridge(
          import {import_module}\nimport Foundation\n\n"
     ));
     swift.push_str(&swift_plumbing(&prefix));
+    if !spec.noncopyable_owners.is_empty() {
+        // Move a `~Copyable` value out of an optional box slot, once.
+        swift.push_str(
+            "@inline(__always) private func cpTakeOut<T: ~Copyable>(_ slot: inout T?) -> T? {\n    var moved: T? = nil; swap(&moved, &slot); return moved\n}\n\n",
+        );
+    }
     if !boxes.is_empty() {
         swift.push_str("// ── boxes (stable opaque-handle identity for value/reference types) ──\n");
         swift.push_str(&boxes);
@@ -2417,5 +2536,76 @@ mod tests {
         assert!(b.swift.contains("cpRetained(KindBox(Kind.x))"), "{}", b.swift);
         assert!(b.cplus.contains("fn Kind_x() -> option::Option[Kind]"), "{}", b.cplus);
         assert!(b.cplus.contains("struct Kind {"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_view_copy_emits_data_extraction() {
+        // `view_copy` emits a contiguous bulk-copy accessor per scalar element,
+        // gated on the owner being a bound, Copyable handle.
+        let nd = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "ND"},
+            "pathComponents": ["NDArray"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct NDArray", "text")],
+        });
+        let g = graph(vec![nd], vec![]);
+        let mut view_copy = std::collections::BTreeMap::new();
+        view_copy.insert("NDArray".to_string(), vec!["Float".to_string(), "Int32".to_string()]);
+        let spec = BridgeSpec {
+            copyable: ["NDArray".to_string()].into_iter().collect(),
+            view_copy,
+            ..Default::default()
+        };
+        let b = generate_bridge(&g, "Demo", None, &spec);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_NDArray_copy_f32\")"), "{}", b.swift);
+        assert!(b.swift.contains("tmp.view(as: Float.self)"), "{}", b.swift);
+        assert!(b.swift.contains("view.withUnsafePointer"), "{}", b.swift);
+        assert!(b.cplus.contains("fn copy_f32(this, dest: f32[]) -> i64"), "{}", b.cplus);
+        assert!(b.cplus.contains("fn copy_i32(this, dest: i32[]) -> i64"), "{}", b.cplus);
+        // Not vouched copyable -> no accessor.
+        let b2 = generate_bridge(&g, "Demo", None, &BridgeSpec {
+            view_copy: [("NDArray".to_string(), vec!["Float".to_string()])].into_iter().collect(),
+            ..Default::default()
+        });
+        assert!(!b2.cplus.contains("fn copy_f32"), "{}", b2.cplus);
+    }
+
+    #[test]
+    fn bridge_noncopyable_owner_uses_take() {
+        // A `~Copyable` owner gets an optional box and a `take_<member>` that
+        // moves the value out once; a borrow-read getter would not compile.
+        let iv = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "IV"},
+            "pathComponents": ["Holder"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Holder", "text")],
+        });
+        let nd = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "ND"},
+            "pathComponents": ["NDArray"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct NDArray", "text")],
+        });
+        let prop = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "pp"},
+            "pathComponents": ["Holder", "payload"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" payload", "text"), frag(": ", "text"), frag("NDArray", "typeIdentifier"), frag(" { get }", "text")],
+        });
+        let g = graph(vec![iv, nd, prop], vec![json!({"kind":"memberOf","source":"pp","target":"IV"})]);
+        let spec = BridgeSpec {
+            noncopyable_owners: ["Holder".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let b = generate_bridge(&g, "Demo", None, &spec);
+        assert!(b.swift.contains("class HolderBox { var value: Holder?; init(_ v: consuming Holder) { value = consume v }"), "{}", b.swift);
+        assert!(b.swift.contains("private func cpTakeOut"), "{}", b.swift);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_Holder_take_payload\")"), "{}", b.swift);
+        assert!(b.swift.contains("cpTakeOut(&_box.value)"), "{}", b.swift);
+        assert!(b.cplus.contains("fn take_payload(this) -> option::Option[NDArray]"), "{}", b.cplus);
     }
 }
