@@ -1,0 +1,23 @@
+[package]
+name    = "coreai"
+version = "0.0.1"
+edition = "2026"
+
+# Swift-first Core AI bridge.
+#
+# Build `bridge/CoreAIBridge.swift` first:
+#
+#   cd vendor/coreai
+#   ./build.sh
+#
+# The produced `bridge/build/libcplus_coreai_bridge.dylib` owns the real
+# Swift/CoreAI objects and exports a small C ABI that C+ can call.
+#
+# Requirements from Apple's coreai-models repo: Xcode 27.0+ and macOS/iOS 27.0+.
+[link]
+frameworks    = ["Foundation"]
+libs          = ["cplus_coreai_bridge"]
+search-paths  = ["bridge/build"]
+
+[dependencies]
+stdlib = "*"
