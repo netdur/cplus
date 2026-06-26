@@ -555,6 +555,962 @@ pub fn extract(module: &str, extra_args: &[String]) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("parsing symbol graph JSON: {e}"))
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Bridge emitter (M1)
+//
+// Instead of the all-SKIP manifest above, generate a compiled `@_cdecl` Swift
+// bridge + the matching C+ bindings — the only stable Swift→C path. Per
+// bindable symbol we emit TWO artifacts in lockstep: a `@_cdecl` thunk (Swift,
+// into `<Module>Bridge.swift`) and the C+ `extern fn` + ergonomic wrapper (into
+// `<module>.cplus`). See plans/plan.swift-bridge-gen.md.
+//
+// M1 marshaling: reference (`class`) and value (`struct`) types → opaque handles
+// boxed in a Swift class; scalars by value; `String` params as (ptr,len);
+// `throws` → nil + error channel; `async` → a blocking semaphore; scalar
+// property getters; raw-value enums. Everything else is SKIPPED (honest
+// residual) with a reason histogram, exactly as the classifier does.
+
+/// The four files of a generated Swift-bridge package.
+pub struct BridgeFiles {
+    pub swift: String,
+    pub cplus: String,
+    pub header: String,
+    pub build_sh: String,
+    pub emitted: usize,
+    pub skipped: usize,
+}
+
+#[derive(Clone)]
+enum Marshal {
+    Void,
+    Scalar { cplus: String, swift: String },
+    Str,
+    Handle(String),
+    /// `T?` where `T` is a known handle type — null pointer means `nil`/`None`.
+    OptHandle(String),
+    /// `[Elem]` of a scalar element — crosses as `(ptr, count)` (param only).
+    Slice { cplus: String, swift: String },
+}
+
+/// Map a single Swift type spelling to its marshaling, or `None` when it has no
+/// bridge (dictionaries, optionals of non-handles, nested/generic types, raw
+/// pointers). `?`-optionals of a known handle and `[scalar]` arrays are handled.
+fn marshal_of(swift_ty: &str, types: &std::collections::BTreeSet<String>) -> Option<Marshal> {
+    let t = swift_ty.trim();
+    if t.is_empty() || t == "Void" || t == "()" {
+        return Some(Marshal::Void);
+    }
+    // `T?` — only known-handle optionals are modelled (null = nil).
+    if let Some(inner) = t.strip_suffix('?') {
+        let inner = inner.trim();
+        if types.contains(inner) {
+            return Some(Marshal::OptHandle(inner.to_string()));
+        }
+        return None;
+    }
+    // `[Elem]` — only a scalar element array (a contiguous buffer).
+    if let Some(rest) = t.strip_prefix('[') {
+        if let Some(elem) = rest.strip_suffix(']') {
+            let elem = elem.trim();
+            if !elem.contains(':') {
+                if let Ok(c) = map_swift_type(elem) {
+                    if c != "()" && !c.starts_with('*') {
+                        return Some(Marshal::Slice {
+                            cplus: c,
+                            swift: elem.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        return None;
+    }
+    if t == "String" {
+        return Some(Marshal::Str);
+    }
+    if let Ok(c) = map_swift_type(t) {
+        // A scalar maps to a non-pointer, non-void C+ type.
+        if c != "()" && !c.starts_with('*') {
+            return Some(Marshal::Scalar {
+                cplus: c,
+                swift: t.to_string(),
+            });
+        }
+    }
+    if types.contains(t) {
+        return Some(Marshal::Handle(t.to_string()));
+    }
+    None
+}
+
+fn last_component(sym: &Value) -> String {
+    sym.get("pathComponents")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.last())
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Concatenate all fragment spellings — the faithful type/decl text, including
+/// `?`, `.Nested`, `<...>`, `[...]` (unlike `type_id_in_fragments`, which keeps
+/// only the first `typeIdentifier` and silently drops optionals/qualifiers).
+fn frag_spellings(frs: &[Value]) -> String {
+    frs.iter()
+        .filter_map(|f| f.get("spelling").and_then(|s| s.as_str()))
+        .collect()
+}
+
+/// The type of a `label: Type` declaration (parameter or property): everything
+/// after the first `": "`. The first colon is always the label separator, so a
+/// dictionary type (`[K: V]`) in the type is preserved intact. A trailing
+/// accessor block on a property (`var n: Int { get }`) is dropped — a type
+/// never contains `{`, so cutting there is safe.
+fn type_after_colon(frs: &[Value]) -> String {
+    let joined = frag_spellings(frs);
+    let after = match joined.split_once(": ") {
+        Some((_, rest)) => rest,
+        None => &joined,
+    };
+    after.split('{').next().unwrap_or(after).trim().to_string()
+}
+
+/// Split a Swift member selector into its base name and external argument
+/// labels: `run(input:)` → (`run`, [`input`]); `init(rank:scale:)` →
+/// (`init`, [`rank`,`scale`]); `name` → (`name`, []).
+fn selector_parts(sel: &str) -> (String, Vec<String>) {
+    let base = sel.split('(').next().unwrap_or(sel).to_string();
+    let labels = match (sel.find('('), sel.rfind(')')) {
+        (Some(o), Some(c)) if c > o => {
+            let inner = &sel[o + 1..c];
+            inner
+                .split(':')
+                .filter(|x| !x.is_empty())
+                .map(|x| x.to_string())
+                .collect()
+        }
+        _ => vec![],
+    };
+    (base, labels)
+}
+
+fn scalar_default(swift: &str) -> &'static str {
+    if swift == "Bool" {
+        "false"
+    } else {
+        "0"
+    }
+}
+
+/// A spelling that is a legal Swift/C+ identifier (so it can name a `@_cdecl`
+/// function). Operator members (`==`, `+`) and the like are not.
+fn is_ident(s: &str) -> bool {
+    let mut cs = s.chars();
+    match cs.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Flatten a (possibly nested, dotted) Swift type name into one C+/Swift
+/// identifier: `InferenceValue.Descriptor` → `InferenceValue_Descriptor`. The
+/// Swift *type spelling* stays dotted; only the C+ struct / box-class names and
+/// generated symbols use this flattened form.
+fn cident(name: &str) -> String {
+    sanitize_ident(&name.replace('.', "_"))
+}
+
+fn box_name(ty: &str) -> String {
+    format!("{}Box", cident(ty))
+}
+
+/// C+ wrapper body that turns a `*u8` (a malloc'd C string from `strdup`, or
+/// null) returned by `callexpr` into `Option[Text]`, copying then `free`-ing the
+/// buffer. Shared by String method returns and String property getters.
+fn str_copyout_body(callexpr: &str) -> String {
+    format!(
+        "        let p: *u8 = {{ {callexpr} }};\n\
+         \x20       if is_null(p) {{ return option::Option[text::Text]::None; }}\n\
+         \x20       let n: usize = {{ strlen(p) }};\n\
+         \x20       let v: str = {{ #str_from_raw_parts(p, n) }};\n\
+         \x20       let t: text::Text = v.to_text();\n\
+         \x20       {{ free(p); }}\n\
+         \x20       return option::some(t);\n"
+    )
+}
+
+/// One bound member: the Swift `@_cdecl` thunk(s), the C+ `extern fn` line(s),
+/// and the C+ wrapper(s) (to live inside `impl <owner>`). A property can yield a
+/// getter and a setter, so each field may hold more than one declaration. `Err`
+/// carries a skip reason. `uses_text` flags a `Text` copy-out (String return).
+struct MemberEmit {
+    thunk: String,
+    extern_line: String,
+    wrapper: String,
+    uses_text: bool,
+}
+
+fn emit_member(
+    sym: &Value,
+    owner: &str,       // flattened C+ identifier for the owning type
+    owner_swift: &str, // dotted Swift type spelling (e.g. `NDArray.RawView`)
+    prefix: &str,
+    types: &std::collections::BTreeSet<String>,
+) -> Result<MemberEmit, String> {
+    let kind = kind_of(sym);
+    let decl = frags(sym);
+    let is_init = kind == "swift.init";
+    let is_static = kind == "swift.type.method";
+    let is_property = kind == "swift.property" || kind == "swift.type.property";
+
+    // Blanket skips (same precedence as the classifier).
+    if sym.get("swiftGenerics").is_some() || decl.contains('<') {
+        return Err("generic — needs a concrete instantiation (spec)".into());
+    }
+    for m in [
+        "consuming ",
+        "borrowing ",
+        "inout ",
+        "~Copyable",
+        "~Escapable",
+    ] {
+        if decl.contains(m) {
+            return Err(format!("ownership/move-only (`{}`)", m.trim()));
+        }
+    }
+    if has_word(&decl, "some") || has_word(&decl, "any") {
+        return Err("opaque/existential — needs a concrete type (spec)".into());
+    }
+
+    let sel = last_component(sym);
+    let (base, labels) = selector_parts(&sel);
+    let owner_box = box_name(owner);
+
+    // ── Properties: getter (+ setter when a stored `var`) ─────────────────
+    if is_property {
+        let pty = type_after_colon(
+            sym.get("declarationFragments")
+                .and_then(|v| v.as_array())
+                .map(|a| a.as_slice())
+                .unwrap_or(&[]),
+        );
+        let g = sanitize_ident(&base);
+        let cget = format!("{prefix}_{owner}_{g}");
+        let cset = format!("{prefix}_{owner}_set_{g}");
+        // A stored `var` is settable; `let` and computed `{ get }` are not.
+        let settable = decl.split_whitespace().next() == Some("var") && !decl.contains("{ get }");
+        let mut thunk = String::new();
+        let mut extern_line = String::new();
+        let mut wrapper = String::new();
+        let mut uses_text = false;
+        match marshal_of(&pty, types) {
+            Some(Marshal::Scalar { cplus, swift }) => {
+                let dflt = scalar_default(&swift);
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{cget}\")\npublic func {cget}(_ self_: UnsafeMutableRawPointer?) -> {swift} {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return {dflt} }}\n    return _self.value.{base}\n}}\n\n"
+                ));
+                extern_line.push_str(&format!("#[link_name = \"{cget}\"]\nextern fn {cget}(receiver: *u8) -> {cplus};\n"));
+                wrapper.push_str(&format!("    fn {g}(this) -> {cplus} {{\n        return {{ {cget}(this._raw) }};\n    }}\n"));
+                if settable {
+                    thunk.push_str(&format!(
+                        "@_cdecl(\"{cset}\")\npublic func {cset}(_ self_: UnsafeMutableRawPointer?, _ value: {swift}) {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return }}\n    _self.value.{base} = value\n}}\n\n"
+                    ));
+                    extern_line.push_str(&format!("#[link_name = \"{cset}\"]\nextern fn {cset}(receiver: *u8, value: {cplus});\n"));
+                    wrapper.push_str(&format!("    fn set_{g}(this, value: {cplus}) {{\n        {{ {cset}(this._raw, value); }}\n        return;\n    }}\n"));
+                }
+            }
+            Some(Marshal::Str) => {
+                uses_text = true;
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{cget}\")\npublic func {cget}(_ self_: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return nil }}\n    return strdup(_self.value.{base})\n}}\n\n"
+                ));
+                extern_line.push_str(&format!("#[link_name = \"{cget}\"]\nextern fn {cget}(receiver: *u8) -> *u8;\n"));
+                wrapper.push_str(&format!(
+                    "    fn {g}(this) -> option::Option[text::Text] {{\n{}    }}\n",
+                    str_copyout_body(&format!("{cget}(this._raw)"))
+                ));
+                if settable {
+                    thunk.push_str(&format!(
+                        "@_cdecl(\"{cset}\")\npublic func {cset}(_ self_: UnsafeMutableRawPointer?, _ value: UnsafePointer<UInt8>?, _ value_len: Int) {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return }}\n    guard let s = cpStringFromBytes(value, value_len) else {{ return }}\n    _self.value.{base} = s\n}}\n\n"
+                    ));
+                    extern_line.push_str(&format!("#[link_name = \"{cset}\"]\nextern fn {cset}(receiver: *u8, value: *u8, value_len: usize);\n"));
+                    wrapper.push_str(&format!("    fn set_{g}(this, value: str) {{\n        {{ {cset}(this._raw, #str_ptr(value), #str_len(value)); }}\n        return;\n    }}\n"));
+                }
+            }
+            // Handle / optional-handle property values would require copying the
+            // value out of `self`, which is illegal for noncopyable types and not
+            // detectable from the graph. Left to a later pass.
+            _ => return Err("property type needs copyability info to bridge".into()),
+        }
+        return Ok(MemberEmit { thunk, extern_line, wrapper, uses_text });
+    }
+
+    // ── Methods / initializers ─────────────────────────────────────────────
+    let is_method = kind == "swift.method" || kind == "swift.type.method";
+    if !is_init && !is_method {
+        // Subscripts, operator decls, deinit, etc. — not M1 shapes.
+        return Err(format!("unsupported member kind `{kind}`"));
+    }
+    if !is_ident(&base) {
+        return Err("operator/non-identifier member — needs a named bridge".into());
+    }
+    let is_async = has_word(&decl, "async");
+    let throws = has_word(&decl, "throws") || has_word(&decl, "rethrows");
+
+    // Parameters: zip the external labels with the signature's typed params.
+    let params: Vec<&Value> = sym
+        .get("functionSignature")
+        .and_then(|s| s.get("parameters"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    if !labels.is_empty() && labels.len() != params.len() {
+        return Err("default/variadic parameters not modelled (M1)".into());
+    }
+
+    struct P {
+        cname: String,   // C+/thunk identifier
+        label: String,   // Swift external label ("_" = none)
+        marshal: Marshal,
+    }
+    let mut ps: Vec<P> = Vec::new();
+    for (i, p) in params.iter().enumerate() {
+        let pty = type_after_colon(
+            p.get("declarationFragments")
+                .and_then(|v| v.as_array())
+                .map(|a| a.as_slice())
+                .unwrap_or(&[]),
+        );
+        let m = marshal_of(&pty, types)
+            .ok_or_else(|| format!("param `{pty}` has no C ABI"))?;
+        match m {
+            Marshal::Void => return Err("void parameter".into()),
+            Marshal::OptHandle(_) => {
+                return Err("optional handle parameter not modelled".into())
+            }
+            _ => {}
+        }
+        let label = labels.get(i).cloned().unwrap_or_else(|| "_".to_string());
+        let internal = p
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(sanitize_ident)
+            .unwrap_or_else(|| format!("arg{i}"));
+        // Prefer the label as the visible C+ name; fall back to the internal name.
+        let cname = if label != "_" {
+            sanitize_ident(&label)
+        } else {
+            internal
+        };
+        ps.push(P {
+            cname,
+            label,
+            marshal: m,
+        });
+    }
+
+    // Return marshaling. An init constructs the owning type — a failable
+    // `init?` yields `Owner?`, so it takes the optional (nil-unwrap) path.
+    let ret = if is_init {
+        if decl.contains("init?") {
+            Marshal::OptHandle(owner.to_string())
+        } else {
+            Marshal::Handle(owner.to_string())
+        }
+    } else {
+        let r = sym
+            .get("functionSignature")
+            .and_then(|s| s.get("returns"))
+            .and_then(|v| v.as_array())
+            .map(|frs| frag_spellings(frs).trim().to_string())
+            .unwrap_or_default();
+        marshal_of(&r, types).ok_or_else(|| format!("return `{r}` has no C ABI"))?
+    };
+    if matches!(ret, Marshal::Slice { .. }) {
+        return Err("array return not modelled".into());
+    }
+
+    let cname = if is_init {
+        // One `new` per type in M1; extra inits are skipped to avoid collisions.
+        format!("{prefix}_{owner}_new")
+    } else {
+        format!("{prefix}_{owner}_{}", sanitize_ident(&base))
+    };
+
+    // --- Build the Swift thunk ---------------------------------------------
+    let mut swift_params: Vec<String> = Vec::new();
+    if !is_init && !is_static {
+        swift_params.push("_ self_: UnsafeMutableRawPointer?".to_string());
+    }
+    for p in &ps {
+        match &p.marshal {
+            Marshal::Scalar { swift, .. } => {
+                swift_params.push(format!("_ {}: {}", p.cname, swift))
+            }
+            Marshal::Str => {
+                swift_params.push(format!("_ {}: UnsafePointer<UInt8>?", p.cname));
+                swift_params.push(format!("_ {}_len: Int", p.cname));
+            }
+            Marshal::Handle(_) => {
+                swift_params.push(format!("_ {}: UnsafeMutableRawPointer?", p.cname))
+            }
+            Marshal::Slice { swift, .. } => {
+                swift_params.push(format!("_ {}: UnsafePointer<{swift}>?", p.cname));
+                swift_params.push(format!("_ {}_count: Int", p.cname));
+            }
+            Marshal::OptHandle(_) | Marshal::Void => {}
+        }
+    }
+
+    let (swift_ret, fail_ret): (String, String) = match &ret {
+        Marshal::Handle(_) | Marshal::OptHandle(_) => {
+            ("UnsafeMutableRawPointer?".into(), "return nil".into())
+        }
+        Marshal::Scalar { swift, .. } => {
+            (swift.clone(), format!("return {}", scalar_default(swift)))
+        }
+        Marshal::Str => ("UnsafeMutablePointer<CChar>?".into(), "return nil".into()),
+        Marshal::Void => ("".into(), "return".into()),
+        Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
+    };
+
+    let mut body = String::new();
+    body.push_str("    cpClearError()\n");
+    if !is_init && !is_static {
+        body.push_str(&format!(
+            "    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ {fail_ret} }}\n"
+        ));
+    }
+    // Unbox handle/string params and materialize slices up front.
+    for p in &ps {
+        match &p.marshal {
+            Marshal::Str => body.push_str(&format!(
+                "    guard let _{n} = cpStringFromBytes({n}, {n}_len) else {{ {fail_ret} }}\n",
+                n = p.cname
+            )),
+            Marshal::Handle(t) => body.push_str(&format!(
+                "    guard let _{n} = cpObject({n}, as: {b}.self) else {{ {fail_ret} }}\n",
+                n = p.cname,
+                b = box_name(t)
+            )),
+            Marshal::Slice { swift, .. } => body.push_str(&format!(
+                "    let _{n} = {n} != nil ? Array(UnsafeBufferPointer(start: {n}, count: {n}_count)) : [{swift}]()\n",
+                n = p.cname
+            )),
+            _ => {}
+        }
+    }
+
+    // The Swift call expression with external labels.
+    let mut call_args: Vec<String> = Vec::new();
+    for p in &ps {
+        let val = match &p.marshal {
+            Marshal::Scalar { .. } => p.cname.clone(),
+            Marshal::Str => format!("_{}", p.cname),
+            Marshal::Handle(_) => format!("_{}.value", p.cname),
+            Marshal::Slice { .. } => format!("_{}", p.cname),
+            Marshal::OptHandle(_) | Marshal::Void => continue,
+        };
+        if p.label == "_" {
+            call_args.push(val);
+        } else {
+            call_args.push(format!("{}: {}", p.label, val));
+        }
+    }
+    let args = call_args.join(", ");
+    let callee = if is_init {
+        format!("{owner_swift}({args})")
+    } else if is_static {
+        format!("{owner_swift}.{base}({args})")
+    } else {
+        format!("_self.value.{base}({args})")
+    };
+    let mut call = callee;
+    if is_async {
+        call = format!("try cpWaitForAsync {{ try await {call} }}");
+    } else if throws {
+        call = format!("try {call}");
+    }
+
+    let needs_try = is_async || throws;
+    // Emit the result handling.
+    let result_stmt = match &ret {
+        Marshal::Handle(t) => format!("return cpRetained({}(_result))", box_name(t)),
+        Marshal::OptHandle(t) => format!(
+            "if let r = _result {{ return cpRetained({}(r)) }} else {{ return nil }}",
+            box_name(t)
+        ),
+        Marshal::Scalar { .. } => "return _result".to_string(),
+        Marshal::Str => "return strdup(_result)".to_string(),
+        Marshal::Void => "return".to_string(),
+        Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
+    };
+    let is_void = matches!(ret, Marshal::Void);
+    if needs_try && is_void {
+        body.push_str(&format!(
+            "    do {{\n        {call}\n        return\n    }} catch {{ cpSetError(\"{owner}.{base}: \\(error)\"); {fail_ret} }}\n"
+        ));
+    } else if needs_try {
+        body.push_str(&format!(
+            "    do {{\n        let _result = {call}\n        {result_stmt}\n    }} catch {{ cpSetError(\"{owner}.{base}: \\(error)\"); {fail_ret} }}\n"
+        ));
+    } else if is_void {
+        body.push_str(&format!("    {call}\n    return\n"));
+    } else {
+        body.push_str(&format!("    let _result = {call}\n    {result_stmt}\n"));
+    }
+
+    let ret_clause = if swift_ret.is_empty() {
+        String::new()
+    } else {
+        format!(" -> {swift_ret}")
+    };
+    let thunk = format!(
+        "@_cdecl(\"{cname}\")\npublic func {cname}({}){ret_clause} {{\n{body}}}\n\n",
+        swift_params.join(", ")
+    );
+
+    // --- Build the C+ extern + wrapper -------------------------------------
+    let mut extern_params: Vec<String> = Vec::new();
+    if !is_init && !is_static {
+        extern_params.push("receiver: *u8".to_string());
+    }
+    for p in &ps {
+        match &p.marshal {
+            Marshal::Scalar { cplus, .. } => extern_params.push(format!("{}: {cplus}", p.cname)),
+            Marshal::Str => {
+                extern_params.push(format!("{}: *u8", p.cname));
+                extern_params.push(format!("{}_len: usize", p.cname));
+            }
+            Marshal::Handle(_) => extern_params.push(format!("{}: *u8", p.cname)),
+            Marshal::Slice { cplus, .. } => {
+                extern_params.push(format!("{}: *{cplus}", p.cname));
+                extern_params.push(format!("{}_count: usize", p.cname));
+            }
+            Marshal::OptHandle(_) | Marshal::Void => {}
+        }
+    }
+    let extern_ret = match &ret {
+        Marshal::Handle(_) | Marshal::OptHandle(_) | Marshal::Str => " -> *u8".to_string(),
+        Marshal::Scalar { cplus, .. } => format!(" -> {cplus}"),
+        Marshal::Void => "".to_string(),
+        Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
+    };
+    let extern_line = format!(
+        "#[link_name = \"{cname}\"]\nextern fn {cname}({}){extern_ret};\n",
+        extern_params.join(", ")
+    );
+
+    // Wrapper signature.
+    let mut wrap_params: Vec<String> = Vec::new();
+    if !is_init && !is_static {
+        wrap_params.push("this".to_string());
+    }
+    for p in &ps {
+        let ty = match &p.marshal {
+            Marshal::Scalar { cplus, .. } => cplus.clone(),
+            Marshal::Str => "str".to_string(),
+            Marshal::Handle(t) => cident(t),
+            Marshal::Slice { cplus, .. } => format!("{cplus}[]"),
+            Marshal::OptHandle(_) | Marshal::Void => continue,
+        };
+        if p.label == "_" {
+            wrap_params.push(format!("_ {}: {ty}", p.cname));
+        } else {
+            wrap_params.push(format!("{}: {ty}", p.cname));
+        }
+    }
+    let wrap_name = if is_init {
+        "new".to_string()
+    } else {
+        sanitize_ident(&base)
+    };
+
+    // Call arguments to the extern.
+    let mut ecall: Vec<String> = Vec::new();
+    if !is_init && !is_static {
+        ecall.push("this._raw".to_string());
+    }
+    for p in &ps {
+        match &p.marshal {
+            Marshal::Scalar { .. } => ecall.push(p.cname.clone()),
+            Marshal::Str => {
+                ecall.push(format!("#str_ptr({})", p.cname));
+                ecall.push(format!("#str_len({})", p.cname));
+            }
+            Marshal::Handle(_) => ecall.push(format!("{}._raw", p.cname)),
+            Marshal::Slice { .. } => {
+                ecall.push(format!("#slice_ptr({})", p.cname));
+                ecall.push(format!("#slice_len({})", p.cname));
+            }
+            Marshal::OptHandle(_) | Marshal::Void => {}
+        }
+    }
+    let ecall = ecall.join(", ");
+
+    let wrapper = match &ret {
+        // A non-optional handle is never nil from Swift, but the thunk still
+        // returns nil on a null receiver — so both map to `Option[T]`.
+        Marshal::Handle(t) | Marshal::OptHandle(t) => {
+            let t = cident(t);
+            format!(
+                "    fn {wrap_name}({}) -> option::Option[{t}] {{\n        let raw: *u8 = {{ {cname}({ecall}) }};\n        if is_null(raw) {{ return option::Option[{t}]::None; }}\n        return option::some({t} {{ _raw: raw }});\n    }}\n",
+                wrap_params.join(", ")
+            )
+        }
+        Marshal::Scalar { cplus, .. } => format!(
+            "    fn {wrap_name}({}) -> {cplus} {{\n        return {{ {cname}({ecall}) }};\n    }}\n",
+            wrap_params.join(", ")
+        ),
+        Marshal::Str => format!(
+            "    fn {wrap_name}({}) -> option::Option[text::Text] {{\n{}    }}\n",
+            wrap_params.join(", "),
+            str_copyout_body(&format!("{cname}({ecall})"))
+        ),
+        Marshal::Void => format!(
+            "    fn {wrap_name}({}) {{\n        {{ {cname}({ecall}); }}\n        return;\n    }}\n",
+            wrap_params.join(", ")
+        ),
+        Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
+    };
+
+    Ok(MemberEmit {
+        thunk,
+        extern_line,
+        wrapper,
+        uses_text: matches!(ret, Marshal::Str),
+    })
+}
+
+/// The framework-independent Swift plumbing (error channel, boxing, async), with
+/// the package's C symbol prefix baked into the two exported `@_cdecl` helpers.
+fn swift_plumbing(prefix: &str) -> String {
+    format!(
+        "// ── shared bridge runtime ──────────────────────────────────────────\n\
+         private let _cpErrLock = NSLock()\n\
+         private var _cpLastError = \"\"\n\
+         private func cpSetError(_ m: String) {{ _cpErrLock.lock(); _cpLastError = m; _cpErrLock.unlock() }}\n\
+         private func cpClearError() {{ cpSetError(\"\") }}\n\
+         private func cpStringFromBytes(_ p: UnsafePointer<UInt8>?, _ n: Int) -> String? {{\n\
+         \x20   guard let p else {{ cpSetError(\"null string pointer\"); return nil }}\n\
+         \x20   return String(decoding: UnsafeBufferPointer(start: p, count: n), as: UTF8.self)\n\
+         }}\n\
+         private func cpRetained(_ o: AnyObject) -> UnsafeMutableRawPointer {{ Unmanaged.passRetained(o).toOpaque() }}\n\
+         private func cpObject<T: AnyObject>(_ h: UnsafeMutableRawPointer?, as _: T.Type) -> T? {{\n\
+         \x20   guard let h else {{ cpSetError(\"null handle\"); return nil }}\n\
+         \x20   guard let v = Unmanaged<AnyObject>.fromOpaque(h).takeUnretainedValue() as? T else {{ cpSetError(\"handle has unexpected type\"); return nil }}\n\
+         \x20   return v\n\
+         }}\n\
+         private func cpWaitForAsync<T>(_ body: @escaping () async throws -> T) throws -> T {{\n\
+         \x20   let sem = DispatchSemaphore(value: 0)\n\
+         \x20   var outcome: Result<T, Error>!\n\
+         \x20   Task {{ do {{ outcome = .success(try await body()) }} catch {{ outcome = .failure(error) }}; sem.signal() }}\n\
+         \x20   sem.wait()\n\
+         \x20   return try outcome.get()\n\
+         }}\n\
+         @_cdecl(\"{prefix}_last_error\")\n\
+         public func {prefix}_last_error(_ buf: UnsafeMutablePointer<UInt8>?, _ len: Int) -> Int32 {{\n\
+         \x20   guard let buf, len > 0 else {{ return -1 }}\n\
+         \x20   _cpErrLock.lock(); let bytes = Array(_cpLastError.utf8); _cpErrLock.unlock()\n\
+         \x20   let n = min(bytes.count, len - 1)\n\
+         \x20   for i in 0..<n {{ buf[i] = bytes[i] }}\n\
+         \x20   buf[n] = 0\n\
+         \x20   return Int32(n)\n\
+         }}\n\
+         @_cdecl(\"{prefix}_release\")\n\
+         public func {prefix}_release(_ h: UnsafeMutableRawPointer?) {{\n\
+         \x20   guard let h else {{ return }}\n\
+         \x20   Unmanaged<AnyObject>.fromOpaque(h).release()\n\
+         }}\n\n"
+    )
+}
+
+/// Generate a full Swift-bridge package from a parsed symbol graph. `module` is
+/// the symbol-graph module (drives C names and box types); `link` is the
+/// importable framework when the module is a framework submodule (e.g. the
+/// `CoreAIRuntime` graph is imported as `CoreAI`).
+pub fn generate_bridge(graph: &Value, module: &str, link: Option<&str>) -> BridgeFiles {
+    use std::collections::{BTreeMap, BTreeSet};
+    let import_module = link.unwrap_or(module);
+    let symbols: Vec<Value> = graph
+        .get("symbols")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // memberOf: child precise → parent precise.
+    let mut member_of: HashMap<String, String> = HashMap::new();
+    if let Some(rels) = graph.get("relationships").and_then(|v| v.as_array()) {
+        for r in rels {
+            if r.get("kind").and_then(|v| v.as_str()) == Some("memberOf") {
+                if let (Some(s), Some(t)) = (
+                    r.get("source").and_then(|v| v.as_str()),
+                    r.get("target").and_then(|v| v.as_str()),
+                ) {
+                    member_of.insert(s.to_string(), t.to_string());
+                }
+            }
+        }
+    }
+
+    let is_pub = |s: &Value| access(s) == "public" || access(s) == "open";
+
+    // Types that become opaque handles. A box stores `var value: T`, which
+    // requires `T` to be Escapable — and `~Escapable` is not detectable from the
+    // symbol graph. The safe, principled set: top-level types (the main API
+    // surface, all Escapable) at any kind, plus enums at any depth (enums are
+    // always Escapable). Nested *structs* are excluded — that is where the
+    // `~Escapable` view/span types live (`NDArray.RawView`, …). Generic types
+    // are skipped too: a box needs a concrete `T`, not `Foo<T>`.
+    let mut type_names: BTreeSet<String> = BTreeSet::new();
+    let mut type_precise: BTreeMap<String, String> = BTreeMap::new(); // dotted name → precise
+    for s in &symbols {
+        let k = kind_of(s);
+        if !matches!(k, "swift.class" | "swift.struct" | "swift.enum") || !is_pub(s) {
+            continue;
+        }
+        if s.get("swiftGenerics").is_some() || frags(s).contains('<') {
+            continue;
+        }
+        let top_level = s
+            .get("pathComponents")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+            == 1;
+        if !top_level && k != "swift.enum" {
+            continue;
+        }
+        let name = path_of(s);
+        type_names.insert(name.clone());
+        type_precise.insert(name, precise(s).to_string());
+    }
+
+    // Group members by owning type precise.
+    let precise_to_name: HashMap<String, String> = type_precise
+        .iter()
+        .map(|(n, p)| (p.clone(), n.clone()))
+        .collect();
+    let mut members_by_type: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    let mut cases_by_enum: HashMap<String, Vec<&Value>> = HashMap::new();
+    for s in &symbols {
+        if kind_of(s) == "swift.enum.case" {
+            if let Some(parent) = member_of.get(precise(s)) {
+                cases_by_enum.entry(parent.clone()).or_default().push(s);
+            }
+            continue;
+        }
+        if let Some(parent) = member_of.get(precise(s)) {
+            if let Some(name) = precise_to_name.get(parent) {
+                if is_pub(s) {
+                    members_by_type.entry(name.clone()).or_default().push(s);
+                }
+            }
+        }
+    }
+
+    let lower = module.to_lowercase();
+    let prefix = format!("cplus_{}", sanitize_ident(&lower));
+
+    let mut thunks = String::new();
+    let mut externs = String::new();
+    let mut impls = String::new();
+    let mut free = String::new();
+    let mut handle_structs = String::new();
+    let mut boxes = String::new();
+    let mut uses_text = false;
+    let mut emitted = 0usize;
+    let mut skipped = 0usize;
+    let mut skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
+    let skip = |reasons: &mut BTreeMap<String, usize>, n: &mut usize, body: &mut String, path: &str, reason: String| {
+        let bucket = reason
+            .split(|c| c == '(' || c == '`' || c == '—')
+            .next()
+            .unwrap_or(&reason)
+            .trim()
+            .to_string();
+        *reasons.entry(bucket).or_insert(0) += 1;
+        *n += 1;
+        body.push_str(&format!("    // SKIPPED {path}: {reason}\n"));
+    };
+
+    // Emit one handle struct + box + impl block per type. `name` is the dotted
+    // Swift spelling; `ident` is its flattened C+ identifier.
+    for (name, _p) in &type_precise {
+        let ident = cident(name);
+        // `consuming` on the init param lets the box hold a noncopyable
+        // (`~Copyable`) value too — noncopyability is not detectable from the
+        // symbol graph, and copyable types accept a consuming param unchanged.
+        boxes.push_str(&format!(
+            "private final class {b} {{ var value: {name}; init(_ v: consuming {name}) {{ value = v }} }}\n",
+            b = box_name(name)
+        ));
+        handle_structs.push_str(&format!("struct {ident} {{\n    _raw: *u8,\n}}\n\n"));
+
+        let mut impl_body = String::new();
+        impl_body.push_str(&format!(
+            "    fn drop(ref this) {{\n        if !is_null(this._raw) {{ {{ {prefix}_release(this._raw); }} this._raw = null(); }}\n        return;\n    }}\n"
+        ));
+        let mut had_init = false;
+        if let Some(members) = members_by_type.get(name) {
+            for m in members {
+                let mpath = path_of(m);
+                // One `new` per type in M1.
+                if kind_of(m) == "swift.init" && had_init {
+                    skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
+                    continue;
+                }
+                match emit_member(m, &ident, name, &prefix, &type_names) {
+                    Ok(e) => {
+                        thunks.push_str(&e.thunk);
+                        externs.push_str(&e.extern_line);
+                        impl_body.push_str(&e.wrapper);
+                        uses_text = uses_text || e.uses_text;
+                        emitted += 1;
+                        if kind_of(m) == "swift.init" {
+                            had_init = true;
+                        }
+                    }
+                    Err(reason) => skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, reason),
+                }
+            }
+        }
+        impls.push_str(&format!("impl {ident} {{\n{impl_body}}}\n\n"));
+    }
+
+    // Bonus: a raw-value enum whose integer values are present in the graph also
+    // gets i64 constant accessors (on top of its opaque handle). When the values
+    // are absent (the common symbolgraph case) the enum is just a handle — no
+    // skip, since it is already bound above.
+    for s in &symbols {
+        if kind_of(s) != "swift.enum" || !is_pub(s) {
+            continue;
+        }
+        let path = path_of(s);
+        let cases = cases_by_enum.get(precise(s)).cloned().unwrap_or_default();
+        if cases.is_empty() || cases.iter().any(|c| case_has_payload(c)) {
+            continue;
+        }
+        let raws: Vec<(String, i64)> = cases
+            .iter()
+            .filter_map(|c| {
+                let cn = c
+                    .get("pathComponents")
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.last())
+                    .and_then(|x| x.as_str())?;
+                case_raw_value(c).map(|v| (cn.to_string(), v))
+            })
+            .collect();
+        if raws.len() != cases.len() {
+            continue;
+        }
+        free.push_str(&format!("// Swift enum `{path}` — raw values as i64 accessors.\n"));
+        for (cn, v) in raws {
+            free.push_str(&format!(
+                "fn {}_{}() -> i64 {{ return {} as i64; }}\n",
+                cident(&path),
+                sanitize_ident(&cn),
+                v
+            ));
+            emitted += 1;
+        }
+    }
+
+    // Pre-existing @_cdecl / @convention(c) free functions: bind the C symbol
+    // directly (no thunk needed — they already export a flat C ABI).
+    for s in &symbols {
+        if kind_of(s) != "swift.func" || !is_pub(s) {
+            continue;
+        }
+        if member_of.contains_key(precise(s)) {
+            continue; // members handled above
+        }
+        match classify_function(s) {
+            FnVerdict::Emit(line) => {
+                externs.push_str(&line);
+                free.push_str(&format!(
+                    "// (already C-callable: {})\n",
+                    path_of(s)
+                ));
+                emitted += 1;
+            }
+            FnVerdict::Skip(reason) => {
+                skip(&mut skip_reasons, &mut skipped, &mut free, &path_of(s), reason)
+            }
+        }
+    }
+
+    // ── Assemble the four files ────────────────────────────────────────────
+    let mut swift = String::new();
+    swift.push_str(&format!(
+        "// {module}Bridge.swift — auto-generated by cpc-bindgen (--swift-bridge). DO NOT EDIT.\n\
+         // @_cdecl bridge: owns the Swift values, exports a flat C ABI for C+.\n\n\
+         import {import_module}\nimport Foundation\n\n"
+    ));
+    swift.push_str(&swift_plumbing(&prefix));
+    if !boxes.is_empty() {
+        swift.push_str("// ── boxes (stable opaque-handle identity for value/reference types) ──\n");
+        swift.push_str(&boxes);
+        swift.push('\n');
+    }
+    swift.push_str("// ── thunks ──────────────────────────────────────────────────────────\n");
+    swift.push_str(&thunks);
+
+    let mut cplus = String::new();
+    cplus.push_str(&format!(
+        "// {lower}.cplus — auto-generated by cpc-bindgen (--swift-bridge). DO NOT EDIT.\n\
+         // C+ facade over the {module} Swift bridge: opaque handles + ergonomic wrappers.\n\n\
+         import \"stdlib/option\" as option;\n"
+    ));
+    // String returns copy out of a malloc'd C string into an owned `Text`.
+    if uses_text {
+        cplus.push_str(
+            "import \"stdlib/text\" as text;\n\
+             extern fn strlen(s: *u8) -> usize;\n\
+             extern fn free(p: *u8);\n",
+        );
+    }
+    cplus.push_str(&format!(
+        "\n#[link_name = \"{prefix}_last_error\"]\nextern fn {prefix}_last_error(buf: *u8, len: usize) -> i32;\n\
+         #[link_name = \"{prefix}_release\"]\nextern fn {prefix}_release(handle: *u8);\n\n"
+    ));
+    cplus.push_str(&externs);
+    cplus.push_str("\nfn null() -> *u8 { return { 0 as *u8 }; }\nfn is_null(p: *u8) -> bool { return p == null(); }\n\n");
+    cplus.push_str("fn last_error_into(buf: u8[]) -> usize {\n    let n: usize = #slice_len(buf);\n    if n == (0 as usize) { return 0 as usize; }\n    let wrote: i32 = { ");
+    cplus.push_str(&format!("{prefix}_last_error"));
+    cplus.push_str("(#slice_ptr(buf), n) };\n    if wrote < 0 { return 0 as usize; }\n    return wrote as usize;\n}\n\n");
+    cplus.push_str(&handle_structs);
+    cplus.push_str(&impls);
+    if !free.is_empty() {
+        cplus.push_str(&free);
+    }
+
+    let header = format!(
+        "#ifndef {guard}\n#define {guard}\n#include <stdint.h>\n#include <stddef.h>\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\n\n\
+         // C ABI exported by lib{lower}_bridge.dylib (see {module}Bridge.swift).\n\
+         int32_t {prefix}_last_error(uint8_t *buf, size_t len);\n\
+         void {prefix}_release(void *handle);\n\n\
+         #ifdef __cplusplus\n}}\n#endif\n#endif\n",
+        guard = format!("{}_BRIDGE_H", prefix.to_uppercase()),
+    );
+
+    let build_sh = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nmkdir -p bridge/build\nSDK=\"$(xcrun --sdk macosx --show-sdk-path)\"\nARCH=\"$(uname -m)\"\nxcrun swiftc \\\n  -sdk \"$SDK\" -target \"${{ARCH}}-apple-macos27.0\" \\\n  -parse-as-library -emit-library -emit-module \\\n  -module-name {module}Bridge \\\n  bridge/{module}Bridge.swift \\\n  -o bridge/build/lib{lower}_bridge.dylib\necho \"built bridge/build/lib{lower}_bridge.dylib\"\n"
+    );
+
+    BridgeFiles {
+        swift,
+        cplus,
+        header,
+        build_sh,
+        emitted,
+        skipped,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,5 +1677,395 @@ mod tests {
         assert_eq!(map_swift_type("UnsafeMutablePointer<Float>").unwrap(), "*f32");
         assert_eq!(map_swift_type("UnsafeRawPointer").unwrap(), "*u8");
         assert!(map_swift_type("String").is_err());
+    }
+
+    // ── bridge emitter ─────────────────────────────────────────────────────
+
+    fn typed_param(name: &str, ty: &str) -> Value {
+        json!({
+            "name": name,
+            "declarationFragments": [
+                frag(name, "identifier"),
+                frag(": ", "text"),
+                frag(ty, "typeIdentifier"),
+            ]
+        })
+    }
+
+    /// A class `Engine` with an init, a throwing scalar method, an async method,
+    /// a scalar property, and a generic method — exercising every M1 shape.
+    fn engine_graph() -> Value {
+        let class = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let init = json!({
+            "kind": {"identifier": "swift.init"},
+            "identifier": {"precise": "init"},
+            "pathComponents": ["Engine", "init(seed:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("init(seed: Int32)", "text")],
+            "functionSignature": {"parameters": [typed_param("seed", "Int32")], "returns": []},
+        });
+        let run = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "run"},
+            "pathComponents": ["Engine", "run(input:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func run(input: Int32) throws -> Int32", "text")],
+            "functionSignature": {"parameters": [typed_param("input", "Int32")], "returns": [frag("Int32", "typeIdentifier")]},
+        });
+        let warm = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "warm"},
+            "pathComponents": ["Engine", "warm()"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func warm() async -> Int32", "text")],
+            "functionSignature": {"parameters": [], "returns": [frag("Int32", "typeIdentifier")]},
+        });
+        let level = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "level"},
+            "pathComponents": ["Engine", "level"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var level", "text"), frag(": ", "text"), frag("Int32", "typeIdentifier")],
+        });
+        let transform = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "xf"},
+            "pathComponents": ["Engine", "transform(value:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func transform<T>(value: T) -> Int32", "text")],
+            "swiftGenerics": {"parameters": [{"name": "T", "index": 0, "depth": 0}]},
+            "functionSignature": {"parameters": [typed_param("value", "T")], "returns": [frag("Int32", "typeIdentifier")]},
+        });
+        graph(
+            vec![class, init, run, warm, level, transform],
+            vec![
+                json!({"kind":"memberOf","source":"init","target":"E"}),
+                json!({"kind":"memberOf","source":"run","target":"E"}),
+                json!({"kind":"memberOf","source":"warm","target":"E"}),
+                json!({"kind":"memberOf","source":"level","target":"E"}),
+                json!({"kind":"memberOf","source":"xf","target":"E"}),
+            ],
+        )
+    }
+
+    #[test]
+    fn bridge_emits_plumbing_and_box() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(b.swift.contains("import Demo"), "{}", b.swift);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_release\")"), "{}", b.swift);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_last_error\")"), "{}", b.swift);
+        assert!(
+            b.swift.contains("private final class EngineBox { var value: Engine"),
+            "{}",
+            b.swift
+        );
+    }
+
+    #[test]
+    fn bridge_init_becomes_new_returning_handle() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_new\")"), "{}", b.swift);
+        assert!(b.swift.contains("let _result = Engine(seed: seed)"), "{}", b.swift);
+        assert!(b.swift.contains("return cpRetained(EngineBox(_result))"), "{}", b.swift);
+        assert!(b.cplus.contains("extern fn cplus_demo_Engine_new(seed: i32) -> *u8;"), "{}", b.cplus);
+        assert!(b.cplus.contains("fn new(seed: i32) -> option::Option[Engine]"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_throwing_method_wraps_in_do_catch() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_run\")"), "{}", b.swift);
+        assert!(b.swift.contains("guard let _self = cpObject(self_, as: EngineBox.self)"), "{}", b.swift);
+        assert!(b.swift.contains("try _self.value.run(input: input)"), "{}", b.swift);
+        assert!(b.swift.contains("catch { cpSetError("), "{}", b.swift);
+        assert!(b.cplus.contains("fn run(this, input: i32) -> i32"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_async_method_uses_wait_for_async() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(
+            b.swift.contains("try cpWaitForAsync { try await _self.value.warm() }"),
+            "{}",
+            b.swift
+        );
+    }
+
+    #[test]
+    fn bridge_scalar_property_emits_getter() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_level\")"), "{}", b.swift);
+        assert!(b.swift.contains("return _self.value.level"), "{}", b.swift);
+        assert!(b.cplus.contains("fn level(this) -> i32"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_generic_method_is_skipped() {
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(b.cplus.contains("SKIPPED Engine.transform(value:): generic"), "{}", b.cplus);
+        assert!(b.skipped >= 1);
+        // Everything else was emitted (init, run, warm, level).
+        assert!(b.emitted >= 4, "emitted={}", b.emitted);
+    }
+
+    #[test]
+    fn bridge_box_init_is_consuming() {
+        // `consuming` lets the box also hold a noncopyable (`~Copyable`) value.
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        assert!(
+            b.swift.contains("init(_ v: consuming Engine) { value = v }"),
+            "{}",
+            b.swift
+        );
+    }
+
+    #[test]
+    fn bridge_optional_return_and_slice_param_and_dict_skip() {
+        // M2: `T?` of a known handle → `Option[T]` (nil-unwrap in the thunk);
+        // `[scalar]` param → `(ptr, count)`. A dictionary param still has no
+        // bridge and must be skipped with its faithful spelling.
+        let class = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let find = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "find"},
+            "pathComponents": ["Engine", "find()"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func find() -> Engine?", "text")],
+            "functionSignature": {"parameters": [], "returns": [frag("Engine", "typeIdentifier"), frag("?", "text")]},
+        });
+        let tally = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "tally"},
+            "pathComponents": ["Engine", "tally(values:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func tally(values: [Int32]) -> Int32", "text")],
+            "functionSignature": {
+                "parameters": [json!({
+                    "name": "values",
+                    "declarationFragments": [frag("values", "identifier"), frag(": ", "text"), frag("[", "text"), frag("Int32", "typeIdentifier"), frag("]", "text")]
+                })],
+                "returns": [frag("Int32", "typeIdentifier")]
+            },
+        });
+        let lookup = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "lookup"},
+            "pathComponents": ["Engine", "lookup(map:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func lookup(map: [String : Int]) -> Int", "text")],
+            "functionSignature": {
+                "parameters": [json!({
+                    "name": "map",
+                    "declarationFragments": [frag("map", "identifier"), frag(": ", "text"), frag("[", "text"), frag("String", "typeIdentifier"), frag(" : ", "text"), frag("Int", "typeIdentifier"), frag("]", "text")]
+                })],
+                "returns": [frag("Int", "typeIdentifier")]
+            },
+        });
+        let g = graph(
+            vec![class, find, tally, lookup],
+            vec![
+                json!({"kind":"memberOf","source":"find","target":"E"}),
+                json!({"kind":"memberOf","source":"tally","target":"E"}),
+                json!({"kind":"memberOf","source":"lookup","target":"E"}),
+            ],
+        );
+        let b = generate_bridge(&g, "Demo", None);
+        // Optional handle return → Option[Engine] with nil-unwrap.
+        assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_find\")"), "{}", b.swift);
+        assert!(b.swift.contains("if let r = _result { return cpRetained(EngineBox(r)) } else { return nil }"), "{}", b.swift);
+        assert!(b.cplus.contains("fn find(this) -> option::Option[Engine]"), "{}", b.cplus);
+        // [Int32] param → (ptr, count) on the C ABI, `i32[]` slice in C+.
+        assert!(b.swift.contains("Array(UnsafeBufferPointer(start: values, count: values_count))"), "{}", b.swift);
+        assert!(b.cplus.contains("fn tally(this, values: i32[]) -> i32"), "{}", b.cplus);
+        // Dictionary param: still no bridge.
+        assert!(b.cplus.contains("SKIPPED Engine.lookup(map:): param `[String : Int]`"), "{}", b.cplus);
+        assert!(!b.swift.contains("cplus_demo_Engine_lookup"), "{}", b.swift);
+    }
+
+    #[test]
+    fn bridge_string_return_and_property_getset() {
+        // String return → owned copy-out `Option[Text]`; a stored `var` String
+        // property → getter + setter; `let` String → getter only.
+        let class = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let greeting = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "greeting"},
+            "pathComponents": ["Engine", "greeting()"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func greeting() -> String", "text")],
+            "functionSignature": {"parameters": [], "returns": [frag("String", "typeIdentifier")]},
+        });
+        let name = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "name"},
+            "pathComponents": ["Engine", "name"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("let", "keyword"), frag(" name", "text"), frag(": ", "text"), frag("String", "typeIdentifier")],
+        });
+        let note = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "note"},
+            "pathComponents": ["Engine", "note"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" note", "text"), frag(": ", "text"), frag("String", "typeIdentifier")],
+        });
+        let g = graph(
+            vec![class, greeting, name, note],
+            vec![
+                json!({"kind":"memberOf","source":"greeting","target":"E"}),
+                json!({"kind":"memberOf","source":"name","target":"E"}),
+                json!({"kind":"memberOf","source":"note","target":"E"}),
+            ],
+        );
+        let b = generate_bridge(&g, "Demo", None);
+        // String method return → strdup + Option[Text] copy-out.
+        assert!(b.swift.contains("return strdup(_result)"), "{}", b.swift);
+        assert!(b.cplus.contains("fn greeting(this) -> option::Option[text::Text]"), "{}", b.cplus);
+        assert!(b.cplus.contains("import \"stdlib/text\" as text;"), "{}", b.cplus);
+        assert!(b.cplus.contains("extern fn strlen(s: *u8) -> usize;"), "{}", b.cplus);
+        // `let name` → getter only; `var note` → getter + setter.
+        assert!(b.cplus.contains("fn name(this) -> option::Option[text::Text]"), "{}", b.cplus);
+        assert!(!b.swift.contains("cplus_demo_Engine_set_name"), "{}", b.swift);
+        assert!(b.cplus.contains("fn note(this) -> option::Option[text::Text]"), "{}", b.cplus);
+        assert!(b.cplus.contains("fn set_note(this, value: str)"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_scalar_property_setter_when_var() {
+        // A stored `var` scalar property emits a setter; the M1 `level` getter
+        // here is `var`, so it now gains `set_level`.
+        let b = generate_bridge(&engine_graph(), "Demo", None);
+        // engine_graph's `level` is declared `var level`.
+        assert!(b.cplus.contains("fn level(this) -> i32"), "{}", b.cplus);
+        assert!(b.cplus.contains("fn set_level(this, value: i32)"), "{}", b.cplus);
+        assert!(b.swift.contains("_self.value.level = value"), "{}", b.swift);
+    }
+
+    #[test]
+    fn bridge_failable_init_returns_optional() {
+        // `init?` yields `Owner?` — must take the optional (nil-unwrap) path,
+        // not box a value that might be nil.
+        let class = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let init = json!({
+            "kind": {"identifier": "swift.init"},
+            "identifier": {"precise": "i"},
+            "pathComponents": ["Engine", "init(x:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("init?(x: Int32)", "text")],
+            "functionSignature": {"parameters": [typed_param("x", "Int32")], "returns": []},
+        });
+        let g = graph(vec![class, init], vec![json!({"kind":"memberOf","source":"i","target":"E"})]);
+        let b = generate_bridge(&g, "Demo", None);
+        assert!(b.swift.contains("if let r = _result { return cpRetained(EngineBox(r)) } else { return nil }"), "{}", b.swift);
+        assert!(b.cplus.contains("fn new(x: i32) -> option::Option[Engine]"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_computed_property_strips_accessor_block() {
+        // `var count: Int { get }` — the `{ get }` accessor block must not be
+        // swept into the type (which would make it unbridgeable). It is a
+        // get-only computed property, so no setter.
+        let class = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let count = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "c"},
+            "pathComponents": ["Engine", "count"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" count", "text"), frag(": ", "text"), frag("Int", "typeIdentifier"), frag(" { get }", "text")],
+        });
+        let g = graph(vec![class, count], vec![json!({"kind":"memberOf","source":"c","target":"E"})]);
+        let b = generate_bridge(&g, "Demo", None);
+        assert!(b.cplus.contains("fn count(this) -> i64"), "{}", b.cplus);
+        assert!(!b.cplus.contains("SKIPPED Engine.count"), "{}", b.cplus);
+        assert!(!b.swift.contains("set_count"), "{}", b.swift);
+    }
+
+    #[test]
+    fn bridge_nested_enum_is_handle_nested_struct_is_not() {
+        // A nested enum is Escapable → boxable as a handle (dotted Swift type,
+        // flattened C+ identifier). A nested struct may be `~Escapable` (a view)
+        // and is not detectable, so it stays out of the handle set.
+        let engine = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Engine", "text")],
+        });
+        let mode = json!({
+            "kind": {"identifier": "swift.enum"},
+            "identifier": {"precise": "M"},
+            "pathComponents": ["Engine", "Mode"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("enum Mode", "text")],
+        });
+        let span = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "S"},
+            "pathComponents": ["Engine", "Span"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Span", "text")],
+        });
+        let mode_m = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "mm"},
+            "pathComponents": ["Engine", "mode()"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func mode() -> Engine.Mode", "text")],
+            "functionSignature": {"parameters": [], "returns": [frag("Engine", "typeIdentifier"), frag(".", "text"), frag("Mode", "typeIdentifier")]},
+        });
+        let span_m = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "sm"},
+            "pathComponents": ["Engine", "span()"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func span() -> Engine.Span", "text")],
+            "functionSignature": {"parameters": [], "returns": [frag("Engine", "typeIdentifier"), frag(".", "text"), frag("Span", "typeIdentifier")]},
+        });
+        let g = graph(
+            vec![engine, mode, span, mode_m, span_m],
+            vec![
+                json!({"kind":"memberOf","source":"mm","target":"E"}),
+                json!({"kind":"memberOf","source":"sm","target":"E"}),
+            ],
+        );
+        let b = generate_bridge(&g, "Demo", None);
+        // Nested enum Mode → handle, dotted Swift type, flattened identifier.
+        assert!(b.swift.contains("class Engine_ModeBox { var value: Engine.Mode"), "{}", b.swift);
+        assert!(b.cplus.contains("struct Engine_Mode {"), "{}", b.cplus);
+        assert!(b.cplus.contains("fn mode(this) -> option::Option[Engine_Mode]"), "{}", b.cplus);
+        // Nested struct Span → not a handle; the method that returns it is skipped.
+        assert!(!b.cplus.contains("struct Engine_Span {"), "{}", b.cplus);
+        assert!(b.cplus.contains("SKIPPED Engine.span(): return `Engine.Span`"), "{}", b.cplus);
     }
 }

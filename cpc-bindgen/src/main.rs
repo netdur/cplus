@@ -28,6 +28,7 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
     let mut swift_mode = false;
+    let mut bridge_mode = false;
     let mut swift_modules: Vec<String> = Vec::new();
     let mut link_framework: Option<String> = None;
     let mut prefix = String::new();
@@ -56,6 +57,15 @@ fn main() {
             // `swift symbolgraph-extract` for NAME first.
             if a == "--swift" {
                 swift_mode = true;
+                i += 1;
+                continue;
+            }
+            // `--swift-bridge` generates a compiled @_cdecl bridge + C+ bindings
+            // (not the all-SKIP classifier manifest). Pairs with --swift-module
+            // <Name> or a `<Module>.symbols.json` path, plus --out DIR.
+            if a == "--swift-bridge" {
+                swift_mode = true;
+                bridge_mode = true;
                 i += 1;
                 continue;
             }
@@ -148,9 +158,26 @@ fn main() {
     // Swift mode: bind a `swift symbolgraph-extract` JSON graph. Either a
     // module name (we run the extractor) or a pre-extracted `.symbols.json`.
     if swift_mode {
+        // Bridge mode (`--swift-bridge`): generate a compiled @_cdecl Swift
+        // bridge + C+ bindings (the only stable Swift→C path). Requires --out.
+        if bridge_mode {
+            let dir = match out_dir.as_deref() {
+                Some(d) => d,
+                None => {
+                    eprintln!("cpc-bindgen --swift-bridge: requires --out DIR");
+                    std::process::exit(2);
+                }
+            };
+            let (graph, module) = resolve_swift_graph(&swift_modules, header.as_deref(), &clang_args);
+            std::process::exit(swift_bridge_package(
+                dir,
+                &graph,
+                &module,
+                link_framework.as_deref(),
+            ));
+        }
         // Package mode: `--out DIR` with one or more `--swift-module` names
-        // writes a whole package (src/<module>.cplus per module, umbrella,
-        // Cplus.toml) instead of printing to stdout.
+        // writes the classifier package (src/<module>.cplus per module).
         if let Some(dir) = &out_dir {
             if swift_modules.is_empty() {
                 eprintln!("cpc-bindgen --swift --out: need at least one --swift-module <Name>");
@@ -158,46 +185,7 @@ fn main() {
             }
             std::process::exit(swift_package(dir, &swift_modules, link_framework.as_deref(), &clang_args));
         }
-        let (graph, module) = if let Some(module) = swift_modules.first() {
-            // Everything after `--` is forwarded to symbolgraph-extract
-            // (-target / -sdk / -F, e.g. for an Xcode-beta SDK).
-            match swift::extract(module, &clang_args) {
-                Ok(g) => (g, module.clone()),
-                Err(e) => {
-                    eprintln!("cpc-bindgen: {e}");
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            let path = match &header {
-                Some(h) => h.clone(),
-                None => {
-                    eprintln!("cpc-bindgen --swift: expected a `<Module>.symbols.json` path");
-                    eprintln!("   or use --swift-module <Name> -- <extractor args> to extract");
-                    std::process::exit(2);
-                }
-            };
-            let bytes = match std::fs::read(&path) {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("cpc-bindgen: cannot read `{path}`: {e}");
-                    std::process::exit(1);
-                }
-            };
-            let g: serde_json::Value = match serde_json::from_slice(&bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("cpc-bindgen: `{path}` is not a symbol-graph JSON: {e}");
-                    std::process::exit(1);
-                }
-            };
-            let module = std::path::Path::new(&path)
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .map(|s| s.trim_end_matches(".symbols.json").to_string())
-                .unwrap_or_else(|| "Module".to_string());
-            (g, module)
-        };
+        let (graph, module) = resolve_swift_graph(&swift_modules, header.as_deref(), &clang_args);
         print!("{}", swift::generate(&graph, &module));
         std::process::exit(0);
     }
@@ -283,6 +271,97 @@ fn main() {
         emitter.walk(&v);
         print!("{}", emitter.finish());
     }
+}
+
+/// Resolve a Swift symbol graph + module name from either a `--swift-module`
+/// name (run the extractor) or a `<Module>.symbols.json` path. Exits on error.
+fn resolve_swift_graph(
+    swift_modules: &[String],
+    header: Option<&str>,
+    clang_args: &[String],
+) -> (serde_json::Value, String) {
+    if let Some(module) = swift_modules.first() {
+        // Everything after `--` is forwarded to symbolgraph-extract
+        // (-target / -sdk / -F, e.g. for an Xcode-beta SDK).
+        match swift::extract(module, clang_args) {
+            Ok(g) => (g, module.clone()),
+            Err(e) => {
+                eprintln!("cpc-bindgen: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let path = match header {
+            Some(h) => h.to_string(),
+            None => {
+                eprintln!("cpc-bindgen --swift: expected a `<Module>.symbols.json` path");
+                eprintln!("   or use --swift-module <Name> -- <extractor args> to extract");
+                std::process::exit(2);
+            }
+        };
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| {
+            eprintln!("cpc-bindgen: cannot read `{path}`: {e}");
+            std::process::exit(1);
+        });
+        let g: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            eprintln!("cpc-bindgen: `{path}` is not a symbol-graph JSON: {e}");
+            std::process::exit(1);
+        });
+        let module = std::path::Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .map(|s| s.trim_end_matches(".symbols.json").to_string())
+            .unwrap_or_else(|| "Module".to_string());
+        (g, module)
+    }
+}
+
+/// Write a generated Swift-bridge package: `bridge/<Module>Bridge.swift`,
+/// `bridge/<module>_bridge.h`, `src/<module>.cplus`, `build.sh`, `Cplus.toml`.
+fn swift_bridge_package(
+    dir: &str,
+    graph: &serde_json::Value,
+    module: &str,
+    link: Option<&str>,
+) -> i32 {
+    let files = swift::generate_bridge(graph, module, link);
+    let lower = module.to_lowercase();
+    let base = std::path::Path::new(dir);
+    let src = base.join("src");
+    let bridge = base.join("bridge");
+    if let Err(e) = std::fs::create_dir_all(&src).and_then(|_| std::fs::create_dir_all(&bridge)) {
+        eprintln!("cpc-bindgen: cannot create `{dir}`: {e}");
+        return 1;
+    }
+    std::fs::write(src.join(format!("{lower}.cplus")), &files.cplus).ok();
+    std::fs::write(bridge.join(format!("{module}Bridge.swift")), &files.swift).ok();
+    std::fs::write(bridge.join(format!("{lower}_bridge.h")), &files.header).ok();
+    let build = base.join("build.sh");
+    std::fs::write(&build, &files.build_sh).ok();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&build) {
+            let mut perm = meta.permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&build, perm).ok();
+        }
+    }
+    let frameworks = link
+        .map(|f| format!("frameworks    = [\"{f}\"]\n"))
+        .unwrap_or_default();
+    let toml = format!(
+        "# Auto-generated by cpc-bindgen --swift-bridge. Build the bridge first: ./build.sh\n\
+         [package]\nname    = \"{lower}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n\n\
+         [link]\n{frameworks}libs          = [\"{lower}_bridge\"]\nsearch-paths  = [\"bridge/build\"]\n"
+    );
+    std::fs::write(base.join("Cplus.toml"), toml).ok();
+    eprintln!(
+        "cpc-bindgen --swift-bridge: wrote {dir} ({} emitted, {} skipped)",
+        files.emitted, files.skipped
+    );
+    0
 }
 
 /// Generate a whole Swift package: extract + bind each module, write
