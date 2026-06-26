@@ -88,18 +88,59 @@ description of a Swift module's public API (the Swift analog of clang's
 Unlike Objective-C, Swift has **no universal dynamic entry point** like
 `objc_msgSend`: methods use the Swift calling convention with mangled names, and
 value types, generics, `async`, `throws`, and move-only (`~Copyable`) types have
-no C ABI. So this mode binds only the subset that has a guaranteed C ABI —
-raw-value enums (as named `i64` constant accessors) and functions marked
-`@_cdecl` / `@convention(c)` — and writes `// SKIPPED <path>: <reason>` for
-everything else, with a summary histogram of the reasons. Each skip names what a
-hand-written `@_cdecl` Swift bridge would have to cover, so the output doubles as
-the bridge spec. (For a pure-Swift framework like CoreAI the result is an
-all-SKIP manifest: there is nothing C-callable to bind directly.)
+no C ABI. `--swift` therefore binds only the subset that already has a guaranteed
+C ABI — raw-value enums and functions marked `@_cdecl` / `@convention(c)` — and
+writes `// SKIPPED <path>: <reason>` for everything else. For a pure-Swift
+framework that is an all-SKIP manifest; use `--swift-bridge` to actually bind it.
+
+### Swift bridges (`--swift-bridge`)
+
+```
+cpc-bindgen --swift-bridge --swift-module CoreAIRuntime --out coreai --link CoreAI \
+  --bridge-spec coreai.json -- -target arm64-apple-macos27.0 -sdk "$SDK" -F "$SDK/.../SubFrameworks"
+```
+
+Instead of skipping, *generate* the C ABI. For each bindable symbol this emits
+two artifacts in lockstep — a `@_cdecl` Swift thunk (into
+`bridge/<Module>Bridge.swift`) and the matching C+ `extern fn` + ergonomic
+wrapper (into `src/<module>.cplus`) — plus a `<module>_bridge.h`, a `build.sh`
+that compiles the Swift into a dylib, and a `Cplus.toml` that links it. The C+
+side owns opaque handles (`+1`/`drop` via `Unmanaged`); the Swift side owns the
+real values.
+
+What it binds: reference/value types and enums as opaque handles (boxed in a
+Swift class); scalars; `String` params/returns (`Text`); `throws` (→ error
+channel + `Option`/`Result`); `async` (a blocking bridge); `T?` and failable
+`init?` (→ `Option`); `[scalar]` params (slices) and `[scalar]`/`[String]`
+property getters (→ `Vec`); scalar/String property get/set. Constructs the graph
+can't decide (copyability, raw-enum-ness, generic instantiations) are supplied by
+`--bridge-spec`; everything still undecidable is `// SKIPPED` with its reason.
+
+`--bridge-spec FILE` is a JSON object of human facts the symbol graph can't
+provide:
+
+- `copyable`: value types that are `Copyable` (unlocks handle property getters).
+- `raw_enums`: integer-`RawValue` enums (bind as `i64` + per-case constants).
+- `enum_cases`: raw-value-less enums (handle + a constructor per case).
+- `noncopyable_owners`: `~Copyable` types (each member read becomes a consuming
+  `take_<member>()`).
+- `view_copy`: `{ "NDArray": ["Float", ...] }` — bulk-copy a `~Escapable` element
+  view into a caller buffer (`<Type>_copy_<elem>`).
+- `instantiate`: `{ "NDArray.init(scalars:shape:)": ["Float", ...] }` — emit one
+  binding per concrete element type for a generic method.
+
+Requires an SDK shipping the framework (e.g. CoreAI needs Xcode 27+); select it
+with `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`.
 
 ## Flags
 
 - `--objc`: Objective-C mode. Without it the input is treated as C.
-- `--swift <Module.symbols.json>`: bind a Swift `symbolgraph-extract` JSON graph.
+- `--swift <Module.symbols.json>`: bind the C-ABI subset of a Swift graph (the
+  all-SKIP classifier).
+- `--swift-bridge`: generate a compiled `@_cdecl` Swift bridge + C+ bindings for
+  the whole bindable surface. Pairs with `--swift-module`/`--swift` + `--out DIR`,
+  `--link <Framework>`, and `--bridge-spec FILE`.
+- `--bridge-spec FILE`: JSON of human-supplied facts (see above).
 - `--swift-module <Name>`: run `swift symbolgraph-extract` for `Name` first;
   pass `-target`/`-sdk`/`-F` after `--`.
 - `--prefix P`: strip a class-name prefix from emitted type names. `--prefix NS`
