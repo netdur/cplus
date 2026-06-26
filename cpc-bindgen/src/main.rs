@@ -29,6 +29,7 @@ fn main() {
     let mut objc_mode = false;
     let mut swift_mode = false;
     let mut bridge_mode = false;
+    let mut bridge_spec_path: Option<String> = None;
     let mut swift_modules: Vec<String> = Vec::new();
     let mut link_framework: Option<String> = None;
     let mut prefix = String::new();
@@ -66,6 +67,18 @@ fn main() {
             if a == "--swift-bridge" {
                 swift_mode = true;
                 bridge_mode = true;
+                i += 1;
+                continue;
+            }
+            // `--bridge-spec FILE` supplies human facts the symbol graph can't
+            // (today: `copyable` types for handle property getters).
+            if a == "--bridge-spec" {
+                bridge_spec_path = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--bridge-spec=") {
+                bridge_spec_path = Some(p.to_string());
                 i += 1;
                 continue;
             }
@@ -174,6 +187,7 @@ fn main() {
                 &graph,
                 &module,
                 link_framework.as_deref(),
+                bridge_spec_path.as_deref(),
             ));
         }
         // Package mode: `--out DIR` with one or more `--swift-module` names
@@ -323,8 +337,28 @@ fn swift_bridge_package(
     graph: &serde_json::Value,
     module: &str,
     link: Option<&str>,
+    spec_path: Option<&str>,
 ) -> i32 {
-    let files = swift::generate_bridge(graph, module, link);
+    let spec = match spec_path {
+        Some(p) => {
+            let bytes = match std::fs::read(p) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("cpc-bindgen --bridge-spec: cannot read `{p}`: {e}");
+                    return 1;
+                }
+            };
+            match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(v) => swift::BridgeSpec::from_json(&v),
+                Err(e) => {
+                    eprintln!("cpc-bindgen --bridge-spec: `{p}` is not valid JSON: {e}");
+                    return 1;
+                }
+            }
+        }
+        None => swift::BridgeSpec::default(),
+    };
+    let files = swift::generate_bridge(graph, module, link, &spec);
     let lower = module.to_lowercase();
     let base = std::path::Path::new(dir);
     let src = base.join("src");

@@ -580,6 +580,33 @@ pub struct BridgeFiles {
     pub skipped: usize,
 }
 
+/// Human-supplied facts the symbol graph cannot provide. Loaded from
+/// `--bridge-spec FILE` (a JSON object). Today it carries `copyable`: the value
+/// types the author vouches are `Copyable`, so a handle *property* getter can
+/// safely copy the value out of `self` (noncopyability is not graph-detectable,
+/// and a wrong guess would fail to compile — classes are always safe and need no
+/// entry).
+#[derive(Default)]
+pub struct BridgeSpec {
+    pub copyable: std::collections::BTreeSet<String>,
+}
+
+impl BridgeSpec {
+    /// Parse a `--bridge-spec` JSON object: `{ "copyable": ["NDArray", ...] }`.
+    pub fn from_json(v: &Value) -> Self {
+        let copyable = v
+            .get("copyable")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        BridgeSpec { copyable }
+    }
+}
+
 #[derive(Clone)]
 enum Marshal {
     Void,
@@ -757,6 +784,7 @@ fn emit_member(
     owner_swift: &str, // dotted Swift type spelling (e.g. `NDArray.RawView`)
     prefix: &str,
     types: &std::collections::BTreeSet<String>,
+    copy_safe: &std::collections::BTreeSet<String>,
 ) -> Result<MemberEmit, String> {
     let kind = kind_of(sym);
     let decl = frags(sym);
@@ -838,10 +866,44 @@ fn emit_member(
                     wrapper.push_str(&format!("    fn set_{g}(this, value: str) {{\n        {{ {cset}(this._raw, #str_ptr(value), #str_len(value)); }}\n        return;\n    }}\n"));
                 }
             }
-            // Handle / optional-handle property values would require copying the
-            // value out of `self`, which is illegal for noncopyable types and not
-            // detectable from the graph. Left to a later pass.
-            _ => return Err("property type needs copyability info to bridge".into()),
+            // Handle / optional-handle property: reading copies the value out of
+            // `self`, which is only safe when the value type is Copyable. Classes
+            // are always safe; other types must be vouched for in `--bridge-spec`.
+            Some(Marshal::Handle(t)) | Some(Marshal::OptHandle(t)) => {
+                let optional = matches!(marshal_of(&pty, types), Some(Marshal::OptHandle(_)));
+                // Both the owner (whose member is read through the box — which
+                // consumes a `~Copyable` value) and the value type (copied into a
+                // new box) must be Copyable.
+                if !copy_safe.contains(owner_swift) || !copy_safe.contains(&t) {
+                    return Err("handle property needs owner + value in `copyable` (--bridge-spec)".into());
+                }
+                let ct = cident(&t);
+                let tb = box_name(&t);
+                // Bind a local first: the box init is `consuming`, and a property
+                // projection of the borrowed `_self.value` can't be consumed in
+                // place. The bind copies it out (safe — the type is copy-safe).
+                let read = if optional {
+                    format!("if let _v = _self.value.{base} {{ return cpRetained({tb}(_v)) }} else {{ return nil }}")
+                } else {
+                    format!("let _v = _self.value.{base}\n    return cpRetained({tb}(_v))")
+                };
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{cget}\")\npublic func {cget}(_ self_: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return nil }}\n    {read}\n}}\n\n"
+                ));
+                extern_line.push_str(&format!("#[link_name = \"{cget}\"]\nextern fn {cget}(receiver: *u8) -> *u8;\n"));
+                wrapper.push_str(&format!(
+                    "    fn {g}(this) -> option::Option[{ct}] {{\n        let raw: *u8 = {{ {cget}(this._raw) }};\n        if is_null(raw) {{ return option::Option[{ct}]::None; }}\n        return option::some({ct} {{ _raw: raw }});\n    }}\n"
+                ));
+                // Setter only for a non-optional stored `var` handle.
+                if settable && !optional {
+                    thunk.push_str(&format!(
+                        "@_cdecl(\"{cset}\")\npublic func {cset}(_ self_: UnsafeMutableRawPointer?, _ value: UnsafeMutableRawPointer?) {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return }}\n    guard let _value = cpObject(value, as: {tb}.self) else {{ return }}\n    _self.value.{base} = _value.value\n}}\n\n"
+                    ));
+                    extern_line.push_str(&format!("#[link_name = \"{cset}\"]\nextern fn {cset}(receiver: *u8, value: *u8);\n"));
+                    wrapper.push_str(&format!("    fn set_{g}(this, value: {ct}) {{\n        {{ {cset}(this._raw, value._raw); }}\n        return;\n    }}\n"));
+                }
+            }
+            _ => return Err("property type not bridgeable".into()),
         }
         return Ok(MemberEmit { thunk, extern_line, wrapper, uses_text });
     }
@@ -1231,7 +1293,12 @@ fn swift_plumbing(prefix: &str) -> String {
 /// the symbol-graph module (drives C names and box types); `link` is the
 /// importable framework when the module is a framework submodule (e.g. the
 /// `CoreAIRuntime` graph is imported as `CoreAI`).
-pub fn generate_bridge(graph: &Value, module: &str, link: Option<&str>) -> BridgeFiles {
+pub fn generate_bridge(
+    graph: &Value,
+    module: &str,
+    link: Option<&str>,
+    spec: &BridgeSpec,
+) -> BridgeFiles {
     use std::collections::{BTreeMap, BTreeSet};
     let import_module = link.unwrap_or(module);
     let symbols: Vec<Value> = graph
@@ -1266,6 +1333,9 @@ pub fn generate_bridge(graph: &Value, module: &str, link: Option<&str>) -> Bridg
     // are skipped too: a box needs a concrete `T`, not `Foo<T>`.
     let mut type_names: BTreeSet<String> = BTreeSet::new();
     let mut type_precise: BTreeMap<String, String> = BTreeMap::new(); // dotted name → precise
+    // Types safe to copy out of `self` for a property getter: classes (always
+    // Copyable — a copy is a retain) plus whatever the spec vouches for.
+    let mut copy_safe: BTreeSet<String> = spec.copyable.clone();
     for s in &symbols {
         let k = kind_of(s);
         if !matches!(k, "swift.class" | "swift.struct" | "swift.enum") || !is_pub(s) {
@@ -1284,6 +1354,9 @@ pub fn generate_bridge(graph: &Value, module: &str, link: Option<&str>) -> Bridg
             continue;
         }
         let name = path_of(s);
+        if k == "swift.class" {
+            copy_safe.insert(name.clone());
+        }
         type_names.insert(name.clone());
         type_precise.insert(name, precise(s).to_string());
     }
@@ -1362,7 +1435,7 @@ pub fn generate_bridge(graph: &Value, module: &str, link: Option<&str>) -> Bridg
                     skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
                     continue;
                 }
-                match emit_member(m, &ident, name, &prefix, &type_names) {
+                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe) {
                     Ok(e) => {
                         thunks.push_str(&e.thunk);
                         externs.push_str(&e.extern_line);
@@ -1756,7 +1829,7 @@ mod tests {
 
     #[test]
     fn bridge_emits_plumbing_and_box() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(b.swift.contains("import Demo"), "{}", b.swift);
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_release\")"), "{}", b.swift);
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_last_error\")"), "{}", b.swift);
@@ -1769,7 +1842,7 @@ mod tests {
 
     #[test]
     fn bridge_init_becomes_new_returning_handle() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_new\")"), "{}", b.swift);
         assert!(b.swift.contains("let _result = Engine(seed: seed)"), "{}", b.swift);
         assert!(b.swift.contains("return cpRetained(EngineBox(_result))"), "{}", b.swift);
@@ -1779,7 +1852,7 @@ mod tests {
 
     #[test]
     fn bridge_throwing_method_wraps_in_do_catch() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_run\")"), "{}", b.swift);
         assert!(b.swift.contains("guard let _self = cpObject(self_, as: EngineBox.self)"), "{}", b.swift);
         assert!(b.swift.contains("try _self.value.run(input: input)"), "{}", b.swift);
@@ -1789,7 +1862,7 @@ mod tests {
 
     #[test]
     fn bridge_async_method_uses_wait_for_async() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(
             b.swift.contains("try cpWaitForAsync { try await _self.value.warm() }"),
             "{}",
@@ -1799,7 +1872,7 @@ mod tests {
 
     #[test]
     fn bridge_scalar_property_emits_getter() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_level\")"), "{}", b.swift);
         assert!(b.swift.contains("return _self.value.level"), "{}", b.swift);
         assert!(b.cplus.contains("fn level(this) -> i32"), "{}", b.cplus);
@@ -1807,7 +1880,7 @@ mod tests {
 
     #[test]
     fn bridge_generic_method_is_skipped() {
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(b.cplus.contains("SKIPPED Engine.transform(value:): generic"), "{}", b.cplus);
         assert!(b.skipped >= 1);
         // Everything else was emitted (init, run, warm, level).
@@ -1817,7 +1890,7 @@ mod tests {
     #[test]
     fn bridge_box_init_is_consuming() {
         // `consuming` lets the box also hold a noncopyable (`~Copyable`) value.
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         assert!(
             b.swift.contains("init(_ v: consuming Engine) { value = v }"),
             "{}",
@@ -1881,7 +1954,7 @@ mod tests {
                 json!({"kind":"memberOf","source":"lookup","target":"E"}),
             ],
         );
-        let b = generate_bridge(&g, "Demo", None);
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
         // Optional handle return → Option[Engine] with nil-unwrap.
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_Engine_find\")"), "{}", b.swift);
         assert!(b.swift.contains("if let r = _result { return cpRetained(EngineBox(r)) } else { return nil }"), "{}", b.swift);
@@ -1935,7 +2008,7 @@ mod tests {
                 json!({"kind":"memberOf","source":"note","target":"E"}),
             ],
         );
-        let b = generate_bridge(&g, "Demo", None);
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
         // String method return → strdup + Option[Text] copy-out.
         assert!(b.swift.contains("return strdup(_result)"), "{}", b.swift);
         assert!(b.cplus.contains("fn greeting(this) -> option::Option[text::Text]"), "{}", b.cplus);
@@ -1952,7 +2025,7 @@ mod tests {
     fn bridge_scalar_property_setter_when_var() {
         // A stored `var` scalar property emits a setter; the M1 `level` getter
         // here is `var`, so it now gains `set_level`.
-        let b = generate_bridge(&engine_graph(), "Demo", None);
+        let b = generate_bridge(&engine_graph(), "Demo", None, &BridgeSpec::default());
         // engine_graph's `level` is declared `var level`.
         assert!(b.cplus.contains("fn level(this) -> i32"), "{}", b.cplus);
         assert!(b.cplus.contains("fn set_level(this, value: i32)"), "{}", b.cplus);
@@ -1979,7 +2052,7 @@ mod tests {
             "functionSignature": {"parameters": [typed_param("x", "Int32")], "returns": []},
         });
         let g = graph(vec![class, init], vec![json!({"kind":"memberOf","source":"i","target":"E"})]);
-        let b = generate_bridge(&g, "Demo", None);
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
         assert!(b.swift.contains("if let r = _result { return cpRetained(EngineBox(r)) } else { return nil }"), "{}", b.swift);
         assert!(b.cplus.contains("fn new(x: i32) -> option::Option[Engine]"), "{}", b.cplus);
     }
@@ -2004,7 +2077,7 @@ mod tests {
             "declarationFragments": [frag("var", "keyword"), frag(" count", "text"), frag(": ", "text"), frag("Int", "typeIdentifier"), frag(" { get }", "text")],
         });
         let g = graph(vec![class, count], vec![json!({"kind":"memberOf","source":"c","target":"E"})]);
-        let b = generate_bridge(&g, "Demo", None);
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
         assert!(b.cplus.contains("fn count(this) -> i64"), "{}", b.cplus);
         assert!(!b.cplus.contains("SKIPPED Engine.count"), "{}", b.cplus);
         assert!(!b.swift.contains("set_count"), "{}", b.swift);
@@ -2059,7 +2132,7 @@ mod tests {
                 json!({"kind":"memberOf","source":"sm","target":"E"}),
             ],
         );
-        let b = generate_bridge(&g, "Demo", None);
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
         // Nested enum Mode → handle, dotted Swift type, flattened identifier.
         assert!(b.swift.contains("class Engine_ModeBox { var value: Engine.Mode"), "{}", b.swift);
         assert!(b.cplus.contains("struct Engine_Mode {"), "{}", b.cplus);
@@ -2067,5 +2140,48 @@ mod tests {
         // Nested struct Span → not a handle; the method that returns it is skipped.
         assert!(!b.cplus.contains("struct Engine_Span {"), "{}", b.cplus);
         assert!(b.cplus.contains("SKIPPED Engine.span(): return `Engine.Span`"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_handle_property_getter_gated_by_spec() {
+        // A struct's handle-typed property getter copies the value out of `self`,
+        // safe only when both owner and value are Copyable. Without a spec it is
+        // skipped; declaring both in `copyable` unlocks it.
+        let owner = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "O"},
+            "pathComponents": ["Owner"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Owner", "text")],
+        });
+        let part = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "P"},
+            "pathComponents": ["Part"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Part", "text")],
+        });
+        let prop = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "pp"},
+            "pathComponents": ["Owner", "part"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" part", "text"), frag(": ", "text"), frag("Part", "typeIdentifier"), frag(" { get }", "text")],
+        });
+        let g = graph(
+            vec![owner, part, prop],
+            vec![json!({"kind":"memberOf","source":"pp","target":"O"})],
+        );
+        // No spec → both Owner and Part are non-class, non-vouched → skipped.
+        let b0 = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
+        assert!(b0.cplus.contains("SKIPPED Owner.part"), "{}", b0.cplus);
+        assert!(!b0.cplus.contains("fn part(this)"), "{}", b0.cplus);
+        // Spec vouches for both → handle getter emitted.
+        let spec = BridgeSpec {
+            copyable: ["Owner".to_string(), "Part".to_string()].into_iter().collect(),
+        };
+        let b1 = generate_bridge(&g, "Demo", None, &spec);
+        assert!(b1.cplus.contains("fn part(this) -> option::Option[Part]"), "{}", b1.cplus);
+        assert!(b1.swift.contains("cpRetained(PartBox(_v))"), "{}", b1.swift);
     }
 }
