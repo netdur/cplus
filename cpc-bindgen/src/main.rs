@@ -28,7 +28,8 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
     let mut swift_mode = false;
-    let mut swift_module: Option<String> = None;
+    let mut swift_modules: Vec<String> = Vec::new();
+    let mut link_framework: Option<String> = None;
     let mut prefix = String::new();
     let mut overrides_path: Option<String> = None;
     let mut framework: Option<String> = None;
@@ -60,13 +61,27 @@ fn main() {
             }
             if a == "--swift-module" {
                 swift_mode = true;
-                swift_module = raw.get(i + 1).cloned();
+                if let Some(m) = raw.get(i + 1) {
+                    swift_modules.push(m.clone());
+                }
                 i += 2;
                 continue;
             }
             if let Some(p) = a.strip_prefix("--swift-module=") {
                 swift_mode = true;
-                swift_module = Some(p.to_string());
+                swift_modules.push(p.to_string());
+                i += 1;
+                continue;
+            }
+            // `--link NAME` sets the [link] framework for a generated Swift
+            // package (e.g. CoreAI for the CoreAIRuntime/Delegates modules).
+            if a == "--link" {
+                link_framework = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--link=") {
+                link_framework = Some(p.to_string());
                 i += 1;
                 continue;
             }
@@ -133,7 +148,17 @@ fn main() {
     // Swift mode: bind a `swift symbolgraph-extract` JSON graph. Either a
     // module name (we run the extractor) or a pre-extracted `.symbols.json`.
     if swift_mode {
-        let (graph, module) = if let Some(module) = &swift_module {
+        // Package mode: `--out DIR` with one or more `--swift-module` names
+        // writes a whole package (src/<module>.cplus per module, umbrella,
+        // Cplus.toml) instead of printing to stdout.
+        if let Some(dir) = &out_dir {
+            if swift_modules.is_empty() {
+                eprintln!("cpc-bindgen --swift --out: need at least one --swift-module <Name>");
+                std::process::exit(2);
+            }
+            std::process::exit(swift_package(dir, &swift_modules, link_framework.as_deref(), &clang_args));
+        }
+        let (graph, module) = if let Some(module) = swift_modules.first() {
             // Everything after `--` is forwarded to symbolgraph-extract
             // (-target / -sdk / -F, e.g. for an Xcode-beta SDK).
             match swift::extract(module, &clang_args) {
@@ -258,6 +283,65 @@ fn main() {
         emitter.walk(&v);
         print!("{}", emitter.finish());
     }
+}
+
+/// Generate a whole Swift package: extract + bind each module, write
+/// `src/<module>.cplus`, an umbrella, and a provenance `Cplus.toml`.
+fn swift_package(dir: &str, modules: &[String], link: Option<&str>, extract_args: &[String]) -> i32 {
+    let out = std::path::PathBuf::from(dir);
+    let src = out.join("src");
+    if let Err(e) = std::fs::create_dir_all(&src) {
+        eprintln!("cpc-bindgen: cannot create {}: {e}", src.display());
+        return 1;
+    }
+    let pkg = out
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "package".to_string());
+    for m in modules {
+        let graph = match swift::extract(m, extract_args) {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("cpc-bindgen: {m}: {e}");
+                return 1;
+            }
+        };
+        let text = swift::generate(&graph, m);
+        let file = src.join(format!("{}.cplus", m.to_lowercase()));
+        if let Err(e) = std::fs::write(&file, &text) {
+            eprintln!("cpc-bindgen: write {}: {e}", file.display());
+            return 1;
+        }
+        let n_skip = text.matches("// SKIPPED ").count();
+        eprintln!("  {m} -> src/{}.cplus ({n_skip} skipped)", m.to_lowercase());
+    }
+    let link = link.unwrap_or(&modules[0]);
+    let sdk = Command::new("xcrun")
+        .args(["--show-sdk-version"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    let mods_flag = modules
+        .iter()
+        .map(|m| format!("--swift-module {m}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let reproduce = format!("cpc-bindgen {mods_flag} --link {link} --out {dir}");
+    std::fs::write(src.join(format!("{pkg}.cplus")), swift::package_umbrella(&pkg, modules)).ok();
+    std::fs::write(
+        out.join("Cplus.toml"),
+        swift::package_toml(&pkg, link, &sdk, modules, &reproduce),
+    )
+    .ok();
+    eprintln!(
+        "cpc-bindgen: wrote package `{pkg}` ({} modules) to {}",
+        modules.len(),
+        out.display()
+    );
+    0
 }
 
 struct Emitter {
