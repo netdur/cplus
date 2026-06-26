@@ -1,0 +1,104 @@
+// facet_appkit — the AppKit construction renderer for facet.
+//
+// `render` walks a `facet::Node` and materializes the native NSView tree.
+// `run` opens the Application + Window and mounts the rendered root.
+//
+// SPIKE LIMITATIONS: views leak their initial +1 (no balanced release);
+// button click callbacks are not yet wired (no target/action bridge yet).
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "facet/facet" as facet;
+
+// Convert the text field of a Node to an NSString.
+// Borrows the text field via raw pointer; c_str() borrows self so no move.
+fn node_text_to_ns(np: *facet::Node) -> *u8 {
+    let tp: *text::Text = { #addr_of((*np).text) };
+    var ns: *u8 = bridge::nsstring("");
+    match (*tp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            ns = bridge::nsstring(sv);
+        }
+        option::Option[text::CString]::None => {}
+    }
+    return ns;
+}
+
+// alloc + initWithFrame: for an ObjC view class named by `class`.
+fn make_view(class: *u8, w: f64, h: f64) -> *u8 {
+    let cls: *u8 = rt::get_class(class);
+    let a: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    return rt::msg_id_rect(a, rt::sel(#str_ptr("initWithFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+}
+
+// Walk a node into a native NSView; returns its raw pointer.
+fn render(np: *facet::Node) -> *u8 {
+    let k: u32 = { (*np).kind };
+
+    if k == facet::kind_label() {
+        let v: *u8 = make_view(#str_ptr("NSTextField\0"), 220.0, 24.0);
+        rt::msg_void_i8(v, rt::sel(#str_ptr("setEditable:\0")), 0 as i8);
+        rt::msg_void_i8(v, rt::sel(#str_ptr("setSelectable:\0")), 0 as i8);
+        rt::msg_void_i8(v, rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
+        rt::msg_void_i8(v, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8);
+        rt::msg_void_id(v, rt::sel(#str_ptr("setStringValue:\0")), node_text_to_ns(np));
+        return v;
+    }
+
+    if k == facet::kind_button() {
+        let v: *u8 = make_view(#str_ptr("NSButton\0"), 220.0, 32.0);
+        rt::msg_void_id(v, rt::sel(#str_ptr("setTitle:\0")), node_text_to_ns(np));
+        // click callback wiring deferred (needs target/action bridge).
+        return v;
+    }
+
+    // stack (vertical): NSStackView with arranged subviews.
+    let sv: *u8 = make_view(#str_ptr("NSStackView\0"), 300.0, 400.0);
+    rt::msg_void_i64(sv, rt::sel(#str_ptr("setOrientation:\0")), 1 as i64);
+    rt::msg_void_f64(sv, rt::sel(#str_ptr("setSpacing:\0")), 8.0);
+    let n: usize = { (*np).children.count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*np).children.at_ptr(i) } {
+            option::Option[*facet::Node]::Some(cp) => {
+                let cv: *u8 = render(cp);
+                rt::msg_void_id(sv, rt::sel(#str_ptr("addArrangedSubview:\0")), cv);
+            }
+            option::Option[*facet::Node]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return sv;
+}
+
+// Open a window, mount the rendered tree, run the event loop (blocks).
+fn run(take root: facet::Node) {
+    let app: application::Application = application::Application::shared_application();
+    let _: bool = app.set_activation_policy(application::ApplicationActivationPolicy::Regular);
+
+    let style: u64 = window::window_style_mask_titled
+        | window::window_style_mask_closable
+        | window::window_style_mask_miniaturizable
+        | window::window_style_mask_resizable;
+    let win: window::Window = window::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: 480.0, h: 320.0 },
+        style,
+        window::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    win.set_title("facet");
+
+    let rv: *u8 = render({ #addr_of(root) });
+    win.set_content_view(rv);
+
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    app.activate_ignoring_other_apps(true);
+    app.run();
+    return;
+}

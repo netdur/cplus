@@ -1,0 +1,15 @@
+[package]
+name    = "hello_facet"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "hello_facet"
+path = "src/main.cplus"
+
+[dependencies]
+facet        = "*"
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+stdlib       = "*"

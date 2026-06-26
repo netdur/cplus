@@ -1,0 +1,59 @@
+// vendor/agent_core/src/backend.cplus
+//
+// The backend-neutral surface contract for the MCP bridge (and any other
+// framework-agnostic consumer of a live UI surface). agent_mcp drives a
+// concrete backend `Surface` (agent_appkit / agent_win32 / agent_gtk)
+// through this, so the bridge itself names no backend.
+//
+// Why a fn-pointer vtable rather than an interface-bound generic? C+ has no
+// method dispatch on a generic type-param for user types (only the
+// compiler-blessed Hash/Eq/Ord/Copy/Drop/Clone), and no `dyn`/trait objects.
+// The C idiom — a struct of fn-pointers plus a type-erased `*u8` receiver
+// each implementor casts back — is the portable way to get runtime
+// polymorphism here. Each backend supplies a `Backend` whose fns cast the
+// erased pointer to its own `Surface` and call the real methods.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./identity" as identity;
+import "./surface" as surface;
+
+// Neutral geometry. f64 absorbs every backend's frame losslessly: AppKit's
+// `rt::Rect` is already f64, Win32's integer rect widens, GTK's f32 widens.
+struct Rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+// One backend-agnostic describe_ui node. Identical fields to each backend's
+// own `UiNode`, but with the neutral `Rect` frame, so the MCP serializer can
+// read it without knowing which backend produced it.
+struct UiNode {
+    id: text::Text,
+    role: identity::Role,
+    class_name: text::Text,
+    frame: Rect,
+    is_hidden: bool,
+    text: text::Text,
+    actionable: bool,
+    parent: option::Option[usize],
+}
+
+// The backend vtable. Every fn takes the type-erased surface pointer as its
+// first argument (the implementor casts `*u8` back to its `Surface`). The
+// four operations the MCP protocol needs:
+//   describe  -> the live snapshot (read path)
+//   click     -> authorized activation
+//   set_text  -> authorized, optimistic-concurrency text edit (mutating)
+//   navigate  -> bring a node into view (AppKit scrolls; Win32/GTK focus)
+// `Backend` is Copy (all fields are fn-pointers), so it passes by value
+// freely through the dispatch/serve call chain.
+struct Backend {
+    describe: fn(*u8) -> vec::Vec[UiNode],
+    click: fn(*u8, str) -> surface::Outcome,
+    set_text: fn(*u8, str, str, u64) -> surface::Outcome,
+    navigate: fn(*u8, str) -> surface::Outcome,
+}

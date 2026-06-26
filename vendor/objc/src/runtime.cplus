@@ -92,6 +92,8 @@ extern fn objc_msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id(recv: *u8, sel: *u8, a: *u8) -> i8;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_i8(recv: *u8, sel: *u8, a: i8);
@@ -101,6 +103,9 @@ extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64(recv: *u8, sel: *u8, a: i64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64(recv: *u8, sel: *u8, a: i64);
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_i64(recv: *u8, sel: *u8, a: i64) -> i8;
@@ -170,8 +175,14 @@ extern fn objc_msg_range_range(recv: *u8, sel: *u8, a: Range) -> Range;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_range_id(recv: *u8, sel: *u8, a: Range, b: *u8);
 
+extern fn object_getClassName(obj: *u8) -> *u8;
+
 fn get_class(name: *u8) -> *u8 {
     return { objc_getClass(name) };
+}
+
+fn class_name(obj: *u8) -> *u8 {
+    return { object_getClassName(obj) };
 }
 
 fn sel(name: *u8) -> *u8 {
@@ -206,6 +217,13 @@ fn msg_void_id(recv: *u8, selector: *u8, a: *u8) {
     { objc_msg_void_id(recv, selector, a); };
 }
 
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_i8(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i8);
+
+fn msg_void_id_id_i8(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i8) {
+    { objc_msg_void_id_id_i8(recv, selector, a, b, c); };
+}
+
 fn msg_u64(recv: *u8, selector: *u8) -> u64 {
     return { objc_msg_u64(recv, selector) };
 }
@@ -217,9 +235,16 @@ fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
 fn msg_i8(recv: *u8, selector: *u8) -> i8 {
     return { objc_msg_i8(recv, selector) };
 }
+fn msg_i8_id(recv: *u8, selector: *u8, a: *u8) -> i8 {
+    return { objc_msg_i8_id(recv, selector, a) };
+}
 
 fn msg_void_i8(recv: *u8, selector: *u8, a: i8) {
     { objc_msg_void_i8(recv, selector, a); };
+}
+
+fn msg_void_i64(recv: *u8, selector: *u8, a: i64) {
+    { objc_msg_void_i64(recv, selector, a); };
 }
 
 fn msg_i8_i64(recv: *u8, selector: *u8, a: i64) -> i8 {
@@ -391,4 +416,26 @@ fn msg_void_point(recv: *u8, selector: *u8, a: Point) {
 }
 fn msg_point_point(recv: *u8, selector: *u8, a: Point) -> Point {
     return { objc_msg_point_point(recv, selector, a) };
+}
+
+// class_addMethod wrapper for action IMPs: `void (*)(id self, SEL _cmd, id arg)`.
+// The `types` encoding string is passed by the caller ("v@:@\0" for a void
+// method taking one id argument).
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_action(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn add_method_action(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) {
+    { class_addMethod_action(cls, sel, imp, types); };
+}
+
+// Associated-object helpers (libobjc). `policy` is the OBJC_ASSOCIATION_* enum:
+// 1 = OBJC_ASSOCIATION_RETAIN_NONATOMIC.
+extern fn objc_setAssociatedObject(obj: *u8, key: *u8, value: *u8, policy: usize);
+extern fn objc_getAssociatedObject(obj: *u8, key: *u8) -> *u8;
+
+fn set_associated_object(obj: *u8, key: *u8, value: *u8, policy: usize) {
+    { objc_setAssociatedObject(obj, key, value, policy); };
+}
+fn get_associated_object(obj: *u8, key: *u8) -> *u8 {
+    return { objc_getAssociatedObject(obj, key) };
 }

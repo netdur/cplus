@@ -176,6 +176,14 @@ impl Text {
         return this._len == (0 as usize);
     }
 
+    // A `str` view of this Text's content (no allocation; aliases the buffer).
+    fn view(this) -> str {
+        if this._len == (0 as usize) {
+            return "";
+        }
+        return { #str_from_raw_parts(this._ptr, this._len) };
+    }
+
     // Ensure room for `additional` more bytes. Returns `OutOfMemory` (Text
     // unchanged) if the new length would overflow `usize` or the allocation
     // fails, `Ok` otherwise.

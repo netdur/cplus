@@ -1,0 +1,10 @@
+import "facet/facet" as facet;
+import "facet_appkit/facet_appkit" as facet_appkit;
+
+fn main() -> i32 {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("Hello from facet!"));
+    let ui: facet::Node = b.finish();
+    facet_appkit::run(ui);
+    return 0;
+}

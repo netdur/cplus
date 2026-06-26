@@ -1,0 +1,10 @@
+[package]
+name    = "gtk"
+version = "0.0.1"
+edition = "2026"
+
+# Minimal C+ wrapper utilities for GTK 4 on Linux/BSD.
+# `convert` bridges C+ str/Text ↔ NUL-terminated C strings for GTK callers;
+# no GTK headers needed here — only stdlib + libc.
+[dependencies]
+stdlib = "*"

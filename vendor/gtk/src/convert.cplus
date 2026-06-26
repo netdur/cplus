@@ -1,0 +1,55 @@
+// gtk/convert — str/Text <-> NUL-terminated C string bridges for GTK 4 callers.
+//
+// GTK functions take and return `const char*` (NUL-terminated, UTF-8). C+ `str`
+// is a fat pointer (ptr + len, NOT guaranteed NUL-terminated); `Text` is an
+// owned heap copy. These helpers convert between the two worlds.
+//
+// Ownership rules:
+//   cstr_to_text / cstr_to_str_unsafe — borrow the caller's C string; do not free it
+//   str_to_cstring — allocates; caller must call free_cstring when done
+//   free_cstring — frees a str_to_cstring result
+
+import "stdlib/text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Length of a NUL-terminated C string (in bytes, excluding the NUL).
+fn c_strlen(p: *u8) -> usize {
+    var n: usize = 0 as usize;
+    loop {
+        let b: u8 = { *(p + n) };
+        if b == (0 as u8) { return n; }
+        n = n +% (1 as usize);
+    }
+    return n;
+}
+
+// A borrowed `const char*` -> owned Text. Null-safe: returns "" for a null pointer.
+fn cstr_to_text(p: *u8) -> text::Text {
+    if p == { 0 as *u8 } { return text::from_str(""); }
+    let len: usize = c_strlen(p);
+    return text::from_str({ #str_from_raw_parts(p, len) });
+}
+
+// A borrowed `const char*` -> str fat-pointer view (borrows p; NOT null-safe).
+fn cstr_to_str_unsafe(p: *u8) -> str {
+    return { #str_from_raw_parts(p, c_strlen(p)) };
+}
+
+// Allocate a NUL-terminated copy of a C+ `str`. Free with `free_cstring` when
+// the C callee no longer needs it (GTK copies strings internally, so typically
+// right after the GTK call).
+fn str_to_cstring(s: str) -> *u8 {
+    let len: usize = { #str_len(s) };
+    let p: *u8 = { malloc(len +% (1 as usize)) };
+    { memcpy(p, #str_ptr(s), len); };
+    { *(p + len) = 0 as u8; };
+    return p;
+}
+
+fn free_cstring(p: *u8) {
+    { free(p); };
+    return;
+}

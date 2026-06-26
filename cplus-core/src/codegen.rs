@@ -101,12 +101,6 @@ struct ModuleMetadata {
     /// gen_intrinsic for `#compile_shader` consults this map to produce
     /// the global's symbol; the result is a `*[u8; N]` pointing at it.
     shader_blob_globals: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
-    /// v0.0.10 Phase 4A/B: whether the module has already declared
-    /// `@sel_registerName` and `@objc_msgSend`. Set on first emission to
-    /// avoid duplicate `declare` lines (LLVM rejects two declares of the
-    /// same symbol with different shapes; we emit each exactly once).
-    selector_runtime_declared: Cell<bool>,
-    msg_send_declared: Cell<bool>,
     /// B-10: floating-point contraction policy. `true` (the default,
     /// matching clang's `-ffp-contract=on`) lets codegen emit
     /// `llvm.fmuladd` for source-level `a*b+c` and tag scalar/SIMD float

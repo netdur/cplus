@@ -1,0 +1,512 @@
+// agent_gtk — the GTK 4 backend for the agent surface (the Linux/BSD
+// counterpart to vendor/agent_appkit and vendor/agent_win32).
+//
+// `open(window)` walks a live GtkWidget hierarchy into a `Surface`: the
+// agent-core identity tree (ids / roles / enabled state / exposure) plus a
+// NodeId->GtkWidget map and the text-version state. From a `Surface` you get:
+//
+//   - the READ path: `describe()` -> `Vec[GtkNode]`, a live snapshot
+//     ({ id, role, class_name, frame, is_hidden, text, actionable, parent }) —
+//     how an agent sees the UI (describe_ui, not screenshots).
+//   - the WRITE path: `click` / `set_text` / `focus`, each gated through the
+//     framework-agnostic `agent_core::surface` authorization brain (exposure +
+//     affordance ceiling + optimistic-concurrency version); the real widget I/O
+//     (gtk_widget_activate / gtk_editable_set_text / gtk_widget_grab_focus)
+//     happens only when the core returns `Allowed`.
+//
+// The agent-visible/actionable surface is the *exposed* subset: a node is
+// exposed iff it was tagged with `set_agent_id` (the developer curates what the
+// agent can touch). Untagged widgets are still walked for tree completeness but
+// are NotExposed, so actions on them are refused.
+//
+// The walk is a DFS (pre-order) over the GTK 4 child chain
+// (gtk_widget_get_first_child / gtk_widget_get_next_sibling); recursion depth
+// tracks widget-tree depth, which is shallow in practice. GTK has no
+// objc_msgSend dispatch — every introspection call is a direct C symbol — and,
+// like Win32, needs no main-thread marshaling helper here: an app that drives
+// the surface off the GTK main thread must hop threads itself (GTK is not
+// thread-safe), the same constraint any GTK code lives under.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "gtk/convert" as convert;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/events" as events;
+import "agent_core/backend" as mcpb;
+
+// ---- GTK 4 widget introspection + messaging ----
+
+// Tree walk (GTK 4 replaced gtk_container_get_children with a sibling chain).
+#[link_name = "gtk_widget_get_first_child"]
+extern fn gtk_widget_get_first_child(widget: *u8) -> *u8;
+#[link_name = "gtk_widget_get_next_sibling"]
+extern fn gtk_widget_get_next_sibling(widget: *u8) -> *u8;
+#[link_name = "gtk_widget_get_root"]
+extern fn gtk_widget_get_root(widget: *u8) -> *u8;
+
+// GObject runtime type identity. `g_type_check_instance_is_a` is
+// ancestry-aware, so a GtkToggleButton answers true to a GtkButton query.
+#[link_name = "g_type_from_name"]
+extern fn g_type_from_name(name: *u8) -> usize;
+#[link_name = "g_type_check_instance_is_a"]
+extern fn g_type_check_instance_is_a(instance: *u8, iface_type: usize) -> i32;
+#[link_name = "g_type_name_from_instance"]
+extern fn g_type_name_from_instance(instance: *u8) -> *u8;
+
+// Live text getters (all return a borrowed `const char*` — do not free).
+#[link_name = "gtk_label_get_text"]
+extern fn gtk_label_get_text(label: *u8) -> *u8;
+#[link_name = "gtk_button_get_label"]
+extern fn gtk_button_get_label(button: *u8) -> *u8;
+#[link_name = "gtk_check_button_get_label"]
+extern fn gtk_check_button_get_label(button: *u8) -> *u8;
+#[link_name = "gtk_editable_get_text"]
+extern fn gtk_editable_get_text(editable: *u8) -> *u8;
+#[link_name = "gtk_window_get_title"]
+extern fn gtk_window_get_title(window: *u8) -> *u8;
+
+// Live state.
+#[link_name = "gtk_widget_get_sensitive"]
+extern fn gtk_widget_get_sensitive(widget: *u8) -> i32;
+#[link_name = "gtk_widget_get_visible"]
+extern fn gtk_widget_get_visible(widget: *u8) -> i32;
+#[link_name = "gtk_widget_get_width"]
+extern fn gtk_widget_get_width(widget: *u8) -> i32;
+#[link_name = "gtk_widget_get_height"]
+extern fn gtk_widget_get_height(widget: *u8) -> i32;
+// Out-param is a graphene_rect_t (four f32: origin.x, origin.y, size.width,
+// size.height). Returns non-zero on success.
+#[link_name = "gtk_widget_compute_bounds"]
+extern fn gtk_widget_compute_bounds(widget: *u8, target: *u8, out_bounds: *u8) -> i32;
+
+// Write / nav.
+#[link_name = "gtk_widget_activate"]
+extern fn gtk_widget_activate(widget: *u8) -> i32;
+#[link_name = "gtk_editable_set_text"]
+extern fn gtk_editable_set_text(editable: *u8, text: *u8);
+#[link_name = "gtk_widget_grab_focus"]
+extern fn gtk_widget_grab_focus(widget: *u8) -> i32;
+
+// agent-id tagging: stash an arbitrary pointer on a GObject under a string key.
+#[link_name = "g_object_set_data"]
+extern fn g_object_set_data(obj: *u8, key: *u8, data: *u8);
+#[link_name = "g_object_get_data"]
+extern fn g_object_get_data(obj: *u8, key: *u8) -> *u8;
+
+fn null() -> *u8 { return { 0 as *u8 }; }
+fn is_null(p: *u8) -> bool { return p == null(); }
+
+// ---- type queries ------------------------------------------------------------
+
+fn is_a(widget: *u8, name: *u8) -> bool {
+    let t: usize = { g_type_from_name(name) };
+    if t == (0 as usize) { return false; }
+    return { g_type_check_instance_is_a(widget, t) } != (0 as i32);
+}
+
+// ---- agent-id tagging --------------------------------------------------------
+
+fn agent_key() -> *u8 { return { #str_ptr("cplus-agent-id\0") }; }
+
+fn set_agent_id(widget: *u8, id: *u8) {
+    { g_object_set_data(widget, agent_key(), id); }
+    return;
+}
+
+fn get_agent_id(widget: *u8) -> *u8 {
+    return { g_object_get_data(widget, agent_key()) };
+}
+
+// ---- describe_ui node --------------------------------------------------------
+
+// graphene_rect_t layout: origin.x, origin.y, size.width, size.height (all f32).
+#[repr(C)]
+struct GrapheneRect {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+// Widget rectangle in root (window) coordinates (f32, faithful to graphene).
+struct Rect {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+// One node of the describe_ui snapshot. `id` is the resolved agent-id; `role`
+// the curated role; `class_name` the GType name (e.g. "GtkButton"); `frame` the
+// rect in root coordinates; `text` the live label/content; `actionable` whether
+// the agent may act on it (exposed + enabled + not observe-only). `parent`
+// indexes into the returned `Vec[GtkNode]` (None for the window root) so the
+// flat list reconstructs the tree.
+struct GtkNode {
+    id: text::Text,
+    role: identity::Role,
+    class_name: text::Text,
+    frame: Rect,
+    is_hidden: bool,
+    text: text::Text,
+    actionable: bool,
+    parent: option::Option[usize],
+}
+
+// ---- role classification + live state ---------------------------------------
+
+fn classify(widget: *u8) -> identity::Role {
+    if is_a(widget, #str_ptr("GtkWindow\0")) {
+        return identity::Role::Window;
+    }
+    if is_a(widget, #str_ptr("GtkEditable\0")) || is_a(widget, #str_ptr("GtkTextView\0")) {
+        return identity::Role::Input;
+    }
+    if is_a(widget, #str_ptr("GtkLabel\0")) {
+        return identity::Role::Text;
+    }
+    if is_a(widget, #str_ptr("GtkButton\0"))
+        || is_a(widget, #str_ptr("GtkCheckButton\0"))
+        || is_a(widget, #str_ptr("GtkSwitch\0")) {
+        return identity::Role::Button;
+    }
+    if is_a(widget, #str_ptr("GtkListBox\0"))
+        || is_a(widget, #str_ptr("GtkListView\0"))
+        || is_a(widget, #str_ptr("GtkColumnView\0")) {
+        return identity::Role::List;
+    }
+    return identity::Role::Group;
+}
+
+// The GType name as owned Text (e.g. "GtkButton").
+fn class_name_text(widget: *u8) -> text::Text {
+    return convert::cstr_to_text({ g_type_name_from_instance(widget) });
+}
+
+// The live text a node carries, keyed by role. A GtkTextView's content lives in
+// its GtkTextBuffer (not GtkEditable), so a multi-line Input reports "".
+fn node_text(widget: *u8, role: identity::Role) -> text::Text {
+    if identity::role_eq(role, identity::Role::Window) {
+        return convert::cstr_to_text({ gtk_window_get_title(widget) });
+    }
+    if identity::role_eq(role, identity::Role::Input) {
+        if is_a(widget, #str_ptr("GtkEditable\0")) {
+            return convert::cstr_to_text({ gtk_editable_get_text(widget) });
+        }
+        return text::from_str("");
+    }
+    if identity::role_eq(role, identity::Role::Text) {
+        return convert::cstr_to_text({ gtk_label_get_text(widget) });
+    }
+    if identity::role_eq(role, identity::Role::Button) {
+        if is_a(widget, #str_ptr("GtkButton\0")) {
+            return convert::cstr_to_text({ gtk_button_get_label(widget) });
+        }
+        if is_a(widget, #str_ptr("GtkCheckButton\0")) {
+            return convert::cstr_to_text({ gtk_check_button_get_label(widget) });
+        }
+    }
+    return text::from_str("");
+}
+
+// The widget's bounds in root (window) coordinates. `gtk_widget_compute_bounds`
+// fills a graphene_rect_t (four f32) relative to the target widget; we use the
+// widget's own root. Returns 0 when the widget shares no ancestor with the root
+// or has no allocation yet — fall back to a 0-origin rect with the live size.
+fn frame_of(widget: *u8) -> Rect {
+    var bounds: GrapheneRect = GrapheneRect { x: 0.0 as f32, y: 0.0 as f32, w: 0.0 as f32, h: 0.0 as f32 };
+    let root: *u8 = { gtk_widget_get_root(widget) };
+    let ok: i32 = if is_null(root) {
+        0 as i32
+    } else {
+        { gtk_widget_compute_bounds(widget, root, { #addr_of(bounds) as *u8 }) }
+    };
+    if ok != (0 as i32) {
+        return Rect { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h };
+    }
+    return Rect {
+        x: 0.0 as f32,
+        y: 0.0 as f32,
+        w: { gtk_widget_get_width(widget) } as f32,
+        h: { gtk_widget_get_height(widget) } as f32,
+    };
+}
+
+fn live_enabled(widget: *u8) -> bool {
+    return { gtk_widget_get_sensitive(widget) } != (0 as i32);
+}
+
+fn live_hidden(widget: *u8) -> bool {
+    return { gtk_widget_get_visible(widget) } == (0 as i32);
+}
+
+// ---- the surface -------------------------------------------------------------
+
+// A NodeId->GtkWidget map entry (index-aligned with the identity registry).
+// `opaque` marks the borrowed pointer unaccounted-by-design (GTK owns the widget
+// lifetime; the surface is valid only while the window is live).
+struct WidgetRef {
+    opaque p: *u8,
+}
+
+// The live surface of one window: the identity tree, the NodeId->GtkWidget map
+// (index 0 is the synthetic app root, mapped to null), and the text-version
+// state for optimistic-concurrency edits.
+struct Surface {
+    reg: identity::Registry,
+    versions: surface::TextVersions,
+    refs: vec::Vec[WidgetRef],
+}
+
+// Recursively register a widget subtree: classify it, add it to the identity
+// tree (a pinned agent-id becomes the developer id, which also exposes the
+// node), reflect its live enabled state, map NodeId->widget, then recurse into
+// its children in order (DFS pre-order). `refs` stays index-aligned with the
+// registry: each `add_child` is paired with exactly one `refs.append`.
+fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8, parent_reg: usize) {
+    let role: identity::Role = classify(widget);
+    let pinned: *u8 = get_agent_id(widget);
+    let reg_node: usize = if is_null(pinned) {
+        reg.add_child(parent_reg, option::Option[str]::None, role)
+    } else {
+        reg.add_child(parent_reg, option::Option[str]::Some(convert::cstr_to_str_unsafe(pinned)), role)
+    };
+    reg.set_enabled(reg_node, live_enabled(widget));
+    refs.append(WidgetRef { p: widget });
+
+    var child: *u8 = { gtk_widget_get_first_child(widget) };
+    while !is_null(child) {
+        walk(reg, refs, child, reg_node);
+        child = { gtk_widget_get_next_sibling(child) };
+    }
+    return;
+}
+
+// Walk a window's child hierarchy into a `Surface`. The window is the root node
+// (role Window) under the registry's app root; its child widgets follow.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
+    // NodeId 0 is the synthetic app root — no backing widget.
+    refs.append(WidgetRef { p: null() });
+
+    if is_null(window) {
+        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+    }
+
+    let win_pinned: *u8 = get_agent_id(window);
+    let win_reg: usize = if is_null(win_pinned) {
+        reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
+    } else {
+        reg.add_child(reg.root(), option::Option[str]::Some(convert::cstr_to_str_unsafe(win_pinned)), identity::Role::Window)
+    };
+    refs.append(WidgetRef { p: window });
+
+    var child: *u8 = { gtk_widget_get_first_child(window) };
+    while !is_null(child) {
+        walk(reg, refs, child, win_reg);
+        child = { gtk_widget_get_next_sibling(child) };
+    }
+
+    return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+}
+
+// Convenience: the read-only snapshot of a window in one call.
+fn describe(window: *u8) -> vec::Vec[GtkNode] {
+    let s: Surface = open(window);
+    return s.describe();
+}
+
+impl Surface {
+    fn widget_of(this, node: usize) -> *u8 {
+        return match this.refs.at_ptr(node) {
+            option::Option[*WidgetRef]::Some(r) => { (*r).p },
+            option::Option[*WidgetRef]::None => null(),
+        };
+    }
+
+    // Live describe_ui snapshot. Reads each node's current frame / hidden / text
+    // from its widget, so it reflects state *now* (e.g. after a `set_text`). The
+    // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
+    fn describe(this) -> vec::Vec[GtkNode] {
+        var out: vec::Vec[GtkNode] = vec::new::[GtkNode]();
+        let total: usize = this.reg.count();
+        var node: usize = 1 as usize;
+        while node < total {
+            let widget: *u8 = this.widget_of(node);
+            let role: identity::Role = this.reg.role_of(node);
+            let parent: option::Option[usize] = match this.reg.parent_of(node) {
+                option::Option[usize]::Some(p) => {
+                    if p == (0 as usize) {
+                        option::Option[usize]::None
+                    } else {
+                        option::Option[usize]::Some(p -% (1 as usize))
+                    }
+                }
+                option::Option[usize]::None => option::Option[usize]::None,
+            };
+            out.append(GtkNode {
+                id: text::from_str(this.reg.resolved_id(node)),
+                role: role,
+                class_name: class_name_text(widget),
+                frame: frame_of(widget),
+                is_hidden: live_hidden(widget),
+                text: node_text(widget, role),
+                actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
+                parent: parent,
+            });
+            node = node +% (1 as usize);
+        }
+        return out;
+    }
+
+    // The current text version of a node (for optimistic-concurrency edits).
+    fn text_version(this, id: str) -> u64 {
+        return match this.reg.lookup(id) {
+            option::Option[usize]::Some(n) => this.versions.version_of(n),
+            option::Option[usize]::None => 0 as u64,
+        };
+    }
+
+    // EVENTS: translate a fired widget into an agent event. Resolves the source
+    // agent-id to its NodeId and offers `{ source, verb }` to the subscriber.
+    // Returns false if the id is unknown. The app installs the actual GObject
+    // signal handlers (closure-free C callbacks reaching app-global state) and
+    // calls this with the verb the signal denotes (e.g. `Clicked` for "clicked",
+    // `Changed` for "changed").
+    fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+        match this.reg.lookup(source_id) {
+            option::Option[usize]::Some(node) => {
+                sub.offer({ #addr_of(this.reg) }, events::event(node, verb));
+                return true;
+            }
+            option::Option[usize]::None => {}
+        }
+        return false;
+    }
+
+    // WRITE: click a control. On `Allowed`, activates the backing widget
+    // (gtk_widget_activate emits the widget's default action).
+    fn click(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(this.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                { gtk_widget_activate(this.widget_of(node)); }
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // WRITE: set an editable's text with optimistic concurrency. `base_version`
+    // is the version the agent last read; a racing edit yields `VersionConflict`.
+    // On `Allowed`, sets the text (GTK copies the buffer) then bumps the version.
+    fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome =
+                    surface::authorize_text_write(this.reg, this.versions, node, base_version);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                let c: *u8 = convert::str_to_cstring(value);
+                { gtk_editable_set_text(this.widget_of(node), c); }
+                convert::free_cstring(c);
+                this.versions.bump(node);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // NAV: move keyboard focus to a node (a GtkViewport follows focus, so this
+    // also scrolls the widget into view inside a scrollable parent). Authorized
+    // via `authorize_read` (exposure required; the affordance ceiling does not
+    // apply to navigation).
+    fn focus(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                { gtk_widget_grab_focus(this.widget_of(node)); }
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+}
+
+// ---- MCP backend vtable -----------------------------------------------------
+//
+// The backend-neutral `agent_core::backend::Backend` for the GTK surface. Each
+// fn casts the erased `*u8` back to `*Surface`; `navigate` is grab-focus.
+// `describe` widens graphene's f32 frame coordinates to the neutral f64 `Rect`.
+
+fn ctext(s: str) -> text::Text {
+    return text::from_str(s);
+}
+
+fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
+    let s: *Surface = { p as *Surface };
+    let local: vec::Vec[GtkNode] = (*s).describe();
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+    var i: usize = 0 as usize;
+    while i < local.count() {
+        match local.at_ptr(i) {
+            option::Option[*GtkNode]::Some(n) => {
+                out.append(mcpb::UiNode {
+                    id: ctext((*n).id.view()),
+                    role: { (*n).role },
+                    class_name: ctext((*n).class_name.view()),
+                    frame: mcpb::Rect {
+                        x: { (*n).frame.x } as f64,
+                        y: { (*n).frame.y } as f64,
+                        w: { (*n).frame.w } as f64,
+                        h: { (*n).frame.h } as f64,
+                    },
+                    is_hidden: { (*n).is_hidden },
+                    text: ctext((*n).text.view()),
+                    actionable: { (*n).actionable },
+                    parent: { (*n).parent },
+                });
+            }
+            option::Option[*GtkNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn mcp_click(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).click(id);
+}
+
+fn mcp_set_text(p: *u8, id: str, value: str, base: u64) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).set_text(id, value, base);
+}
+
+fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
+    let s: *Surface = { p as *Surface };
+    return (*s).focus(id);
+}
+
+fn mcp_backend() -> mcpb::Backend {
+    return mcpb::Backend {
+        describe: mcp_describe,
+        click: mcp_click,
+        set_text: mcp_set_text,
+        navigate: mcp_navigate,
+    };
+}
