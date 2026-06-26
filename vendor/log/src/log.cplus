@@ -1,0 +1,375 @@
+// vendor/log/src/log.cplus
+// Structured logging utility.
+//
+// The public surface follows naming_guideline.md:
+//   - `Level` answers for itself: `severity()` is its numeric rank,
+//     `label()` its `[INFO]`-style tag, `color()` its ANSI escape. The
+//     three repeated `match` ladders are folded into those methods.
+//   - readers drop needless words: `max_level()` (not `get_max_level`),
+//     `uses_color()` reads as an assertion.
+//   - boolean parameters read as assertions: `set_uses_color(false)`.
+//   - `is_enabled(level)` answers "would this level be emitted?" before
+//     a caller does the work to build a message.
+//   - `log(level, message:)` is the one workhorse; `trace`/`debug`/
+//     `info`/`warn`/`error` are role-named conveniences over it. The
+//     message label keeps the call reading as a phrase.
+//   - the public surface takes and returns `str` / `Level`, never raw
+//     `*u8`; the ANSI escapes and the libc bridge stay private.
+//
+// **Concurrency.** `MAX_LEVEL` and `USE_COLORS` are mutable C-facing
+// globals read on every log call and written by `set_max_level` /
+// `set_uses_color`. Concurrent reads + writes are a data race — there is
+// no synchronization in this module. Single-threaded use is fine; if you
+// call `info()` from worker threads, set the config once before spawning
+// and never touch it again. Long-term plan: route the config through
+// `vendor/stdlib::atomic` once it exists.
+
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn time(tloc: *i64) -> i64;
+extern fn localtime(timep: *i64) -> *Tm;
+extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
+
+// ANSI escape sequences as `static str`. The `\x1b` hex escape produces
+// ESC = 27 in the string payload (ASCII-only, since the lexer keeps str
+// payloads UTF-8). Private to the module — callers never see raw codes.
+static ANSI_RESET: str = "\x1b[0m";
+static ANSI_TRACE: str = "\x1b[90m";  // bright black
+static ANSI_DEBUG: str = "\x1b[37m";  // white
+static ANSI_INFO: str = "\x1b[36m";  // cyan
+static ANSI_WARN: str = "\x1b[33m";  // yellow
+static ANSI_ERROR: str = "\x1b[31m";  // red
+
+// The first 9 i32 fields are POSIX-portable (macOS, Linux, BSD all
+// agree on layout up through tm_isdst). The trailing tm_gmtoff /
+// tm_zone fields exist on macOS+BSD+glibc but are absent on musl and
+// other libcs — we don't read them, so omit them. Copying `*tm_ptr`
+// then reads only the 36 bytes we declared, which is safe under every
+// supported libc.
+#[repr(C)]
+struct Tm {
+    tm_sec: i32,
+    tm_min: i32,
+    tm_hour: i32,
+    tm_mday: i32,
+    tm_mon: i32,
+    tm_year: i32,
+    tm_wday: i32,
+    tm_yday: i32,
+    tm_isdst: i32,
+}
+
+enum Level {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Level {
+    // The numeric rank — higher is more severe. A level is emitted when
+    // its severity is at least the configured `max_level`. This is the
+    // single source of truth the cutoff comparison reads.
+    fn severity(this) -> i32 {
+        return match this {
+            Level::Trace => 0,
+            Level::Debug => 1,
+            Level::Info  => 2,
+            Level::Warn  => 3,
+            Level::Error => 4,
+        };
+    }
+
+    // The level from a numeric rank. Out-of-range ranks clamp to the
+    // nearest valid level (below 0 -> Trace, above 4 -> Error) so a
+    // round-trip through `severity()` is always total.
+    fn from_severity(rank: i32) -> Level {
+        if rank <= 0 { return Level::Trace; }
+        if rank == 1 { return Level::Debug; }
+        if rank == 2 { return Level::Info; }
+        if rank == 3 { return Level::Warn; }
+        return Level::Error;
+    }
+
+    // The fixed-width tag written ahead of the message, e.g. "[INFO]  ".
+    fn label(this) -> str {
+        return match this {
+            Level::Trace => "[TRACE] ",
+            Level::Debug => "[DEBUG] ",
+            Level::Info  => "[INFO]  ",
+            Level::Warn  => "[WARN]  ",
+            Level::Error => "[ERROR] ",
+        };
+    }
+
+    // The ANSI color escape for this level (private codes hidden inside).
+    fn color(this) -> str {
+        return match this {
+            Level::Trace => ANSI_TRACE,
+            Level::Debug => ANSI_DEBUG,
+            Level::Info  => ANSI_INFO,
+            Level::Warn  => ANSI_WARN,
+            Level::Error => ANSI_ERROR,
+        };
+    }
+}
+
+static MAX_LEVEL: i32 = 2; // Info level by default
+static USE_COLORS: bool = true;
+
+// Set the lowest level that will be emitted. Levels below this are
+// dropped. Reads as "set max level to Warn".
+fn set_max_level(level: Level) {
+    { MAX_LEVEL = level.severity(); }
+    return;
+}
+
+// The lowest level currently being emitted.
+fn max_level() -> Level {
+    return Level::from_severity({ MAX_LEVEL });
+}
+
+// True when a message at `level` would be emitted under the current
+// `max_level` — lets a caller skip building an expensive message.
+fn is_enabled(level: Level) -> bool {
+    return level.severity() >= { MAX_LEVEL };
+}
+
+// Turn the ANSI color escapes on or off. Reads as an assertion:
+// `set_uses_color(false)`.
+fn set_uses_color(enabled: bool) {
+    { USE_COLORS = enabled; }
+    return;
+}
+
+// True when log output is currently colorized.
+fn uses_color() -> bool {
+    return { USE_COLORS };
+}
+
+fn write_str(fd: i32, s: str) {
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
+    var written: usize = 0;
+    while written < n {
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, n -% written) };
+        if w <= (0 as isize) { return; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn print_timestamp(fd: i32) {
+    // Both the `time_t` slot and the snprintf scratch buffer live on the
+    // stack — no malloc per log call.
+    var t: i64 = { time(0 as *i64) };
+    let tm_ptr: *Tm = { localtime(#addr_of(t)) };
+    if { #addr(tm_ptr) } == (0 as usize) { return; }
+    let tm: Tm = { *tm_ptr };
+    let year: i32 = tm.tm_year +% 1900;
+    let mon: i32 = tm.tm_mon +% 1;
+
+    var buf: [u8; 32] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    ];
+    let n: i32 = {
+        snprintf(#addr_of(buf) as *u8, 32 as usize,
+        #str_ptr("[%04d-%02d-%02d %02d:%02d:%02d] \0"),
+        year, mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+    };
+    if n > 0 {
+        let view: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+        write_str(fd, view);
+    }
+    return;
+}
+
+// The one workhorse: emit `message` at `level`, gated on `max_level` and
+// colorized per `uses_color`. The conveniences below all route here. The
+// `message` label keeps every call site reading as a phrase.
+fn log(level: Level, message: str) {
+    if is_enabled(level) == false { return; }
+
+    let fd: i32 = 2; // stderr
+
+    let colored: bool = { USE_COLORS };
+    if colored {
+        write_str(fd, level.color());
+    }
+
+    print_timestamp(fd);
+    write_str(fd, level.label());
+    write_str(fd, message);
+    write_str(fd, "\n");
+
+    if colored {
+        write_str(fd, ANSI_RESET);
+    }
+    return;
+}
+
+fn trace(message: str) { log(Level::Trace, message); return; }
+fn debug(message: str) { log(Level::Debug, message); return; }
+fn info(message: str)  { log(Level::Info, message); return; }
+fn warn(message: str)  { log(Level::Warn, message); return; }
+fn error(message: str) { log(Level::Error, message); return; }
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+// The side-effecting `log`/`info`/`warn` paths write to stderr; without
+// capture infrastructure their output isn't asserted, but the
+// level-gating decision (`is_enabled`) and the full `Level`/config
+// surface are driven directly here.
+
+#[test]
+fn test_severity_ranks_ascend() {
+    assert Level::Trace.severity() == 0;
+    assert Level::Debug.severity() == 1;
+    assert Level::Info.severity()  == 2;
+    assert Level::Warn.severity()  == 3;
+    assert Level::Error.severity() == 4;
+}
+
+#[test]
+fn test_from_severity_round_trip() {
+    assert Level::from_severity(0).severity() == 0;
+    assert Level::from_severity(1).severity() == 1;
+    assert Level::from_severity(2).severity() == 2;
+    assert Level::from_severity(3).severity() == 3;
+    assert Level::from_severity(4).severity() == 4;
+}
+
+#[test]
+fn test_from_severity_clamps_out_of_range() {
+    // Below 0 clamps to Trace, above 4 clamps to Error — the conversion
+    // is total so a malformed MAX_LEVEL can't produce an invalid level.
+    assert Level::from_severity(0 -% 1).severity() == 0;
+    assert Level::from_severity(0 -% 100).severity() == 0;
+    assert Level::from_severity(5).severity() == 4;
+    assert Level::from_severity(9999).severity() == 4;
+}
+
+#[test]
+fn test_label_is_fixed_width_tag() {
+    // Every label is the same width so columns line up.
+    assert #str_len(Level::Trace.label()) == (8 as usize);
+    assert #str_len(Level::Info.label())  == (8 as usize);
+    assert #str_len(Level::Error.label()) == (8 as usize);
+    // Content sanity: starts with '[' and the INFO tag names the level.
+    let p: *u8 = #str_ptr(Level::Info.label());
+    assert { *p } == ('[' as u8);
+    let p1: *u8 = { p + 1 };
+    assert { *p1 } == ('I' as u8);
+}
+
+#[test]
+fn test_color_is_ansi_escape() {
+    // Each color is an ANSI escape: first byte is ESC (0x1b). This
+    // catches drift to a literal "\\x1b" (six bytes).
+    let pt: *u8 = #str_ptr(Level::Trace.color());
+    assert { *pt } == (27 as u8);
+    let pe: *u8 = #str_ptr(Level::Error.color());
+    assert { *pe } == (27 as u8);
+}
+
+#[test]
+fn test_ansi_reset_is_escape_sequence() {
+    let p: *u8 = #str_ptr(ANSI_RESET);
+    assert { *p } == (27 as u8);
+}
+
+#[test]
+fn test_set_and_get_max_level_trace() {
+    set_max_level(Level::Trace);
+    assert max_level().severity() == 0;
+}
+
+#[test]
+fn test_set_and_get_max_level_error() {
+    set_max_level(Level::Error);
+    assert max_level().severity() == 4;
+}
+
+#[test]
+fn test_set_and_get_max_level_round_trip() {
+    set_max_level(Level::Debug);
+    assert max_level().severity() == 1;
+    set_max_level(Level::Info);
+    assert max_level().severity() == 2;
+    set_max_level(Level::Warn);
+    assert max_level().severity() == 3;
+}
+
+#[test]
+fn test_is_enabled_respects_cutoff() {
+    // At Warn cutoff, Warn and Error pass; lower levels are dropped.
+    set_max_level(Level::Warn);
+    assert is_enabled(Level::Error);
+    assert is_enabled(Level::Warn);
+    assert is_enabled(Level::Info)  == false;
+    assert is_enabled(Level::Debug) == false;
+    assert is_enabled(Level::Trace) == false;
+}
+
+#[test]
+fn test_is_enabled_trace_cutoff_passes_all() {
+    // At the lowest cutoff every level is enabled.
+    set_max_level(Level::Trace);
+    assert is_enabled(Level::Trace);
+    assert is_enabled(Level::Debug);
+    assert is_enabled(Level::Info);
+    assert is_enabled(Level::Warn);
+    assert is_enabled(Level::Error);
+}
+
+#[test]
+fn test_is_enabled_error_cutoff_drops_warn() {
+    // At the highest cutoff only Error survives — negative case for each
+    // lower level.
+    set_max_level(Level::Error);
+    assert is_enabled(Level::Error);
+    assert is_enabled(Level::Warn)  == false;
+    assert is_enabled(Level::Info)  == false;
+    assert is_enabled(Level::Debug) == false;
+    assert is_enabled(Level::Trace) == false;
+}
+
+#[test]
+fn test_set_uses_color_toggles() {
+    set_uses_color(false);
+    assert uses_color() == false;
+    set_uses_color(true);
+    assert uses_color();
+}
+
+#[test]
+fn test_log_below_cutoff_is_dropped() {
+    // A Trace message under an Error cutoff must not be emitted. We can't
+    // capture stderr, but `is_enabled` is the gate `log` consults, so
+    // assert the decision directly and confirm the call is a no-op (no
+    // crash, returns cleanly).
+    set_uses_color(false);
+    set_max_level(Level::Error);
+    assert is_enabled(Level::Trace) == false;
+    trace("this trace message must be dropped");
+    assert true;
+}
+
+#[test]
+fn test_log_conveniences_run_when_enabled() {
+    // With colors off and the lowest cutoff, each convenience emits to
+    // stderr without crashing. This exercises the full log() path
+    // (gate, timestamp, label, message, newline) for every level.
+    set_uses_color(false);
+    set_max_level(Level::Trace);
+    trace("trace line");
+    debug("debug line");
+    info("info line");
+    warn("warn line");
+    error("error line");
+    log(Level::Info, "explicit log() call");
+    assert true;
+}
