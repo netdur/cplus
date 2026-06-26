@@ -1,0 +1,159 @@
+// vendor/cuda/src/cublas.cplus — cuBLAS bindings (the "crush large numbers"
+// path on NVIDIA). cuBLAS is COLUMN-MAJOR; callers lay out matrices
+// accordingly (or transpose via the `Op` flags). Matrix/vector operands are
+// DEVICE pointers — pass `DeviceBuffer.device_ptr()`, which keeps ownership
+// with the caller (the buffer isn't consumed).
+//
+// alpha / beta are HOST scalars in cuBLAS's default pointer mode; we stage
+// them in host slots and pass their addresses.
+//
+// The public surface follows naming_guideline.md:
+//   - the raw context handle is hidden behind `_raw`.
+//   - `handle()` constructs a cuBLAS context, taking nothing and returning a
+//     value-or-reason `Result[Handle, CudaError]`.
+//   - `sgemm` / `sgemv` report failure as `Option[CudaError]` (`None` =
+//     success, `Some(Blas(status))` keeps the `cublasStatus_t`); same
+//     deliberate mapping documented in runtime.cplus.
+
+import "./runtime" as runtime;
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+extern fn cublasCreate_v2(handle: **u8) -> i32;
+extern fn cublasDestroy_v2(handle: *u8) -> i32;
+extern fn cublasSgemm_v2(
+    handle: *u8, transa: i32, transb: i32,
+    m: i32, n: i32, k: i32,
+    alpha: *u8, a: *u8, lda: i32, b: *u8, ldb: i32,
+    beta: *u8, c: *u8, ldc: i32,
+) -> i32;
+extern fn cublasSgemv_v2(
+    handle: *u8, trans: i32,
+    m: i32, n: i32,
+    alpha: *u8, a: *u8, lda: i32, x: *u8, incx: i32,
+    beta: *u8, y: *u8, incy: i32,
+) -> i32;
+
+// cublasOperation_t.
+enum Op {
+    N, // no transpose      (CUBLAS_OP_N = 0)
+    T, // transpose         (CUBLAS_OP_T = 1)
+    C, // conjugate transpose (CUBLAS_OP_C = 2)
+}
+
+fn op_raw(o: Op) -> i32 {
+    let v: i32 = match o {
+        Op::N => 0 as i32,
+        Op::T => 1 as i32,
+        Op::C => 2 as i32,
+    };
+    return v;
+}
+
+struct Handle {
+    opaque _raw: *u8,
+}
+
+// Void wrapper around `cublasDestroy_v2` so `drop` releases the field as a
+// bare statement passing `this._raw` directly (the form the raw-pointer
+// accountability check recognizes as a provable release).
+fn handle_destroy(h: *u8) {
+    let _rc: i32 = { cublasDestroy_v2(h) };
+    return;
+}
+
+// Create a cuBLAS context (one per thread/stream; cache it). Reads as
+// `cublas::handle()`.
+fn handle() -> result::Result[Handle, runtime::CudaError] {
+    let slot: *u8 = { malloc(8 as usize) };
+    let pp: **u8 = { slot as **u8 };
+    let rc: i32 = { cublasCreate_v2(pp) };
+    let raw: *u8 = { *pp };
+    { free(slot); }
+    if rc != (0 as i32) {
+        return result::Result[Handle, runtime::CudaError]::Err(runtime::CudaError::Blas(rc));
+    }
+    return result::Result[Handle, runtime::CudaError]::Ok(Handle { _raw: raw });
+}
+
+impl Handle {
+    // Single-precision GEMM: C = alpha * op(A) * op(B) + beta * C.
+    // Column-major; `a`/`b`/`c` are device pointers (`DeviceBuffer.device_ptr()`).
+    // `None` on success; `Some(CudaError::Blas(status))` preserves the failure.
+    fn sgemm(
+        this,
+        transa: Op, transb: Op,
+        m: i32, n: i32, k: i32,
+        alpha: f32, a: *u8, lda: i32, b: *u8, ldb: i32,
+        beta: f32, c: *u8, ldc: i32,
+    ) -> option::Option[runtime::CudaError] {
+        let abuf: *u8 = { malloc(4 as usize) };
+        let bbuf: *u8 = { malloc(4 as usize) };
+        { *(abuf as *f32) = alpha; }
+        { *(bbuf as *f32) = beta; }
+        let rc: i32 = {
+            cublasSgemm_v2(
+                this._raw, op_raw(transa), op_raw(transb),
+                m, n, k,
+                abuf, a, lda, b, ldb,
+                bbuf, c, ldc,
+            )
+        };
+        { free(abuf); }
+        { free(bbuf); }
+        if rc != (0 as i32) {
+            return option::Option[runtime::CudaError]::Some(runtime::CudaError::Blas(rc));
+        }
+        return option::Option[runtime::CudaError]::None;
+    }
+
+    // Single-precision GEMV: y = alpha * op(A) * x + beta * y.
+    // Column-major; `a`/`x`/`y` are device pointers. The matrix-vector form
+    // behind vector search (`scores = database @ query`).
+    // `None` on success; `Some(CudaError::Blas(status))` preserves the failure.
+    fn sgemv(
+        this,
+        trans: Op,
+        m: i32, n: i32,
+        alpha: f32, a: *u8, lda: i32, x: *u8, incx: i32,
+        beta: f32, y: *u8, incy: i32,
+    ) -> option::Option[runtime::CudaError] {
+        let abuf: *u8 = { malloc(4 as usize) };
+        let bbuf: *u8 = { malloc(4 as usize) };
+        { *(abuf as *f32) = alpha; }
+        { *(bbuf as *f32) = beta; }
+        let rc: i32 = {
+            cublasSgemv_v2(
+                this._raw, op_raw(trans),
+                m, n,
+                abuf, a, lda, x, incx,
+                bbuf, y, incy,
+            )
+        };
+        { free(abuf); }
+        { free(bbuf); }
+        if rc != (0 as i32) {
+            return option::Option[runtime::CudaError]::Some(runtime::CudaError::Blas(rc));
+        }
+        return option::Option[runtime::CudaError]::None;
+    }
+
+    fn drop(ref this) {
+        handle_destroy(this._raw);
+        this._raw = { 0 as *u8 };
+        return;
+    }
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+// Host-runnable: `op_raw` is pure mapping logic with no device calls.
+
+#[test]
+fn test_op_raw_values() {
+    assert op_raw(Op::N) == (0 as i32);
+    assert op_raw(Op::T) == (1 as i32);
+    assert op_raw(Op::C) == (2 as i32);
+}

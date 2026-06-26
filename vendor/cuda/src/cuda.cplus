@@ -1,0 +1,23 @@
+// vendor/cuda/src/cuda.cplus — facade for the CUDA bindings. Re-exports the
+// submodule types so a consumer can `import "cuda/cuda" as cuda;` and reach
+// everything through one alias.
+//
+// Position (docs/GPU.md): C+ is a consumer of GPU backend SDKs. These are
+// plain `extern fn` bindings to NVIDIA's CUDA Runtime API + cuBLAS — no
+// kernel language, no GPU codegen. NVIDIA's libraries do the math; C+ is
+// the host that allocates, copies, dispatches, and synchronizes.
+//
+// Surface:
+//   - runtime: device_count / set_device / synchronize / CudaError (.message())
+//   - buffer:  DeviceBuffer (owned device memory, Drop = cudaFree)
+//              .write(from:, bytes:) / .read(to:, bytes:) / .device_ptr()
+//   - cublas:  Handle (cublas::handle()), sgemm, sgemv (column-major)
+
+import "./runtime" as runtime;
+import "./buffer" as buffer;
+import "./cublas" as cublas;
+
+type CudaError = runtime::CudaError;
+type DeviceBuffer = buffer::DeviceBuffer;
+type Handle = cublas::Handle;
+type Op = cublas::Op;

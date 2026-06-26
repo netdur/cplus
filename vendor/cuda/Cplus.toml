@@ -1,0 +1,22 @@
+[package]
+name    = "cuda"
+version = "0.0.1"
+edition = "2026"
+
+# CUDA Runtime API + cuBLAS. The libs ship with the NVIDIA CUDA Toolkit;
+# they live under <cuda>/lib64, which is not on the default linker/loader
+# path, so we add it via `search-paths` (-> -L at link, -rpath at runtime).
+#
+# Defaults to the standard `/usr/local/cuda/lib64`. If your toolkit lives
+# elsewhere, override it via the environment: `export CUDA_LIB=/opt/cuda/lib64`
+# (`cpc build` expands `${CUDA_LIB:-/usr/local/cuda/lib64}` below).
+#
+# Position (docs/GPU.md): C+ is a CONSUMER of GPU backend SDKs. These are
+# plain `extern fn` bindings to NVIDIA's libraries — no kernel language, no
+# codegen. cuBLAS does the math; C+ orchestrates.
+[link]
+libs         = ["cudart", "cublas"]
+search-paths = ["${CUDA_LIB:-/usr/local/cuda/lib64}"]
+
+[dependencies]
+stdlib = "*"

@@ -1,0 +1,156 @@
+// vendor/cuda/src/runtime.cplus — CUDA Runtime API: device management,
+// device memory, errors. Plain C FFI to libcudart.
+//
+// Position (docs/GPU.md): bindings only. NVIDIA's runtime does the work.
+//
+// The public surface follows naming_guideline.md:
+//   - `device_count()` returns a value-or-reason `Result[i32, CudaError]`.
+//   - side-effecting device operations (`set_device`, `synchronize`) carry
+//     no success value, so they report failure as `Option[CudaError]`:
+//     `None` means success, `Some(CudaError::Runtime(code))` preserves the
+//     exact `cudaError_t` for recovery. This is a deliberate, documented
+//     mapping: `Status` (Ok / OutOfMemory / OutOfBounds / InvalidInput) has
+//     no variant that fits a CUDA runtime code and would lose it, so the
+//     binding keeps the code in an `Option` whose `None` reads as "no
+//     failure". The program never traps on a device error.
+//   - `CudaError::message()` returns libcudart's human-readable text as an
+//     owned `Text`, not a raw `*u8`.
+
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn strlen(s: *u8) -> usize;
+
+// ---- libcudart ----
+extern fn cudaGetDeviceCount(count: *i32) -> i32;
+extern fn cudaSetDevice(dev: i32) -> i32;
+extern fn cudaDeviceSynchronize() -> i32;
+extern fn cudaGetErrorString(err: i32) -> *u8; // const char*
+extern fn cudaMalloc(dev_ptr: **u8, size: usize) -> i32;
+extern fn cudaFree(dev_ptr: *u8) -> i32;
+extern fn cudaMemcpy(dst: *u8, src: *u8, count: usize, kind: i32) -> i32;
+
+// cudaMemcpyKind constants.
+fn memcpy_host_to_host() -> i32 { return 0 as i32; }
+fn memcpy_host_to_device() -> i32 { return 1 as i32; }
+fn memcpy_device_to_host() -> i32 { return 2 as i32; }
+fn memcpy_device_to_device() -> i32 { return 3 as i32; }
+
+// A failed CUDA call. `Runtime` carries a `cudaError_t`, `Blas` a
+// `cublasStatus_t` — both are ints where 0 means success. `message()`
+// turns a runtime code into libcudart's human-readable text.
+enum CudaError {
+    Runtime(i32),
+    Blas(i32),
+    NoDevice,
+}
+
+impl CudaError {
+    // The underlying integer code (`cudaError_t` / `cublasStatus_t`).
+    // `NoDevice` has no native code; it reports as 0.
+    fn code(this) -> i32 {
+        let v: i32 = match this {
+            CudaError::Runtime(c) => c,
+            CudaError::Blas(c) => c,
+            CudaError::NoDevice => 0 as i32,
+        };
+        return v;
+    }
+
+    // libcudart's human-readable message for this error, as owned `Text`.
+    // `cudaGetErrorString` maps a runtime code; a cuBLAS status has no
+    // runtime-string equivalent, so `Blas` is described generically.
+    fn message(this) -> text::Text {
+        let out: text::Text = match this {
+            CudaError::Runtime(c) => {
+                let raw: *u8 = { cudaGetErrorString(c) };
+                let n: usize = { strlen(raw) };
+                let view: str = { #str_from_raw_parts(raw, n) };
+                view.to_text()
+            }
+            CudaError::Blas(_) => text::from_str("cuBLAS error"),
+            CudaError::NoDevice => text::from_str("no CUDA-capable device"),
+        };
+        return out;
+    }
+}
+
+// Number of CUDA-capable devices visible to the process.
+fn device_count() -> result::Result[i32, CudaError] {
+    let slot: *u8 = { malloc(4 as usize) };
+    let p: *i32 = { slot as *i32 };
+    let rc: i32 = { cudaGetDeviceCount(p) };
+    let n: i32 = { *p };
+    { free(slot); }
+    if rc != (0 as i32) {
+        return result::Result[i32, CudaError]::Err(CudaError::Runtime(rc));
+    }
+    return result::Result[i32, CudaError]::Ok(n);
+}
+
+// Select the active device for subsequent allocations / launches.
+// `None` on success; `Some(CudaError::Runtime(code))` preserves the failure.
+fn set_device(dev: i32) -> option::Option[CudaError] {
+    let rc: i32 = { cudaSetDevice(dev) };
+    if rc != (0 as i32) {
+        return option::Option[CudaError]::Some(CudaError::Runtime(rc));
+    }
+    return option::Option[CudaError]::None;
+}
+
+// Block the host until all previously issued device work completes.
+// `None` on success; `Some(CudaError::Runtime(code))` preserves the failure.
+fn synchronize() -> option::Option[CudaError] {
+    let rc: i32 = { cudaDeviceSynchronize() };
+    if rc != (0 as i32) {
+        return option::Option[CudaError]::Some(CudaError::Runtime(rc));
+    }
+    return option::Option[CudaError]::None;
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+// Host-runnable: these exercise the pure mapping logic in `CudaError`
+// (no device calls), so they pass without a GPU once linked.
+
+#[test]
+fn test_error_code_runtime() {
+    let e: CudaError = CudaError::Runtime(35 as i32);
+    assert e.code() == (35 as i32);
+}
+
+#[test]
+fn test_error_code_blas() {
+    let e: CudaError = CudaError::Blas(7 as i32);
+    assert e.code() == (7 as i32);
+}
+
+#[test]
+fn test_error_code_no_device_is_zero() {
+    let e: CudaError = CudaError::NoDevice;
+    assert e.code() == (0 as i32);
+}
+
+#[test]
+fn test_blas_message_text() {
+    let e: CudaError = CudaError::Blas(1 as i32);
+    let m: text::Text = e.message();
+    assert m.count() == (12 as usize);   // "cuBLAS error"
+}
+
+#[test]
+fn test_no_device_message_text() {
+    let e: CudaError = CudaError::NoDevice;
+    let m: text::Text = e.message();
+    assert m.count() == (22 as usize);   // "no CUDA-capable device"
+}
+
+#[test]
+fn test_memcpy_kind_constants() {
+    assert memcpy_host_to_host() == (0 as i32);
+    assert memcpy_host_to_device() == (1 as i32);
+    assert memcpy_device_to_host() == (2 as i32);
+    assert memcpy_device_to_device() == (3 as i32);
+}
