@@ -1,0 +1,133 @@
+// win32/graphics.cplus — 2D drawing inside a paint handler (the gtk
+// `cairo`/`graphics` analogue).
+//
+// A `Painter` wraps the device context (HDC) handed to a window's `on_paint`
+// handler (`fn(window_hwnd, hdc)`); wrap it with `Painter::from_hdc(hdc)` and
+// issue GDI drawing calls. `Color` is a COLORREF (0x00BBGGRR) value.
+
+extern fn strlen(s: *u8) -> usize;
+
+#[link_name = "TextOutA"]
+extern fn TextOutA(hdc: *u8, x: i32, y: i32, text: *u8, len: i32) -> i32;
+#[link_name = "Rectangle"]
+extern fn Rectangle(hdc: *u8, l: i32, t: i32, r: i32, b: i32) -> i32;
+#[link_name = "Ellipse"]
+extern fn Ellipse(hdc: *u8, l: i32, t: i32, r: i32, b: i32) -> i32;
+#[link_name = "MoveToEx"]
+extern fn MoveToEx(hdc: *u8, x: i32, y: i32, old: *u8) -> i32;
+#[link_name = "LineTo"]
+extern fn LineTo(hdc: *u8, x: i32, y: i32) -> i32;
+#[link_name = "SetTextColor"]
+extern fn SetTextColor(hdc: *u8, color: u32) -> u32;
+#[link_name = "SetBkMode"]
+extern fn SetBkMode(hdc: *u8, mode: i32) -> i32;
+#[link_name = "CreateSolidBrush"]
+extern fn CreateSolidBrush(color: u32) -> *u8;
+#[link_name = "CreatePen"]
+extern fn CreatePen(style: i32, width: i32, color: u32) -> *u8;
+#[link_name = "SelectObject"]
+extern fn SelectObject(hdc: *u8, obj: *u8) -> *u8;
+#[link_name = "DeleteObject"]
+extern fn DeleteObject(obj: *u8) -> i32;
+
+fn transparent() -> i32 { return 1 as i32; }
+fn ps_solid() -> i32 { return 0 as i32; }
+
+// A COLORREF (0x00BBGGRR). Plain value type (Copy).
+struct Color {
+    _value: u32,
+}
+impl Color {
+    fn rgb(r: u8, g: u8, b: u8) -> Color {
+        let v: u32 = (r as u32)|((g as u32) << (8 as u32))|((b as u32) << (16 as u32));
+        return Color { _value: v };
+    }
+    fn raw(this) -> u32 { return this._value; }
+}
+
+// A drawing surface over a paint HDC. Holds the HDC `opaque` (owned by the
+// WM_PAINT BeginPaint/EndPaint pair in core, not by the Painter).
+struct Painter {
+    opaque _hdc: *u8,
+}
+impl Painter {
+    fn from_hdc(hdc: *u8) -> Painter { return Painter { _hdc: hdc }; }
+    fn raw(this) -> *u8 { return this._hdc; }
+
+    // Draw NUL-terminated `text` at (x, y).
+    fn text(this, x: i32, y: i32, text: *u8) {
+        let n: usize = { strlen(text) };
+        { TextOutA(this._hdc, x, y, text, n as i32); }
+        return;
+    }
+
+    fn set_text_color(this, c: Color) { { SetTextColor(this._hdc, c.raw()); } return; }
+    fn set_transparent_text(this) { { SetBkMode(this._hdc, transparent()); } return; }
+
+    // Outline a rectangle / ellipse with the current pen + brush.
+    fn rectangle(this, l: i32, t: i32, r: i32, b: i32) {
+        { Rectangle(this._hdc, l, t, r, b); } return;
+    }
+    fn ellipse(this, l: i32, t: i32, r: i32, b: i32) {
+        { Ellipse(this._hdc, l, t, r, b); } return;
+    }
+
+    // Draw a line from (x1,y1) to (x2,y2) with the current pen.
+    fn line(this, x1: i32, y1: i32, x2: i32, y2: i32) {
+        { MoveToEx(this._hdc, x1, y1, 0 as *u8); }
+        { LineTo(this._hdc, x2, y2); }
+        return;
+    }
+
+    // Fill a rectangle with a solid color (creates + frees a temporary brush).
+    fn fill_rect(this, l: i32, t: i32, r: i32, b: i32, c: Color) {
+        let brush: *u8 = { CreateSolidBrush(c.raw()) };
+        let old: *u8 = { SelectObject(this._hdc, brush) };
+        { Rectangle(this._hdc, l, t, r, b); }
+        { SelectObject(this._hdc, old); }
+        { DeleteObject(brush); }
+        return;
+    }
+
+    // Set the pen (line color/width) for subsequent rectangle/line/ellipse
+    // outlines. Returns the previous pen so the caller can restore it.
+    fn use_pen(this, width: i32, c: Color) -> *u8 {
+        let pen: *u8 = { CreatePen(ps_solid(), width, c.raw()) };
+        return { SelectObject(this._hdc, pen) };
+    }
+}
+
+// ---- pure-logic tests ----
+// `Color::rgb` packs r/g/b into a COLORREF (0x00BBGGRR); this is plain
+// arithmetic with no Win32 dependency, so it runs on any host.
+
+#[test]
+fn test_color_rgb_packs_bbggrr() {
+    // 0x11 red, 0x22 green, 0x33 blue -> 0x00332211.
+    let c: Color = Color::rgb(0x11 as u8, 0x22 as u8, 0x33 as u8);
+    assert c.raw() == (0x00332211 as u32);
+}
+
+#[test]
+fn test_color_rgb_red_only() {
+    let c: Color = Color::rgb(0xFF as u8, 0 as u8, 0 as u8);
+    assert c.raw() == (0x000000FF as u32);
+}
+
+#[test]
+fn test_color_rgb_blue_only() {
+    let c: Color = Color::rgb(0 as u8, 0 as u8, 0xFF as u8);
+    assert c.raw() == (0x00FF0000 as u32);
+}
+
+#[test]
+fn test_color_rgb_black_is_zero() {
+    let c: Color = Color::rgb(0 as u8, 0 as u8, 0 as u8);
+    assert c.raw() == (0 as u32);
+}
+
+#[test]
+fn test_color_rgb_white() {
+    let c: Color = Color::rgb(0xFF as u8, 0xFF as u8, 0xFF as u8);
+    assert c.raw() == (0x00FFFFFF as u32);
+}

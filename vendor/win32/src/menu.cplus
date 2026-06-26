@@ -1,0 +1,54 @@
+// win32/menu.cplus — menu bars and items (the gtk `menu`/`actions` analogue).
+//
+// A `Menu` wraps an HMENU. Build a bar with `Menu::new()`, add submenus
+// (`Menu::new_popup()`), then attach it with `window.set_menu(bar.raw())`.
+// Menu-item clicks arrive as WM_COMMAND keyed by the item's command id, so
+// items are registered into the owning window's dispatch table exactly like
+// controls — pass the window HWND to `add_item`.
+
+import "./core" as core;
+
+#[link_name = "CreateMenu"]
+extern fn CreateMenu() -> *u8;
+#[link_name = "CreatePopupMenu"]
+extern fn CreatePopupMenu() -> *u8;
+#[link_name = "AppendMenuA"]
+extern fn AppendMenuA(menu: *u8, flags: u32, id_or_submenu: usize, text: *u8) -> i32;
+
+fn mf_string() -> u32 { return 0x0000 as u32; }
+fn mf_popup() -> u32 { return 0x0010 as u32; }
+fn mf_separator() -> u32 { return 0x0800 as u32; }
+
+struct Menu {
+    opaque _hmenu: *u8,
+}
+
+impl Menu {
+    fn raw(this) -> *u8 { return this._hmenu; }
+
+    // A top-level menu bar (attach with `window.set_menu`).
+    fn new() -> Menu { return Menu { _hmenu: { CreateMenu() } }; }
+
+    // A submenu / popup to nest under a bar item.
+    fn new_popup() -> Menu { return Menu { _hmenu: { CreatePopupMenu() } }; }
+
+    // Add a clickable item to this menu, bound to `handler` in `window`'s
+    // dispatch table. Returns the allocated command id.
+    fn add_item(this, window: *u8, text: *u8, handler: fn(*u8, *u8), user: *u8) -> u32 {
+        let id: u32 = core::alloc_command_id(window);
+        { AppendMenuA(this._hmenu, mf_string(), id as usize, text); }
+        core::set_command(window, id, handler, user);
+        return id;
+    }
+
+    // Nest `submenu` under this menu, labelled `text`.
+    fn add_submenu(this, text: *u8, submenu: Menu) {
+        { AppendMenuA(this._hmenu, mf_popup(), { submenu.raw() } as usize, text); }
+        return;
+    }
+
+    fn add_separator(this) {
+        { AppendMenuA(this._hmenu, mf_separator(), 0 as usize, 0 as *u8); }
+        return;
+    }
+}

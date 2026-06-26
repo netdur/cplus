@@ -1,0 +1,20 @@
+[package]
+name    = "win32"
+version = "0.0.1"
+edition = "2026"
+
+# C+ bindings for the native Win32 GUI API — the Windows counterpart to
+# `vendor/appkit` (macOS) and `vendor/gtk` (Linux). Unlike GTK, this needs
+# NOTHING installed: user32/gdi32 ship with every Windows install and are on
+# the linker's default search path, so `cpc build` works out of the box on
+# `x86_64-pc-windows-msvc`.
+#
+# Like the GTK bindings (and unlike Cocoa's objc_msgSend), these are direct
+# `extern fn` calls to `user32`/`gdi32` symbols — thin C+ structs over the
+# opaque HWND/HINSTANCE handles. The ANSI (`*A`) entry points are used so
+# plain NUL-terminated C+ strings pass straight through (no UTF-16).
+[dependencies]
+stdlib = "*"
+
+[link]
+libs = ["user32", "gdi32", "comctl32", "comdlg32"]
