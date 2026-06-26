@@ -1,0 +1,167 @@
+// GPIO (ESP-IDF `driver/gpio.h`).
+//
+// The public surface follows naming_guideline.md. The raw `i32`/`u32` ABI of
+// `driver/gpio.h` is hidden behind role-named, Copy enums:
+//   - `Mode` replaces the `mode_disable()`/`mode_input()`/... free functions
+//     and the bare `gpio_mode_t` integer.
+//   - `Level` replaces the 0/1 `u32`/`i32` level, read as `is_high()`.
+// Mutating calls (`reset`, `set_direction`, `set_level`) return `Status`
+// instead of a raw `esp_err_t` (0 = ESP_OK); a read (`level`) returns
+// `Option[Level]` so a driver fault is a value, not a -1 sentinel.
+//
+// **#[no_alloc] / #[realtime] contract.** `Status`, `Mode`, and `Level` are
+// payload-free Copy enums — no heap, no trap — so every wrapper stays a
+// `#[no_alloc]` leaf usable from a `#[realtime]` control loop. The pin number
+// is a plain `i32` (`gpio_num_t` is a C enum) and is never wrapped, matching
+// the README's "stay usable from #[no_alloc] code" constraint.
+
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+
+// The pin direction (`gpio_mode_t`). Values match the C enum:
+// `GPIO_MODE_DISABLE` = 0, `_INPUT` = 1, `_OUTPUT` = 2, `_INPUT_OUTPUT` = 3.
+enum Mode {
+    Disable,
+    Input,
+    Output,
+    InputOutput,
+}
+
+impl Mode {
+    // The `gpio_mode_t` integer this mode passes to the driver.
+    #[no_alloc]
+    fn raw(this) -> i32 {
+        return match this {
+            Mode::Disable => { 0 as i32 }
+            Mode::Input => { 1 as i32 }
+            Mode::Output => { 2 as i32 }
+            Mode::InputOutput => { 3 as i32 }
+        };
+    }
+}
+
+// A digital pin level. `Low` drives/reads 0, `High` drives/reads 1.
+enum Level {
+    Low,
+    High,
+}
+
+impl Level {
+    // The `u32` the driver expects: 0 for `Low`, 1 for `High`.
+    #[no_alloc]
+    fn raw(this) -> u32 {
+        return match this {
+            Level::Low => { 0 as u32 }
+            Level::High => { 1 as u32 }
+        };
+    }
+
+    // True when this is the high level (logic 1).
+    #[no_alloc]
+    fn is_high(this) -> bool {
+        return this == Level::High;
+    }
+
+    // True when this is the low level (logic 0).
+    #[no_alloc]
+    fn is_low(this) -> bool {
+        return this == Level::Low;
+    }
+}
+
+// Externs are register writes/reads — `#[no_alloc]` + `#[no_block]` leaves so
+// `#[realtime]` code can drive pins.
+#[no_alloc]
+#[no_block]
+extern fn gpio_reset_pin(pin: i32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_set_direction(pin: i32, mode: i32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_set_level(pin: i32, level: u32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_get_level(pin: i32) -> i32;
+
+// Map an `esp_err_t` (0 = ESP_OK) to a `Status`. A non-zero error code means
+// the driver rejected the request; the pin is left in its prior valid state.
+#[no_alloc]
+fn status_from_err(code: i32) -> status::Status {
+    if code == (0 as i32) {
+        return status::Status::Ok;
+    }
+    return status::Status::InvalidInput;
+}
+
+// Reset a pin to its power-on default (input, pulls disabled). `Status::Ok`
+// on success.
+#[no_alloc]
+fn reset(pin: i32) -> status::Status {
+    return status_from_err({ gpio_reset_pin(pin) });
+}
+
+// Set a pin's direction. Reads as "set_direction(pin, to: Mode::Output)".
+#[no_alloc]
+fn set_direction(pin: i32, to: Mode) -> status::Status {
+    return status_from_err({ gpio_set_direction(pin, to.raw()) });
+}
+
+// Drive a pin to a level. Reads as "set_level(pin, to: Level::High)".
+#[no_alloc]
+fn set_level(pin: i32, to: Level) -> status::Status {
+    return status_from_err({ gpio_set_level(pin, to.raw()) });
+}
+
+// Read a pin's current level. `gpio_get_level` returns 0 or 1 for a valid
+// configured pin and -1 (`ESP_ERR`) for a bad pin number — the failure is
+// surfaced as `None`, never a sentinel the caller must remember to check.
+#[no_alloc]
+fn level(pin: i32) -> option::Option[Level] {
+    let raw: i32 = { gpio_get_level(pin) };
+    if raw == (0 as i32) {
+        return option::Option[Level]::Some(Level::Low);
+    }
+    if raw == (1 as i32) {
+        return option::Option[Level]::Some(Level::High);
+    }
+    return option::Option[Level]::None;
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+// These cover the pure enum<->ABI mapping; they need no ESP-IDF symbols.
+
+#[test]
+fn test_mode_raw_values() {
+    assert Mode::Disable.raw() == (0 as i32);
+    assert Mode::Input.raw() == (1 as i32);
+    assert Mode::Output.raw() == (2 as i32);
+    assert Mode::InputOutput.raw() == (3 as i32);
+}
+
+#[test]
+fn test_level_raw_values() {
+    assert Level::Low.raw() == (0 as u32);
+    assert Level::High.raw() == (1 as u32);
+}
+
+#[test]
+fn test_level_predicates() {
+    assert Level::High.is_high();
+    assert Level::High.is_low() == false;
+    assert Level::Low.is_low();
+    assert Level::Low.is_high() == false;
+}
+
+#[test]
+fn test_status_from_err_ok_on_zero() {
+    let s: status::Status = status_from_err(0 as i32);
+    assert s.is_ok();
+}
+
+#[test]
+fn test_status_from_err_err_on_nonzero() {
+    // ESP_FAIL is -1; any non-zero esp_err_t is an error.
+    assert status_from_err(0 as i32 -% (1 as i32)).is_err();
+    assert status_from_err(258 as i32).is_err();   // ESP_ERR_INVALID_ARG
+}

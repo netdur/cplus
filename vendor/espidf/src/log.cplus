@@ -1,0 +1,33 @@
+// Console output. ESP-IDF routes newlib's stdout to UART0, so plain `printf`
+// reaches the serial monitor. `ESP_LOGx` are C macros and cannot be bound;
+// these helpers print the same content without the log-level framing.
+//
+// The public surface follows naming_guideline.md: callers pass a `str`, not a
+// raw NUL-terminated `*u8`. The C bridging is hidden inside each helper — the
+// `printf("%.*s", len, ptr)` precision-star form takes an explicit length, so
+// no NUL terminator and no `CString` allocation are needed. That keeps these
+// helpers heap-free and usable from `#[no_alloc]` code, same as the gpio/timer
+// leaves.
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+// Print `text` followed by a newline.
+#[no_alloc]
+fn print_line(text: str) {
+    let _r: i32 = { printf(#str_ptr("%.*s\n\0"), #str_len(text) as i32, #str_ptr(text)) };
+    return;
+}
+
+// Print `label`, then `value`, then a newline — e.g. "ticks: 42".
+#[no_alloc]
+fn print_i32(label: str, value: i32) {
+    let _r: i32 = { printf(#str_ptr("%.*s%d\n\0"), #str_len(label) as i32, #str_ptr(label), value) };
+    return;
+}
+
+// Print `label`, then a 64-bit `value`, then a newline.
+#[no_alloc]
+fn print_i64(label: str, value: i64) {
+    let _r: i32 = { printf(#str_ptr("%.*s%lld\n\0"), #str_len(label) as i32, #str_ptr(label), value) };
+    return;
+}
