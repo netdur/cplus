@@ -1,0 +1,45 @@
+// Umbrella module for Android View bindings.
+
+import "jni/jni" as jni;
+import "./runtime" as runtime;
+import "./activity" as activity;
+import "./view" as view;
+import "./controls" as controls;
+
+type Env = runtime::Env;
+type Context = runtime::Context;
+type Activity = activity::Activity;
+
+type View = view::View;
+type LinearLayout = view::LinearLayout;
+type TextView = controls::TextView;
+type Button = controls::Button;
+
+fn from_native(envp: *jni::JNIEnv) -> runtime::Env {
+    return runtime::from_native(envp);
+}
+
+fn orientation_horizontal() -> i32 {
+    return view::orientation_horizontal();
+}
+
+fn orientation_vertical() -> i32 {
+    return view::orientation_vertical();
+}
+
+fn set_on_click_raw(env: runtime::Env, v: jni::jobject, adapter_class: *u8, token: i64) {
+    view::set_on_click_raw(env, v, adapter_class, token);
+    return;
+}
+
+fn arg_object(obj: jni::jobject) -> jni::JValue {
+    return runtime::arg_object(obj);
+}
+
+fn arg_int(v: i32) -> jni::JValue {
+    return runtime::arg_int(v);
+}
+
+fn arg_long(v: i64) -> jni::JValue {
+    return runtime::arg_long(v);
+}

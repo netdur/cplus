@@ -1,0 +1,202 @@
+// android_view runtime: small JNI helpers used by the typed View wrappers.
+//
+// Native Android entrypoints receive `JNIEnv *` — a pointer to the
+// thread-local JNI function-table pointer. JNI functions must be called
+// with that same double pointer (ART recovers the thread from it), so
+// `Env` stores it as-is and dereferences twice to reach the table.
+//
+// Naming guideline notes:
+//   - the raw `JNIEnv *` handle is hidden behind `_env`; reach it through
+//     `raw()` for the rare table call this module does not yet wrap.
+//   - JNI class/method descriptors stay raw `*u8` on this surface: JNI's
+//     FindClass/GetMethodID/NewStringUTF take NUL-terminated modified UTF-8,
+//     and the `#str_ptr("...\0")` literal is the idiom callers already use.
+//     A `str`/`Text` overload (with runtime NUL-termination) is deferred so
+//     the JNI interop is not redesigned in this slice.
+
+import "jni/jni" as jni;
+
+type Context = jni::jobject;
+type Activity = jni::jobject;
+type JavaObject = jni::jobject;
+
+struct Env {
+    // The JVM/ART owns the env; `Env` only borrows the handle. `opaque`
+    // marks it as not-owned so no drop-glue is required.
+    opaque _env: *jni::JNIEnv,
+}
+
+fn from_native(envp: *jni::JNIEnv) -> Env {
+    return Env { _env: envp };
+}
+
+impl Env {
+    fn raw(this) -> *jni::JNIEnv {
+        return this._env;
+    }
+
+    fn version(this) -> jni::jint {
+        return { (*(*this._env)).GetVersion(this._env) };
+    }
+
+    fn find_class(this, name: *u8) -> jni::jclass {
+        return { (*(*this._env)).FindClass(this._env, name) };
+    }
+
+    fn method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
+        return { (*(*this._env)).GetMethodID(this._env, cls, name, sig) };
+    }
+
+    fn pending_exception(this) -> jni::jthrowable {
+        return { (*(*this._env)).ExceptionOccurred(this._env) };
+    }
+
+    fn clear_exception(this) {
+        { (*(*this._env)).ExceptionClear(this._env); };
+    }
+
+    fn new_global_ref(this, obj: jni::jobject) -> jni::jobject {
+        return { (*(*this._env)).NewGlobalRef(this._env, obj) };
+    }
+
+    fn delete_global_ref(this, obj: jni::jobject) {
+        { (*(*this._env)).DeleteGlobalRef(this._env, obj); };
+    }
+
+    fn delete_local_ref(this, obj: jni::jobject) {
+        { (*(*this._env)).DeleteLocalRef(this._env, obj); };
+    }
+
+    // `utf8` must be NUL-terminated modified UTF-8, matching JNI's
+    // NewStringUTF contract. String-literal call sites should include `\0`.
+    fn new_string_utf(this, utf8: *u8) -> jni::jstring {
+        return { (*(*this._env)).NewStringUTF(this._env, utf8) };
+    }
+
+    fn method(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
+        let cls: jni::jclass = this.find_class(class_name);
+        let mid: jni::jmethodID = this.method_id(cls, name, sig);
+        this.delete_local_ref(cls);
+        return mid;
+    }
+
+    fn new_object_0(this, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
+        let cls: jni::jclass = this.find_class(class_name);
+        let ctor: jni::jmethodID = this.method_id(cls, #str_ptr("<init>\0"), ctor_sig);
+        let obj: jni::jobject = {
+            (*(*this._env)).NewObjectA(this._env, cls, ctor, 0 as *jni::JValue)
+        };
+        this.delete_local_ref(cls);
+        return obj;
+    }
+
+    fn new_object_1(this, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.find_class(class_name);
+        let ctor: jni::jmethodID = this.method_id(cls, #str_ptr("<init>\0"), ctor_sig);
+        var args: [jni::JValue; 1] = [arg0];
+        let obj: jni::jobject = {
+            (*(*this._env)).NewObjectA(this._env, cls, ctor, #addr_of(args[0]))
+        };
+        this.delete_local_ref(cls);
+        return obj;
+    }
+
+    fn call_void_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, 0 as *jni::JValue); };
+    }
+
+    fn call_void_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, #addr_of(args[0])); };
+    }
+
+    fn call_void_2(
+        this,
+        obj: jni::jobject,
+        class_name: *u8,
+        name: *u8,
+        sig: *u8,
+        arg0: jni::JValue,
+        arg1: jni::JValue,
+    ) {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, #addr_of(args[0])); };
+    }
+
+    fn call_object_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        return { (*(*this._env)).CallObjectMethodA(this._env, obj, mid, 0 as *u8) };
+    }
+
+    fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        return {
+            (*(*this._env)).CallObjectMethodA(this._env, obj, mid, #addr_of(args[0]) as *u8)
+        };
+    }
+
+    // A pending JVM exception reads as an assertion, not a raw 0/1 sentinel.
+    fn has_pending_exception(this) -> bool {
+        return { (*(*this._env)).ExceptionCheck(this._env) } as i8 != 0;
+    }
+
+    fn retain_local_as_global(this, local: jni::jobject) -> jni::jobject {
+        let global: jni::jobject = this.new_global_ref(local);
+        this.delete_local_ref(local);
+        return global;
+    }
+}
+
+fn arg_object(obj: jni::jobject) -> jni::JValue {
+    return jni::arg_object(obj);
+}
+
+fn arg_int(v: i32) -> jni::JValue {
+    return jni::arg_int(v as jni::jint);
+}
+
+// Booleans on the public surface read as `true`/`false`; the JNI `jboolean`
+// (u8) encoding is applied here at the boundary.
+fn arg_bool(v: bool) -> jni::JValue {
+    var bits: jni::jboolean = 0 as jni::jboolean;
+    if v {
+        bits = 1 as jni::jboolean;
+    }
+    return jni::arg_bool(bits);
+}
+
+fn arg_long(v: i64) -> jni::JValue {
+    return jni::arg_long(v as jni::jlong);
+}
+
+// Host-runnable tests for the pure arg-encoding boundary (no JVM needed):
+// these exercise the `bool`/i32/i64 -> JValue word conversions only.
+
+#[test]
+fn arg_bool_true_sets_low_byte_one() {
+    assert arg_bool(true).bits() == 1 as jni::jlong;
+    return;
+}
+
+#[test]
+fn arg_bool_false_is_zero_word() {
+    assert arg_bool(false).bits() == 0 as jni::jlong;
+    return;
+}
+
+#[test]
+fn arg_int_sign_extends_into_word() {
+    assert arg_int(-1 as i32).bits() == -1 as jni::jlong;
+    assert arg_int(42 as i32).bits() == 42 as jni::jlong;
+    return;
+}
+
+#[test]
+fn arg_long_round_trips() {
+    assert arg_long(9223372036854775807 as i64).bits() == 9223372036854775807 as jni::jlong;
+    return;
+}

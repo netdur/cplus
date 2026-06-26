@@ -1,0 +1,120 @@
+// Basic android.widget controls backed by owned global JNI references.
+//
+// Naming guideline notes: the raw global ref is hidden behind `_obj`, the
+// `Env` behind `_env`. `set_text` keeps a raw `*u8` because JNI's
+// NewStringUTF takes NUL-terminated modified UTF-8 — the `#str_ptr("...\0")`
+// literal is the call-site idiom; a `str`/`Text` overload that NUL-terminates
+// at runtime is deferred so the JNI interop is not redesigned in this slice.
+
+import "jni/jni" as jni;
+import "./runtime" as rt;
+import "./view" as view;
+
+struct TextView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl TextView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj` after transferring the global ref out;
+        // JNI's DeleteGlobalRef contract does not admit NULL.
+        if this._obj != { 0 as jni::jobject } {
+            this._env.delete_global_ref(this._obj);
+        }
+        return;
+    }
+
+    fn new(env: rt::Env, ctx: rt::Context) -> TextView {
+        let local: jni::jobject = env.new_object_1(
+            #str_ptr("android/widget/TextView\0"),
+            #str_ptr("(Landroid/content/Context;)V\0"),
+            rt::arg_object(ctx),
+        );
+        return TextView { _env: env, _obj: env.retain_local_as_global(local) };
+    }
+
+    fn as_view_obj(this) -> jni::jobject {
+        return this._obj;
+    }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn set_text(this, utf8: *u8) {
+        let s: jni::jstring = this._env.new_string_utf(utf8);
+        this._env.call_void_1(
+            this._obj,
+            #str_ptr("android/widget/TextView\0"),
+            #str_ptr("setText\0"),
+            #str_ptr("(Ljava/lang/CharSequence;)V\0"),
+            rt::arg_object(s),
+        );
+        this._env.delete_local_ref(s);
+    }
+}
+
+struct Button {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl Button {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj` after transferring the global ref out;
+        // JNI's DeleteGlobalRef contract does not admit NULL.
+        if this._obj != { 0 as jni::jobject } {
+            this._env.delete_global_ref(this._obj);
+        }
+        return;
+    }
+
+    fn new(env: rt::Env, ctx: rt::Context) -> Button {
+        let local: jni::jobject = env.new_object_1(
+            #str_ptr("android/widget/Button\0"),
+            #str_ptr("(Landroid/content/Context;)V\0"),
+            rt::arg_object(ctx),
+        );
+        return Button { _env: env, _obj: env.retain_local_as_global(local) };
+    }
+
+    fn as_view_obj(this) -> jni::jobject {
+        return this._obj;
+    }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn set_text(this, utf8: *u8) {
+        let s: jni::jstring = this._env.new_string_utf(utf8);
+        this._env.call_void_1(
+            this._obj,
+            #str_ptr("android/widget/TextView\0"),
+            #str_ptr("setText\0"),
+            #str_ptr("(Ljava/lang/CharSequence;)V\0"),
+            rt::arg_object(s),
+        );
+        this._env.delete_local_ref(s);
+    }
+
+    fn set_on_click(this, adapter_class: *u8, token: i64) {
+        view::set_on_click_raw(this._env, this._obj, adapter_class, token);
+        return;
+    }
+
+    fn set_on_click_listener(this, listener: jni::jobject, listener_sig: *u8) {
+        this._env.call_void_1(
+            this._obj,
+            #str_ptr("android/view/View\0"),
+            #str_ptr("setOnClickListener\0"),
+            listener_sig,
+            rt::arg_object(listener),
+        );
+    }
+}
