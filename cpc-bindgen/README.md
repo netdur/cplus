@@ -1,12 +1,13 @@
 # cpc-bindgen
 
-Generates C+ bindings from a C or Objective-C header. It shells out to `clang`
-to dump the header's AST as JSON, then emits C+ source to stdout. Constructs it
-cannot model are written as `// SKIPPED` comments, never as wrong code, and each
-SKIP names its reason.
+Generates C+ bindings from a C or Objective-C header, or a Swift module. For
+C/ObjC it shells out to `clang` to dump the header's AST as JSON; for Swift
+(`--swift`) it reads a `swift symbolgraph-extract` graph. Either way it emits C+
+source to stdout, and constructs it cannot model are written as `// SKIPPED`
+comments, never as wrong code, each naming its reason.
 
-Requires `clang` on `PATH`. Objective-C mode also needs the Xcode command-line
-tools (it calls `xcrun` for the SDK path).
+Requires `clang` on `PATH`. Objective-C and Swift modes also need the Xcode
+command-line tools (`xcrun` for the SDK path / `swift symbolgraph-extract`).
 
 ## Build
 
@@ -69,9 +70,38 @@ skeleton the single-header mode leaves to you:
 mechanical is regenerated. Output goes to `--out DIR` (default: the lowercased
 framework name).
 
+### Swift modules (`--swift`)
+
+```
+# bind a pre-extracted symbol graph
+cpc-bindgen --swift CoreAIRuntime.symbols.json
+
+# or extract it first (args after -- go to symbolgraph-extract)
+cpc-bindgen --swift-module CoreAIRuntime -- \
+  -target arm64-apple-macos27.0 -sdk "$SDK" -F "$SDK/System/Library/SubFrameworks"
+```
+
+Reads the JSON from `swift symbolgraph-extract` — the documented, stable
+description of a Swift module's public API (the Swift analog of clang's
+`-ast-dump=json`).
+
+Unlike Objective-C, Swift has **no universal dynamic entry point** like
+`objc_msgSend`: methods use the Swift calling convention with mangled names, and
+value types, generics, `async`, `throws`, and move-only (`~Copyable`) types have
+no C ABI. So this mode binds only the subset that has a guaranteed C ABI —
+raw-value enums (as named `i64` constant accessors) and functions marked
+`@_cdecl` / `@convention(c)` — and writes `// SKIPPED <path>: <reason>` for
+everything else, with a summary histogram of the reasons. Each skip names what a
+hand-written `@_cdecl` Swift bridge would have to cover, so the output doubles as
+the bridge spec. (For a pure-Swift framework like CoreAI the result is an
+all-SKIP manifest: there is nothing C-callable to bind directly.)
+
 ## Flags
 
 - `--objc`: Objective-C mode. Without it the input is treated as C.
+- `--swift <Module.symbols.json>`: bind a Swift `symbolgraph-extract` JSON graph.
+- `--swift-module <Name>`: run `swift symbolgraph-extract` for `Name` first;
+  pass `-target`/`-sdk`/`-F` after `--`.
 - `--prefix P`: strip a class-name prefix from emitted type names. `--prefix NS`
   turns `NSTimeZone` into `TimeZone`.
 - `--overrides FILE`: a JSON file of naming overrides (see below).

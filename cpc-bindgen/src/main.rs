@@ -19,6 +19,7 @@
 
 mod framework;
 mod objc;
+mod swift;
 
 use std::process::Command;
 
@@ -26,6 +27,8 @@ fn main() {
     // Flags (`--objc`, `--prefix P`) precede the header; clang args follow `--`.
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
+    let mut swift_mode = false;
+    let mut swift_module: Option<String> = None;
     let mut prefix = String::new();
     let mut overrides_path: Option<String> = None;
     let mut framework: Option<String> = None;
@@ -44,6 +47,26 @@ fn main() {
             }
             if a == "--objc" {
                 objc_mode = true;
+                i += 1;
+                continue;
+            }
+            // `--swift FILE.symbols.json` binds a pre-extracted Swift symbol
+            // graph. `--swift-module NAME [-- <extractor args>]` runs
+            // `swift symbolgraph-extract` for NAME first.
+            if a == "--swift" {
+                swift_mode = true;
+                i += 1;
+                continue;
+            }
+            if a == "--swift-module" {
+                swift_mode = true;
+                swift_module = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--swift-module=") {
+                swift_mode = true;
+                swift_module = Some(p.to_string());
                 i += 1;
                 continue;
             }
@@ -107,6 +130,53 @@ fn main() {
         ));
     }
 
+    // Swift mode: bind a `swift symbolgraph-extract` JSON graph. Either a
+    // module name (we run the extractor) or a pre-extracted `.symbols.json`.
+    if swift_mode {
+        let (graph, module) = if let Some(module) = &swift_module {
+            // Everything after `--` is forwarded to symbolgraph-extract
+            // (-target / -sdk / -F, e.g. for an Xcode-beta SDK).
+            match swift::extract(module, &clang_args) {
+                Ok(g) => (g, module.clone()),
+                Err(e) => {
+                    eprintln!("cpc-bindgen: {e}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            let path = match &header {
+                Some(h) => h.clone(),
+                None => {
+                    eprintln!("cpc-bindgen --swift: expected a `<Module>.symbols.json` path");
+                    eprintln!("   or use --swift-module <Name> -- <extractor args> to extract");
+                    std::process::exit(2);
+                }
+            };
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("cpc-bindgen: cannot read `{path}`: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let g: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("cpc-bindgen: `{path}` is not a symbol-graph JSON: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let module = std::path::Path::new(&path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| s.trim_end_matches(".symbols.json").to_string())
+                .unwrap_or_else(|| "Module".to_string());
+            (g, module)
+        };
+        print!("{}", swift::generate(&graph, &module));
+        std::process::exit(0);
+    }
+
     let header = match header {
         Some(h) => h,
         None => {
@@ -114,6 +184,8 @@ fn main() {
             eprintln!();
             eprintln!("usage: cpc-bindgen [--objc] [--prefix P] <header.h> [-- <clang args>...]");
             eprintln!("       cpc-bindgen --framework <Name> [--prefix P] [--overrides F] [--out DIR]");
+            eprintln!("       cpc-bindgen --swift <Module.symbols.json>");
+            eprintln!("       cpc-bindgen --swift-module <Name> -- <symbolgraph-extract args>");
             std::process::exit(2);
         }
     };
