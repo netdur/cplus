@@ -1,0 +1,88 @@
+// In-app notifications — AdwToast (a transient message) shown by an
+// AdwToastOverlay that wraps your content. This is the Adwaita analog of a
+// "snackbar": call `overlay.add_toast(toast)` and it animates in over the
+// content, optionally with an action button.
+
+// ---- AdwToast ----
+
+#[link_name = "adw_toast_new"]
+extern fn adw_toast_new(title: *u8) -> *u8;
+
+#[link_name = "adw_toast_set_title"]
+extern fn adw_toast_set_title(toast: *u8, title: *u8);
+
+#[link_name = "adw_toast_set_timeout"]
+extern fn adw_toast_set_timeout(toast: *u8, timeout: u32);
+
+#[link_name = "adw_toast_set_button_label"]
+extern fn adw_toast_set_button_label(toast: *u8, button_label: *u8);
+
+// Wire the toast's button to an `"app.<name>"` / `"win.<name>"` action.
+#[link_name = "adw_toast_set_action_name"]
+extern fn adw_toast_set_action_name(toast: *u8, action_name: *u8);
+
+struct Toast {
+    opaque _obj: *u8,
+}
+
+impl Toast {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> Toast { return Toast { _obj: obj }; }
+
+    fn new(title: *u8) -> Toast {
+        return Toast { _obj: { adw_toast_new(title) } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_toast_set_title(this._obj, title); };
+    }
+
+    // Seconds before auto-dismiss; 0 means "until dismissed".
+    fn set_timeout(this, timeout: u32) {
+        { adw_toast_set_timeout(this._obj, timeout); };
+    }
+
+    // Show an action button with this label (pair with `set_action_name`).
+    fn set_button_label(this, button_label: *u8) {
+        { adw_toast_set_button_label(this._obj, button_label); };
+    }
+
+    fn set_action_name(this, action_name: *u8) {
+        { adw_toast_set_action_name(this._obj, action_name); };
+    }
+}
+
+// ---- AdwToastOverlay ----
+
+#[link_name = "adw_toast_overlay_new"]
+extern fn adw_toast_overlay_new() -> *u8;
+
+#[link_name = "adw_toast_overlay_set_child"]
+extern fn adw_toast_overlay_set_child(overlay: *u8, child: *u8);
+
+#[link_name = "adw_toast_overlay_add_toast"]
+extern fn adw_toast_overlay_add_toast(overlay: *u8, toast: *u8);
+
+struct ToastOverlay {
+    opaque _obj: *u8,
+}
+
+impl ToastOverlay {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> ToastOverlay { return ToastOverlay { _obj: obj }; }
+
+    fn new() -> ToastOverlay {
+        return ToastOverlay { _obj: { adw_toast_overlay_new() } };
+    }
+
+    // The content the overlay sits in front of (your main view).
+    fn set_child(this, child: *u8) {
+        { adw_toast_overlay_set_child(this._obj, child); };
+    }
+
+    // Show `toast` (pass `Toast::raw()`). The overlay takes ownership of the
+    // toast — do not reuse the wrapper afterwards.
+    fn add_toast(this, toast: *u8) {
+        { adw_toast_overlay_add_toast(this._obj, toast); };
+    }
+}

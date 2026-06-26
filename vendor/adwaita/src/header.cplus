@@ -1,0 +1,127 @@
+// Title bars and the modern content scaffold — AdwHeaderBar (an adaptive header
+// bar that shows the window title and window controls), AdwWindowTitle (a
+// title + subtitle widget for the header's center), and AdwToolbarView (the
+// recommended container that stacks top bars + content + bottom bars and styles
+// them cohesively).
+
+// ---- AdwHeaderBar ----
+
+#[link_name = "adw_header_bar_new"]
+extern fn adw_header_bar_new() -> *u8;
+
+#[link_name = "adw_header_bar_set_title_widget"]
+extern fn adw_header_bar_set_title_widget(bar: *u8, widget: *u8);
+
+#[link_name = "adw_header_bar_pack_start"]
+extern fn adw_header_bar_pack_start(bar: *u8, widget: *u8);
+
+#[link_name = "adw_header_bar_pack_end"]
+extern fn adw_header_bar_pack_end(bar: *u8, widget: *u8);
+
+#[link_name = "adw_header_bar_set_show_end_title_buttons"]
+extern fn adw_header_bar_set_show_end_title_buttons(bar: *u8, setting: i32);
+
+struct HeaderBar {
+    opaque _obj: *u8,
+}
+
+impl HeaderBar {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> HeaderBar { return HeaderBar { _obj: obj }; }
+
+    fn new() -> HeaderBar {
+        return HeaderBar { _obj: { adw_header_bar_new() } };
+    }
+
+    // Center widget (commonly a `WindowTitle`). With none set, the header shows
+    // the window's title automatically.
+    fn set_title_widget(this, widget: *u8) {
+        { adw_header_bar_set_title_widget(this._obj, widget); };
+    }
+
+    fn pack_start(this, widget: *u8) {
+        { adw_header_bar_pack_start(this._obj, widget); };
+    }
+
+    fn pack_end(this, widget: *u8) {
+        { adw_header_bar_pack_end(this._obj, widget); };
+    }
+
+    fn set_show_end_title_buttons(this, setting: i32) {
+        { adw_header_bar_set_show_end_title_buttons(this._obj, setting); };
+    }
+}
+
+// ---- AdwWindowTitle ----
+
+#[link_name = "adw_window_title_new"]
+extern fn adw_window_title_new(title: *u8, subtitle: *u8) -> *u8;
+
+#[link_name = "adw_window_title_set_title"]
+extern fn adw_window_title_set_title(self: *u8, title: *u8);
+
+#[link_name = "adw_window_title_set_subtitle"]
+extern fn adw_window_title_set_subtitle(self: *u8, subtitle: *u8);
+
+struct WindowTitle {
+    opaque _obj: *u8,
+}
+
+impl WindowTitle {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> WindowTitle { return WindowTitle { _obj: obj }; }
+
+    // Pass `0 as *u8` for an empty subtitle.
+    fn new(title: *u8, subtitle: *u8) -> WindowTitle {
+        return WindowTitle { _obj: { adw_window_title_new(title, subtitle) } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_window_title_set_title(this._obj, title); };
+    }
+
+    fn set_subtitle(this, subtitle: *u8) {
+        { adw_window_title_set_subtitle(this._obj, subtitle); };
+    }
+}
+
+// ---- AdwToolbarView ----
+
+#[link_name = "adw_toolbar_view_new"]
+extern fn adw_toolbar_view_new() -> *u8;
+
+#[link_name = "adw_toolbar_view_add_top_bar"]
+extern fn adw_toolbar_view_add_top_bar(view: *u8, widget: *u8);
+
+#[link_name = "adw_toolbar_view_add_bottom_bar"]
+extern fn adw_toolbar_view_add_bottom_bar(view: *u8, widget: *u8);
+
+#[link_name = "adw_toolbar_view_set_content"]
+extern fn adw_toolbar_view_set_content(view: *u8, content: *u8);
+
+struct ToolbarView {
+    opaque _obj: *u8,
+}
+
+impl ToolbarView {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> ToolbarView { return ToolbarView { _obj: obj }; }
+
+    fn new() -> ToolbarView {
+        return ToolbarView { _obj: { adw_toolbar_view_new() } };
+    }
+
+    // Add a top bar (typically a `HeaderBar`). Multiple stack vertically.
+    fn add_top_bar(this, widget: *u8) {
+        { adw_toolbar_view_add_top_bar(this._obj, widget); };
+    }
+
+    fn add_bottom_bar(this, widget: *u8) {
+        { adw_toolbar_view_add_bottom_bar(this._obj, widget); };
+    }
+
+    // The main scrolling/content widget between the bars.
+    fn set_content(this, content: *u8) {
+        { adw_toolbar_view_set_content(this._obj, content); };
+    }
+}

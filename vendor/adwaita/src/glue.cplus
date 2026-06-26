@@ -1,0 +1,111 @@
+// Internal GObject / GtkApplication / GtkWindow glue for the libadwaita
+// bindings.
+//
+// Every Adwaita object is a GObject, and Adwaita's Application/Window subclass
+// GTK's. The committed `vendor/gtk` package is the minimal str<->C-string
+// bridge (`gtk/convert`) only — it no longer ships the `glib`/`application`/
+// `window` modules these bindings used to import. Rather than reach across
+// packages, this module binds the small set of `g_*` / `gtk_*` symbols Adwaita
+// delegates to directly, the same way `vendor/agent_gtk` declares the GTK
+// symbols it calls. The GTK stack arrives transitively through the `gtk`
+// dependency's link line plus libadwaita's own `[link]` entry.
+//
+// This is internal plumbing, not public API: callers use the `Application` /
+// `Window` wrappers in `application`/`window`, never these raw externs.
+
+// ---- GObject reference counting ----
+
+#[link_name = "g_object_unref"]
+extern fn g_object_unref(obj: *u8);
+
+// Release an owned GObject reference.
+fn unref(obj: *u8) {
+    { g_object_unref(obj); };
+}
+
+// ---- signals (g_signal_connect family) ----
+//
+// `g_signal_connect(obj, "name", cb, data)` expands to
+// `g_signal_connect_data(obj, name, cb, data, NULL, 0)`. The dominant handler
+// shape is `void handler(GObject *emitter, gpointer user_data)` — button
+// "clicked", "notify::*", application "activate", and the like.
+
+#[link_name = "g_signal_connect_data"]
+extern fn g_signal_connect_2(
+    instance: *u8,
+    signal: *u8,
+    handler: fn(*u8, *u8),
+    data: *u8,
+    destroy: *u8,
+    flags: u32,
+) -> u64;
+
+// Connect the common `(emitter, user_data)` handler. Returns the handler id.
+fn signal_connect(instance: *u8, signal: *u8, handler: fn(*u8, *u8), data: *u8) -> u64 {
+    return { g_signal_connect_2(instance, signal, handler, data, 0 as *u8, 0 as u32) };
+}
+
+// ---- GApplicationFlags ----
+
+// `G_APPLICATION_DEFAULT_FLAGS` (GLib >= 2.74).
+fn application_default_flags() -> u32 { return 0 as u32; }
+
+// ---- GtkApplication base (Adwaita's Application subclasses it) ----
+
+#[link_name = "g_application_run"]
+extern fn g_application_run(app: *u8, argc: i32, argv: *u8) -> i32;
+
+#[link_name = "g_application_quit"]
+extern fn g_application_quit(app: *u8);
+
+#[link_name = "g_action_map_add_action"]
+extern fn g_action_map_add_action(action_map: *u8, action: *u8);
+
+#[link_name = "gtk_application_set_menubar"]
+extern fn gtk_application_set_menubar(app: *u8, menu_model: *u8);
+
+fn application_run(app: *u8) -> i32 {
+    return { g_application_run(app, 0 as i32, 0 as *u8) };
+}
+
+fn application_quit(app: *u8) {
+    { g_application_quit(app); };
+}
+
+fn application_add_action(app: *u8, action: *u8) {
+    { g_action_map_add_action(app, action); };
+}
+
+fn application_set_menubar(app: *u8, menu_model: *u8) {
+    { gtk_application_set_menubar(app, menu_model); };
+}
+
+// ---- GtkWindow base (Adwaita's windows subclass it) ----
+
+#[link_name = "gtk_window_set_title"]
+extern fn gtk_window_set_title(window: *u8, title: *u8);
+
+#[link_name = "gtk_window_set_default_size"]
+extern fn gtk_window_set_default_size(window: *u8, width: i32, height: i32);
+
+#[link_name = "gtk_window_present"]
+extern fn gtk_window_present(window: *u8);
+
+#[link_name = "gtk_window_close"]
+extern fn gtk_window_close(window: *u8);
+
+fn window_set_title(window: *u8, title: *u8) {
+    { gtk_window_set_title(window, title); };
+}
+
+fn window_set_default_size(window: *u8, width: i32, height: i32) {
+    { gtk_window_set_default_size(window, width, height); };
+}
+
+fn window_present(window: *u8) {
+    { gtk_window_present(window); };
+}
+
+fn window_close(window: *u8) {
+    { gtk_window_close(window); };
+}

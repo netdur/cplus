@@ -1,0 +1,89 @@
+import "./glue" as glue;
+
+// AdwApplicationWindow / AdwWindow — top-level windows that host their own
+// title bar inside the content (so an `AdwHeaderBar` can be flush with the
+// window edge and the window can be free-form / rounded). Unlike a GtkWindow,
+// the single child slot is `set_content`, not `set_child`; you typically set a
+// `view::ToolbarView` (header bars + content) there.
+//
+// Window geometry/lifecycle (`set_default_size`, `present`, `close`, …) lives
+// on the GtkWindow base, reached via the shared raw pointer (use
+// `gtk::Window::from_raw(win.raw())` for the full set).
+
+#[link_name = "adw_application_window_new"]
+extern fn adw_application_window_new(app: *u8) -> *u8;
+
+#[link_name = "adw_application_window_set_content"]
+extern fn adw_application_window_set_content(window: *u8, content: *u8);
+
+#[link_name = "adw_window_new"]
+extern fn adw_window_new() -> *u8;
+
+#[link_name = "adw_window_set_content"]
+extern fn adw_window_set_content(window: *u8, content: *u8);
+
+struct Window {
+    opaque _obj: *u8,
+}
+
+impl Window {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> Window { return Window { _obj: obj }; }
+
+    // An application window bound to `app` (the "activate" pointer). Owned by
+    // the AdwApplication.
+    fn for_application(app: *u8) -> Window {
+        return Window { _obj: { adw_application_window_new(app) } };
+    }
+
+    // A free-standing Adwaita window.
+    fn new() -> Window {
+        return Window { _obj: { adw_window_new() } };
+    }
+
+    // The single content widget (commonly a `view::ToolbarView`).
+    fn set_content(this, content: *u8) {
+        { adw_application_window_set_content(this._obj, content); };
+    }
+
+    // ---- GtkWindow base conveniences (delegated via the raw pointer) ----
+
+    fn set_title(this, title: *u8) {
+        glue::window_set_title(this._obj, title);
+    }
+
+    fn set_default_size(this, width: i32, height: i32) {
+        glue::window_set_default_size(this._obj, width, height);
+    }
+
+    fn present(this) {
+        glue::window_present(this._obj);
+    }
+
+    fn close(this) {
+        glue::window_close(this._obj);
+    }
+}
+
+// A plain (non-application) AdwWindow with `set_content`. Use when you need an
+// auxiliary window not tied to the AdwApplication.
+struct PlainWindow {
+    opaque _obj: *u8,
+}
+
+impl PlainWindow {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> PlainWindow { return PlainWindow { _obj: obj }; }
+
+    fn new() -> PlainWindow {
+        return PlainWindow { _obj: { adw_window_new() } };
+    }
+
+    fn set_content(this, content: *u8) {
+        { adw_window_set_content(this._obj, content); };
+    }
+
+    fn present(this) {
+        glue::window_present(this._obj);
+    }
+}

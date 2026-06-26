@@ -1,0 +1,111 @@
+// Content-shaping widgets — AdwClamp (constrains a child to a comfortable
+// reading width and centers it, the key responsive-content primitive), AdwBin
+// (a single-child container, handy as a styling/host slot), and AdwStatusPage
+// (a full-page empty/placeholder state with icon, title, description, and an
+// optional action child).
+
+// ---- AdwClamp ----
+
+#[link_name = "adw_clamp_new"]
+extern fn adw_clamp_new() -> *u8;
+
+#[link_name = "adw_clamp_set_child"]
+extern fn adw_clamp_set_child(clamp: *u8, child: *u8);
+
+#[link_name = "adw_clamp_set_maximum_size"]
+extern fn adw_clamp_set_maximum_size(clamp: *u8, maximum_size: i32);
+
+struct Clamp {
+    opaque _obj: *u8,
+}
+
+impl Clamp {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> Clamp { return Clamp { _obj: obj }; }
+
+    fn new() -> Clamp {
+        return Clamp { _obj: { adw_clamp_new() } };
+    }
+
+    fn set_child(this, child: *u8) {
+        { adw_clamp_set_child(this._obj, child); };
+    }
+
+    // Maximum child width in px before the clamp stops growing (default 600).
+    fn set_maximum_size(this, maximum_size: i32) {
+        { adw_clamp_set_maximum_size(this._obj, maximum_size); };
+    }
+}
+
+// ---- AdwBin ----
+
+#[link_name = "adw_bin_new"]
+extern fn adw_bin_new() -> *u8;
+
+#[link_name = "adw_bin_set_child"]
+extern fn adw_bin_set_child(bin: *u8, child: *u8);
+
+struct Bin {
+    opaque _obj: *u8,
+}
+
+impl Bin {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> Bin { return Bin { _obj: obj }; }
+
+    fn new() -> Bin {
+        return Bin { _obj: { adw_bin_new() } };
+    }
+
+    fn set_child(this, child: *u8) {
+        { adw_bin_set_child(this._obj, child); };
+    }
+}
+
+// ---- AdwStatusPage ----
+
+#[link_name = "adw_status_page_new"]
+extern fn adw_status_page_new() -> *u8;
+
+#[link_name = "adw_status_page_set_title"]
+extern fn adw_status_page_set_title(page: *u8, title: *u8);
+
+#[link_name = "adw_status_page_set_description"]
+extern fn adw_status_page_set_description(page: *u8, description: *u8);
+
+#[link_name = "adw_status_page_set_icon_name"]
+extern fn adw_status_page_set_icon_name(page: *u8, icon_name: *u8);
+
+#[link_name = "adw_status_page_set_child"]
+extern fn adw_status_page_set_child(page: *u8, child: *u8);
+
+struct StatusPage {
+    opaque _obj: *u8,
+}
+
+impl StatusPage {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(obj: *u8) -> StatusPage { return StatusPage { _obj: obj }; }
+
+    fn new() -> StatusPage {
+        return StatusPage { _obj: { adw_status_page_new() } };
+    }
+
+    fn set_title(this, title: *u8) {
+        { adw_status_page_set_title(this._obj, title); };
+    }
+
+    fn set_description(this, description: *u8) {
+        { adw_status_page_set_description(this._obj, description); };
+    }
+
+    // A themed icon name (e.g. "folder-symbolic").
+    fn set_icon_name(this, icon_name: *u8) {
+        { adw_status_page_set_icon_name(this._obj, icon_name); };
+    }
+
+    // An optional action widget below the description (e.g. a `gtk::Button`).
+    fn set_child(this, child: *u8) {
+        { adw_status_page_set_child(this._obj, child); };
+    }
+}
