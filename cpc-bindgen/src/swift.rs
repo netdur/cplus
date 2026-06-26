@@ -1020,6 +1020,36 @@ fn emit_member(
                     wrapper.push_str(&format!("    fn set_{g}(this, value: i64) {{\n        {{ {cset}(this._raw, value); }}\n        return;\n    }}\n"));
                 }
             }
+            // `[scalar]` property → `Vec[scalar]` via a count + per-index thunk.
+            Some(Marshal::Slice { cplus, swift }) => {
+                let dflt = scalar_default(&swift);
+                let count = format!("{prefix}_{owner}_{g}_count");
+                let at = format!("{prefix}_{owner}_{g}_at");
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{count}\")\npublic func {count}(_ self_: UnsafeMutableRawPointer?) -> Int {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return 0 }}\n    return _self.value.{base}.count\n}}\n@_cdecl(\"{at}\")\npublic func {at}(_ self_: UnsafeMutableRawPointer?, _ i: Int) -> {swift} {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return {dflt} }}\n    return _self.value.{base}[Int(i)]\n}}\n\n"
+                ));
+                extern_line.push_str(&format!(
+                    "#[link_name = \"{count}\"]\nextern fn {count}(receiver: *u8) -> i64;\n#[link_name = \"{at}\"]\nextern fn {at}(receiver: *u8, i: i64) -> {cplus};\n"
+                ));
+                wrapper.push_str(&format!(
+                    "    fn {g}(this) -> vec::Vec[{cplus}] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[{cplus}] = vec::new::[{cplus}]();\n        var i: usize = 0 as usize;\n        while i < n {{ v.append({{ {at}(this._raw, i as i64) }}); i = i +% (1 as usize); }}\n        return v;\n    }}\n"
+                ));
+            }
+            _ if pty == "[String]" => {
+                // `[String]` property → `Vec[Text]` via count + per-index copy-out.
+                uses_text = true;
+                let count = format!("{prefix}_{owner}_{g}_count");
+                let at = format!("{prefix}_{owner}_{g}_at");
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{count}\")\npublic func {count}(_ self_: UnsafeMutableRawPointer?) -> Int {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return 0 }}\n    return _self.value.{base}.count\n}}\n@_cdecl(\"{at}\")\npublic func {at}(_ self_: UnsafeMutableRawPointer?, _ i: Int) -> UnsafeMutablePointer<CChar>? {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return nil }}\n    return strdup(_self.value.{base}[Int(i)])\n}}\n\n"
+                ));
+                extern_line.push_str(&format!(
+                    "#[link_name = \"{count}\"]\nextern fn {count}(receiver: *u8) -> i64;\n#[link_name = \"{at}\"]\nextern fn {at}(receiver: *u8, i: i64) -> *u8;\n"
+                ));
+                wrapper.push_str(&format!(
+                    "    fn {g}(this) -> vec::Vec[text::Text] {{\n        let n: usize = {{ {count}(this._raw) }} as usize;\n        var v: vec::Vec[text::Text] = vec::new::[text::Text]();\n        var i: usize = 0 as usize;\n        while i < n {{\n            let p: *u8 = {{ {at}(this._raw, i as i64) }};\n            if !is_null(p) {{\n                let ln: usize = {{ strlen(p) }};\n                let view: str = {{ #str_from_raw_parts(p, ln) }};\n                v.append(view.to_text());\n                {{ free(p); }}\n            }}\n            i = i +% (1 as usize);\n        }}\n        return v;\n    }}\n"
+                ));
+            }
             _ => return Err("property type not bridgeable".into()),
         }
         return Ok(MemberEmit { thunk, extern_line, wrapper, uses_text });
@@ -1935,11 +1965,17 @@ pub fn generate_bridge(
          // C+ facade over the {module} Swift bridge: opaque handles + ergonomic wrappers.\n\n\
          import \"stdlib/option\" as option;\n"
     ));
+    // All imports must precede any item — group them before the externs below.
+    if uses_text {
+        cplus.push_str("import \"stdlib/text\" as text;\n");
+    }
+    if impls.contains("vec::new::") {
+        cplus.push_str("import \"stdlib/vec\" as vec;\n");
+    }
     // String returns copy out of a malloc'd C string into an owned `Text`.
     if uses_text {
         cplus.push_str(
-            "import \"stdlib/text\" as text;\n\
-             extern fn strlen(s: *u8) -> usize;\n\
+            "extern fn strlen(s: *u8) -> usize;\n\
              extern fn free(p: *u8);\n",
         );
     }
@@ -2797,5 +2833,44 @@ mod tests {
         // view self-gates: its return is still a non-handle `View<Float>`.
         assert!(!b.cplus.contains("fn view_Float"), "{}", b.cplus);
         assert!(b.cplus.contains("SKIPPED NDArray.view(as:) [Float]"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_array_property_getters() {
+        // `[scalar]` and `[String]` properties → owned `Vec` via count + at.
+        let grid = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "G"},
+            "pathComponents": ["Grid"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct Grid", "text")],
+        });
+        let shape = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "sh"},
+            "pathComponents": ["Grid", "shape"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" shape", "text"), frag(": ", "text"), frag("[", "text"), frag("Int", "typeIdentifier"), frag("]", "text"), frag(" { get }", "text")],
+        });
+        let names = json!({
+            "kind": {"identifier": "swift.property"},
+            "identifier": {"precise": "nm"},
+            "pathComponents": ["Grid", "names"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("var", "keyword"), frag(" names", "text"), frag(": ", "text"), frag("[", "text"), frag("String", "typeIdentifier"), frag("]", "text"), frag(" { get }", "text")],
+        });
+        let g = graph(
+            vec![grid, shape, names],
+            vec![
+                json!({"kind":"memberOf","source":"sh","target":"G"}),
+                json!({"kind":"memberOf","source":"nm","target":"G"}),
+            ],
+        );
+        let b = generate_bridge(&g, "Demo", None, &BridgeSpec::default());
+        assert!(b.cplus.contains("fn shape(this) -> vec::Vec[i64]"), "{}", b.cplus);
+        assert!(b.swift.contains("return _self.value.shape.count"), "{}", b.swift);
+        assert!(b.cplus.contains("fn names(this) -> vec::Vec[text::Text]"), "{}", b.cplus);
+        assert!(b.swift.contains("strdup(_self.value.names[Int(i)])"), "{}", b.swift);
+        assert!(b.cplus.contains("import \"stdlib/vec\" as vec;"), "{}", b.cplus);
     }
 }
