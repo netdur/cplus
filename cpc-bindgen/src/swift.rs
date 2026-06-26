@@ -581,29 +581,46 @@ pub struct BridgeFiles {
 }
 
 /// Human-supplied facts the symbol graph cannot provide. Loaded from
-/// `--bridge-spec FILE` (a JSON object). Today it carries `copyable`: the value
-/// types the author vouches are `Copyable`, so a handle *property* getter can
-/// safely copy the value out of `self` (noncopyability is not graph-detectable,
-/// and a wrong guess would fail to compile — classes are always safe and need no
-/// entry).
+/// `--bridge-spec FILE` (a JSON object).
+///
+/// - `copyable`: value types the author vouches are `Copyable`, so a handle
+///   *property* getter can safely copy the value out of `self`. Noncopyability
+///   is not graph-detectable; a wrong guess fails to compile. Classes are always
+///   safe and need no entry.
+/// - `raw_enums`: enums with an integer `RawValue`. They bind as usable `i64`
+///   scalars (with per-case accessor constants) instead of opaque handles, so a
+///   method taking such an enum becomes callable. The integer width is irrelevant
+///   to the spec — the bridge funnels every raw value through `Int64`.
+/// - `enum_cases`: enums *without* a raw value (a plain `case a, b, c`). They
+///   stay opaque handles, but each case gets a constructor `Enum_case() ->
+///   Option[Enum]` so C+ can build a value to pass on. Use this for an enum a
+///   method consumes when the enum has no `RawValue`.
 #[derive(Default)]
 pub struct BridgeSpec {
     pub copyable: std::collections::BTreeSet<String>,
+    pub raw_enums: std::collections::BTreeSet<String>,
+    pub enum_cases: std::collections::BTreeSet<String>,
 }
 
 impl BridgeSpec {
-    /// Parse a `--bridge-spec` JSON object: `{ "copyable": ["NDArray", ...] }`.
+    /// Parse a `--bridge-spec` JSON object: `{ "copyable": [...],
+    /// "raw_enums": [...], "enum_cases": [...] }`.
     pub fn from_json(v: &Value) -> Self {
-        let copyable = v
-            .get("copyable")
-            .and_then(|c| c.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        BridgeSpec { copyable }
+        let str_set = |key: &str| {
+            v.get(key)
+                .and_then(|c| c.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        BridgeSpec {
+            copyable: str_set("copyable"),
+            raw_enums: str_set("raw_enums"),
+            enum_cases: str_set("enum_cases"),
+        }
     }
 }
 
@@ -617,15 +634,26 @@ enum Marshal {
     OptHandle(String),
     /// `[Elem]` of a scalar element — crosses as `(ptr, count)` (param only).
     Slice { cplus: String, swift: String },
+    /// A spec-declared integer raw-value enum — crosses as `i64` (the case's
+    /// `.rawValue`), with the Swift type name kept to build/read it.
+    EnumScalar(String),
 }
 
 /// Map a single Swift type spelling to its marshaling, or `None` when it has no
 /// bridge (dictionaries, optionals of non-handles, nested/generic types, raw
 /// pointers). `?`-optionals of a known handle and `[scalar]` arrays are handled.
-fn marshal_of(swift_ty: &str, types: &std::collections::BTreeSet<String>) -> Option<Marshal> {
+fn marshal_of(
+    swift_ty: &str,
+    types: &std::collections::BTreeSet<String>,
+    raw_enums: &std::collections::BTreeSet<String>,
+) -> Option<Marshal> {
     let t = swift_ty.trim();
     if t.is_empty() || t == "Void" || t == "()" {
         return Some(Marshal::Void);
+    }
+    // A spec-declared raw-value enum binds as an `i64` scalar, not a handle.
+    if raw_enums.contains(t) {
+        return Some(Marshal::EnumScalar(t.to_string()));
     }
     // `T?` — only known-handle optionals are modelled (null = nil).
     if let Some(inner) = t.strip_suffix('?') {
@@ -785,6 +813,7 @@ fn emit_member(
     prefix: &str,
     types: &std::collections::BTreeSet<String>,
     copy_safe: &std::collections::BTreeSet<String>,
+    raw_enums: &std::collections::BTreeSet<String>,
 ) -> Result<MemberEmit, String> {
     let kind = kind_of(sym);
     let decl = frags(sym);
@@ -832,7 +861,7 @@ fn emit_member(
         let mut extern_line = String::new();
         let mut wrapper = String::new();
         let mut uses_text = false;
-        match marshal_of(&pty, types) {
+        match marshal_of(&pty, types, raw_enums) {
             Some(Marshal::Scalar { cplus, swift }) => {
                 let dflt = scalar_default(&swift);
                 thunk.push_str(&format!(
@@ -870,7 +899,7 @@ fn emit_member(
             // `self`, which is only safe when the value type is Copyable. Classes
             // are always safe; other types must be vouched for in `--bridge-spec`.
             Some(Marshal::Handle(t)) | Some(Marshal::OptHandle(t)) => {
-                let optional = matches!(marshal_of(&pty, types), Some(Marshal::OptHandle(_)));
+                let optional = matches!(marshal_of(&pty, types, raw_enums), Some(Marshal::OptHandle(_)));
                 // Both the owner (whose member is read through the box — which
                 // consumes a `~Copyable` value) and the value type (copied into a
                 // new box) must be Copyable.
@@ -901,6 +930,26 @@ fn emit_member(
                     ));
                     extern_line.push_str(&format!("#[link_name = \"{cset}\"]\nextern fn {cset}(receiver: *u8, value: *u8);\n"));
                     wrapper.push_str(&format!("    fn set_{g}(this, value: {ct}) {{\n        {{ {cset}(this._raw, value._raw); }}\n        return;\n    }}\n"));
+                }
+            }
+            // A raw-enum property reads as `i64` (the case's `.rawValue`). Like a
+            // handle property it reads through the box, so the owner must be
+            // Copyable; the enum value itself is a plain integer.
+            Some(Marshal::EnumScalar(name)) => {
+                if !copy_safe.contains(owner_swift) {
+                    return Err("raw-enum property needs the owner in `copyable` (--bridge-spec)".into());
+                }
+                thunk.push_str(&format!(
+                    "@_cdecl(\"{cget}\")\npublic func {cget}(_ self_: UnsafeMutableRawPointer?) -> Int64 {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return 0 }}\n    return Int64(_self.value.{base}.rawValue)\n}}\n\n"
+                ));
+                extern_line.push_str(&format!("#[link_name = \"{cget}\"]\nextern fn {cget}(receiver: *u8) -> i64;\n"));
+                wrapper.push_str(&format!("    fn {g}(this) -> i64 {{\n        return {{ {cget}(this._raw) }};\n    }}\n"));
+                if settable {
+                    thunk.push_str(&format!(
+                        "@_cdecl(\"{cset}\")\npublic func {cset}(_ self_: UnsafeMutableRawPointer?, _ value: Int64) {{\n    guard let _self = cpObject(self_, as: {owner_box}.self) else {{ return }}\n    guard let _e = {name}(rawValue: numericCast(value)) else {{ return }}\n    _self.value.{base} = _e\n}}\n\n"
+                    ));
+                    extern_line.push_str(&format!("#[link_name = \"{cset}\"]\nextern fn {cset}(receiver: *u8, value: i64);\n"));
+                    wrapper.push_str(&format!("    fn set_{g}(this, value: i64) {{\n        {{ {cset}(this._raw, value); }}\n        return;\n    }}\n"));
                 }
             }
             _ => return Err("property type not bridgeable".into()),
@@ -944,7 +993,7 @@ fn emit_member(
                 .map(|a| a.as_slice())
                 .unwrap_or(&[]),
         );
-        let m = marshal_of(&pty, types)
+        let m = marshal_of(&pty, types, raw_enums)
             .ok_or_else(|| format!("param `{pty}` has no C ABI"))?;
         match m {
             Marshal::Void => return Err("void parameter".into()),
@@ -988,7 +1037,7 @@ fn emit_member(
             .and_then(|v| v.as_array())
             .map(|frs| frag_spellings(frs).trim().to_string())
             .unwrap_or_default();
-        marshal_of(&r, types).ok_or_else(|| format!("return `{r}` has no C ABI"))?
+        marshal_of(&r, types, raw_enums).ok_or_else(|| format!("return `{r}` has no C ABI"))?
     };
     if matches!(ret, Marshal::Slice { .. }) {
         return Err("array return not modelled".into());
@@ -1022,6 +1071,7 @@ fn emit_member(
                 swift_params.push(format!("_ {}: UnsafePointer<{swift}>?", p.cname));
                 swift_params.push(format!("_ {}_count: Int", p.cname));
             }
+            Marshal::EnumScalar(_) => swift_params.push(format!("_ {}: Int64", p.cname)),
             Marshal::OptHandle(_) | Marshal::Void => {}
         }
     }
@@ -1033,6 +1083,7 @@ fn emit_member(
         Marshal::Scalar { swift, .. } => {
             (swift.clone(), format!("return {}", scalar_default(swift)))
         }
+        Marshal::EnumScalar(_) => ("Int64".into(), "return 0".into()),
         Marshal::Str => ("UnsafeMutablePointer<CChar>?".into(), "return nil".into()),
         Marshal::Void => ("".into(), "return".into()),
         Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
@@ -1061,6 +1112,10 @@ fn emit_member(
                 "    let _{n} = {n} != nil ? Array(UnsafeBufferPointer(start: {n}, count: {n}_count)) : [{swift}]()\n",
                 n = p.cname
             )),
+            Marshal::EnumScalar(name) => body.push_str(&format!(
+                "    guard let _{n} = {name}(rawValue: numericCast({n})) else {{ cpSetError(\"invalid {name} raw value\"); {fail_ret} }}\n",
+                n = p.cname
+            )),
             _ => {}
         }
     }
@@ -1073,6 +1128,7 @@ fn emit_member(
             Marshal::Str => format!("_{}", p.cname),
             Marshal::Handle(_) => format!("_{}.value", p.cname),
             Marshal::Slice { .. } => format!("_{}", p.cname),
+            Marshal::EnumScalar(_) => format!("_{}", p.cname),
             Marshal::OptHandle(_) | Marshal::Void => continue,
         };
         if p.label == "_" {
@@ -1105,6 +1161,7 @@ fn emit_member(
             box_name(t)
         ),
         Marshal::Scalar { .. } => "return _result".to_string(),
+        Marshal::EnumScalar(_) => "return Int64(_result.rawValue)".to_string(),
         Marshal::Str => "return strdup(_result)".to_string(),
         Marshal::Void => "return".to_string(),
         Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
@@ -1151,12 +1208,14 @@ fn emit_member(
                 extern_params.push(format!("{}: *{cplus}", p.cname));
                 extern_params.push(format!("{}_count: usize", p.cname));
             }
+            Marshal::EnumScalar(_) => extern_params.push(format!("{}: i64", p.cname)),
             Marshal::OptHandle(_) | Marshal::Void => {}
         }
     }
     let extern_ret = match &ret {
         Marshal::Handle(_) | Marshal::OptHandle(_) | Marshal::Str => " -> *u8".to_string(),
         Marshal::Scalar { cplus, .. } => format!(" -> {cplus}"),
+        Marshal::EnumScalar(_) => " -> i64".to_string(),
         Marshal::Void => "".to_string(),
         Marshal::Slice { .. } => unreachable!("slice return rejected earlier"),
     };
@@ -1176,6 +1235,7 @@ fn emit_member(
             Marshal::Str => "str".to_string(),
             Marshal::Handle(t) => cident(t),
             Marshal::Slice { cplus, .. } => format!("{cplus}[]"),
+            Marshal::EnumScalar(_) => "i64".to_string(),
             Marshal::OptHandle(_) | Marshal::Void => continue,
         };
         if p.label == "_" {
@@ -1207,6 +1267,7 @@ fn emit_member(
                 ecall.push(format!("#slice_ptr({})", p.cname));
                 ecall.push(format!("#slice_len({})", p.cname));
             }
+            Marshal::EnumScalar(_) => ecall.push(p.cname.clone()),
             Marshal::OptHandle(_) | Marshal::Void => {}
         }
     }
@@ -1224,6 +1285,10 @@ fn emit_member(
         }
         Marshal::Scalar { cplus, .. } => format!(
             "    fn {wrap_name}({}) -> {cplus} {{\n        return {{ {cname}({ecall}) }};\n    }}\n",
+            wrap_params.join(", ")
+        ),
+        Marshal::EnumScalar(_) => format!(
+            "    fn {wrap_name}({}) -> i64 {{\n        return {{ {cname}({ecall}) }};\n    }}\n",
             wrap_params.join(", ")
         ),
         Marshal::Str => format!(
@@ -1354,6 +1419,11 @@ pub fn generate_bridge(
             continue;
         }
         let name = path_of(s);
+        // A spec-declared raw-value enum binds as an i64 scalar, not a handle —
+        // keep it out of the boxed-handle set.
+        if spec.raw_enums.contains(&name) {
+            continue;
+        }
         if k == "swift.class" {
             copy_safe.insert(name.clone());
         }
@@ -1435,7 +1505,7 @@ pub fn generate_bridge(
                     skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
                     continue;
                 }
-                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe) {
+                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums) {
                     Ok(e) => {
                         thunks.push_str(&e.thunk);
                         externs.push_str(&e.extern_line);
@@ -1487,6 +1557,87 @@ pub fn generate_bridge(
                 cident(&path),
                 sanitize_ident(&cn),
                 v
+            ));
+            emitted += 1;
+        }
+    }
+
+    // Per-case accessors for spec-declared raw-value enums: `<Enum>_<case>()`
+    // returns the case's `.rawValue`, read at runtime — so the spec lists only
+    // the enum, never the values (whatever their integer width).
+    for s in &symbols {
+        if kind_of(s) != "swift.enum" || !is_pub(s) {
+            continue;
+        }
+        let name = path_of(s);
+        if !spec.raw_enums.contains(&name) {
+            continue;
+        }
+        let ident = cident(&name);
+        let cases = cases_by_enum.get(precise(s)).cloned().unwrap_or_default();
+        free.push_str(&format!("// Swift raw-value enum `{name}` — cases as i64.\n"));
+        for c in cases {
+            if case_has_payload(c) {
+                continue;
+            }
+            let case = match c
+                .get("pathComponents")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.last())
+                .and_then(|x| x.as_str())
+            {
+                Some(c) => c,
+                None => continue,
+            };
+            let cn = format!("{prefix}_{ident}_{}", sanitize_ident(case));
+            thunks.push_str(&format!(
+                "@_cdecl(\"{cn}\")\npublic func {cn}() -> Int64 {{ return Int64({name}.{case}.rawValue) }}\n\n"
+            ));
+            externs.push_str(&format!("#[link_name = \"{cn}\"]\nextern fn {cn}() -> i64;\n"));
+            free.push_str(&format!(
+                "fn {ident}_{c}() -> i64 {{ return {{ {cn}() }}; }}\n",
+                c = sanitize_ident(case)
+            ));
+            emitted += 1;
+        }
+    }
+
+    // Per-case constructors for spec-declared raw-value-less enums (kept as
+    // handles): `<Enum>_<case>() -> Option[<Enum>]` boxes `EnumType.case`, so C+
+    // can build a value to pass to a method that consumes the enum.
+    for s in &symbols {
+        if kind_of(s) != "swift.enum" || !is_pub(s) {
+            continue;
+        }
+        let name = path_of(s);
+        if !spec.enum_cases.contains(&name) || !type_names.contains(&name) {
+            continue;
+        }
+        let ident = cident(&name);
+        let cases = cases_by_enum.get(precise(s)).cloned().unwrap_or_default();
+        free.push_str(&format!("// Swift enum `{name}` — case constructors.\n"));
+        for c in cases {
+            if case_has_payload(c) {
+                continue;
+            }
+            let case = match c
+                .get("pathComponents")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.last())
+                .and_then(|x| x.as_str())
+            {
+                Some(c) => c,
+                None => continue,
+            };
+            let cn = format!("{prefix}_{ident}_{}", sanitize_ident(case));
+            thunks.push_str(&format!(
+                "@_cdecl(\"{cn}\")\npublic func {cn}() -> UnsafeMutableRawPointer? {{ return cpRetained({b}({name}.{case})) }}\n\n",
+                b = box_name(&name)
+            ));
+            externs.push_str(&format!("#[link_name = \"{cn}\"]\nextern fn {cn}() -> *u8;\n"));
+            free.push_str(&format!(
+                "fn {ident}_{c}() -> option::Option[{ident}] {{\n    let raw: *u8 = {{ {cn}() }};\n    if is_null(raw) {{ return option::Option[{ident}]::None; }}\n    return option::some({ident} {{ _raw: raw }});\n}}\n",
+                c = sanitize_ident(case)
             ));
             emitted += 1;
         }
@@ -2179,9 +2330,92 @@ mod tests {
         // Spec vouches for both → handle getter emitted.
         let spec = BridgeSpec {
             copyable: ["Owner".to_string(), "Part".to_string()].into_iter().collect(),
+            ..Default::default()
         };
         let b1 = generate_bridge(&g, "Demo", None, &spec);
         assert!(b1.cplus.contains("fn part(this) -> option::Option[Part]"), "{}", b1.cplus);
         assert!(b1.swift.contains("cpRetained(PartBox(_v))"), "{}", b1.swift);
+    }
+
+    fn enum_with_case(enum_name: &str, eprecise: &str, case: &str, cprecise: &str) -> Vec<Value> {
+        vec![
+            json!({
+                "kind": {"identifier": "swift.enum"},
+                "identifier": {"precise": eprecise},
+                "pathComponents": [enum_name],
+                "accessLevel": "public",
+                "declarationFragments": [frag(&format!("enum {enum_name}"), "text")],
+            }),
+            json!({
+                "kind": {"identifier": "swift.enum.case"},
+                "identifier": {"precise": cprecise},
+                "pathComponents": [enum_name, case],
+                "accessLevel": "public",
+                "names": {"title": format!("{enum_name}.{case}")},
+                "declarationFragments": [frag(&format!("case {case}"), "text")],
+            }),
+        ]
+    }
+
+    #[test]
+    fn bridge_raw_enum_binds_as_i64_with_case_accessors() {
+        // A spec-declared raw-value enum crosses as i64: the param init goes
+        // through `rawValue`, and each case gets an `Enum_case() -> i64`.
+        let engine = json!({
+            "kind": {"identifier": "swift.class"},
+            "identifier": {"precise": "E"},
+            "pathComponents": ["Engine"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("final class Engine", "text")],
+        });
+        let set_mode = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "sm"},
+            "pathComponents": ["Engine", "setMode(m:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func setMode(m: Mode)", "text")],
+            "functionSignature": {"parameters": [typed_param("m", "Mode")], "returns": []},
+        });
+        let mut syms = enum_with_case("Mode", "M", "a", "ca");
+        syms.push(engine);
+        syms.push(set_mode);
+        let g = graph(
+            syms,
+            vec![
+                json!({"kind":"memberOf","source":"sm","target":"E"}),
+                json!({"kind":"memberOf","source":"ca","target":"M"}),
+            ],
+        );
+        let spec = BridgeSpec {
+            raw_enums: ["Mode".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let b = generate_bridge(&g, "Demo", None, &spec);
+        assert!(b.cplus.contains("extern fn cplus_demo_Engine_setMode(receiver: *u8, m: i64)"), "{}", b.cplus);
+        assert!(b.swift.contains("Mode(rawValue: numericCast(m))"), "{}", b.swift);
+        assert!(b.cplus.contains("fn setMode(this, m: i64)"), "{}", b.cplus);
+        // Case accessor reads the rawValue at runtime.
+        assert!(b.swift.contains("Int64(Mode.a.rawValue)"), "{}", b.swift);
+        assert!(b.cplus.contains("fn Mode_a() -> i64"), "{}", b.cplus);
+        // Not also boxed as a handle.
+        assert!(!b.cplus.contains("struct Mode {"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_enum_cases_emit_handle_constructors() {
+        // A raw-value-less enum stays a handle; `enum_cases` adds a constructor
+        // per case so C+ can build a value.
+        let g = graph(
+            enum_with_case("Kind", "K", "x", "cx"),
+            vec![json!({"kind":"memberOf","source":"cx","target":"K"})],
+        );
+        let spec = BridgeSpec {
+            enum_cases: ["Kind".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let b = generate_bridge(&g, "Demo", None, &spec);
+        assert!(b.swift.contains("cpRetained(KindBox(Kind.x))"), "{}", b.swift);
+        assert!(b.cplus.contains("fn Kind_x() -> option::Option[Kind]"), "{}", b.cplus);
+        assert!(b.cplus.contains("struct Kind {"), "{}", b.cplus);
     }
 }
