@@ -599,10 +599,15 @@ pub struct BridgeFiles {
 ///   Their box uses optional storage, and a member read becomes a consuming
 ///   `take_<member>` (single-use; the C+ handle is invalidated after) — because
 ///   reading any member through the box otherwise consumes a borrowed value.
-/// - `view_copy`: for a handle type with a `view(as:)`/`mutableView(as:)` over a
-///   `~Escapable` element view, emit bulk-copy accessors (`<Type>_copy_<elem>` /
-///   `_fill_<elem>`) that take the view *inside* the thunk and memcpy to/from a
-///   caller buffer — the view never escapes, so it never needs to be boxed.
+/// - `view_copy`: for a handle type with a `view(as:)` over a `~Escapable`
+///   element view, emit a bulk-copy accessor (`<Type>_copy_<elem>`) that takes
+///   the view *inside* the thunk and memcpy's a contiguous run into a caller
+///   buffer — the view never escapes, so it never needs to be boxed.
+/// - `instantiate`: concrete element types for a generic method whose generic
+///   parameter is carried by a `some Sequence`/`[T]` element. One binding is
+///   emitted per type (`<base>_<Type>`); the `some Sequence` param becomes a
+///   `[Type]` slice. A generic that still returns a `~Escapable` view after
+///   substitution self-gates (its `<…>` return keeps it skipped).
 #[derive(Default)]
 pub struct BridgeSpec {
     pub copyable: std::collections::BTreeSet<String>,
@@ -610,6 +615,7 @@ pub struct BridgeSpec {
     pub enum_cases: std::collections::BTreeSet<String>,
     pub noncopyable_owners: std::collections::BTreeSet<String>,
     pub view_copy: std::collections::BTreeMap<String, Vec<String>>,
+    pub instantiate: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl BridgeSpec {
@@ -627,30 +633,32 @@ impl BridgeSpec {
                 })
                 .unwrap_or_default()
         };
-        let view_copy = v
-            .get("view_copy")
-            .and_then(|o| o.as_object())
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, val)| {
-                        val.as_array().map(|a| {
-                            (
-                                k.clone(),
-                                a.iter()
-                                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                                    .collect::<Vec<_>>(),
-                            )
+        let map_of_lists = |key: &str| {
+            v.get(key)
+                .and_then(|o| o.as_object())
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, val)| {
+                            val.as_array().map(|a| {
+                                (
+                                    k.clone(),
+                                    a.iter()
+                                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                        .collect::<Vec<_>>(),
+                                )
+                            })
                         })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         BridgeSpec {
             copyable: str_set("copyable"),
             raw_enums: str_set("raw_enums"),
             enum_cases: str_set("enum_cases"),
             noncopyable_owners: str_set("noncopyable_owners"),
-            view_copy,
+            view_copy: map_of_lists("view_copy"),
+            instantiate: map_of_lists("instantiate"),
         }
     }
 }
@@ -846,6 +854,7 @@ fn emit_member(
     copy_safe: &std::collections::BTreeSet<String>,
     raw_enums: &std::collections::BTreeSet<String>,
     noncopyable_owner: bool,
+    suffix: &str, // appended to the C symbol + wrapper name (generic instantiation)
 ) -> Result<MemberEmit, String> {
     let kind = kind_of(sym);
     let decl = frags(sym);
@@ -1104,9 +1113,9 @@ fn emit_member(
 
     let cname = if is_init {
         // One `new` per type in M1; extra inits are skipped to avoid collisions.
-        format!("{prefix}_{owner}_new")
+        format!("{prefix}_{owner}_new{suffix}")
     } else {
-        format!("{prefix}_{owner}_{}", sanitize_ident(&base))
+        format!("{prefix}_{owner}_{}{suffix}", sanitize_ident(&base))
     };
 
     // --- Build the Swift thunk ---------------------------------------------
@@ -1304,9 +1313,9 @@ fn emit_member(
         }
     }
     let wrap_name = if is_init {
-        "new".to_string()
+        format!("new{suffix}")
     } else {
-        sanitize_ident(&base)
+        format!("{}{suffix}", sanitize_ident(&base))
     };
 
     // Call arguments to the extern.
@@ -1411,6 +1420,93 @@ fn swift_plumbing(prefix: &str) -> String {
          \x20   Unmanaged<AnyObject>.fromOpaque(h).release()\n\
          }}\n\n"
     )
+}
+
+/// Build a non-generic view of a generic member for one concrete element type:
+/// drop `swiftGenerics`, rewrite a `some Sequence` parameter to a `[<elem>]`
+/// slice, and substitute the generic parameter name(s) with `<elem>` in the decl
+/// / params / return. A still-generic return (`View<elem>`) is left intact so
+/// `emit_member` self-gates (it isn't a bound handle type).
+fn instantiate_symbol(sym: &Value, gnames: &[String], elem: &str) -> Value {
+    let subst = |sp: &str| -> String {
+        let mut s = sp.to_string();
+        for g in gnames {
+            s = s.replace(g.as_str(), elem);
+        }
+        s
+    };
+    let mut s = sym.clone();
+    if let Some(obj) = s.as_object_mut() {
+        obj.remove("swiftGenerics");
+        // Clean symbol-level decl so the blanket generic/`some` skips don't fire.
+        let mut decl = frags(sym);
+        if let Some(i) = decl.find(" where ") {
+            decl.truncate(i);
+        }
+        for g in gnames {
+            decl = decl.replace(&format!("<{g}>"), "");
+        }
+        decl = subst(&decl)
+            .replace("some Sequence", &format!("[{elem}]"))
+            .replace("some Collection", &format!("[{elem}]"));
+        obj.insert(
+            "declarationFragments".into(),
+            serde_json::json!([{ "spelling": decl, "kind": "text" }]),
+        );
+        if let Some(fs) = obj.get_mut("functionSignature").and_then(|f| f.as_object_mut()) {
+            if let Some(params) = fs.get_mut("parameters").and_then(|p| p.as_array_mut()) {
+                for p in params.iter_mut() {
+                    let pty = type_after_colon(
+                        p.get("declarationFragments")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.as_slice())
+                            .unwrap_or(&[]),
+                    );
+                    let name = p
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("arg")
+                        .to_string();
+                    if pty.starts_with("some ") {
+                        if let Some(po) = p.as_object_mut() {
+                            po.insert(
+                                "declarationFragments".into(),
+                                serde_json::json!([
+                                    {"spelling": name, "kind": "identifier"},
+                                    {"spelling": ": ", "kind": "text"},
+                                    {"spelling": "[", "kind": "text"},
+                                    {"spelling": elem, "kind": "typeIdentifier"},
+                                    {"spelling": "]", "kind": "text"},
+                                ]),
+                            );
+                        }
+                    } else if let Some(frs) =
+                        p.get_mut("declarationFragments").and_then(|v| v.as_array_mut())
+                    {
+                        for f in frs.iter_mut() {
+                            if let Some(sp) = f.get("spelling").and_then(|x| x.as_str()) {
+                                let ns = subst(sp);
+                                if let Some(fo) = f.as_object_mut() {
+                                    fo.insert("spelling".into(), Value::String(ns));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(rets) = fs.get_mut("returns").and_then(|r| r.as_array_mut()) {
+                for f in rets.iter_mut() {
+                    if let Some(sp) = f.get("spelling").and_then(|x| x.as_str()) {
+                        let ns = subst(sp);
+                        if let Some(fo) = f.as_object_mut() {
+                            fo.insert("spelling".into(), Value::String(ns));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    s
 }
 
 /// Generate a full Swift-bridge package from a parsed symbol graph. `module` is
@@ -1568,12 +1664,43 @@ pub fn generate_bridge(
         if let Some(members) = members_by_type.get(name) {
             for m in members {
                 let mpath = path_of(m);
+                // Generic instantiation: emit one binding per spec element type
+                // (`<base>_<Type>`); the generic is otherwise skipped.
+                if let Some(elems) = spec.instantiate.get(&mpath) {
+                    let gnames: Vec<String> = m
+                        .get("swiftGenerics")
+                        .and_then(|g| g.get("parameters"))
+                        .and_then(|p| p.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| {
+                                    x.get("name").and_then(|n| n.as_str()).map(String::from)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for elem in elems {
+                        let syn = instantiate_symbol(m, &gnames, elem);
+                        let suffix = format!("_{}", cident(elem));
+                        match emit_member(&syn, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums, spec.noncopyable_owners.contains(name), &suffix) {
+                            Ok(e) => {
+                                thunks.push_str(&e.thunk);
+                                externs.push_str(&e.extern_line);
+                                impl_body.push_str(&e.wrapper);
+                                uses_text = uses_text || e.uses_text;
+                                emitted += 1;
+                            }
+                            Err(reason) => skip(&mut skip_reasons, &mut skipped, &mut impl_body, &format!("{mpath} [{elem}]"), reason),
+                        }
+                    }
+                    continue;
+                }
                 // One `new` per type in M1.
                 if kind_of(m) == "swift.init" && had_init {
                     skip(&mut skip_reasons, &mut skipped, &mut impl_body, &mpath, "extra init variant (one `new` per type in M1)".into());
                     continue;
                 }
-                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums, spec.noncopyable_owners.contains(name)) {
+                match emit_member(m, &ident, name, &prefix, &type_names, &copy_safe, &spec.raw_enums, spec.noncopyable_owners.contains(name), "") {
                     Ok(e) => {
                         thunks.push_str(&e.thunk);
                         externs.push_str(&e.extern_line);
@@ -2607,5 +2734,68 @@ mod tests {
         assert!(b.swift.contains("@_cdecl(\"cplus_demo_Holder_take_payload\")"), "{}", b.swift);
         assert!(b.swift.contains("cpTakeOut(&_box.value)"), "{}", b.swift);
         assert!(b.cplus.contains("fn take_payload(this) -> option::Option[NDArray]"), "{}", b.cplus);
+    }
+
+    #[test]
+    fn bridge_generic_instantiation_init_and_self_gating_view() {
+        // A generic init with a `some Sequence` element param becomes one
+        // binding per spec type; a generic returning a `<…>` view self-gates.
+        let nd = json!({
+            "kind": {"identifier": "swift.struct"},
+            "identifier": {"precise": "ND"},
+            "pathComponents": ["NDArray"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("struct NDArray", "text")],
+        });
+        let init = json!({
+            "kind": {"identifier": "swift.init"},
+            "identifier": {"precise": "i"},
+            "pathComponents": ["NDArray", "init(scalars:shape:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("init<Scalar>(scalars: some Sequence, shape: [Int]) where Scalar : BitwiseCopyable", "text")],
+            "swiftGenerics": {"parameters": [{"name": "Scalar", "index": 0, "depth": 0}]},
+            "functionSignature": {
+                "parameters": [
+                    json!({"name": "scalars", "declarationFragments": [frag("scalars", "identifier"), frag(": ", "text"), frag("some ", "text"), frag("Sequence", "typeIdentifier")]}),
+                    json!({"name": "shape", "declarationFragments": [frag("shape", "identifier"), frag(": ", "text"), frag("[", "text"), frag("Int", "typeIdentifier"), frag("]", "text")]})
+                ],
+                "returns": []
+            }
+        });
+        let viewm = json!({
+            "kind": {"identifier": "swift.method"},
+            "identifier": {"precise": "v"},
+            "pathComponents": ["NDArray", "view(as:)"],
+            "accessLevel": "public",
+            "declarationFragments": [frag("func view<T>(as: T.Type) -> NDArray.View<T>", "text")],
+            "swiftGenerics": {"parameters": [{"name": "T", "index": 0, "depth": 0}]},
+            "functionSignature": {
+                "parameters": [json!({"name": "as", "declarationFragments": [frag("as", "identifier"), frag(": ", "text"), frag("T", "typeIdentifier"), frag(".Type", "text")]})],
+                "returns": [frag("NDArray.View", "typeIdentifier"), frag("<", "text"), frag("T", "typeIdentifier"), frag(">", "text")]
+            }
+        });
+        let g = graph(
+            vec![nd, init, viewm],
+            vec![
+                json!({"kind":"memberOf","source":"i","target":"ND"}),
+                json!({"kind":"memberOf","source":"v","target":"ND"}),
+            ],
+        );
+        let spec = BridgeSpec {
+            instantiate: [
+                ("NDArray.init(scalars:shape:)".to_string(), vec!["Float".to_string()]),
+                ("NDArray.view(as:)".to_string(), vec!["Float".to_string()]),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let b = generate_bridge(&g, "Demo", None, &spec);
+        // init instantiated, `some Sequence` -> [Float] slice, owner-handle return.
+        assert!(b.cplus.contains("fn new_Float(scalars: f32[], shape: i64[]) -> option::Option[NDArray]"), "{}", b.cplus);
+        assert!(b.swift.contains("NDArray(scalars: _scalars, shape: _shape)"), "{}", b.swift);
+        // view self-gates: its return is still a non-handle `View<Float>`.
+        assert!(!b.cplus.contains("fn view_Float"), "{}", b.cplus);
+        assert!(b.cplus.contains("SKIPPED NDArray.view(as:) [Float]"), "{}", b.cplus);
     }
 }
