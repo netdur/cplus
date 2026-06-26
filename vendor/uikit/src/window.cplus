@@ -1,0 +1,36 @@
+// UIWindow.
+
+import "./runtime" as rt;
+import "./view" as view;
+import "./controllers" as controllers;
+
+struct Window {
+    opaque _obj: *u8,
+}
+
+impl Window {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    // `alloc` + `initWithFrame:`. The returned window holds refcount 1 and
+    // is never released by these bindings — UIKit expects the app's key
+    // window to live for the process, and (pre-iOS-13, no scenes) nothing
+    // else retains it, so the "leak" is the correct ownership model here.
+    fn new(frame: rt::Rect) -> Window {
+        let cls: *u8 = rt::get_class(#str_ptr("UIWindow\0"));
+        let alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let win: *u8 = rt::msg_id_rect(alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+        return Window { _obj: win };
+    }
+
+    fn set_root_view_controller(this, vc: controllers::ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRootViewController:\0")), vc.raw());
+    }
+
+    fn set_background_color(this, color: view::Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.raw());
+    }
+
+    fn make_key_and_visible(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("makeKeyAndVisible\0")));
+    }
+}

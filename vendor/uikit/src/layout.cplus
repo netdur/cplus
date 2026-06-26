@@ -1,0 +1,119 @@
+import "./runtime" as rt;
+
+fn use_constraints(view: *u8) {
+    rt::msg_void_i8(
+        view,
+        rt::sel(#str_ptr("setTranslatesAutoresizingMaskIntoConstraints:\0")),
+        0 as i8,
+    );
+}
+
+fn safe_area(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("safeAreaLayoutGuide\0")));
+}
+
+fn leading(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("leadingAnchor\0")));
+}
+
+fn trailing(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("trailingAnchor\0")));
+}
+
+fn left(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("leftAnchor\0")));
+}
+
+fn right(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("rightAnchor\0")));
+}
+
+fn top(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("topAnchor\0")));
+}
+
+fn bottom(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("bottomAnchor\0")));
+}
+
+fn width(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("widthAnchor\0")));
+}
+
+fn height(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("heightAnchor\0")));
+}
+
+fn center_x(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("centerXAnchor\0")));
+}
+
+fn center_y(view: *u8) -> *u8 {
+    return rt::msg_id(view, rt::sel(#str_ptr("centerYAnchor\0")));
+}
+
+fn equal(anchor: *u8, other: *u8) -> *u8 {
+    return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintEqualToAnchor:\0")), other);
+}
+
+fn equal_offset(anchor: *u8, other: *u8, constant: f64) -> *u8 {
+    return rt::msg_id_id_f64(
+        anchor,
+        rt::sel(#str_ptr("constraintEqualToAnchor:constant:\0")),
+        other,
+        constant,
+    );
+}
+
+fn ge(anchor: *u8, other: *u8) -> *u8 {
+    return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:\0")), other);
+}
+
+fn le(anchor: *u8, other: *u8) -> *u8 {
+    return rt::msg_id_id(anchor, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:\0")), other);
+}
+
+fn equal_const(dimension: *u8, constant: f64) -> *u8 {
+    return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintEqualToConstant:\0")), constant);
+}
+
+fn ge_const(dimension: *u8, constant: f64) -> *u8 {
+    return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintGreaterThanOrEqualToConstant:\0")), constant);
+}
+
+fn le_const(dimension: *u8, constant: f64) -> *u8 {
+    return rt::msg_id_f64(dimension, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), constant);
+}
+
+fn activate(constraint: *u8) -> *u8 {
+    rt::msg_void_i8(constraint, rt::sel(#str_ptr("setActive:\0")), 1 as i8);
+    return constraint;
+}
+
+fn deactivate(constraint: *u8) -> *u8 {
+    rt::msg_void_i8(constraint, rt::sel(#str_ptr("setActive:\0")), 0 as i8);
+    return constraint;
+}
+
+fn is_active(constraint: *u8) -> i8 {
+    return rt::msg_i8(constraint, rt::sel(#str_ptr("isActive\0")));
+}
+
+fn priority_required() -> f32 { return 1000.0 as f32; }
+fn priority_high() -> f32 { return 750.0 as f32; }
+fn priority_low() -> f32 { return 250.0 as f32; }
+
+fn set_priority(constraint: *u8, priority: f32) -> *u8 {
+    rt::msg_void_f32(constraint, rt::sel(#str_ptr("setPriority:\0")), priority);
+    return constraint;
+}
+
+fn priority(constraint: *u8) -> f32 {
+    return rt::msg_f32(constraint, rt::sel(#str_ptr("priority\0")));
+}
+
+fn add_guide(view: *u8) -> *u8 {
+    let guide: *u8 = rt::alloc_init(#str_ptr("UILayoutGuide\0"));
+    rt::msg_void_id(view, rt::sel(#str_ptr("addLayoutGuide:\0")), guide);
+    return guide;
+}

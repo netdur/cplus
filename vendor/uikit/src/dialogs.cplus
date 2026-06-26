@@ -1,0 +1,51 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+
+struct AlertController {
+    _obj: *u8,
+}
+
+impl AlertController {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(title: str, message: str, style: i64) -> AlertController {
+        let cls: *u8 = rt::get_class(#str_ptr("UIAlertController\0"));
+        let alert: *u8 = rt::msg_id_id_id_i64(
+            cls,
+            rt::sel(#str_ptr("alertControllerWithTitle:message:preferredStyle:\0")),
+            convert::cplus_str_to_nsstring(title),
+            convert::cplus_str_to_nsstring(message),
+            style,
+        );
+        return AlertController { _obj: rt::retain(alert) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn add_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addAction:\0")), action);
+    }
+}
+
+struct AlertAction {
+    opaque _obj: *u8,
+}
+
+impl AlertAction {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(title: str, style: i64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIAlertAction\0"));
+        return rt::msg_id_id_i64_id(
+            cls,
+            rt::sel(#str_ptr("actionWithTitle:style:handler:\0")),
+            convert::cplus_str_to_nsstring(title),
+            style,
+            { 0 as *u8 },
+        );
+    }
+}
+
+type Alert = AlertController;

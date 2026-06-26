@@ -1,0 +1,25 @@
+// UIScreen.
+
+import "./runtime" as rt;
+
+struct Screen {
+    opaque _obj: *u8,
+}
+
+impl Screen {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn main() -> Screen {
+        let cls: *u8 = rt::get_class(#str_ptr("UIScreen\0"));
+        let screen: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("mainScreen\0")));
+        return Screen { _obj: screen };
+    }
+
+    fn bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("bounds\0")));
+    }
+
+    fn scale(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("scale\0")));
+    }
+}

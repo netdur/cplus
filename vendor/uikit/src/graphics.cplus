@@ -1,0 +1,155 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+import "./view" as view;
+
+type Color = view::Color;
+
+struct ImageView {
+    _obj: *u8,
+}
+
+impl ImageView {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(frame: rt::Rect) -> ImageView {
+        return ImageView { _obj: rt::alloc_init_with_frame(#str_ptr("UIImageView\0"), frame) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn set_image(this, image: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    }
+
+    fn set_highlighted_image(this, image: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHighlightedImage:\0")), image);
+    }
+
+    fn set_content_mode(this, mode: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
+    }
+
+    fn set_tint_color(this, color: view::Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTintColor:\0")), color.raw());
+    }
+
+    fn as_view_obj(this) -> *u8 {
+        return this._obj;
+    }
+}
+
+struct Image {
+    opaque _obj: *u8,
+}
+
+impl Image {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn by_name(name: str) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
+        return rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), convert::cplus_str_to_nsstring(name));
+    }
+
+    fn system_symbol(name: str) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
+        return rt::msg_id_id(cls, rt::sel(#str_ptr("systemImageNamed:\0")), convert::cplus_str_to_nsstring(name));
+    }
+
+    fn init_with_file(path: str) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfFile:\0")), convert::cplus_str_to_nsstring(path));
+    }
+
+    fn with_rendering_mode(image: *u8, mode: i64) -> *u8 {
+        return rt::msg_id_u64(image, rt::sel(#str_ptr("imageWithRenderingMode:\0")), mode as u64);
+    }
+
+    fn with_symbol_configuration(image: *u8, config: *u8) -> *u8 {
+        return rt::msg_id_id(image, rt::sel(#str_ptr("imageByApplyingSymbolConfiguration:\0")), config);
+    }
+}
+
+struct Font {
+    opaque _obj: *u8,
+}
+
+impl Font {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn system_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
+    }
+
+    fn bold_system_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("boldSystemFontOfSize:\0")), size);
+    }
+
+    fn italic_system_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("italicSystemFontOfSize:\0")), size);
+    }
+
+    fn preferred_font_for_text_style(style: str) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
+        return rt::msg_id_id(cls, rt::sel(#str_ptr("preferredFontForTextStyle:\0")), convert::cplus_str_to_nsstring(style));
+    }
+}
+
+struct BezierPath {
+    _obj: *u8,
+}
+
+impl BezierPath {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new() -> BezierPath {
+        return BezierPath { _obj: rt::alloc_init(#str_ptr("UIBezierPath\0")) };
+    }
+
+    fn with_rect(rect: rt::Rect) -> BezierPath {
+        let cls: *u8 = rt::get_class(#str_ptr("UIBezierPath\0"));
+        let path: *u8 = rt::msg_id_rect(cls, rt::sel(#str_ptr("bezierPathWithRect:\0")), rect);
+        return BezierPath { _obj: rt::retain(path) };
+    }
+
+    fn with_oval_in_rect(rect: rt::Rect) -> BezierPath {
+        let cls: *u8 = rt::get_class(#str_ptr("UIBezierPath\0"));
+        let path: *u8 = rt::msg_id_rect(cls, rt::sel(#str_ptr("bezierPathWithOvalInRect:\0")), rect);
+        return BezierPath { _obj: rt::retain(path) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn move_to(this, x: f64, y: f64) {
+        let p: rt::Point = rt::Point { x: x, y: y };
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
+    }
+
+    fn line_to(this, x: f64, y: f64) {
+        let p: rt::Point = rt::Point { x: x, y: y };
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("addLineToPoint:\0")), p);
+    }
+
+    fn close(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("closePath\0")));
+    }
+
+    fn set_line_width(this, width: f64) {
+        rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
+    }
+
+    fn stroke(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("stroke\0")));
+    }
+
+    fn fill(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("fill\0")));
+    }
+}

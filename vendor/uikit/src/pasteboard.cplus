@@ -1,0 +1,27 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+
+struct Pasteboard {
+    opaque _obj: *u8,
+}
+
+impl Pasteboard {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn general() -> Pasteboard {
+        let cls: *u8 = rt::get_class(#str_ptr("UIPasteboard\0"));
+        return Pasteboard { _obj: rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0"))) };
+    }
+
+    fn set_string(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setString:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn string(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("string\0")));
+    }
+
+    fn has_strings(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasStrings\0"))) != (0 as i8);
+    }
+}

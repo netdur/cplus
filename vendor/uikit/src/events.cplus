@@ -1,0 +1,33 @@
+import "./runtime" as rt;
+
+fn event_type(event: *u8) -> i64 {
+    return rt::msg_i64(event, rt::sel(#str_ptr("type\0")));
+}
+
+fn event_subtype(event: *u8) -> i64 {
+    return rt::msg_i64(event, rt::sel(#str_ptr("subtype\0")));
+}
+
+fn timestamp(event: *u8) -> f64 {
+    return rt::msg_f64(event, rt::sel(#str_ptr("timestamp\0")));
+}
+
+fn all_touches(event: *u8) -> *u8 {
+    return rt::msg_id(event, rt::sel(#str_ptr("allTouches\0")));
+}
+
+fn touch_phase(touch: *u8) -> i64 {
+    return rt::msg_i64(touch, rt::sel(#str_ptr("phase\0")));
+}
+
+fn touch_tap_count(touch: *u8) -> i64 {
+    return rt::msg_i64(touch, rt::sel(#str_ptr("tapCount\0")));
+}
+
+fn touch_location_in_view(touch: *u8, view: *u8) -> rt::Point {
+    return rt::msg_point_id(touch, rt::sel(#str_ptr("locationInView:\0")), view);
+}
+
+fn touch_previous_location_in_view(touch: *u8, view: *u8) -> rt::Point {
+    return rt::msg_point_id(touch, rt::sel(#str_ptr("previousLocationInView:\0")), view);
+}

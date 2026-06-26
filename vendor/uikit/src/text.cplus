@@ -1,0 +1,153 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+import "./view" as view;
+
+struct TextField {
+    _obj: *u8,
+}
+
+impl TextField {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(frame: rt::Rect) -> TextField {
+        return TextField { _obj: rt::alloc_init_with_frame(#str_ptr("UITextField\0"), frame) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn set_text(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn text(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("text\0")));
+    }
+
+    fn set_placeholder(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn set_text_color(this, color: view::Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextColor:\0")), color.raw());
+    }
+
+    fn set_font(this, font: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font);
+    }
+
+    fn set_text_alignment(this, alignment: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
+    }
+
+    fn set_border_style(this, style: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderStyle:\0")), style);
+    }
+
+    fn set_secure_text_entry(this, flag: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSecureTextEntry:\0")), flag as i8);
+    }
+
+    fn set_keyboard_type(this, keyboard_type: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setKeyboardType:\0")), keyboard_type);
+    }
+
+    fn set_return_key_type(this, return_key_type: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setReturnKeyType:\0")), return_key_type);
+    }
+
+    fn set_on_editing_changed(this, cb: fn(*u8)) {
+        rt::attach_control_callback(this._obj, cb, rt::control_event_value_changed());
+    }
+
+    fn as_view_obj(this) -> *u8 {
+        return this._obj;
+    }
+}
+
+struct TextView {
+    _obj: *u8,
+}
+
+impl TextView {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(frame: rt::Rect) -> TextView {
+        return TextView { _obj: rt::alloc_init_with_frame(#str_ptr("UITextView\0"), frame) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn set_text(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn text(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("text\0")));
+    }
+
+    fn set_text_color(this, color: view::Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextColor:\0")), color.raw());
+    }
+
+    fn set_font(this, font: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font);
+    }
+
+    fn set_editable(this, flag: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setEditable:\0")), flag as i8);
+    }
+
+    fn set_selectable(this, flag: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSelectable:\0")), flag as i8);
+    }
+
+    fn set_text_alignment(this, alignment: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
+    }
+
+    fn as_view_obj(this) -> *u8 {
+        return this._obj;
+    }
+}
+
+struct SearchBar {
+    _obj: *u8,
+}
+
+impl SearchBar {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn new(frame: rt::Rect) -> SearchBar {
+        return SearchBar { _obj: rt::alloc_init_with_frame(#str_ptr("UISearchBar\0"), frame) };
+    }
+
+    fn drop(ref this) {
+        rt::release(this._obj);
+    }
+
+    fn set_text(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn text(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("text\0")));
+    }
+
+    fn set_placeholder(this, text: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
+    }
+
+    fn set_bar_style(this, style: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
+    }
+
+    fn as_view_obj(this) -> *u8 {
+        return this._obj;
+    }
+}
+
+type SecureTextField = TextField;
