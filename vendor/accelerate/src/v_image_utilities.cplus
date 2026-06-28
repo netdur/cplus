@@ -1506,7 +1506,11 @@ extern fn __c_vImageBuffer_InitWithCGImage(buf: *u8, format: *vImage_CGImageForm
 fn vImageBuffer_InitWithCGImage(buf: *u8, format: *vImage_CGImageFormat, backgroundColor: *f64, image: *u8, flags: u32) -> i64 {
     return { __c_vImageBuffer_InitWithCGImage(buf, format, backgroundColor, image, flags) };
 }
-// SKIPPED `vImageCreateCGImageFromBuffer`: param 2 type `void (*)(void *, void *)` — unsupported type `void ( * )(void * , void * )`
+#[link_name = "vImageCreateCGImageFromBuffer"]
+extern fn __c_vImageCreateCGImageFromBuffer(buf: *u8, format: *vImage_CGImageFormat, callback: *u8, userData: *u8, flags: u32, error: *i64) -> *u8;
+fn vImageCreateCGImageFromBuffer(buf: *u8, format: *vImage_CGImageFormat, callback: *u8, userData: *u8, flags: u32, error: *i64) -> *u8 {
+    return { __c_vImageCreateCGImageFromBuffer(buf, format, callback, userData, flags, error) };
+}
 #[link_name = "vImageConverter_Retain"]
 extern fn __c_vImageConverter_Retain(converter: *u8);
 fn vImageConverter_Retain(converter: *u8) {

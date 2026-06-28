@@ -6250,7 +6250,11 @@ extern fn __c_vImageCVImageFormat_GetUserData(format: *u8) -> *u8;
 fn vImageCVImageFormat_GetUserData(format: *u8) -> *u8 {
     return { __c_vImageCVImageFormat_GetUserData(format) };
 }
-// SKIPPED `vImageCVImageFormat_SetUserData`: param 2 type `void (*)(vImageCVImageFormatRef, void *)` — unsupported type `void ( * )(vImageCVImageFormatRef, void * )`
+#[link_name = "vImageCVImageFormat_SetUserData"]
+extern fn __c_vImageCVImageFormat_SetUserData(format: *u8, userData: *u8, userDataReleaseCallback: *u8) -> i64;
+fn vImageCVImageFormat_SetUserData(format: *u8, userData: *u8, userDataReleaseCallback: *u8) -> i64 {
+    return { __c_vImageCVImageFormat_SetUserData(format, userData, userDataReleaseCallback) };
+}
 #[link_name = "vImageCreateRGBColorSpaceWithPrimariesAndTransferFunction"]
 extern fn __c_vImageCreateRGBColorSpaceWithPrimariesAndTransferFunction(primaries: *vImageRGBPrimaries, tf: *vImageTransferFunction, intent: i32, flags: u32, error: *i64) -> *u8;
 fn vImageCreateRGBColorSpaceWithPrimariesAndTransferFunction(primaries: *vImageRGBPrimaries, tf: *vImageTransferFunction, intent: i32, flags: u32, error: *i64) -> *u8 {

@@ -5,161 +5,161 @@
 // C+ require `{ ... }` blocks.
 
 #[link_name = "vIsamax"]
-extern fn __c_vIsamax(count: i32, x: *u8) -> i32;
-fn vIsamax(count: i32, x: *u8) -> i32 {
+extern fn __c_vIsamax(count: i32, x: *f32x4) -> i32;
+fn vIsamax(count: i32, x: *f32x4) -> i32 {
     return { __c_vIsamax(count, x) };
 }
 #[link_name = "vIsamin"]
-extern fn __c_vIsamin(count: i32, x: *u8) -> i32;
-fn vIsamin(count: i32, x: *u8) -> i32 {
+extern fn __c_vIsamin(count: i32, x: *f32x4) -> i32;
+fn vIsamin(count: i32, x: *f32x4) -> i32 {
     return { __c_vIsamin(count, x) };
 }
 #[link_name = "vIsmax"]
-extern fn __c_vIsmax(count: i32, x: *u8) -> i32;
-fn vIsmax(count: i32, x: *u8) -> i32 {
+extern fn __c_vIsmax(count: i32, x: *f32x4) -> i32;
+fn vIsmax(count: i32, x: *f32x4) -> i32 {
     return { __c_vIsmax(count, x) };
 }
 #[link_name = "vIsmin"]
-extern fn __c_vIsmin(count: i32, x: *u8) -> i32;
-fn vIsmin(count: i32, x: *u8) -> i32 {
+extern fn __c_vIsmin(count: i32, x: *f32x4) -> i32;
+fn vIsmin(count: i32, x: *f32x4) -> i32 {
     return { __c_vIsmin(count, x) };
 }
 #[link_name = "vSasum"]
-extern fn __c_vSasum(count: i32, x: *u8) -> f32;
-fn vSasum(count: i32, x: *u8) -> f32 {
+extern fn __c_vSasum(count: i32, x: *f32x4) -> f32;
+fn vSasum(count: i32, x: *f32x4) -> f32 {
     return { __c_vSasum(count, x) };
 }
 #[link_name = "vSsum"]
-extern fn __c_vSsum(count: i32, x: *u8) -> f32;
-fn vSsum(count: i32, x: *u8) -> f32 {
+extern fn __c_vSsum(count: i32, x: *f32x4) -> f32;
+fn vSsum(count: i32, x: *f32x4) -> f32 {
     return { __c_vSsum(count, x) };
 }
 #[link_name = "vSaxpy"]
-extern fn __c_vSaxpy(n: i32, alpha: f32, x: *u8, y: *u8);
-fn vSaxpy(n: i32, alpha: f32, x: *u8, y: *u8) {
+extern fn __c_vSaxpy(n: i32, alpha: f32, x: *f32x4, y: *f32x4);
+fn vSaxpy(n: i32, alpha: f32, x: *f32x4, y: *f32x4) {
     { __c_vSaxpy(n, alpha, x, y); }
     return;
 }
 #[link_name = "vScopy"]
-extern fn __c_vScopy(n: i32, x: *u8, y: *u8);
-fn vScopy(n: i32, x: *u8, y: *u8) {
+extern fn __c_vScopy(n: i32, x: *f32x4, y: *f32x4);
+fn vScopy(n: i32, x: *f32x4, y: *f32x4) {
     { __c_vScopy(n, x, y); }
     return;
 }
 #[link_name = "vSdot"]
-extern fn __c_vSdot(n: i32, x: *u8, y: *u8) -> f32;
-fn vSdot(n: i32, x: *u8, y: *u8) -> f32 {
+extern fn __c_vSdot(n: i32, x: *f32x4, y: *f32x4) -> f32;
+fn vSdot(n: i32, x: *f32x4, y: *f32x4) -> f32 {
     return { __c_vSdot(n, x, y) };
 }
 #[link_name = "vSnaxpy"]
-extern fn __c_vSnaxpy(n: i32, m: i32, a: *u8, x: *u8, y: *u8);
-fn vSnaxpy(n: i32, m: i32, a: *u8, x: *u8, y: *u8) {
+extern fn __c_vSnaxpy(n: i32, m: i32, a: *f32x4, x: *f32x4, y: *f32x4);
+fn vSnaxpy(n: i32, m: i32, a: *f32x4, x: *f32x4, y: *f32x4) {
     { __c_vSnaxpy(n, m, a, x, y); }
     return;
 }
 #[link_name = "vSndot"]
-extern fn __c_vSndot(n: i32, m: i32, s: *f32, isw: i32, x: *u8, y: *u8);
-fn vSndot(n: i32, m: i32, s: *f32, isw: i32, x: *u8, y: *u8) {
+extern fn __c_vSndot(n: i32, m: i32, s: *f32, isw: i32, x: *f32x4, y: *f32x4);
+fn vSndot(n: i32, m: i32, s: *f32, isw: i32, x: *f32x4, y: *f32x4) {
     { __c_vSndot(n, m, s, isw, x, y); }
     return;
 }
 #[link_name = "vSnrm2"]
-extern fn __c_vSnrm2(count: i32, x: *u8) -> f32;
-fn vSnrm2(count: i32, x: *u8) -> f32 {
+extern fn __c_vSnrm2(count: i32, x: *f32x4) -> f32;
+fn vSnrm2(count: i32, x: *f32x4) -> f32 {
     return { __c_vSnrm2(count, x) };
 }
 #[link_name = "vSnorm2"]
-extern fn __c_vSnorm2(count: i32, x: *u8) -> f32;
-fn vSnorm2(count: i32, x: *u8) -> f32 {
+extern fn __c_vSnorm2(count: i32, x: *f32x4) -> f32;
+fn vSnorm2(count: i32, x: *f32x4) -> f32 {
     return { __c_vSnorm2(count, x) };
 }
 #[link_name = "vSrot"]
-extern fn __c_vSrot(n: i32, x: *u8, y: *u8, c: f32, s: f32);
-fn vSrot(n: i32, x: *u8, y: *u8, c: f32, s: f32) {
+extern fn __c_vSrot(n: i32, x: *f32x4, y: *f32x4, c: f32, s: f32);
+fn vSrot(n: i32, x: *f32x4, y: *f32x4, c: f32, s: f32) {
     { __c_vSrot(n, x, y, c, s); }
     return;
 }
 #[link_name = "vSscal"]
-extern fn __c_vSscal(n: i32, alpha: f32, x: *u8);
-fn vSscal(n: i32, alpha: f32, x: *u8) {
+extern fn __c_vSscal(n: i32, alpha: f32, x: *f32x4);
+fn vSscal(n: i32, alpha: f32, x: *f32x4) {
     { __c_vSscal(n, alpha, x); }
     return;
 }
 #[link_name = "vSswap"]
-extern fn __c_vSswap(n: i32, x: *u8, y: *u8);
-fn vSswap(n: i32, x: *u8, y: *u8) {
+extern fn __c_vSswap(n: i32, x: *f32x4, y: *f32x4);
+fn vSswap(n: i32, x: *f32x4, y: *f32x4) {
     { __c_vSswap(n, x, y); }
     return;
 }
 #[link_name = "vSyax"]
-extern fn __c_vSyax(n: i32, alpha: f32, x: *u8, y: *u8);
-fn vSyax(n: i32, alpha: f32, x: *u8, y: *u8) {
+extern fn __c_vSyax(n: i32, alpha: f32, x: *f32x4, y: *f32x4);
+fn vSyax(n: i32, alpha: f32, x: *f32x4, y: *f32x4) {
     { __c_vSyax(n, alpha, x, y); }
     return;
 }
 #[link_name = "vSzaxpy"]
-extern fn __c_vSzaxpy(n: i32, alpha: f32, x: *u8, y: *u8, z: *u8);
-fn vSzaxpy(n: i32, alpha: f32, x: *u8, y: *u8, z: *u8) {
+extern fn __c_vSzaxpy(n: i32, alpha: f32, x: *f32x4, y: *f32x4, z: *f32x4);
+fn vSzaxpy(n: i32, alpha: f32, x: *f32x4, y: *f32x4, z: *f32x4) {
     { __c_vSzaxpy(n, alpha, x, y, z); }
     return;
 }
 #[link_name = "vSgemv"]
-extern fn __c_vSgemv(forma: i8, m: i32, n: i32, alpha: f32, a: *u8, x: *u8, beta: f32, y: *u8);
-fn vSgemv(forma: i8, m: i32, n: i32, alpha: f32, a: *u8, x: *u8, beta: f32, y: *u8) {
+extern fn __c_vSgemv(forma: i8, m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, beta: f32, y: *f32x4);
+fn vSgemv(forma: i8, m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, beta: f32, y: *f32x4) {
     { __c_vSgemv(forma, m, n, alpha, a, x, beta, y); }
     return;
 }
 #[link_name = "vSgemx"]
-extern fn __c_vSgemx(m: i32, n: i32, alpha: f32, a: *u8, x: *u8, y: *u8);
-fn vSgemx(m: i32, n: i32, alpha: f32, a: *u8, x: *u8, y: *u8) {
+extern fn __c_vSgemx(m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, y: *f32x4);
+fn vSgemx(m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, y: *f32x4) {
     { __c_vSgemx(m, n, alpha, a, x, y); }
     return;
 }
 #[link_name = "vSgemtx"]
-extern fn __c_vSgemtx(m: i32, n: i32, alpha: f32, a: *u8, x: *u8, y: *u8);
-fn vSgemtx(m: i32, n: i32, alpha: f32, a: *u8, x: *u8, y: *u8) {
+extern fn __c_vSgemtx(m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, y: *f32x4);
+fn vSgemtx(m: i32, n: i32, alpha: f32, a: *f32x4, x: *f32x4, y: *f32x4) {
     { __c_vSgemtx(m, n, alpha, a, x, y); }
     return;
 }
 #[link_name = "vSgeadd"]
-extern fn __c_vSgeadd(height: i32, width: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8);
-fn vSgeadd(height: i32, width: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8) {
+extern fn __c_vSgeadd(height: i32, width: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4);
+fn vSgeadd(height: i32, width: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4) {
     { __c_vSgeadd(height, width, a, forma, b, formb, c); }
     return;
 }
 #[link_name = "vSgesub"]
-extern fn __c_vSgesub(height: i32, width: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8);
-fn vSgesub(height: i32, width: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8) {
+extern fn __c_vSgesub(height: i32, width: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4);
+fn vSgesub(height: i32, width: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4) {
     { __c_vSgesub(height, width, a, forma, b, formb, c); }
     return;
 }
 #[link_name = "vSgemul"]
-extern fn __c_vSgemul(l: i32, m: i32, n: i32, a: *u8, forma: i8, b: *u8, formb: i8, matrix: *u8);
-fn vSgemul(l: i32, m: i32, n: i32, a: *u8, forma: i8, b: *u8, formb: i8, matrix: *u8) {
+extern fn __c_vSgemul(l: i32, m: i32, n: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, matrix: *f32x4);
+fn vSgemul(l: i32, m: i32, n: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, matrix: *f32x4) {
     { __c_vSgemul(l, m, n, a, forma, b, formb, matrix); }
     return;
 }
 #[link_name = "vSgemm"]
-extern fn __c_vSgemm(l: i32, m: i32, n: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8, alpha: f32, beta: f32, matrix: *u8);
-fn vSgemm(l: i32, m: i32, n: i32, a: *u8, forma: i8, b: *u8, formb: i8, c: *u8, alpha: f32, beta: f32, matrix: *u8) {
+extern fn __c_vSgemm(l: i32, m: i32, n: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4, alpha: f32, beta: f32, matrix: *f32x4);
+fn vSgemm(l: i32, m: i32, n: i32, a: *f32x4, forma: i8, b: *f32x4, formb: i8, c: *f32x4, alpha: f32, beta: f32, matrix: *f32x4) {
     { __c_vSgemm(l, m, n, a, forma, b, formb, c, alpha, beta, matrix); }
     return;
 }
 #[link_name = "vSgetmi"]
-extern fn __c_vSgetmi(size: i32, x: *u8);
-fn vSgetmi(size: i32, x: *u8) {
+extern fn __c_vSgetmi(size: i32, x: *f32x4);
+fn vSgetmi(size: i32, x: *f32x4) {
     { __c_vSgetmi(size, x); }
     return;
 }
 #[link_name = "vSgetmo"]
-extern fn __c_vSgetmo(height: i32, width: i32, x: *u8, y: *u8);
-fn vSgetmo(height: i32, width: i32, x: *u8, y: *u8) {
+extern fn __c_vSgetmo(height: i32, width: i32, x: *f32x4, y: *f32x4);
+fn vSgetmo(height: i32, width: i32, x: *f32x4, y: *f32x4) {
     { __c_vSgetmo(height, width, x, y); }
     return;
 }
 #[link_name = "vSgevv"]
-extern fn __c_vSgevv(l: i32, n: i32, A: *u8, B: *u8, M: *u8);
-fn vSgevv(l: i32, n: i32, A: *u8, B: *u8, M: *u8) {
+extern fn __c_vSgevv(l: i32, n: i32, A: *f32x4, B: *f32x4, M: *f32x4);
+fn vSgevv(l: i32, n: i32, A: *f32x4, B: *f32x4, M: *f32x4) {
     { __c_vSgevv(l, n, A, B, M); }
     return;
 }

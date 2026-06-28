@@ -103,8 +103,16 @@ extern fn __c_cgeequb_(__m: *i32, __n: *i32, __a: *__CLPK_complex, __lda: *i32, 
 fn cgeequb_(__m: *i32, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __r__: *f32, __c__: *f32, __rowcnd: *f32, __colcnd: *f32, __amax: *f32, __info: *i32) -> i32 {
     return { __c_cgeequb_(__m, __n, __a, __lda, __r__, __c__, __rowcnd, __colcnd, __amax, __info) };
 }
-// SKIPPED `cgees_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `cgeesx_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "cgees_"]
+extern fn __c_cgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __sdim: *i32, __w: *__CLPK_complex, __vs: *__CLPK_complex, __ldvs: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32;
+fn cgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __sdim: *i32, __w: *__CLPK_complex, __vs: *__CLPK_complex, __ldvs: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_cgees_(__jobvs, __sort, __select, __n, __a, __lda, __sdim, __w, __vs, __ldvs, __work, __lwork, __rwork, __bwork, __info) };
+}
+#[link_name = "cgeesx_"]
+extern fn __c_cgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __sdim: *i32, __w: *__CLPK_complex, __vs: *__CLPK_complex, __ldvs: *i32, __rconde: *f32, __rcondv: *f32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32;
+fn cgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __sdim: *i32, __w: *__CLPK_complex, __vs: *__CLPK_complex, __ldvs: *i32, __rconde: *f32, __rcondv: *f32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_cgeesx_(__jobvs, __sort, __select, __sense, __n, __a, __lda, __sdim, __w, __vs, __ldvs, __rconde, __rcondv, __work, __lwork, __rwork, __bwork, __info) };
+}
 #[link_name = "cgeev_"]
 extern fn __c_cgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __w: *__CLPK_complex, __vl: *__CLPK_complex, __ldvl: *i32, __vr: *__CLPK_complex, __ldvr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __info: *i32) -> i32;
 fn cgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __w: *__CLPK_complex, __vl: *__CLPK_complex, __ldvl: *i32, __vr: *__CLPK_complex, __ldvr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __info: *i32) -> i32 {
@@ -275,8 +283,16 @@ extern fn __c_cggbal_(__job: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, 
 fn cggbal_(__job: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __ilo: *i32, __ihi: *i32, __lscale: *f32, __rscale: *f32, __work: *f32, __info: *i32) -> i32 {
     return { __c_cggbal_(__job, __n, __a, __lda, __b, __ldb, __ilo, __ihi, __lscale, __rscale, __work, __info) };
 }
-// SKIPPED `cgges_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `cggesx_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "cgges_"]
+extern fn __c_cgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vsl: *__CLPK_complex, __ldvsl: *i32, __vsr: *__CLPK_complex, __ldvsr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32;
+fn cgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vsl: *__CLPK_complex, __ldvsl: *i32, __vsr: *__CLPK_complex, __ldvsr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_cgges_(__jobvsl, __jobvsr, __sort, __selctg, __n, __a, __lda, __b, __ldb, __sdim, __alpha, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __work, __lwork, __rwork, __bwork, __info) };
+}
+#[link_name = "cggesx_"]
+extern fn __c_cggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vsl: *__CLPK_complex, __ldvsl: *i32, __vsr: *__CLPK_complex, __ldvsr: *i32, __rconde: *f32, __rcondv: *f32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn cggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vsl: *__CLPK_complex, __ldvsl: *i32, __vsr: *__CLPK_complex, __ldvsr: *i32, __rconde: *f32, __rcondv: *f32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_cggesx_(__jobvsl, __jobvsr, __sort, __selctg, __sense, __n, __a, __lda, __b, __ldb, __sdim, __alpha, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __rconde, __rcondv, __work, __lwork, __rwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "cggev_"]
 extern fn __c_cggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vl: *__CLPK_complex, __ldvl: *i32, __vr: *__CLPK_complex, __ldvr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __info: *i32) -> i32;
 fn cggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_complex, __lda: *i32, __b: *__CLPK_complex, __ldb: *i32, __alpha: *__CLPK_complex, __beta: *__CLPK_complex, __vl: *__CLPK_complex, __ldvl: *i32, __vr: *__CLPK_complex, __ldvr: *i32, __work: *__CLPK_complex, __lwork: *i32, __rwork: *f32, __info: *i32) -> i32 {
@@ -1804,8 +1820,16 @@ extern fn __c_dgeequb_(__m: *i32, __n: *i32, __a: *f64, __lda: *i32, __r__: *f64
 fn dgeequb_(__m: *i32, __n: *i32, __a: *f64, __lda: *i32, __r__: *f64, __c__: *f64, __rowcnd: *f64, __colcnd: *f64, __amax: *f64, __info: *i32) -> i32 {
     return { __c_dgeequb_(__m, __n, __a, __lda, __r__, __c__, __rowcnd, __colcnd, __amax, __info) };
 }
-// SKIPPED `dgees_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `dgeesx_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "dgees_"]
+extern fn __c_dgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *f64, __lda: *i32, __sdim: *i32, __wr: *f64, __wi: *f64, __vs: *f64, __ldvs: *i32, __work: *f64, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn dgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *f64, __lda: *i32, __sdim: *i32, __wr: *f64, __wi: *f64, __vs: *f64, __ldvs: *i32, __work: *f64, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_dgees_(__jobvs, __sort, __select, __n, __a, __lda, __sdim, __wr, __wi, __vs, __ldvs, __work, __lwork, __bwork, __info) };
+}
+#[link_name = "dgeesx_"]
+extern fn __c_dgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *f64, __lda: *i32, __sdim: *i32, __wr: *f64, __wi: *f64, __vs: *f64, __ldvs: *i32, __rconde: *f64, __rcondv: *f64, __work: *f64, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn dgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *f64, __lda: *i32, __sdim: *i32, __wr: *f64, __wi: *f64, __vs: *f64, __ldvs: *i32, __rconde: *f64, __rcondv: *f64, __work: *f64, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_dgeesx_(__jobvs, __sort, __select, __sense, __n, __a, __lda, __sdim, __wr, __wi, __vs, __ldvs, __rconde, __rcondv, __work, __lwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "dgeev_"]
 extern fn __c_dgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f64, __lda: *i32, __wr: *f64, __wi: *f64, __vl: *f64, __ldvl: *i32, __vr: *f64, __ldvr: *i32, __work: *f64, __lwork: *i32, __info: *i32) -> i32;
 fn dgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f64, __lda: *i32, __wr: *f64, __wi: *f64, __vl: *f64, __ldvl: *i32, __vr: *f64, __ldvr: *i32, __work: *f64, __lwork: *i32, __info: *i32) -> i32 {
@@ -1986,8 +2010,16 @@ extern fn __c_dggbal_(__job: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, 
 fn dggbal_(__job: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __ilo: *i32, __ihi: *i32, __lscale: *f64, __rscale: *f64, __work: *f64, __info: *i32) -> i32 {
     return { __c_dggbal_(__job, __n, __a, __lda, __b, __ldb, __ilo, __ihi, __lscale, __rscale, __work, __info) };
 }
-// SKIPPED `dgges_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `dggesx_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "dgges_"]
+extern fn __c_dgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __sdim: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vsl: *f64, __ldvsl: *i32, __vsr: *f64, __ldvsr: *i32, __work: *f64, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn dgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __sdim: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vsl: *f64, __ldvsl: *i32, __vsr: *f64, __ldvsr: *i32, __work: *f64, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_dgges_(__jobvsl, __jobvsr, __sort, __selctg, __n, __a, __lda, __b, __ldb, __sdim, __alphar, __alphai, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __work, __lwork, __bwork, __info) };
+}
+#[link_name = "dggesx_"]
+extern fn __c_dggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __sdim: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vsl: *f64, __ldvsl: *i32, __vsr: *f64, __ldvsr: *i32, __rconde: *f64, __rcondv: *f64, __work: *f64, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn dggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __sdim: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vsl: *f64, __ldvsl: *i32, __vsr: *f64, __ldvsr: *i32, __rconde: *f64, __rcondv: *f64, __work: *f64, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_dggesx_(__jobvsl, __jobvsr, __sort, __selctg, __sense, __n, __a, __lda, __b, __ldb, __sdim, __alphar, __alphai, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __rconde, __rcondv, __work, __lwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "dggev_"]
 extern fn __c_dggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vl: *f64, __ldvl: *i32, __vr: *f64, __ldvr: *i32, __work: *f64, __lwork: *i32, __info: *i32) -> i32;
 fn dggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f64, __lda: *i32, __b: *f64, __ldb: *i32, __alphar: *f64, __alphai: *f64, __beta: *f64, __vl: *f64, __ldvl: *i32, __vr: *f64, __ldvr: *i32, __work: *f64, __lwork: *i32, __info: *i32) -> i32 {
@@ -3788,8 +3820,16 @@ extern fn __c_sgeequb_(__m: *i32, __n: *i32, __a: *f32, __lda: *i32, __r__: *f32
 fn sgeequb_(__m: *i32, __n: *i32, __a: *f32, __lda: *i32, __r__: *f32, __c__: *f32, __rowcnd: *f32, __colcnd: *f32, __amax: *f32, __info: *i32) -> i32 {
     return { __c_sgeequb_(__m, __n, __a, __lda, __r__, __c__, __rowcnd, __colcnd, __amax, __info) };
 }
-// SKIPPED `sgees_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `sgeesx_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "sgees_"]
+extern fn __c_sgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *f32, __lda: *i32, __sdim: *i32, __wr: *f32, __wi: *f32, __vs: *f32, __ldvs: *i32, __work: *f32, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn sgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *f32, __lda: *i32, __sdim: *i32, __wr: *f32, __wi: *f32, __vs: *f32, __ldvs: *i32, __work: *f32, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_sgees_(__jobvs, __sort, __select, __n, __a, __lda, __sdim, __wr, __wi, __vs, __ldvs, __work, __lwork, __bwork, __info) };
+}
+#[link_name = "sgeesx_"]
+extern fn __c_sgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *f32, __lda: *i32, __sdim: *i32, __wr: *f32, __wi: *f32, __vs: *f32, __ldvs: *i32, __rconde: *f32, __rcondv: *f32, __work: *f32, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn sgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *f32, __lda: *i32, __sdim: *i32, __wr: *f32, __wi: *f32, __vs: *f32, __ldvs: *i32, __rconde: *f32, __rcondv: *f32, __work: *f32, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_sgeesx_(__jobvs, __sort, __select, __sense, __n, __a, __lda, __sdim, __wr, __wi, __vs, __ldvs, __rconde, __rcondv, __work, __lwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "sgeev_"]
 extern fn __c_sgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f32, __lda: *i32, __wr: *f32, __wi: *f32, __vl: *f32, __ldvl: *i32, __vr: *f32, __ldvr: *i32, __work: *f32, __lwork: *i32, __info: *i32) -> i32;
 fn sgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f32, __lda: *i32, __wr: *f32, __wi: *f32, __vl: *f32, __ldvl: *i32, __vr: *f32, __ldvr: *i32, __work: *f32, __lwork: *i32, __info: *i32) -> i32 {
@@ -3970,8 +4010,16 @@ extern fn __c_sggbal_(__job: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, 
 fn sggbal_(__job: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __ilo: *i32, __ihi: *i32, __lscale: *f32, __rscale: *f32, __work: *f32, __info: *i32) -> i32 {
     return { __c_sggbal_(__job, __n, __a, __lda, __b, __ldb, __ilo, __ihi, __lscale, __rscale, __work, __info) };
 }
-// SKIPPED `sgges_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `sggesx_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "sgges_"]
+extern fn __c_sgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __sdim: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vsl: *f32, __ldvsl: *i32, __vsr: *f32, __ldvsr: *i32, __work: *f32, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn sgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __sdim: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vsl: *f32, __ldvsl: *i32, __vsr: *f32, __ldvsr: *i32, __work: *f32, __lwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_sgges_(__jobvsl, __jobvsr, __sort, __selctg, __n, __a, __lda, __b, __ldb, __sdim, __alphar, __alphai, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __work, __lwork, __bwork, __info) };
+}
+#[link_name = "sggesx_"]
+extern fn __c_sggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __sdim: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vsl: *f32, __ldvsl: *i32, __vsr: *f32, __ldvsr: *i32, __rconde: *f32, __rcondv: *f32, __work: *f32, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn sggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __sdim: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vsl: *f32, __ldvsl: *i32, __vsr: *f32, __ldvsr: *i32, __rconde: *f32, __rcondv: *f32, __work: *f32, __lwork: *i32, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_sggesx_(__jobvsl, __jobvsr, __sort, __selctg, __sense, __n, __a, __lda, __b, __ldb, __sdim, __alphar, __alphai, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __rconde, __rcondv, __work, __lwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "sggev_"]
 extern fn __c_sggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vl: *f32, __ldvl: *i32, __vr: *f32, __ldvr: *i32, __work: *f32, __lwork: *i32, __info: *i32) -> i32;
 fn sggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *f32, __lda: *i32, __b: *f32, __ldb: *i32, __alphar: *f32, __alphai: *f32, __beta: *f32, __vl: *f32, __ldvl: *i32, __vr: *f32, __ldvr: *i32, __work: *f32, __lwork: *i32, __info: *i32) -> i32 {
@@ -5652,8 +5700,16 @@ extern fn __c_zgeequb_(__m: *i32, __n: *i32, __a: *__CLPK_doublecomplex, __lda: 
 fn zgeequb_(__m: *i32, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __r__: *f64, __c__: *f64, __rowcnd: *f64, __colcnd: *f64, __amax: *f64, __info: *i32) -> i32 {
     return { __c_zgeequb_(__m, __n, __a, __lda, __r__, __c__, __rowcnd, __colcnd, __amax, __info) };
 }
-// SKIPPED `zgees_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `zgeesx_`: param 2 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "zgees_"]
+extern fn __c_zgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __sdim: *i32, __w: *__CLPK_doublecomplex, __vs: *__CLPK_doublecomplex, __ldvs: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32;
+fn zgees_(__jobvs: *i8, __sort: *i8, __select: *u8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __sdim: *i32, __w: *__CLPK_doublecomplex, __vs: *__CLPK_doublecomplex, __ldvs: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_zgees_(__jobvs, __sort, __select, __n, __a, __lda, __sdim, __w, __vs, __ldvs, __work, __lwork, __rwork, __bwork, __info) };
+}
+#[link_name = "zgeesx_"]
+extern fn __c_zgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __sdim: *i32, __w: *__CLPK_doublecomplex, __vs: *__CLPK_doublecomplex, __ldvs: *i32, __rconde: *f64, __rcondv: *f64, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32;
+fn zgeesx_(__jobvs: *i8, __sort: *i8, __select: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __sdim: *i32, __w: *__CLPK_doublecomplex, __vs: *__CLPK_doublecomplex, __ldvs: *i32, __rconde: *f64, __rcondv: *f64, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_zgeesx_(__jobvs, __sort, __select, __sense, __n, __a, __lda, __sdim, __w, __vs, __ldvs, __rconde, __rcondv, __work, __lwork, __rwork, __bwork, __info) };
+}
 #[link_name = "zgeev_"]
 extern fn __c_zgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __w: *__CLPK_doublecomplex, __vl: *__CLPK_doublecomplex, __ldvl: *i32, __vr: *__CLPK_doublecomplex, __ldvr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __info: *i32) -> i32;
 fn zgeev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __w: *__CLPK_doublecomplex, __vl: *__CLPK_doublecomplex, __ldvl: *i32, __vr: *__CLPK_doublecomplex, __ldvr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __info: *i32) -> i32 {
@@ -5824,8 +5880,16 @@ extern fn __c_zggbal_(__job: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: 
 fn zggbal_(__job: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __ilo: *i32, __ihi: *i32, __lscale: *f64, __rscale: *f64, __work: *f64, __info: *i32) -> i32 {
     return { __c_zggbal_(__job, __n, __a, __lda, __b, __ldb, __ilo, __ihi, __lscale, __rscale, __work, __info) };
 }
-// SKIPPED `zgges_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
-// SKIPPED `zggesx_`: param 3 type `__CLPK_L_fp` — unsupported type `int ( * )()`
+#[link_name = "zgges_"]
+extern fn __c_zgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vsl: *__CLPK_doublecomplex, __ldvsl: *i32, __vsr: *__CLPK_doublecomplex, __ldvsr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32;
+fn zgges_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vsl: *__CLPK_doublecomplex, __ldvsl: *i32, __vsr: *__CLPK_doublecomplex, __ldvsr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_zgges_(__jobvsl, __jobvsr, __sort, __selctg, __n, __a, __lda, __b, __ldb, __sdim, __alpha, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __work, __lwork, __rwork, __bwork, __info) };
+}
+#[link_name = "zggesx_"]
+extern fn __c_zggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vsl: *__CLPK_doublecomplex, __ldvsl: *i32, __vsr: *__CLPK_doublecomplex, __ldvsr: *i32, __rconde: *f64, __rcondv: *f64, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32;
+fn zggesx_(__jobvsl: *i8, __jobvsr: *i8, __sort: *i8, __selctg: *u8, __sense: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __sdim: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vsl: *__CLPK_doublecomplex, __ldvsl: *i32, __vsr: *__CLPK_doublecomplex, __ldvsr: *i32, __rconde: *f64, __rcondv: *f64, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __iwork: *i32, __liwork: *i32, __bwork: *i32, __info: *i32) -> i32 {
+    return { __c_zggesx_(__jobvsl, __jobvsr, __sort, __selctg, __sense, __n, __a, __lda, __b, __ldb, __sdim, __alpha, __beta, __vsl, __ldvsl, __vsr, __ldvsr, __rconde, __rcondv, __work, __lwork, __rwork, __iwork, __liwork, __bwork, __info) };
+}
 #[link_name = "zggev_"]
 extern fn __c_zggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vl: *__CLPK_doublecomplex, __ldvl: *i32, __vr: *__CLPK_doublecomplex, __ldvr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __info: *i32) -> i32;
 fn zggev_(__jobvl: *i8, __jobvr: *i8, __n: *i32, __a: *__CLPK_doublecomplex, __lda: *i32, __b: *__CLPK_doublecomplex, __ldb: *i32, __alpha: *__CLPK_doublecomplex, __beta: *__CLPK_doublecomplex, __vl: *__CLPK_doublecomplex, __ldvl: *i32, __vr: *__CLPK_doublecomplex, __ldvr: *i32, __work: *__CLPK_doublecomplex, __lwork: *i32, __rwork: *f64, __info: *i32) -> i32 {

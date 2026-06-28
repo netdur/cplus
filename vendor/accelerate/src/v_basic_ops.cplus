@@ -4,60 +4,288 @@
 // Every declaration below targets the C ABI. Calls into these from
 // C+ require `{ ... }` blocks.
 
-// SKIPPED `vU8Divide`: return type — unsupported type `__attribute__((__vector_size__(16 * sizeof(unsigned char)))) unsigned char`
-// SKIPPED `vS8Divide`: return type — unsupported type `__attribute__((__vector_size__(16 * sizeof(signed char)))) signed char`
-// SKIPPED `vU16Divide`: return type — unsupported type `__attribute__((__vector_size__(8 * sizeof(unsigned short)))) unsigned short`
-// SKIPPED `vS16Divide`: return type — unsupported type `__attribute__((__vector_size__(8 * sizeof(short)))) short`
-// SKIPPED `vU32Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS32Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU64Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS64Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU128Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS128Divide`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU8HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(16 * sizeof(unsigned char)))) unsigned char`
-// SKIPPED `vS8HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(16 * sizeof(signed char)))) signed char`
-// SKIPPED `vU32HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS32HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU32FullMulEven`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU32FullMulOdd`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS32FullMulEven`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS32FullMulOdd`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU64FullMulEven`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU64FullMulOdd`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU64HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS64HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS64FullMulEven`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS64FullMulOdd`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU128HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS128HalfMultiply`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU64SubS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU128Sub`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU128SubS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS128Sub`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS64SubS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS128SubS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU64AddS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU128Add`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vU128AddS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS64AddS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS128Add`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vS128AddS`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU64Neg`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS64Neg`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vU128Neg`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vS128Neg`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(int)))) int`
-// SKIPPED `vLL64Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vA64Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vLR64Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vLL64Shift2`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vA64Shift2`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vLR64Shift2`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vLL128Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vLR128Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vA128Shift`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vL64Rotate`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vR64Rotate`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vL64Rotate2`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vR64Rotate2`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vL128Rotate`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vR128Rotate`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
+#[link_name = "vU8Divide"]
+extern fn __c_vU8Divide(vN: u8x16, vD: u8x16, vRemainder: *u8x16) -> u8x16;
+fn vU8Divide(vN: u8x16, vD: u8x16, vRemainder: *u8x16) -> u8x16 {
+    return { __c_vU8Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vS8Divide"]
+extern fn __c_vS8Divide(vN: i8x16, vD: i8x16, vRemainder: *i8x16) -> i8x16;
+fn vS8Divide(vN: i8x16, vD: i8x16, vRemainder: *i8x16) -> i8x16 {
+    return { __c_vS8Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vU16Divide"]
+extern fn __c_vU16Divide(vN: u16x8, vD: u16x8, vRemainder: *u16x8) -> u16x8;
+fn vU16Divide(vN: u16x8, vD: u16x8, vRemainder: *u16x8) -> u16x8 {
+    return { __c_vU16Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vS16Divide"]
+extern fn __c_vS16Divide(vN: i16x8, vD: i16x8, vRemainder: *i16x8) -> i16x8;
+fn vS16Divide(vN: i16x8, vD: i16x8, vRemainder: *i16x8) -> i16x8 {
+    return { __c_vS16Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vU32Divide"]
+extern fn __c_vU32Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4;
+fn vU32Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4 {
+    return { __c_vU32Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vS32Divide"]
+extern fn __c_vS32Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4;
+fn vS32Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4 {
+    return { __c_vS32Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vU64Divide"]
+extern fn __c_vU64Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4;
+fn vU64Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4 {
+    return { __c_vU64Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vS64Divide"]
+extern fn __c_vS64Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4;
+fn vS64Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4 {
+    return { __c_vS64Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vU128Divide"]
+extern fn __c_vU128Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4;
+fn vU128Divide(vN: u32x4, vD: u32x4, vRemainder: *u32x4) -> u32x4 {
+    return { __c_vU128Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vS128Divide"]
+extern fn __c_vS128Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4;
+fn vS128Divide(vN: i32x4, vD: i32x4, vRemainder: *i32x4) -> i32x4 {
+    return { __c_vS128Divide(vN, vD, vRemainder) };
+}
+#[link_name = "vU8HalfMultiply"]
+extern fn __c_vU8HalfMultiply(vA: u8x16, vB: u8x16) -> u8x16;
+fn vU8HalfMultiply(vA: u8x16, vB: u8x16) -> u8x16 {
+    return { __c_vU8HalfMultiply(vA, vB) };
+}
+#[link_name = "vS8HalfMultiply"]
+extern fn __c_vS8HalfMultiply(vA: i8x16, vB: i8x16) -> i8x16;
+fn vS8HalfMultiply(vA: i8x16, vB: i8x16) -> i8x16 {
+    return { __c_vS8HalfMultiply(vA, vB) };
+}
+#[link_name = "vU32HalfMultiply"]
+extern fn __c_vU32HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU32HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU32HalfMultiply(vA, vB) };
+}
+#[link_name = "vS32HalfMultiply"]
+extern fn __c_vS32HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS32HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS32HalfMultiply(vA, vB) };
+}
+#[link_name = "vU32FullMulEven"]
+extern fn __c_vU32FullMulEven(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU32FullMulEven(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU32FullMulEven(vA, vB) };
+}
+#[link_name = "vU32FullMulOdd"]
+extern fn __c_vU32FullMulOdd(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU32FullMulOdd(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU32FullMulOdd(vA, vB) };
+}
+#[link_name = "vS32FullMulEven"]
+extern fn __c_vS32FullMulEven(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS32FullMulEven(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS32FullMulEven(vA, vB) };
+}
+#[link_name = "vS32FullMulOdd"]
+extern fn __c_vS32FullMulOdd(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS32FullMulOdd(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS32FullMulOdd(vA, vB) };
+}
+#[link_name = "vU64FullMulEven"]
+extern fn __c_vU64FullMulEven(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU64FullMulEven(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU64FullMulEven(vA, vB) };
+}
+#[link_name = "vU64FullMulOdd"]
+extern fn __c_vU64FullMulOdd(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU64FullMulOdd(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU64FullMulOdd(vA, vB) };
+}
+#[link_name = "vU64HalfMultiply"]
+extern fn __c_vU64HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU64HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU64HalfMultiply(vA, vB) };
+}
+#[link_name = "vS64HalfMultiply"]
+extern fn __c_vS64HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS64HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS64HalfMultiply(vA, vB) };
+}
+#[link_name = "vS64FullMulEven"]
+extern fn __c_vS64FullMulEven(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS64FullMulEven(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS64FullMulEven(vA, vB) };
+}
+#[link_name = "vS64FullMulOdd"]
+extern fn __c_vS64FullMulOdd(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS64FullMulOdd(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS64FullMulOdd(vA, vB) };
+}
+#[link_name = "vU128HalfMultiply"]
+extern fn __c_vU128HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU128HalfMultiply(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU128HalfMultiply(vA, vB) };
+}
+#[link_name = "vS128HalfMultiply"]
+extern fn __c_vS128HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS128HalfMultiply(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS128HalfMultiply(vA, vB) };
+}
+#[link_name = "vU64SubS"]
+extern fn __c_vU64SubS(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU64SubS(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU64SubS(vA, vB) };
+}
+#[link_name = "vU128Sub"]
+extern fn __c_vU128Sub(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU128Sub(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU128Sub(vA, vB) };
+}
+#[link_name = "vU128SubS"]
+extern fn __c_vU128SubS(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU128SubS(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU128SubS(vA, vB) };
+}
+#[link_name = "vS128Sub"]
+extern fn __c_vS128Sub(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS128Sub(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS128Sub(vA, vB) };
+}
+#[link_name = "vS64SubS"]
+extern fn __c_vS64SubS(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS64SubS(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS64SubS(vA, vB) };
+}
+#[link_name = "vS128SubS"]
+extern fn __c_vS128SubS(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS128SubS(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS128SubS(vA, vB) };
+}
+#[link_name = "vU64AddS"]
+extern fn __c_vU64AddS(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU64AddS(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU64AddS(vA, vB) };
+}
+#[link_name = "vU128Add"]
+extern fn __c_vU128Add(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU128Add(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU128Add(vA, vB) };
+}
+#[link_name = "vU128AddS"]
+extern fn __c_vU128AddS(vA: u32x4, vB: u32x4) -> u32x4;
+fn vU128AddS(vA: u32x4, vB: u32x4) -> u32x4 {
+    return { __c_vU128AddS(vA, vB) };
+}
+#[link_name = "vS64AddS"]
+extern fn __c_vS64AddS(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS64AddS(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS64AddS(vA, vB) };
+}
+#[link_name = "vS128Add"]
+extern fn __c_vS128Add(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS128Add(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS128Add(vA, vB) };
+}
+#[link_name = "vS128AddS"]
+extern fn __c_vS128AddS(vA: i32x4, vB: i32x4) -> i32x4;
+fn vS128AddS(vA: i32x4, vB: i32x4) -> i32x4 {
+    return { __c_vS128AddS(vA, vB) };
+}
+#[link_name = "vU64Neg"]
+extern fn __c_vU64Neg(vA: u32x4) -> u32x4;
+fn vU64Neg(vA: u32x4) -> u32x4 {
+    return { __c_vU64Neg(vA) };
+}
+#[link_name = "vS64Neg"]
+extern fn __c_vS64Neg(vA: i32x4) -> i32x4;
+fn vS64Neg(vA: i32x4) -> i32x4 {
+    return { __c_vS64Neg(vA) };
+}
+#[link_name = "vU128Neg"]
+extern fn __c_vU128Neg(vA: u32x4) -> u32x4;
+fn vU128Neg(vA: u32x4) -> u32x4 {
+    return { __c_vU128Neg(vA) };
+}
+#[link_name = "vS128Neg"]
+extern fn __c_vS128Neg(vA: i32x4) -> i32x4;
+fn vS128Neg(vA: i32x4) -> i32x4 {
+    return { __c_vS128Neg(vA) };
+}
+#[link_name = "vLL64Shift"]
+extern fn __c_vLL64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLL64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLL64Shift(vA, vShiftFactor) };
+}
+#[link_name = "vA64Shift"]
+extern fn __c_vA64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vA64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vA64Shift(vA, vShiftFactor) };
+}
+#[link_name = "vLR64Shift"]
+extern fn __c_vLR64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLR64Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLR64Shift(vA, vShiftFactor) };
+}
+#[link_name = "vLL64Shift2"]
+extern fn __c_vLL64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLL64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLL64Shift2(vA, vShiftFactor) };
+}
+#[link_name = "vA64Shift2"]
+extern fn __c_vA64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vA64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vA64Shift2(vA, vShiftFactor) };
+}
+#[link_name = "vLR64Shift2"]
+extern fn __c_vLR64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLR64Shift2(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLR64Shift2(vA, vShiftFactor) };
+}
+#[link_name = "vLL128Shift"]
+extern fn __c_vLL128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLL128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLL128Shift(vA, vShiftFactor) };
+}
+#[link_name = "vLR128Shift"]
+extern fn __c_vLR128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vLR128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vLR128Shift(vA, vShiftFactor) };
+}
+#[link_name = "vA128Shift"]
+extern fn __c_vA128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4;
+fn vA128Shift(vA: u32x4, vShiftFactor: u8x16) -> u32x4 {
+    return { __c_vA128Shift(vA, vShiftFactor) };
+}
+#[link_name = "vL64Rotate"]
+extern fn __c_vL64Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vL64Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vL64Rotate(vA, vRotateFactor) };
+}
+#[link_name = "vR64Rotate"]
+extern fn __c_vR64Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vR64Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vR64Rotate(vA, vRotateFactor) };
+}
+#[link_name = "vL64Rotate2"]
+extern fn __c_vL64Rotate2(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vL64Rotate2(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vL64Rotate2(vA, vRotateFactor) };
+}
+#[link_name = "vR64Rotate2"]
+extern fn __c_vR64Rotate2(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vR64Rotate2(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vR64Rotate2(vA, vRotateFactor) };
+}
+#[link_name = "vL128Rotate"]
+extern fn __c_vL128Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vL128Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vL128Rotate(vA, vRotateFactor) };
+}
+#[link_name = "vR128Rotate"]
+extern fn __c_vR128Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4;
+fn vR128Rotate(vA: u32x4, vRotateFactor: u8x16) -> u32x4 {
+    return { __c_vR128Rotate(vA, vRotateFactor) };
+}

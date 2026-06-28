@@ -4,50 +4,238 @@
 // Every declaration below targets the C ABI. Calls into these from
 // C+ require `{ ... }` blocks.
 
-// SKIPPED `vceilf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vfloorf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vtruncf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vnintf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vintf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vexpf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vexp2f`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vexpm1f`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vlogf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vlog2f`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vlog10f`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vlog1pf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vlogbf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vscalbf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vpowf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vipowf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsinf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vcosf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsincosf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vtanf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsinpif`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vcospif`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vtanpif`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vasinf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vacosf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vatanf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vatan2f`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsinhf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vcoshf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vtanhf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vasinhf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vacoshf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vatanhf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vrecf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsqrtf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vrsqrtf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vdivf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vfmodf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vremainderf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vremquof`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vfabsf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vcopysignf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vsignbitf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vnextafterf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vclassifyf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
-// SKIPPED `vfabf`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(float)))) float`
-// SKIPPED `vtablelookup`: return type — unsupported type `__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int`
+#[link_name = "vceilf"]
+extern fn __c_vceilf(arg0: f32x4) -> f32x4;
+fn vceilf(arg0: f32x4) -> f32x4 {
+    return { __c_vceilf(arg0) };
+}
+#[link_name = "vfloorf"]
+extern fn __c_vfloorf(arg0: f32x4) -> f32x4;
+fn vfloorf(arg0: f32x4) -> f32x4 {
+    return { __c_vfloorf(arg0) };
+}
+#[link_name = "vtruncf"]
+extern fn __c_vtruncf(arg0: f32x4) -> f32x4;
+fn vtruncf(arg0: f32x4) -> f32x4 {
+    return { __c_vtruncf(arg0) };
+}
+#[link_name = "vnintf"]
+extern fn __c_vnintf(arg0: f32x4) -> f32x4;
+fn vnintf(arg0: f32x4) -> f32x4 {
+    return { __c_vnintf(arg0) };
+}
+#[link_name = "vintf"]
+extern fn __c_vintf(arg0: f32x4) -> f32x4;
+fn vintf(arg0: f32x4) -> f32x4 {
+    return { __c_vintf(arg0) };
+}
+#[link_name = "vexpf"]
+extern fn __c_vexpf(arg0: f32x4) -> f32x4;
+fn vexpf(arg0: f32x4) -> f32x4 {
+    return { __c_vexpf(arg0) };
+}
+#[link_name = "vexp2f"]
+extern fn __c_vexp2f(arg0: f32x4) -> f32x4;
+fn vexp2f(arg0: f32x4) -> f32x4 {
+    return { __c_vexp2f(arg0) };
+}
+#[link_name = "vexpm1f"]
+extern fn __c_vexpm1f(arg0: f32x4) -> f32x4;
+fn vexpm1f(arg0: f32x4) -> f32x4 {
+    return { __c_vexpm1f(arg0) };
+}
+#[link_name = "vlogf"]
+extern fn __c_vlogf(arg0: f32x4) -> f32x4;
+fn vlogf(arg0: f32x4) -> f32x4 {
+    return { __c_vlogf(arg0) };
+}
+#[link_name = "vlog2f"]
+extern fn __c_vlog2f(arg0: f32x4) -> f32x4;
+fn vlog2f(arg0: f32x4) -> f32x4 {
+    return { __c_vlog2f(arg0) };
+}
+#[link_name = "vlog10f"]
+extern fn __c_vlog10f(arg0: f32x4) -> f32x4;
+fn vlog10f(arg0: f32x4) -> f32x4 {
+    return { __c_vlog10f(arg0) };
+}
+#[link_name = "vlog1pf"]
+extern fn __c_vlog1pf(arg0: f32x4) -> f32x4;
+fn vlog1pf(arg0: f32x4) -> f32x4 {
+    return { __c_vlog1pf(arg0) };
+}
+#[link_name = "vlogbf"]
+extern fn __c_vlogbf(arg0: f32x4) -> f32x4;
+fn vlogbf(arg0: f32x4) -> f32x4 {
+    return { __c_vlogbf(arg0) };
+}
+#[link_name = "vscalbf"]
+extern fn __c_vscalbf(arg0: f32x4, arg1: i32x4) -> f32x4;
+fn vscalbf(arg0: f32x4, arg1: i32x4) -> f32x4 {
+    return { __c_vscalbf(arg0, arg1) };
+}
+#[link_name = "vpowf"]
+extern fn __c_vpowf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vpowf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vpowf(arg0, arg1) };
+}
+#[link_name = "vipowf"]
+extern fn __c_vipowf(arg0: f32x4, arg1: i32x4) -> f32x4;
+fn vipowf(arg0: f32x4, arg1: i32x4) -> f32x4 {
+    return { __c_vipowf(arg0, arg1) };
+}
+#[link_name = "vsinf"]
+extern fn __c_vsinf(arg0: f32x4) -> f32x4;
+fn vsinf(arg0: f32x4) -> f32x4 {
+    return { __c_vsinf(arg0) };
+}
+#[link_name = "vcosf"]
+extern fn __c_vcosf(arg0: f32x4) -> f32x4;
+fn vcosf(arg0: f32x4) -> f32x4 {
+    return { __c_vcosf(arg0) };
+}
+#[link_name = "vsincosf"]
+extern fn __c_vsincosf(arg0: f32x4, arg1: *f32x4) -> f32x4;
+fn vsincosf(arg0: f32x4, arg1: *f32x4) -> f32x4 {
+    return { __c_vsincosf(arg0, arg1) };
+}
+#[link_name = "vtanf"]
+extern fn __c_vtanf(arg0: f32x4) -> f32x4;
+fn vtanf(arg0: f32x4) -> f32x4 {
+    return { __c_vtanf(arg0) };
+}
+#[link_name = "vsinpif"]
+extern fn __c_vsinpif(arg0: f32x4) -> f32x4;
+fn vsinpif(arg0: f32x4) -> f32x4 {
+    return { __c_vsinpif(arg0) };
+}
+#[link_name = "vcospif"]
+extern fn __c_vcospif(arg0: f32x4) -> f32x4;
+fn vcospif(arg0: f32x4) -> f32x4 {
+    return { __c_vcospif(arg0) };
+}
+#[link_name = "vtanpif"]
+extern fn __c_vtanpif(arg0: f32x4) -> f32x4;
+fn vtanpif(arg0: f32x4) -> f32x4 {
+    return { __c_vtanpif(arg0) };
+}
+#[link_name = "vasinf"]
+extern fn __c_vasinf(arg0: f32x4) -> f32x4;
+fn vasinf(arg0: f32x4) -> f32x4 {
+    return { __c_vasinf(arg0) };
+}
+#[link_name = "vacosf"]
+extern fn __c_vacosf(arg0: f32x4) -> f32x4;
+fn vacosf(arg0: f32x4) -> f32x4 {
+    return { __c_vacosf(arg0) };
+}
+#[link_name = "vatanf"]
+extern fn __c_vatanf(arg0: f32x4) -> f32x4;
+fn vatanf(arg0: f32x4) -> f32x4 {
+    return { __c_vatanf(arg0) };
+}
+#[link_name = "vatan2f"]
+extern fn __c_vatan2f(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vatan2f(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vatan2f(arg0, arg1) };
+}
+#[link_name = "vsinhf"]
+extern fn __c_vsinhf(arg0: f32x4) -> f32x4;
+fn vsinhf(arg0: f32x4) -> f32x4 {
+    return { __c_vsinhf(arg0) };
+}
+#[link_name = "vcoshf"]
+extern fn __c_vcoshf(arg0: f32x4) -> f32x4;
+fn vcoshf(arg0: f32x4) -> f32x4 {
+    return { __c_vcoshf(arg0) };
+}
+#[link_name = "vtanhf"]
+extern fn __c_vtanhf(arg0: f32x4) -> f32x4;
+fn vtanhf(arg0: f32x4) -> f32x4 {
+    return { __c_vtanhf(arg0) };
+}
+#[link_name = "vasinhf"]
+extern fn __c_vasinhf(arg0: f32x4) -> f32x4;
+fn vasinhf(arg0: f32x4) -> f32x4 {
+    return { __c_vasinhf(arg0) };
+}
+#[link_name = "vacoshf"]
+extern fn __c_vacoshf(arg0: f32x4) -> f32x4;
+fn vacoshf(arg0: f32x4) -> f32x4 {
+    return { __c_vacoshf(arg0) };
+}
+#[link_name = "vatanhf"]
+extern fn __c_vatanhf(arg0: f32x4) -> f32x4;
+fn vatanhf(arg0: f32x4) -> f32x4 {
+    return { __c_vatanhf(arg0) };
+}
+#[link_name = "vrecf"]
+extern fn __c_vrecf(arg0: f32x4) -> f32x4;
+fn vrecf(arg0: f32x4) -> f32x4 {
+    return { __c_vrecf(arg0) };
+}
+#[link_name = "vsqrtf"]
+extern fn __c_vsqrtf(arg0: f32x4) -> f32x4;
+fn vsqrtf(arg0: f32x4) -> f32x4 {
+    return { __c_vsqrtf(arg0) };
+}
+#[link_name = "vrsqrtf"]
+extern fn __c_vrsqrtf(arg0: f32x4) -> f32x4;
+fn vrsqrtf(arg0: f32x4) -> f32x4 {
+    return { __c_vrsqrtf(arg0) };
+}
+#[link_name = "vdivf"]
+extern fn __c_vdivf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vdivf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vdivf(arg0, arg1) };
+}
+#[link_name = "vfmodf"]
+extern fn __c_vfmodf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vfmodf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vfmodf(arg0, arg1) };
+}
+#[link_name = "vremainderf"]
+extern fn __c_vremainderf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vremainderf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vremainderf(arg0, arg1) };
+}
+#[link_name = "vremquof"]
+extern fn __c_vremquof(arg0: f32x4, arg1: f32x4, arg2: *u32x4) -> f32x4;
+fn vremquof(arg0: f32x4, arg1: f32x4, arg2: *u32x4) -> f32x4 {
+    return { __c_vremquof(arg0, arg1, arg2) };
+}
+#[link_name = "vfabsf"]
+extern fn __c_vfabsf(arg0: f32x4) -> f32x4;
+fn vfabsf(arg0: f32x4) -> f32x4 {
+    return { __c_vfabsf(arg0) };
+}
+#[link_name = "vcopysignf"]
+extern fn __c_vcopysignf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vcopysignf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vcopysignf(arg0, arg1) };
+}
+#[link_name = "vsignbitf"]
+extern fn __c_vsignbitf(arg0: f32x4) -> u32x4;
+fn vsignbitf(arg0: f32x4) -> u32x4 {
+    return { __c_vsignbitf(arg0) };
+}
+#[link_name = "vnextafterf"]
+extern fn __c_vnextafterf(arg0: f32x4, arg1: f32x4) -> f32x4;
+fn vnextafterf(arg0: f32x4, arg1: f32x4) -> f32x4 {
+    return { __c_vnextafterf(arg0, arg1) };
+}
+#[link_name = "vclassifyf"]
+extern fn __c_vclassifyf(arg0: f32x4) -> u32x4;
+fn vclassifyf(arg0: f32x4) -> u32x4 {
+    return { __c_vclassifyf(arg0) };
+}
+#[link_name = "vfabf"]
+extern fn __c_vfabf(arg0: f32x4) -> f32x4;
+fn vfabf(arg0: f32x4) -> f32x4 {
+    return { __c_vfabf(arg0) };
+}
+#[link_name = "vtablelookup"]
+extern fn __c_vtablelookup(arg0: i32x4, arg1: *u32) -> u32x4;
+fn vtablelookup(arg0: i32x4, arg1: *u32) -> u32x4 {
+    return { __c_vtablelookup(arg0, arg1) };
+}

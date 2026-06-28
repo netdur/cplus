@@ -4,7 +4,7 @@
 # sdk       = "26.5"
 # generator = "cpc-bindgen 0.0.25"
 # headers   = 28
-# reproduce = "cpc-bindgen --framework Accelerate"
+# reproduce = "cpc-bindgen --framework Accelerate --overrides overrides.json"
 
 [package]
 name    = "accelerate"

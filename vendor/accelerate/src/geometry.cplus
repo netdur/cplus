@@ -751,8 +751,16 @@ fn vImageDestroyResamplingFilter(filter: *u8) {
     { __c_vImageDestroyResamplingFilter(filter); }
     return;
 }
-// SKIPPED `vImageNewResamplingFilterForFunctionUsingBuffer`: param 2 type `void (*)(const float *, float *, unsigned long, void *)` — unsupported type `void ( * )(const float * , float * , unsigned long, void * )`
-// SKIPPED `vImageGetResamplingFilterSize`: param 1 type `void (*)(const float *, float *, unsigned long, void *)` — unsupported type `void ( * )(const float * , float * , unsigned long, void * )`
+#[link_name = "vImageNewResamplingFilterForFunctionUsingBuffer"]
+extern fn __c_vImageNewResamplingFilterForFunctionUsingBuffer(filter: *u8, scale: f32, kernelFunc: *u8, kernelWidth: f32, userData: *u8, flags: u32) -> i64;
+fn vImageNewResamplingFilterForFunctionUsingBuffer(filter: *u8, scale: f32, kernelFunc: *u8, kernelWidth: f32, userData: *u8, flags: u32) -> i64 {
+    return { __c_vImageNewResamplingFilterForFunctionUsingBuffer(filter, scale, kernelFunc, kernelWidth, userData, flags) };
+}
+#[link_name = "vImageGetResamplingFilterSize"]
+extern fn __c_vImageGetResamplingFilterSize(scale: f32, kernelFunc: *u8, kernelWidth: f32, flags: u32) -> u64;
+fn vImageGetResamplingFilterSize(scale: f32, kernelFunc: *u8, kernelWidth: f32, flags: u32) -> u64 {
+    return { __c_vImageGetResamplingFilterSize(scale, kernelFunc, kernelWidth, flags) };
+}
 #[link_name = "vImageGetResamplingFilterExtent"]
 extern fn __c_vImageGetResamplingFilterExtent(filter: *u8, flags: u32) -> u64;
 fn vImageGetResamplingFilterExtent(filter: *u8, flags: u32) -> u64 {

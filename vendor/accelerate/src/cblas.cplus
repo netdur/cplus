@@ -944,4 +944,9 @@ fn appleblas_dgeadd(__order: i32, __transA: i32, __transB: i32, __m: i32, __n: i
     { __c_appleblas_dgeadd(__order, __transA, __transB, __m, __n, __alpha, __A, __lda, __beta, __B, __ldb, __C, __ldc); }
     return;
 }
-// SKIPPED `SetBLASParamErrorProc`: param 0 type `BLASParamErrorProc` — unsupported type `void ( * )(const char * , char * , int * , int * )`
+#[link_name = "SetBLASParamErrorProc"]
+extern fn __c_SetBLASParamErrorProc(__ErrorProc: *u8);
+fn SetBLASParamErrorProc(__ErrorProc: *u8) {
+    { __c_SetBLASParamErrorProc(__ErrorProc); }
+    return;
+}
