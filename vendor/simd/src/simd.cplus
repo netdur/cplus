@@ -11,3 +11,4 @@ import "./vec3" as vec3;
 import "./vec4" as vec4;
 import "./mat4x4" as mat4x4;
 import "./integer" as integer;
+import "./lanes" as lanes;

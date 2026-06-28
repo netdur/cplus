@@ -1,0 +1,309 @@
+// simd/lanes.cplus — integer / unsigned SIMD *lane* vectors.
+//
+// The geometry modules (vec3/vec4/mat4x4) wrap `f32x4` as a 3D-math type
+// (x/y/z/w, dot, length, normalize). These are a different thing: a
+// fixed-width vector of N independent integer lanes for SIMD compute —
+// the shape Accelerate's vDSP/vImage kernels return. Each type is a thin,
+// safe newtype over the v0.0.7 SIMD built-in (`i32x4`, `u8x16`, …), so an
+// FFI return value flows in via `from_raw`, is read/operated on through a
+// guideline-shaped API, and flows back out via `raw`.
+//
+// Naming-guideline notes (naming_guideline.md):
+//   - the raw lane vector is hidden behind `_v`; `raw()` reads it,
+//     `from_raw(_)` builds from one (the FFI interop seam).
+//   - `lane(at:)` returns `Option` — an out-of-range index is absence,
+//     not a trap. `to_array()` extracts every lane at once.
+//   - arithmetic reads as a phrase: `a.add(b)`, `a.min(b)`.
+
+import "stdlib/option" as option;
+
+// ── Int32x4 — 4 lanes of i32 ────────────────────────────────────────
+struct Int32x4 {
+    _v: i32x4,
+}
+
+impl Int32x4 {
+    fn splat(value: i32) -> Int32x4 { return Int32x4 { _v: i32x4::splat(value) }; }
+    fn new(a: i32, b: i32, c: i32, d: i32) -> Int32x4 {
+        return Int32x4 { _v: i32x4::new(a, b, c, d) };
+    }
+    fn from_raw(v: i32x4) -> Int32x4 { return Int32x4 { _v: v }; }
+    fn raw(this) -> i32x4 { return this._v; }
+    fn count() -> usize { return 4 as usize; }
+
+    fn to_array(this) -> [i32; 4] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[i32] {
+        if at >= (4 as u32) { return option::Option[i32]::None; }
+        let a: [i32; 4] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: Int32x4) -> Int32x4 { return Int32x4 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: Int32x4) -> Int32x4 { return Int32x4 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: Int32x4) -> Int32x4 { return Int32x4 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: Int32x4) -> Int32x4 { return Int32x4 { _v: this._v.min(o._v) }; }
+    fn max(this, o: Int32x4) -> Int32x4 { return Int32x4 { _v: this._v.max(o._v) }; }
+    fn sum(this) -> i32 { return this._v.sum(); }
+}
+
+// ── UInt32x4 — 4 lanes of u32 ───────────────────────────────────────
+struct UInt32x4 {
+    _v: u32x4,
+}
+
+impl UInt32x4 {
+    fn splat(value: u32) -> UInt32x4 { return UInt32x4 { _v: u32x4::splat(value) }; }
+    fn new(a: u32, b: u32, c: u32, d: u32) -> UInt32x4 {
+        return UInt32x4 { _v: u32x4::new(a, b, c, d) };
+    }
+    fn from_raw(v: u32x4) -> UInt32x4 { return UInt32x4 { _v: v }; }
+    fn raw(this) -> u32x4 { return this._v; }
+    fn count() -> usize { return 4 as usize; }
+
+    fn to_array(this) -> [u32; 4] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[u32] {
+        if at >= (4 as u32) { return option::Option[u32]::None; }
+        let a: [u32; 4] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: UInt32x4) -> UInt32x4 { return UInt32x4 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: UInt32x4) -> UInt32x4 { return UInt32x4 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: UInt32x4) -> UInt32x4 { return UInt32x4 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: UInt32x4) -> UInt32x4 { return UInt32x4 { _v: this._v.min(o._v) }; }
+    fn max(this, o: UInt32x4) -> UInt32x4 { return UInt32x4 { _v: this._v.max(o._v) }; }
+    fn sum(this) -> u32 { return this._v.sum(); }
+}
+
+// ── Int16x8 — 8 lanes of i16 ────────────────────────────────────────
+struct Int16x8 {
+    _v: i16x8,
+}
+
+impl Int16x8 {
+    fn splat(value: i16) -> Int16x8 { return Int16x8 { _v: i16x8::splat(value) }; }
+    fn from_raw(v: i16x8) -> Int16x8 { return Int16x8 { _v: v }; }
+    fn raw(this) -> i16x8 { return this._v; }
+    fn count() -> usize { return 8 as usize; }
+
+    fn to_array(this) -> [i16; 8] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32),
+                this._v.lane(4 as u32), this._v.lane(5 as u32),
+                this._v.lane(6 as u32), this._v.lane(7 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[i16] {
+        if at >= (8 as u32) { return option::Option[i16]::None; }
+        let a: [i16; 8] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: Int16x8) -> Int16x8 { return Int16x8 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: Int16x8) -> Int16x8 { return Int16x8 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: Int16x8) -> Int16x8 { return Int16x8 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: Int16x8) -> Int16x8 { return Int16x8 { _v: this._v.min(o._v) }; }
+    fn max(this, o: Int16x8) -> Int16x8 { return Int16x8 { _v: this._v.max(o._v) }; }
+}
+
+// ── UInt16x8 — 8 lanes of u16 ───────────────────────────────────────
+struct UInt16x8 {
+    _v: u16x8,
+}
+
+impl UInt16x8 {
+    fn splat(value: u16) -> UInt16x8 { return UInt16x8 { _v: u16x8::splat(value) }; }
+    fn from_raw(v: u16x8) -> UInt16x8 { return UInt16x8 { _v: v }; }
+    fn raw(this) -> u16x8 { return this._v; }
+    fn count() -> usize { return 8 as usize; }
+
+    fn to_array(this) -> [u16; 8] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32),
+                this._v.lane(4 as u32), this._v.lane(5 as u32),
+                this._v.lane(6 as u32), this._v.lane(7 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[u16] {
+        if at >= (8 as u32) { return option::Option[u16]::None; }
+        let a: [u16; 8] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: UInt16x8) -> UInt16x8 { return UInt16x8 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: UInt16x8) -> UInt16x8 { return UInt16x8 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: UInt16x8) -> UInt16x8 { return UInt16x8 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: UInt16x8) -> UInt16x8 { return UInt16x8 { _v: this._v.min(o._v) }; }
+    fn max(this, o: UInt16x8) -> UInt16x8 { return UInt16x8 { _v: this._v.max(o._v) }; }
+}
+
+// ── Int8x16 — 16 lanes of i8 ────────────────────────────────────────
+struct Int8x16 {
+    _v: i8x16,
+}
+
+impl Int8x16 {
+    fn splat(value: i8) -> Int8x16 { return Int8x16 { _v: i8x16::splat(value) }; }
+    fn from_raw(v: i8x16) -> Int8x16 { return Int8x16 { _v: v }; }
+    fn raw(this) -> i8x16 { return this._v; }
+    fn count() -> usize { return 16 as usize; }
+
+    fn to_array(this) -> [i8; 16] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32),
+                this._v.lane(4 as u32), this._v.lane(5 as u32),
+                this._v.lane(6 as u32), this._v.lane(7 as u32),
+                this._v.lane(8 as u32), this._v.lane(9 as u32),
+                this._v.lane(10 as u32), this._v.lane(11 as u32),
+                this._v.lane(12 as u32), this._v.lane(13 as u32),
+                this._v.lane(14 as u32), this._v.lane(15 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[i8] {
+        if at >= (16 as u32) { return option::Option[i8]::None; }
+        let a: [i8; 16] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: Int8x16) -> Int8x16 { return Int8x16 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: Int8x16) -> Int8x16 { return Int8x16 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: Int8x16) -> Int8x16 { return Int8x16 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: Int8x16) -> Int8x16 { return Int8x16 { _v: this._v.min(o._v) }; }
+    fn max(this, o: Int8x16) -> Int8x16 { return Int8x16 { _v: this._v.max(o._v) }; }
+}
+
+// ── UInt8x16 — 16 lanes of u8 ───────────────────────────────────────
+struct UInt8x16 {
+    _v: u8x16,
+}
+
+impl UInt8x16 {
+    fn splat(value: u8) -> UInt8x16 { return UInt8x16 { _v: u8x16::splat(value) }; }
+    fn from_raw(v: u8x16) -> UInt8x16 { return UInt8x16 { _v: v }; }
+    fn raw(this) -> u8x16 { return this._v; }
+    fn count() -> usize { return 16 as usize; }
+
+    fn to_array(this) -> [u8; 16] {
+        return [this._v.lane(0 as u32), this._v.lane(1 as u32),
+                this._v.lane(2 as u32), this._v.lane(3 as u32),
+                this._v.lane(4 as u32), this._v.lane(5 as u32),
+                this._v.lane(6 as u32), this._v.lane(7 as u32),
+                this._v.lane(8 as u32), this._v.lane(9 as u32),
+                this._v.lane(10 as u32), this._v.lane(11 as u32),
+                this._v.lane(12 as u32), this._v.lane(13 as u32),
+                this._v.lane(14 as u32), this._v.lane(15 as u32)];
+    }
+    fn lane(this, at: u32) -> option::Option[u8] {
+        if at >= (16 as u32) { return option::Option[u8]::None; }
+        let a: [u8; 16] = this.to_array();
+        return option::some(a[at as usize]);
+    }
+
+    fn add(this, o: UInt8x16) -> UInt8x16 { return UInt8x16 { _v: this._v.add(o._v) }; }
+    fn sub(this, o: UInt8x16) -> UInt8x16 { return UInt8x16 { _v: this._v.sub(o._v) }; }
+    fn mul(this, o: UInt8x16) -> UInt8x16 { return UInt8x16 { _v: this._v.mul(o._v) }; }
+    fn min(this, o: UInt8x16) -> UInt8x16 { return UInt8x16 { _v: this._v.min(o._v) }; }
+    fn max(this, o: UInt8x16) -> UInt8x16 { return UInt8x16 { _v: this._v.max(o._v) }; }
+}
+
+// ──────────────── in-package tests (cpc test) ──────────────────────
+// `Option` is a bare enum (no `==`/`unwrap`): assert lane *values* through
+// `to_array()` (plain scalars), and `lane(at:)`'s Option behaviour via `match`.
+
+#[test]
+fn test_int32x4_construct_and_lanes() {
+    let v: Int32x4 = Int32x4::new(10, 20, 30, 40);
+    let a: [i32; 4] = v.to_array();
+    assert a[0 as usize] == 10;
+    assert a[3 as usize] == 40;
+    assert Int32x4::count() == (4 as usize);
+}
+
+#[test]
+fn test_int32x4_lane_in_range_is_some() {
+    let v: Int32x4 = Int32x4::new(10, 20, 30, 40);
+    match v.lane(at: 2 as u32) {
+        option::Option[i32]::Some(x) => { assert x == 30; }
+        option::Option[i32]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn test_int32x4_lane_out_of_range_is_none() {
+    let v: Int32x4 = Int32x4::splat(7);
+    var none: bool = false;
+    match v.lane(at: 4 as u32) {
+        option::Option[i32]::Some(x) => { none = false; }
+        option::Option[i32]::None => { none = true; }
+    }
+    assert none;
+}
+
+#[test]
+fn test_int32x4_arithmetic_and_sum() {
+    let a: Int32x4 = Int32x4::new(1, 2, 3, 4);
+    let b: Int32x4 = Int32x4::splat(10);
+    assert a.add(b).to_array()[0 as usize] == 11;
+    assert a.mul(b).sum() == 100;             // 10+20+30+40
+    assert a.sub(b).to_array()[1 as usize] == (0 - 8);
+}
+
+#[test]
+fn test_int32x4_min_max() {
+    let a: Int32x4 = Int32x4::new(1, 9, 3, 7);
+    let b: Int32x4 = Int32x4::splat(5);
+    assert a.min(b).to_array()[1 as usize] == 5;   // min(9,5)
+    assert a.max(b).to_array()[0 as usize] == 5;   // max(1,5)
+}
+
+#[test]
+fn test_int32x4_raw_roundtrip() {
+    let r: i32x4 = i32x4::new(2, 4, 6, 8);
+    let v: Int32x4 = Int32x4::from_raw(r);
+    assert v.raw().lane(0 as u32) == 2;
+    assert v.to_array()[3 as usize] == 8;
+}
+
+#[test]
+fn test_uint32x4_basics() {
+    let a: UInt32x4 = UInt32x4::new(1 as u32, 2 as u32, 3 as u32, 4 as u32);
+    let b: UInt32x4 = UInt32x4::splat(2 as u32);
+    assert a.mul(b).sum() == (20 as u32);
+    assert a.to_array()[3 as usize] == (4 as u32);
+}
+
+#[test]
+fn test_int16x8_lanes_and_arith() {
+    let a: Int16x8 = Int16x8::splat(3i16);
+    let b: Int16x8 = Int16x8::splat(4i16);
+    assert a.mul(b).to_array()[0 as usize] == 12i16;
+    assert a.add(b).to_array()[7 as usize] == 7i16;
+    assert Int16x8::count() == (8 as usize);
+}
+
+#[test]
+fn test_uint16x8_lanes() {
+    let a: UInt16x8 = UInt16x8::splat(5 as u16);
+    assert a.to_array()[7 as usize] == (5 as u16);
+    assert a.min(UInt16x8::splat(2 as u16)).to_array()[0 as usize] == (2 as u16);
+}
+
+#[test]
+fn test_int8x16_lanes() {
+    let a: Int8x16 = Int8x16::splat(2i8);
+    let b: Int8x16 = Int8x16::splat(3i8);
+    assert a.add(b).to_array()[15 as usize] == 5i8;
+    assert Int8x16::count() == (16 as usize);
+}
+
+#[test]
+fn test_uint8x16_lanes_and_raw() {
+    let a: UInt8x16 = UInt8x16::splat(9 as u8);
+    assert a.to_array()[0 as usize] == (9 as u8);
+    let back: UInt8x16 = UInt8x16::from_raw(a.raw());
+    assert back.to_array()[15 as usize] == (9 as u8);
+}
