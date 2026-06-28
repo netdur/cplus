@@ -53,6 +53,8 @@ struct ScrubberLayoutAttributes {
 impl ScrubberLayoutAttributes {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberLayoutAttributes { return ScrubberLayoutAttributes { _obj: ptr }; }
+
 }
 
 // `NSTextField` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -62,6 +64,8 @@ struct TextField {
 
 impl TextField {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextField { return TextField { _obj: ptr }; }
 
 }
 
@@ -73,6 +77,8 @@ struct ImageView {
 impl ImageView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ImageView { return ImageView { _obj: ptr }; }
+
 }
 
 // `NSScrubberArrangedView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -83,8 +89,10 @@ struct ScrubberArrangedView {
 impl ScrubberArrangedView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn apply_layout_attributes(this, layout_attributes: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("applyLayoutAttributes:\0")), layout_attributes);
+    fn from_raw(ptr: *u8) -> ScrubberArrangedView { return ScrubberArrangedView { _obj: ptr }; }
+
+    fn apply_layout_attributes(this, layout_attributes: ScrubberLayoutAttributes) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("applyLayoutAttributes:\0")), layout_attributes.raw());
     }
 
     fn is_selected(this) -> bool {
@@ -113,6 +121,8 @@ struct ScrubberSelectionView {
 impl ScrubberSelectionView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberSelectionView { return ScrubberSelectionView { _obj: ptr }; }
+
 }
 
 // `NSScrubberItemView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -122,6 +132,8 @@ struct ScrubberItemView {
 
 impl ScrubberItemView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ScrubberItemView { return ScrubberItemView { _obj: ptr }; }
 
 }
 
@@ -133,8 +145,10 @@ struct ScrubberTextItemView {
 impl ScrubberTextItemView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn text_field(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textField\0")));
+    fn from_raw(ptr: *u8) -> ScrubberTextItemView { return ScrubberTextItemView { _obj: ptr }; }
+
+    fn text_field(this) -> TextField {
+        return TextField::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textField\0"))));
     }
 
     fn title(this) -> text::Text {
@@ -156,8 +170,10 @@ struct ScrubberImageItemView {
 impl ScrubberImageItemView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn image_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0")));
+    fn from_raw(ptr: *u8) -> ScrubberImageItemView { return ScrubberImageItemView { _obj: ptr }; }
+
+    fn image_view(this) -> ImageView {
+        return ImageView::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0"))));
     }
 
     fn image(this) -> *u8 {

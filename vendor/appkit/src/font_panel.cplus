@@ -5,7 +5,19 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
+
+// `NSFontPanelModeMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const font_panel_mode_mask_face: u64 = 1 as u64;
+const font_panel_mode_mask_size: u64 = 2 as u64;
+const font_panel_mode_mask_collection: u64 = 4 as u64;
+const font_panel_mode_mask_underline_effect: u64 = 256 as u64;
+const font_panel_mode_mask_strikethrough_effect: u64 = 512 as u64;
+const font_panel_mode_mask_text_color_effect: u64 = 1024 as u64;
+const font_panel_mode_mask_document_color_effect: u64 = 2048 as u64;
+const font_panel_mode_mask_shadow_effect: u64 = 4096 as u64;
+const font_panel_mode_mask_all_effects: u64 = 1048320 as u64;
+const font_panel_mode_mask_n_s_font_panel_modes_mask_standard_modes: u64 = 65535 as u64;
+const font_panel_mode_mask_n_s_font_panel_modes_mask_all_modes: u64 = 4294967295 as u64;
 
 // `NSFontPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FontPanel {
@@ -15,9 +27,11 @@ struct FontPanel {
 impl FontPanel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FontPanel { return FontPanel { _obj: ptr }; }
+
     // SKIPPED `setPanelFont:isMultiple:`: (return, arg) shape not yet modelled
-    fn panel_convert_font(this, font_obj: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("panelConvertFont:\0")), font_obj);
+    fn panel_convert_font(this, font_obj: Font) -> Font {
+        return Font::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("panelConvertFont:\0")), font_obj.raw()));
     }
 
     fn reload_default_font_families(this) {
@@ -67,6 +81,8 @@ struct MutableDictionary {
 impl MutableDictionary {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableDictionary { return MutableDictionary { _obj: ptr }; }
+
 }
 
 // `NSFontManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -76,6 +92,8 @@ struct FontManager {
 
 impl FontManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontManager { return FontManager { _obj: ptr }; }
 
 }
 
@@ -87,6 +105,8 @@ struct MutableArray {
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
+
 }
 
 // `NSTableView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -96,6 +116,8 @@ struct TableView {
 
 impl TableView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableView { return TableView { _obj: ptr }; }
 
 }
 
@@ -107,6 +129,8 @@ struct FontDescriptor {
 impl FontDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FontDescriptor { return FontDescriptor { _obj: ptr }; }
+
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -117,61 +141,24 @@ struct Font {
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
+
 }
 
-// `NSFontChanging` delegate protocol -> runtime class-synthesis helper.
-fn FontChanging_noop_u64_1(user: *u8, a0: *u8) -> u64 { return 0 as u64; }
-fn FontChanging_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSFontChanging` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct FontChanging {
-    change_font: fn(*u8, *u8),
-    valid_modes_for_font_panel: fn(*u8, *u8) -> u64,
-    opaque user: *u8,
-}
-
-fn FontChanging_new(user: *u8) -> FontChanging {
-    return FontChanging { change_font: FontChanging_noop_v_1, valid_modes_for_font_panel: FontChanging_noop_u64_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl FontChanging {
-    fn set_change_font(ref this, handler: fn(*u8, *u8)) {
-        this.change_font = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontChanging { return FontChanging { _obj: ptr }; }
+
+    fn change_font(this, sender: FontManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeFont:\0")), sender.raw());
     }
-    fn set_valid_modes_for_font_panel(ref this, handler: fn(*u8, *u8) -> u64) {
-        this.valid_modes_for_font_panel = handler;
-        return;
-    }
-}
 
-fn FontChanging_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn FontChanging_change_font_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *FontChanging = { synth::get_associated(self_obj, FontChanging_key()) as *FontChanging };
-    let f: fn(*u8, *u8) = { (*c).change_font };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn FontChanging_valid_modes_for_font_panel_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> u64 {
-    let c: *FontChanging = { synth::get_associated(self_obj, FontChanging_key()) as *FontChanging };
-    let f: fn(*u8, *u8) -> u64 = { (*c).valid_modes_for_font_panel };
-    let u: *u8 = { (*c).user };
-    return f(u, a0);
-}
-
-fn create_FontChanging(ctx: *FontChanging) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_FontChanging\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_change_font: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("changeFont:\0")), FontChanging_change_font_imp, #str_ptr("v@:@\0"));
-        let add_valid_modes_for_font_panel: i8 = synth::add_method_u64_1id(cls, rt::sel(#str_ptr("validModesForFontPanel:\0")), FontChanging_valid_modes_for_font_panel_imp, #str_ptr("Q@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, FontChanging_key(), { ctx as *u8 });
-    return d;
+    // SKIPPED `validModesForFontPanel:`: (return, arg) shape not yet modelled
 }
 

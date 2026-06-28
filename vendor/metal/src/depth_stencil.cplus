@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLCompareFunction` (NS_ENUM)
 enum CompareFunction {
@@ -109,10 +108,22 @@ impl StencilDescriptor {
     }
 
     // SKIPPED `setDepthStencilPassOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `readMask`: return `uint32_t` — unmapped type `uint32_t`
-    // SKIPPED `setReadMask:`: param `uint32_t` — unmapped type `uint32_t`
-    // SKIPPED `writeMask`: return `uint32_t` — unmapped type `uint32_t`
-    // SKIPPED `setWriteMask:`: param `uint32_t` — unmapped type `uint32_t`
+    fn read_mask(this) -> u32 {
+        return rt::msg_u32(this._obj, rt::sel(#str_ptr("readMask\0")));
+    }
+
+    fn set_read_mask(this, read_mask: u32) {
+        rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setReadMask:\0")), read_mask);
+    }
+
+    fn write_mask(this) -> u32 {
+        return rt::msg_u32(this._obj, rt::sel(#str_ptr("writeMask\0")));
+    }
+
+    fn set_write_mask(this, write_mask: u32) {
+        rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setWriteMask:\0")), write_mask);
+    }
+
 }
 
 // `MTLDepthStencilDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -138,20 +149,20 @@ impl DepthStencilDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setDepthWriteEnabled:\0")), depth_write_enabled as i8);
     }
 
-    fn front_face_stencil(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("frontFaceStencil\0")));
+    fn front_face_stencil(this) -> StencilDescriptor {
+        return StencilDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("frontFaceStencil\0"))));
     }
 
-    fn set_front_face_stencil(this, front_face_stencil: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFrontFaceStencil:\0")), front_face_stencil);
+    fn set_front_face_stencil(this, front_face_stencil: StencilDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFrontFaceStencil:\0")), front_face_stencil.raw());
     }
 
-    fn back_face_stencil(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backFaceStencil\0")));
+    fn back_face_stencil(this) -> StencilDescriptor {
+        return StencilDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backFaceStencil\0"))));
     }
 
-    fn set_back_face_stencil(this, back_face_stencil: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackFaceStencil:\0")), back_face_stencil);
+    fn set_back_face_stencil(this, back_face_stencil: StencilDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackFaceStencil:\0")), back_face_stencil.raw());
     }
 
     fn label(this) -> option::Option[text::Text] {
@@ -165,46 +176,28 @@ impl DepthStencilDescriptor {
 
 }
 
-// `MTLDepthStencilState` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-// SKIPPED `gpuResourceID`: return `MTLResourceID` not modelled
-fn DepthStencilState_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `MTLDepthStencilState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct DepthStencilState {
-    label: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn DepthStencilState_new(user: *u8) -> DepthStencilState {
-    return DepthStencilState { label: DepthStencilState_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl DepthStencilState {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DepthStencilState { return DepthStencilState { _obj: ptr }; }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
     }
-}
 
-fn DepthStencilState_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn DepthStencilState_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *DepthStencilState = { synth::get_associated(self_obj, DepthStencilState_key()) as *DepthStencilState };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_DepthStencilState(ctx: *DepthStencilState) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_DepthStencilState\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), DepthStencilState_label_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, DepthStencilState_key(), { ctx as *u8 });
-    return d;
+
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
+
 }
 

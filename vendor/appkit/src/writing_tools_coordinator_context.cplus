@@ -14,6 +14,8 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
 }
 
 // `NSUUID` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct UUID {
 
 impl UUID {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UUID { return UUID { _obj: ptr }; }
 
 }
 
@@ -34,18 +38,20 @@ struct WritingToolsCoordinatorContext {
 impl WritingToolsCoordinatorContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> WritingToolsCoordinatorContext { return WritingToolsCoordinatorContext { _obj: ptr }; }
+
     // SKIPPED `initWithAttributedString:range:`: init arg shape not yet modelled
     // SKIPPED `init`: extra init variant (one `new` per type)
-    fn attributed_string(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
+    fn attributed_string(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }
 
     fn range(this) -> rt::Range {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("range\0")));
     }
 
-    fn identifier(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
+    fn identifier(this) -> UUID {
+        return UUID::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0"))));
     }
 
     fn resolved_range(this) -> rt::Range {

@@ -222,44 +222,16 @@ fn image_scaling_from_raw(raw: i64) -> ImageScaling {
     return ImageScaling::NSImageScaleProportionallyDown;
 }
 
-// `NSEventModifierFlags` (NS_ENUM)
-enum EventModifierFlags {
-    NSEventModifierFlagCapsLock,
-    NSEventModifierFlagShift,
-    NSEventModifierFlagControl,
-    NSEventModifierFlagOption,
-    NSEventModifierFlagCommand,
-    NSEventModifierFlagNumericPad,
-    NSEventModifierFlagHelp,
-    NSEventModifierFlagFunction,
-    NSEventModifierFlagDeviceIndependentFlagsMask,
-}
-
-fn event_modifier_flags_raw(v: EventModifierFlags) -> i64 {
-    return match v {
-        EventModifierFlags::NSEventModifierFlagCapsLock => { 65536 as i64 },
-        EventModifierFlags::NSEventModifierFlagShift => { 131072 as i64 },
-        EventModifierFlags::NSEventModifierFlagControl => { 262144 as i64 },
-        EventModifierFlags::NSEventModifierFlagOption => { 524288 as i64 },
-        EventModifierFlags::NSEventModifierFlagCommand => { 1048576 as i64 },
-        EventModifierFlags::NSEventModifierFlagNumericPad => { 2097152 as i64 },
-        EventModifierFlags::NSEventModifierFlagHelp => { 4194304 as i64 },
-        EventModifierFlags::NSEventModifierFlagFunction => { 8388608 as i64 },
-        EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask => { 4294901760 as i64 },
-    };
-}
-
-fn event_modifier_flags_from_raw(raw: i64) -> EventModifierFlags {
-    if raw == (131072 as i64) { return EventModifierFlags::NSEventModifierFlagShift; }
-    if raw == (262144 as i64) { return EventModifierFlags::NSEventModifierFlagControl; }
-    if raw == (524288 as i64) { return EventModifierFlags::NSEventModifierFlagOption; }
-    if raw == (1048576 as i64) { return EventModifierFlags::NSEventModifierFlagCommand; }
-    if raw == (2097152 as i64) { return EventModifierFlags::NSEventModifierFlagNumericPad; }
-    if raw == (4194304 as i64) { return EventModifierFlags::NSEventModifierFlagHelp; }
-    if raw == (8388608 as i64) { return EventModifierFlags::NSEventModifierFlagFunction; }
-    if raw == (4294901760 as i64) { return EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask; }
-    return EventModifierFlags::NSEventModifierFlagCapsLock;
-}
+// `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_shift: u64 = 131072 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_control: u64 = 262144 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_option: u64 = 524288 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_command: u64 = 1048576 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_numeric_pad: u64 = 2097152 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_help: u64 = 4194304 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_function: u64 = 8388608 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_device_independent_flags_mask: u64 = 4294901760 as u64;
 
 // `NSControlBorderShape` (NS_ENUM)
 enum ControlBorderShape {
@@ -293,6 +265,8 @@ struct Sound {
 impl Sound {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Sound { return Sound { _obj: ptr }; }
+
 }
 
 // `NSImageSymbolConfiguration` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -303,6 +277,8 @@ struct ImageSymbolConfiguration {
 impl ImageSymbolConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ImageSymbolConfiguration { return ImageSymbolConfiguration { _obj: ptr }; }
+
 }
 
 // `NSButton` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -312,6 +288,8 @@ struct Button {
 
 impl Button {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
     // SKIPPED `buttonWithTitle:image:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `buttonWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
@@ -374,13 +352,16 @@ impl Button {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasDestructiveAction:\0")), has_destructive_action as i8);
     }
 
-    fn sound(this) -> option::Option[*u8] {
+    fn sound(this) -> option::Option[Sound] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sound\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Sound]::None;
+        }
+        return option::some(Sound::from_raw(obj));
     }
 
-    fn set_sound(this, sound: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSound:\0")), sound);
+    fn set_sound(this, sound: Sound) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSound:\0")), sound.raw());
     }
 
     fn is_spring_loaded(this) -> bool {
@@ -509,8 +490,8 @@ impl Button {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeyEquivalent:\0")), bridge::nsstring(key_equivalent));
     }
 
-    fn key_equivalent_modifier_mask(this) -> EventModifierFlags {
-        return event_modifier_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0"))));
+    fn key_equivalent_modifier_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0")));
     }
 
     // SKIPPED `setKeyEquivalentModifierMask:`: (return, arg) shape not yet modelled

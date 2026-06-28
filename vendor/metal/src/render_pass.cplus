@@ -128,8 +128,18 @@ impl RenderPassAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPassAttachmentDescriptor { return RenderPassAttachmentDescriptor { _obj: ptr }; }
 
-    // SKIPPED `texture`: return `id<MTLTexture> _Nullable` — generic collection
-    // SKIPPED `setTexture:`: param `id<MTLTexture> _Nullable` — generic collection
+    fn texture(this) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("texture\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
+    }
+
+    fn set_texture(this, texture: Texture) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTexture:\0")), texture.raw());
+    }
+
     fn level(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("level\0")));
     }
@@ -145,8 +155,18 @@ impl RenderPassAttachmentDescriptor {
     }
 
     // SKIPPED `setDepthPlane:`: (return, arg) shape not yet modelled
-    // SKIPPED `resolveTexture`: return `id<MTLTexture> _Nullable` — generic collection
-    // SKIPPED `setResolveTexture:`: param `id<MTLTexture> _Nullable` — generic collection
+    fn resolve_texture(this) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("resolveTexture\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
+    }
+
+    fn set_resolve_texture(this, resolve_texture: Texture) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setResolveTexture:\0")), resolve_texture.raw());
+    }
+
     fn resolve_level(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("resolveLevel\0")));
     }
@@ -228,8 +248,14 @@ impl RenderPassStencilAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPassStencilAttachmentDescriptor { return RenderPassStencilAttachmentDescriptor { _obj: ptr }; }
 
-    // SKIPPED `clearStencil`: return `uint32_t` — unmapped type `uint32_t`
-    // SKIPPED `setClearStencil:`: param `uint32_t` — unmapped type `uint32_t`
+    fn clear_stencil(this) -> u32 {
+        return rt::msg_u32(this._obj, rt::sel(#str_ptr("clearStencil\0")));
+    }
+
+    fn set_clear_stencil(this, clear_stencil: u32) {
+        rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setClearStencil:\0")), clear_stencil);
+    }
+
     fn stencil_resolve_filter(this) -> MultisampleStencilResolveFilter {
         return multisample_stencil_resolve_filter_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("stencilResolveFilter\0"))));
     }
@@ -247,8 +273,8 @@ impl RenderPassColorAttachmentDescriptorArray {
 
     fn from_raw(ptr: *u8) -> RenderPassColorAttachmentDescriptorArray { return RenderPassColorAttachmentDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
+    fn object_at_indexed_subscript(this, attachment_index: u64) -> RenderPassColorAttachmentDescriptor {
+        return RenderPassColorAttachmentDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -264,8 +290,15 @@ impl RenderPassSampleBufferAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPassSampleBufferAttachmentDescriptor { return RenderPassSampleBufferAttachmentDescriptor { _obj: ptr }; }
 
-    // SKIPPED `sampleBuffer`: return `id<MTLCounterSampleBuffer> _Nullable` — generic collection
-    // SKIPPED `setSampleBuffer:`: param `id<MTLCounterSampleBuffer> _Nullable` — generic collection
+    fn sample_buffer(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBuffer\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_sample_buffer(this, sample_buffer: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSampleBuffer:\0")), sample_buffer);
+    }
+
     fn start_of_vertex_sample_index(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("startOfVertexSampleIndex\0")));
     }
@@ -298,8 +331,8 @@ impl RenderPassSampleBufferAttachmentDescriptorArray {
 
     fn from_raw(ptr: *u8) -> RenderPassSampleBufferAttachmentDescriptorArray { return RenderPassSampleBufferAttachmentDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
+    fn object_at_indexed_subscript(this, attachment_index: u64) -> RenderPassSampleBufferAttachmentDescriptor {
+        return RenderPassSampleBufferAttachmentDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -321,28 +354,38 @@ impl RenderPassDescriptor {
 
     // SKIPPED `setSamplePositions:count:`: (return, arg) shape not yet modelled
     // SKIPPED `getSamplePositions:count:`: (return, arg) shape not yet modelled
-    fn color_attachments(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorAttachments\0")));
+    fn color_attachments(this) -> RenderPassColorAttachmentDescriptorArray {
+        return RenderPassColorAttachmentDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorAttachments\0"))));
     }
 
-    fn depth_attachment(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("depthAttachment\0")));
+    fn depth_attachment(this) -> RenderPassDepthAttachmentDescriptor {
+        return RenderPassDepthAttachmentDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("depthAttachment\0"))));
     }
 
-    fn set_depth_attachment(this, depth_attachment: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthAttachment:\0")), depth_attachment);
+    fn set_depth_attachment(this, depth_attachment: RenderPassDepthAttachmentDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthAttachment:\0")), depth_attachment.raw());
     }
 
-    fn stencil_attachment(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("stencilAttachment\0")));
+    fn stencil_attachment(this) -> RenderPassStencilAttachmentDescriptor {
+        return RenderPassStencilAttachmentDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("stencilAttachment\0"))));
     }
 
-    fn set_stencil_attachment(this, stencil_attachment: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStencilAttachment:\0")), stencil_attachment);
+    fn set_stencil_attachment(this, stencil_attachment: RenderPassStencilAttachmentDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStencilAttachment:\0")), stencil_attachment.raw());
     }
 
-    // SKIPPED `visibilityResultBuffer`: return `id<MTLBuffer> _Nullable` — generic collection
-    // SKIPPED `setVisibilityResultBuffer:`: param `id<MTLBuffer> _Nullable` — generic collection
+    fn visibility_result_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("visibilityResultBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_visibility_result_buffer(this, visibility_result_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVisibilityResultBuffer:\0")), visibility_result_buffer.raw());
+    }
+
     fn render_target_array_length(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("renderTargetArrayLength\0")));
     }
@@ -383,10 +426,20 @@ impl RenderPassDescriptor {
     }
 
     // SKIPPED `setRenderTargetHeight:`: (return, arg) shape not yet modelled
-    // SKIPPED `rasterizationRateMap`: return `id<MTLRasterizationRateMap> _Nullable` — generic collection
-    // SKIPPED `setRasterizationRateMap:`: param `id<MTLRasterizationRateMap> _Nullable` — generic collection
-    fn sample_buffer_attachments(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBufferAttachments\0")));
+    fn rasterization_rate_map(this) -> option::Option[RasterizationRateMap] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rasterizationRateMap\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[RasterizationRateMap]::None;
+        }
+        return option::some(RasterizationRateMap::from_raw(obj));
+    }
+
+    fn set_rasterization_rate_map(this, rasterization_rate_map: RasterizationRateMap) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRasterizationRateMap:\0")), rasterization_rate_map.raw());
+    }
+
+    fn sample_buffer_attachments(this) -> RenderPassSampleBufferAttachmentDescriptorArray {
+        return RenderPassSampleBufferAttachmentDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBufferAttachments\0"))));
     }
 
     fn visibility_result_type(this) -> VisibilityResultType {
@@ -401,6 +454,54 @@ impl RenderPassDescriptor {
     fn set_support_color_attachment_mapping(this, support_color_attachment_mapping: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSupportColorAttachmentMapping:\0")), support_color_attachment_mapping as i8);
     }
+
+}
+
+// `MTLRasterizationRateMap` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct RasterizationRateMap {
+    opaque _obj: *u8,
+}
+
+impl RasterizationRateMap {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RasterizationRateMap { return RasterizationRateMap { _obj: ptr }; }
+
+}
+
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
+}
+
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Texture {
+    opaque _obj: *u8,
+}
+
+impl Texture {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+}
+
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
+}
+
+impl Buffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
 
 }
 

@@ -36,6 +36,8 @@ struct TextField {
 impl TextField {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextField { return TextField { _obj: ptr }; }
+
 }
 
 // `NSPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -45,6 +47,8 @@ struct Panel {
 
 impl Panel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Panel { return Panel { _obj: ptr }; }
 
 }
 
@@ -56,6 +60,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -65,6 +71,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -76,6 +84,8 @@ struct Button {
 impl Button {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
+
 }
 
 // `NSError` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -85,6 +95,8 @@ struct Error {
 
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
 
 }
 
@@ -96,12 +108,14 @@ struct Alert {
 impl Alert {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn alert_with_error(error: *u8) -> Alert {
-        return Alert { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSAlert\0")), rt::sel(#str_ptr("alertWithError:\0")), error) };
+    fn from_raw(ptr: *u8) -> Alert { return Alert { _obj: ptr }; }
+
+    fn alert_with_error(error: Error) -> Alert {
+        return Alert { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSAlert\0")), rt::sel(#str_ptr("alertWithError:\0")), error.raw()) };
     }
 
-    fn add_button_with_title(this, title: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), bridge::nsstring(title));
+    fn add_button_with_title(this, title: str) -> Button {
+        return Button::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), bridge::nsstring(title)));
     }
 
     fn layout(this) {
@@ -128,12 +142,12 @@ impl Alert {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInformativeText:\0")), bridge::nsstring(informative_text));
     }
 
-    fn icon(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("icon\0")));
+    fn icon(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("icon\0"))));
     }
 
-    fn set_icon(this, icon: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIcon:\0")), icon);
+    fn set_icon(this, icon: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIcon:\0")), icon.raw());
     }
 
     // SKIPPED `buttons`: return `NSArray<NSButton *> * _Nonnull` — generic collection
@@ -159,8 +173,15 @@ impl Alert {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHelpAnchor:\0")), bridge::nsstring(help_anchor));
     }
 
-    // SKIPPED `delegate`: return `id<NSAlertDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSAlertDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn accessory_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("accessoryView\0")));
     }
@@ -181,8 +202,8 @@ impl Alert {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("suppressionButton\0")));
     }
 
-    fn window(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("window\0")));
+    fn window(this) -> Window {
+        return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }
 
     // SKIPPED `alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:`: (return, arg) shape not yet modelled
@@ -190,43 +211,43 @@ impl Alert {
 }
 
 // `NSAlertDelegate` delegate protocol -> runtime class-synthesis helper.
-fn AlertDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn AlertDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
 
-struct AlertDelegateProtocol {
+struct AlertDelegate {
     alert_show_help: fn(*u8, *u8) -> i8,
     opaque user: *u8,
 }
 
-fn AlertDelegateProtocol_new(user: *u8) -> AlertDelegateProtocol {
-    return AlertDelegateProtocol { alert_show_help: AlertDelegateProtocol_noop_i8_1, user: user };
+fn AlertDelegate_new(user: *u8) -> AlertDelegate {
+    return AlertDelegate { alert_show_help: AlertDelegate_noop_i8_1, user: user };
 }
 
-impl AlertDelegateProtocol {
+impl AlertDelegate {
     fn set_alert_show_help(ref this, handler: fn(*u8, *u8) -> i8) {
         this.alert_show_help = handler;
         return;
     }
 }
 
-fn AlertDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn AlertDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn AlertDelegateProtocol_alert_show_help_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *AlertDelegateProtocol = { synth::get_associated(self_obj, AlertDelegateProtocol_key()) as *AlertDelegateProtocol };
+fn AlertDelegate_alert_show_help_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *AlertDelegate = { synth::get_associated(self_obj, AlertDelegate_key()) as *AlertDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).alert_show_help };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn create_AlertDelegateProtocol(ctx: *AlertDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_AlertDelegateProtocol\0");
+fn create_AlertDelegate(ctx: *AlertDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_AlertDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_alert_show_help: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("alertShowHelp:\0")), AlertDelegateProtocol_alert_show_help_imp, #str_ptr("c@:@\0"));
+        let add_alert_show_help: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("alertShowHelp:\0")), AlertDelegate_alert_show_help_imp, #str_ptr("c@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, AlertDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, AlertDelegate_key(), { ctx as *u8 });
     return d;
 }
 

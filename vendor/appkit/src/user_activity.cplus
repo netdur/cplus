@@ -5,47 +5,20 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `NSUserActivityRestoring` delegate protocol -> runtime class-synthesis helper.
-fn UserActivityRestoring_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSUserActivityRestoring` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct UserActivityRestoring {
-    restore_user_activity_state: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn UserActivityRestoring_new(user: *u8) -> UserActivityRestoring {
-    return UserActivityRestoring { restore_user_activity_state: UserActivityRestoring_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl UserActivityRestoring {
-    fn set_restore_user_activity_state(ref this, handler: fn(*u8, *u8)) {
-        this.restore_user_activity_state = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UserActivityRestoring { return UserActivityRestoring { _obj: ptr }; }
+
+    fn restore_user_activity_state(this, user_activity: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("restoreUserActivityState:\0")), user_activity);
     }
-}
 
-fn UserActivityRestoring_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn UserActivityRestoring_restore_user_activity_state_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *UserActivityRestoring = { synth::get_associated(self_obj, UserActivityRestoring_key()) as *UserActivityRestoring };
-    let f: fn(*u8, *u8) = { (*c).restore_user_activity_state };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_UserActivityRestoring(ctx: *UserActivityRestoring) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_UserActivityRestoring\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_restore_user_activity_state: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("restoreUserActivityState:\0")), UserActivityRestoring_restore_user_activity_state_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, UserActivityRestoring_key(), { ctx as *u8 });
-    return d;
 }
 

@@ -131,6 +131,8 @@ struct MutableArray {
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
+
 }
 
 // `NSSegmentedCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -141,7 +143,12 @@ struct SegmentedCell {
 impl SegmentedCell {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `selectSegmentWithTag:`: (return, arg) shape not yet modelled
+    fn from_raw(ptr: *u8) -> SegmentedCell { return SegmentedCell { _obj: ptr }; }
+
+    fn select_segment_with_tag(this, tag: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectSegmentWithTag:\0")), tag) != (0 as i8);
+    }
+
     fn make_next_segment_key(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("makeNextSegmentKey\0")));
     }
@@ -167,9 +174,15 @@ impl SegmentedCell {
     }
 
     // SKIPPED `setSelected:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `isSelectedForSegment:`: (return, arg) shape not yet modelled
+    fn is_selected_for_segment(this, segment: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isSelectedForSegment:\0")), segment) != (0 as i8);
+    }
+
     // SKIPPED `setEnabled:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `isEnabledForSegment:`: (return, arg) shape not yet modelled
+    fn is_enabled_for_segment(this, segment: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledForSegment:\0")), segment) != (0 as i8);
+    }
+
     // SKIPPED `setMenu:forSegment:`: (return, arg) shape not yet modelled
     fn menu_for_segment(this, segment: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("menuForSegment:\0")), segment);
@@ -184,7 +197,7 @@ impl SegmentedCell {
 
     // SKIPPED `setTag:forSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `tagForSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawSegment:inFrame:withView:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawSegment:inFrame:withView:`: (return, arg) shape not yet modelled
     fn segment_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
     }

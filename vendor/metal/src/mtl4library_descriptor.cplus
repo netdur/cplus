@@ -37,13 +37,16 @@ impl MTL4LibraryDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSource:\0")), bridge::nsstring(source));
     }
 
-    fn options(this) -> option::Option[*u8] {
+    fn options(this) -> option::Option[CompileOptions] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("options\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CompileOptions]::None;
+        }
+        return option::some(CompileOptions::from_raw(obj));
     }
 
-    fn set_options(this, options: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOptions:\0")), options);
+    fn set_options(this, options: CompileOptions) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOptions:\0")), options.raw());
     }
 
     fn name(this) -> option::Option[text::Text] {

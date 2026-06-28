@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTL4PipelineDataSetSerializerConfiguration` (NS_OPTIONS) — bitfield; combine with `|`.
 const m_t_l4_pipeline_data_set_serializer_configuration_capture_descriptors: u64 = 1 as u64;
@@ -28,58 +27,21 @@ impl MTL4PipelineDataSetSerializerDescriptor {
     // SKIPPED `setConfiguration:`: (return, arg) shape not yet modelled
 }
 
-// `MTL4PipelineDataSetSerializer` delegate protocol -> runtime class-synthesis helper.
-fn MTL4PipelineDataSetSerializer_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn MTL4PipelineDataSetSerializer_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `MTL4PipelineDataSetSerializer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct MTL4PipelineDataSetSerializer {
-    serialize_as_archive_and_flush_to_u_r_l_error: fn(*u8, *u8, *u8) -> i8,
-    serialize_as_pipelines_script_with_error: fn(*u8, *u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn MTL4PipelineDataSetSerializer_new(user: *u8) -> MTL4PipelineDataSetSerializer {
-    return MTL4PipelineDataSetSerializer { serialize_as_archive_and_flush_to_u_r_l_error: MTL4PipelineDataSetSerializer_noop_i8_2, serialize_as_pipelines_script_with_error: MTL4PipelineDataSetSerializer_noop_id_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl MTL4PipelineDataSetSerializer {
-    fn set_serialize_as_archive_and_flush_to_u_r_l_error(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
-        this.serialize_as_archive_and_flush_to_u_r_l_error = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4PipelineDataSetSerializer { return MTL4PipelineDataSetSerializer { _obj: ptr }; }
+
+    // SKIPPED `serializeAsArchiveAndFlushToURL:error:`: (return, arg) shape not yet modelled
+    fn serialize_as_pipelines_script_with_error(this, error: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("serializeAsPipelinesScriptWithError:\0")), error);
+        return bridge::obj_option(obj);
     }
-    fn set_serialize_as_pipelines_script_with_error(ref this, handler: fn(*u8, *u8) -> *u8) {
-        this.serialize_as_pipelines_script_with_error = handler;
-        return;
-    }
-}
 
-fn MTL4PipelineDataSetSerializer_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4PipelineDataSetSerializer_serialize_as_archive_and_flush_to_u_r_l_error_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *MTL4PipelineDataSetSerializer = { synth::get_associated(self_obj, MTL4PipelineDataSetSerializer_key()) as *MTL4PipelineDataSetSerializer };
-    let f: fn(*u8, *u8, *u8) -> i8 = { (*c).serialize_as_archive_and_flush_to_u_r_l_error };
-    let u: *u8 = { (*c).user };
-    return f(u, a0, a1);
-}
-
-fn MTL4PipelineDataSetSerializer_serialize_as_pipelines_script_with_error_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *MTL4PipelineDataSetSerializer = { synth::get_associated(self_obj, MTL4PipelineDataSetSerializer_key()) as *MTL4PipelineDataSetSerializer };
-    let f: fn(*u8, *u8) -> *u8 = { (*c).serialize_as_pipelines_script_with_error };
-    let u: *u8 = { (*c).user };
-    return f(u, a0);
-}
-
-fn create_MTL4PipelineDataSetSerializer(ctx: *MTL4PipelineDataSetSerializer) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4PipelineDataSetSerializer\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_serialize_as_archive_and_flush_to_u_r_l_error: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("serializeAsArchiveAndFlushToURL:error:\0")), MTL4PipelineDataSetSerializer_serialize_as_archive_and_flush_to_u_r_l_error_imp, #str_ptr("c@:@@\0"));
-        let add_serialize_as_pipelines_script_with_error: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("serializeAsPipelinesScriptWithError:\0")), MTL4PipelineDataSetSerializer_serialize_as_pipelines_script_with_error_imp, #str_ptr("@@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4PipelineDataSetSerializer_key(), { ctx as *u8 });
-    return d;
 }
 

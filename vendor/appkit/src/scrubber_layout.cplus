@@ -14,6 +14,8 @@ struct Scrubber {
 impl Scrubber {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Scrubber { return Scrubber { _obj: ptr }; }
+
 }
 
 // `NSScrubberFlowLayout` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,8 +26,10 @@ struct ScrubberFlowLayout {
 impl ScrubberFlowLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn invalidate_layout_for_items_at_indexes(this, invalid_item_indexes: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForItemsAtIndexes:\0")), invalid_item_indexes);
+    fn from_raw(ptr: *u8) -> ScrubberFlowLayout { return ScrubberFlowLayout { _obj: ptr }; }
+
+    fn invalidate_layout_for_items_at_indexes(this, invalid_item_indexes: IndexSet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForItemsAtIndexes:\0")), invalid_item_indexes.raw());
     }
 
     fn item_spacing(this) -> f64 {
@@ -36,8 +40,14 @@ impl ScrubberFlowLayout {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setItemSpacing:\0")), item_spacing);
     }
 
-    // SKIPPED `itemSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setItemSize:`: param `NSSize` — unmapped type `NSSize`
+    fn item_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("itemSize\0")));
+    }
+
+    fn set_item_size(this, item_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setItemSize:\0")), item_size);
+    }
+
 }
 
 // `NSIndexSet` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -47,6 +57,8 @@ struct IndexSet {
 
 impl IndexSet {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IndexSet { return IndexSet { _obj: ptr }; }
 
 }
 
@@ -58,6 +70,8 @@ struct ScrubberLayoutAttributes {
 impl ScrubberLayoutAttributes {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberLayoutAttributes { return ScrubberLayoutAttributes { _obj: ptr }; }
+
     fn layout_attributes_for_item_at_index(index: i64) -> ScrubberLayoutAttributes {
         return ScrubberLayoutAttributes { _obj: rt::msg_id_i64(rt::get_class(#str_ptr("NSScrubberLayoutAttributes\0")), rt::sel(#str_ptr("layoutAttributesForItemAtIndex:\0")), index) };
     }
@@ -67,8 +81,14 @@ impl ScrubberLayoutAttributes {
     }
 
     // SKIPPED `setItemIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
+    fn set_frame(this, frame: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setFrame:\0")), frame);
+    }
+
     fn alpha(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("alpha\0")));
     }
@@ -87,6 +107,8 @@ struct ScrubberLayout {
 impl ScrubberLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberLayout { return ScrubberLayout { _obj: ptr }; }
+
     fn new() -> ScrubberLayout {
         let cls: *u8 = rt::get_class(#str_ptr("NSScrubberLayout\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -102,21 +124,33 @@ impl ScrubberLayout {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareLayout\0")));
     }
 
-    fn layout_attributes_for_item_at_index(this, index: i64) -> option::Option[*u8] {
+    fn layout_attributes_for_item_at_index(this, index: i64) -> option::Option[ScrubberLayoutAttributes] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("layoutAttributesForItemAtIndex:\0")), index);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberLayoutAttributes]::None;
+        }
+        return option::some(ScrubberLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `layoutAttributesForItemsInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `shouldInvalidateLayoutForChangeFromVisibleRect:toVisibleRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `layoutAttributesForItemsInRect:`: return `NSSet<__kindof NSScrubberLayoutAttributes *> * _Nonnull` — generic collection
+    // SKIPPED `shouldInvalidateLayoutForChangeFromVisibleRect:toVisibleRect:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutAttributesClass`: return `Class _Nonnull` — unmapped type `Class`
-    fn scrubber(this) -> option::Option[*u8] {
+    fn scrubber(this) -> option::Option[Scrubber] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("scrubber\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Scrubber]::None;
+        }
+        return option::some(Scrubber::from_raw(obj));
     }
 
-    // SKIPPED `visibleRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `scrubberContentSize`: return `NSSize` — unmapped type `NSSize`
+    fn visible_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("visibleRect\0")));
+    }
+
+    fn scrubber_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("scrubberContentSize\0")));
+    }
+
     fn should_invalidate_layout_for_selection_change(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("shouldInvalidateLayoutForSelectionChange\0"))) != (0 as i8);
     }
@@ -141,6 +175,8 @@ struct ScrubberProportionalLayout {
 
 impl ScrubberProportionalLayout {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ScrubberProportionalLayout { return ScrubberProportionalLayout { _obj: ptr }; }
 
     fn new(number_of_visible_items: i64) -> ScrubberProportionalLayout {
         let cls: *u8 = rt::get_class(#str_ptr("NSScrubberProportionalLayout\0"));

@@ -137,6 +137,8 @@ struct ImageSymbolConfiguration {
 impl ImageSymbolConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ImageSymbolConfiguration { return ImageSymbolConfiguration { _obj: ptr }; }
+
 }
 
 // `NSImageView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -146,6 +148,8 @@ struct ImageView {
 
 impl ImageView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageView { return ImageView { _obj: ptr }; }
 
     fn image_view_with_image(image: *u8) -> ImageView {
         return ImageView { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageView\0")), rt::sel(#str_ptr("imageViewWithImage:\0")), image) };

@@ -6,6 +6,48 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSHapticFeedbackPattern` (NS_ENUM)
+enum HapticFeedbackPattern {
+    Generic,
+    Alignment,
+    LevelChange,
+}
+
+fn haptic_feedback_pattern_raw(v: HapticFeedbackPattern) -> i64 {
+    return match v {
+        HapticFeedbackPattern::Generic => { 0 as i64 },
+        HapticFeedbackPattern::Alignment => { 1 as i64 },
+        HapticFeedbackPattern::LevelChange => { 2 as i64 },
+    };
+}
+
+fn haptic_feedback_pattern_from_raw(raw: i64) -> HapticFeedbackPattern {
+    if raw == (1 as i64) { return HapticFeedbackPattern::Alignment; }
+    if raw == (2 as i64) { return HapticFeedbackPattern::LevelChange; }
+    return HapticFeedbackPattern::Generic;
+}
+
+// `NSHapticFeedbackPerformanceTime` (NS_ENUM)
+enum HapticFeedbackPerformanceTime {
+    Default,
+    Now,
+    DrawCompleted,
+}
+
+fn haptic_feedback_performance_time_raw(v: HapticFeedbackPerformanceTime) -> i64 {
+    return match v {
+        HapticFeedbackPerformanceTime::Default => { 0 as i64 },
+        HapticFeedbackPerformanceTime::Now => { 1 as i64 },
+        HapticFeedbackPerformanceTime::DrawCompleted => { 2 as i64 },
+    };
+}
+
+fn haptic_feedback_performance_time_from_raw(raw: i64) -> HapticFeedbackPerformanceTime {
+    if raw == (1 as i64) { return HapticFeedbackPerformanceTime::Now; }
+    if raw == (2 as i64) { return HapticFeedbackPerformanceTime::DrawCompleted; }
+    return HapticFeedbackPerformanceTime::Default;
+}
+
 // `NSHapticFeedbackManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct HapticFeedbackManager {
     opaque _obj: *u8,
@@ -14,6 +56,24 @@ struct HapticFeedbackManager {
 impl HapticFeedbackManager {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `defaultPerformer`: return `id<NSHapticFeedbackPerformer> _Nonnull` — generic collection
+    fn from_raw(ptr: *u8) -> HapticFeedbackManager { return HapticFeedbackManager { _obj: ptr }; }
+
+    fn default_performer() -> HapticFeedbackPerformer {
+        return HapticFeedbackPerformer::from_raw(rt::msg_id(rt::get_class(#str_ptr("NSHapticFeedbackManager\0")), rt::sel(#str_ptr("defaultPerformer\0"))));
+    }
+
+}
+
+// `NSHapticFeedbackPerformer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct HapticFeedbackPerformer {
+    opaque _obj: *u8,
+}
+
+impl HapticFeedbackPerformer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> HapticFeedbackPerformer { return HapticFeedbackPerformer { _obj: ptr }; }
+
+    // SKIPPED `performFeedbackPattern:performanceTime:`: (return, arg) shape not yet modelled
 }
 

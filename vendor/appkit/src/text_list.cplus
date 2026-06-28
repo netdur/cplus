@@ -6,20 +6,8 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSTextListOptions` (NS_ENUM)
-enum TextListOptions {
-    NSTextListPrependEnclosingMarker,
-}
-
-fn text_list_options_raw(v: TextListOptions) -> i64 {
-    return match v {
-        TextListOptions::NSTextListPrependEnclosingMarker => { 1 as i64 },
-    };
-}
-
-fn text_list_options_from_raw(raw: i64) -> TextListOptions {
-    return TextListOptions::NSTextListPrependEnclosingMarker;
-}
+// `NSTextListOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_list_options_n_s_text_list_prepend_enclosing_marker: u64 = 1 as u64;
 
 // `NSTextList` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TextList {
@@ -28,6 +16,8 @@ struct TextList {
 
 impl TextList {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
 
     // SKIPPED `initWithMarkerFormat:options:startingItemNumber:`: init arg shape not yet modelled
     // SKIPPED `initWithMarkerFormat:options:`: extra init variant (one `new` per type)
@@ -42,8 +32,8 @@ impl TextList {
         return bridge::to_text(ns);
     }
 
-    fn list_options(this) -> TextListOptions {
-        return text_list_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("listOptions\0"))));
+    fn list_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("listOptions\0")));
     }
 
     fn starting_item_number(this) -> i64 {

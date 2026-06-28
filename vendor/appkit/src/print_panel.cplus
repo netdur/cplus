@@ -5,43 +5,16 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `NSPrintPanelOptions` (NS_ENUM)
-enum PrintPanelOptions {
-    NSPrintPanelShowsCopies,
-    NSPrintPanelShowsPageRange,
-    NSPrintPanelShowsPaperSize,
-    NSPrintPanelShowsOrientation,
-    NSPrintPanelShowsScaling,
-    NSPrintPanelShowsPrintSelection,
-    NSPrintPanelShowsPageSetupAccessory,
-    NSPrintPanelShowsPreview,
-}
-
-fn print_panel_options_raw(v: PrintPanelOptions) -> i64 {
-    return match v {
-        PrintPanelOptions::NSPrintPanelShowsCopies => { 1 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsPageRange => { 2 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsPaperSize => { 4 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsOrientation => { 8 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsScaling => { 16 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsPrintSelection => { 32 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsPageSetupAccessory => { 256 as i64 },
-        PrintPanelOptions::NSPrintPanelShowsPreview => { 131072 as i64 },
-    };
-}
-
-fn print_panel_options_from_raw(raw: i64) -> PrintPanelOptions {
-    if raw == (2 as i64) { return PrintPanelOptions::NSPrintPanelShowsPageRange; }
-    if raw == (4 as i64) { return PrintPanelOptions::NSPrintPanelShowsPaperSize; }
-    if raw == (8 as i64) { return PrintPanelOptions::NSPrintPanelShowsOrientation; }
-    if raw == (16 as i64) { return PrintPanelOptions::NSPrintPanelShowsScaling; }
-    if raw == (32 as i64) { return PrintPanelOptions::NSPrintPanelShowsPrintSelection; }
-    if raw == (256 as i64) { return PrintPanelOptions::NSPrintPanelShowsPageSetupAccessory; }
-    if raw == (131072 as i64) { return PrintPanelOptions::NSPrintPanelShowsPreview; }
-    return PrintPanelOptions::NSPrintPanelShowsCopies;
-}
+// `NSPrintPanelOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const print_panel_options_n_s_print_panel_shows_copies: u64 = 1 as u64;
+const print_panel_options_n_s_print_panel_shows_page_range: u64 = 2 as u64;
+const print_panel_options_n_s_print_panel_shows_paper_size: u64 = 4 as u64;
+const print_panel_options_n_s_print_panel_shows_orientation: u64 = 8 as u64;
+const print_panel_options_n_s_print_panel_shows_scaling: u64 = 16 as u64;
+const print_panel_options_n_s_print_panel_shows_print_selection: u64 = 32 as u64;
+const print_panel_options_n_s_print_panel_shows_page_setup_accessory: u64 = 256 as u64;
+const print_panel_options_n_s_print_panel_shows_preview: u64 = 131072 as u64;
 
 // `NSPrintInfo` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct PrintInfo {
@@ -50,6 +23,8 @@ struct PrintInfo {
 
 impl PrintInfo {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
 
 }
 
@@ -61,6 +36,8 @@ struct Set {
 impl Set {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Set { return Set { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -70,6 +47,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -81,6 +60,8 @@ struct ViewController {
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -90,6 +71,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
 }
 
@@ -101,6 +84,8 @@ struct WindowController {
 impl WindowController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> WindowController { return WindowController { _obj: ptr }; }
+
 }
 
 // `NSPrintPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -110,6 +95,8 @@ struct PrintPanel {
 
 impl PrintPanel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrintPanel { return PrintPanel { _obj: ptr }; }
 
     fn print_panel() -> PrintPanel {
         return PrintPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
@@ -134,8 +121,8 @@ impl PrintPanel {
     }
 
     // SKIPPED `accessoryControllers`: return `API_AVAILABLE NSArray<__kindof NSViewController *> *` — generic collection
-    fn options(this) -> PrintPanelOptions {
-        return print_panel_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("options\0"))));
+    fn options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
     // SKIPPED `setOptions:`: (return, arg) shape not yet modelled
@@ -154,13 +141,16 @@ impl PrintPanel {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0")));
     }
 
-    fn set_accessory_view(this, accessory_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), accessory_view);
+    fn set_accessory_view(this, accessory_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), accessory_view.raw());
     }
 
-    fn accessory_view(this) -> option::Option[*u8] {
+    fn accessory_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accessoryView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     fn update_from_print_info(this) {
@@ -173,57 +163,17 @@ impl PrintPanel {
 
 }
 
-// `NSPrintPanelAccessorizing` delegate protocol -> runtime class-synthesis helper.
-fn PrintPanelAccessorizing_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `NSPrintPanelAccessorizing` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct PrintPanelAccessorizing {
-    localized_summary_items: fn(*u8) -> *u8,
-    key_paths_for_values_affecting_preview: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn PrintPanelAccessorizing_new(user: *u8) -> PrintPanelAccessorizing {
-    return PrintPanelAccessorizing { localized_summary_items: PrintPanelAccessorizing_noop_id_0, key_paths_for_values_affecting_preview: PrintPanelAccessorizing_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl PrintPanelAccessorizing {
-    fn set_localized_summary_items(ref this, handler: fn(*u8) -> *u8) {
-        this.localized_summary_items = handler;
-        return;
-    }
-    fn set_key_paths_for_values_affecting_preview(ref this, handler: fn(*u8) -> *u8) {
-        this.key_paths_for_values_affecting_preview = handler;
-        return;
-    }
-}
+    fn raw(this) -> *u8 { return this._obj; }
 
-fn PrintPanelAccessorizing_key() -> *u8 { return { 28672 as *u8 }; }
+    fn from_raw(ptr: *u8) -> PrintPanelAccessorizing { return PrintPanelAccessorizing { _obj: ptr }; }
 
-fn PrintPanelAccessorizing_localized_summary_items_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PrintPanelAccessorizing = { synth::get_associated(self_obj, PrintPanelAccessorizing_key()) as *PrintPanelAccessorizing };
-    let f: fn(*u8) -> *u8 = { (*c).localized_summary_items };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn PrintPanelAccessorizing_key_paths_for_values_affecting_preview_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PrintPanelAccessorizing = { synth::get_associated(self_obj, PrintPanelAccessorizing_key()) as *PrintPanelAccessorizing };
-    let f: fn(*u8) -> *u8 = { (*c).key_paths_for_values_affecting_preview };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_PrintPanelAccessorizing(ctx: *PrintPanelAccessorizing) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PrintPanelAccessorizing\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_localized_summary_items: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("localizedSummaryItems\0")), PrintPanelAccessorizing_localized_summary_items_imp, #str_ptr("@@:\0"));
-        let add_key_paths_for_values_affecting_preview: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("keyPathsForValuesAffectingPreview\0")), PrintPanelAccessorizing_key_paths_for_values_affecting_preview_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PrintPanelAccessorizing_key(), { ctx as *u8 });
-    return d;
+    // SKIPPED `localizedSummaryItems`: return `NSArray<NSDictionary<NSPrintPanelAccessorySummaryKey,NSString *> *> * _Nonnull` — generic collection
+    // SKIPPED `keyPathsForValuesAffectingPreview`: return `NSSet<NSString *> * _Nonnull` — generic collection
 }
 

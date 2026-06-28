@@ -6,26 +6,10 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSTableColumnResizingOptions` (NS_ENUM)
-enum TableColumnResizingOptions {
-    NSTableColumnNoResizing,
-    NSTableColumnAutoresizingMask,
-    NSTableColumnUserResizingMask,
-}
-
-fn table_column_resizing_options_raw(v: TableColumnResizingOptions) -> i64 {
-    return match v {
-        TableColumnResizingOptions::NSTableColumnNoResizing => { 0 as i64 },
-        TableColumnResizingOptions::NSTableColumnAutoresizingMask => { 1 as i64 },
-        TableColumnResizingOptions::NSTableColumnUserResizingMask => { 2 as i64 },
-    };
-}
-
-fn table_column_resizing_options_from_raw(raw: i64) -> TableColumnResizingOptions {
-    if raw == (1 as i64) { return TableColumnResizingOptions::NSTableColumnAutoresizingMask; }
-    if raw == (2 as i64) { return TableColumnResizingOptions::NSTableColumnUserResizingMask; }
-    return TableColumnResizingOptions::NSTableColumnNoResizing;
-}
+// `NSTableColumnResizingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const table_column_resizing_options_n_s_table_column_no_resizing: u64 = 0 as u64;
+const table_column_resizing_options_n_s_table_column_autoresizing_mask: u64 = 1 as u64;
+const table_column_resizing_options_n_s_table_column_user_resizing_mask: u64 = 2 as u64;
 
 // `NSTableView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TableView {
@@ -34,6 +18,8 @@ struct TableView {
 
 impl TableView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableView { return TableView { _obj: ptr }; }
 
 }
 
@@ -45,6 +31,8 @@ struct Cell {
 impl Cell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Cell { return Cell { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -54,6 +42,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -65,6 +55,8 @@ struct SortDescriptor {
 impl SortDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SortDescriptor { return SortDescriptor { _obj: ptr }; }
+
 }
 
 // `NSTableHeaderCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -75,6 +67,8 @@ struct TableHeaderCell {
 impl TableHeaderCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableHeaderCell { return TableHeaderCell { _obj: ptr }; }
+
 }
 
 // `NSTableColumn` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -84,6 +78,8 @@ struct TableColumn {
 
 impl TableColumn {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableColumn { return TableColumn { _obj: ptr }; }
 
     fn new(identifier: str) -> TableColumn {
         let cls: *u8 = rt::get_class(#str_ptr("NSTableColumn\0"));
@@ -105,13 +101,16 @@ impl TableColumn {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identifier));
     }
 
-    fn table_view(this) -> option::Option[*u8] {
+    fn table_view(this) -> option::Option[TableView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tableView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TableView]::None;
+        }
+        return option::some(TableView::from_raw(obj));
     }
 
-    fn set_table_view(this, table_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTableView:\0")), table_view);
+    fn set_table_view(this, table_view: TableView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTableView:\0")), table_view.raw());
     }
 
     fn width(this) -> f64 {
@@ -147,12 +146,12 @@ impl TableColumn {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn header_cell(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("headerCell\0")));
+    fn header_cell(this) -> TableHeaderCell {
+        return TableHeaderCell::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("headerCell\0"))));
     }
 
-    fn set_header_cell(this, header_cell: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderCell:\0")), header_cell);
+    fn set_header_cell(this, header_cell: TableHeaderCell) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderCell:\0")), header_cell.raw());
     }
 
     fn is_editable(this) -> bool {
@@ -163,17 +162,20 @@ impl TableColumn {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setEditable:\0")), editable as i8);
     }
 
-    fn sort_descriptor_prototype(this) -> option::Option[*u8] {
+    fn sort_descriptor_prototype(this) -> option::Option[SortDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sortDescriptorPrototype\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[SortDescriptor]::None;
+        }
+        return option::some(SortDescriptor::from_raw(obj));
     }
 
-    fn set_sort_descriptor_prototype(this, sort_descriptor_prototype: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSortDescriptorPrototype:\0")), sort_descriptor_prototype);
+    fn set_sort_descriptor_prototype(this, sort_descriptor_prototype: SortDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSortDescriptorPrototype:\0")), sort_descriptor_prototype.raw());
     }
 
-    fn resizing_mask(this) -> TableColumnResizingOptions {
-        return table_column_resizing_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("resizingMask\0"))));
+    fn resizing_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("resizingMask\0")));
     }
 
     // SKIPPED `setResizingMask:`: (return, arg) shape not yet modelled

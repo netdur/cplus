@@ -71,6 +71,8 @@ struct Data {
 impl Data {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Data { return Data { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -80,6 +82,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -91,6 +95,8 @@ struct Screen {
 impl Screen {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Screen { return Screen { _obj: ptr }; }
+
 }
 
 // `NSOpenGLPixelFormat` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -101,16 +107,21 @@ struct OpenGLPixelFormat {
 impl OpenGLPixelFormat {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> OpenGLPixelFormat { return OpenGLPixelFormat { _obj: ptr }; }
+
     // SKIPPED `initWithCGLPixelFormatObj:`: param `CGLPixelFormatObj _Nonnull` — unmapped type `CGLPixelFormatObj`
     // SKIPPED `initWithAttributes:`: extra init variant (one `new` per type)
     // SKIPPED `initWithData:`: extra init variant (one `new` per type)
-    fn attributes(this) -> option::Option[*u8] {
+    fn attributes(this) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
     }
 
-    fn set_attributes(this, attribs: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributes:\0")), attribs);
+    fn set_attributes(this, attribs: Data) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributes:\0")), attribs.raw());
     }
 
     // SKIPPED `getValues:forAttribute:forVirtualScreen:`: param `NSOpenGLPixelFormatAttribute` — unmapped type `NSOpenGLPixelFormatAttribute`
@@ -128,6 +139,8 @@ struct OpenGLPixelBuffer {
 
 impl OpenGLPixelBuffer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> OpenGLPixelBuffer { return OpenGLPixelBuffer { _obj: ptr }; }
 
     // SKIPPED `initWithTextureTarget:textureInternalFormat:textureMaxMipMapLevel:pixelsWide:pixelsHigh:`: param `GLenum` — unmapped type `GLenum`
     // SKIPPED `initWithCGLPBufferObj:`: extra init variant (one `new` per type)
@@ -150,10 +163,12 @@ struct OpenGLContext {
 impl OpenGLContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> OpenGLContext { return OpenGLContext { _obj: ptr }; }
+
     // SKIPPED `initWithFormat:shareContext:`: init arg shape not yet modelled
     // SKIPPED `initWithCGLContextObj:`: extra init variant (one `new` per type)
-    fn set_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
+    fn set_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
     fn set_full_screen(this) {
@@ -205,9 +220,12 @@ impl OpenGLContext {
     // SKIPPED `setCurrentVirtualScreen:`: param `GLint` — unmapped type `GLint`
     // SKIPPED `CGLContextObj`: return `NS_RETURNS_INNER_POINTER CGLContextObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLContextObj`
     // SKIPPED `setPixelBuffer:cubeMapFace:mipMapLevel:currentVirtualScreen:`: param `GLenum` — unmapped type `GLenum`
-    fn pixel_buffer(this) -> option::Option[*u8] {
+    fn pixel_buffer(this) -> option::Option[OpenGLPixelBuffer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pixelBuffer\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[OpenGLPixelBuffer]::None;
+        }
+        return option::some(OpenGLPixelBuffer::from_raw(obj));
     }
 
     // SKIPPED `pixelBufferCubeMapFace`: return `GLenum` — unmapped type `GLenum`

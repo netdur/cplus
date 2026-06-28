@@ -27,35 +27,13 @@ fn text_layout_manager_segment_type_from_raw(raw: i64) -> TextLayoutManagerSegme
     return TextLayoutManagerSegmentType::Standard;
 }
 
-// `NSTextLayoutManagerSegmentOptions` (NS_ENUM)
-enum TextLayoutManagerSegmentOptions {
-    None,
-    RangeNotRequired,
-    MiddleFragmentsExcluded,
-    HeadSegmentExtended,
-    TailSegmentExtended,
-    UpstreamAffinity,
-}
-
-fn text_layout_manager_segment_options_raw(v: TextLayoutManagerSegmentOptions) -> i64 {
-    return match v {
-        TextLayoutManagerSegmentOptions::None => { 0 as i64 },
-        TextLayoutManagerSegmentOptions::RangeNotRequired => { 1 as i64 },
-        TextLayoutManagerSegmentOptions::MiddleFragmentsExcluded => { 2 as i64 },
-        TextLayoutManagerSegmentOptions::HeadSegmentExtended => { 4 as i64 },
-        TextLayoutManagerSegmentOptions::TailSegmentExtended => { 8 as i64 },
-        TextLayoutManagerSegmentOptions::UpstreamAffinity => { 16 as i64 },
-    };
-}
-
-fn text_layout_manager_segment_options_from_raw(raw: i64) -> TextLayoutManagerSegmentOptions {
-    if raw == (1 as i64) { return TextLayoutManagerSegmentOptions::RangeNotRequired; }
-    if raw == (2 as i64) { return TextLayoutManagerSegmentOptions::MiddleFragmentsExcluded; }
-    if raw == (4 as i64) { return TextLayoutManagerSegmentOptions::HeadSegmentExtended; }
-    if raw == (8 as i64) { return TextLayoutManagerSegmentOptions::TailSegmentExtended; }
-    if raw == (16 as i64) { return TextLayoutManagerSegmentOptions::UpstreamAffinity; }
-    return TextLayoutManagerSegmentOptions::None;
-}
+// `NSTextLayoutManagerSegmentOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_layout_manager_segment_options_none: u64 = 0 as u64;
+const text_layout_manager_segment_options_range_not_required: u64 = 1 as u64;
+const text_layout_manager_segment_options_middle_fragments_excluded: u64 = 2 as u64;
+const text_layout_manager_segment_options_head_segment_extended: u64 = 4 as u64;
+const text_layout_manager_segment_options_tail_segment_extended: u64 = 8 as u64;
+const text_layout_manager_segment_options_upstream_affinity: u64 = 16 as u64;
 
 #[repr(C)]
 struct TextLayoutManager_set_rendering_attributes_validator_block {
@@ -84,6 +62,8 @@ struct TextRange {
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
+
 }
 
 // `NSTextContentManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -93,6 +73,8 @@ struct TextContentManager {
 
 impl TextContentManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextContentManager { return TextContentManager { _obj: ptr }; }
 
 }
 
@@ -104,6 +86,8 @@ struct TextElement {
 impl TextElement {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextElement { return TextElement { _obj: ptr }; }
+
 }
 
 // `NSTextContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -113,6 +97,8 @@ struct TextContainer {
 
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
 
 }
 
@@ -124,6 +110,8 @@ struct TextSelection {
 impl TextSelection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextSelection { return TextSelection { _obj: ptr }; }
+
 }
 
 // `NSTextSelectionNavigation` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -133,6 +121,8 @@ struct TextSelectionNavigation {
 
 impl TextSelectionNavigation {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextSelectionNavigation { return TextSelectionNavigation { _obj: ptr }; }
 
 }
 
@@ -144,6 +134,8 @@ struct TextViewportLayoutController {
 impl TextViewportLayoutController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextViewportLayoutController { return TextViewportLayoutController { _obj: ptr }; }
+
 }
 
 // `NSTextLayoutManager` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -154,6 +146,8 @@ struct TextLayoutManager {
 impl TextLayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLayoutManager { return TextLayoutManager { _obj: ptr }; }
+
     fn new() -> TextLayoutManager {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextLayoutManager\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -161,36 +155,50 @@ impl TextLayoutManager {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    fn replace_text_content_manager(this, text_content_manager: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContentManager:\0")), text_content_manager);
+    fn replace_text_content_manager(this, text_content_manager: TextContentManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContentManager:\0")), text_content_manager.raw());
     }
 
-    fn ensure_layout_for_range(this, range: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForRange:\0")), range);
+    fn ensure_layout_for_range(this, range: TextRange) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForRange:\0")), range.raw());
     }
 
-    // SKIPPED `ensureLayoutForBounds:`: param `CGRect` — unmapped type `CGRect`
-    fn invalidate_layout_for_range(this, range: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForRange:\0")), range);
+    fn ensure_layout_for_bounds(this, bounds: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("ensureLayoutForBounds:\0")), bounds);
     }
 
-    // SKIPPED `textLayoutFragmentForPosition:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `textLayoutFragmentForLocation:`: param `id<NSTextLocation> _Nonnull` — generic collection
+    fn invalidate_layout_for_range(this, range: TextRange) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForRange:\0")), range.raw());
+    }
+
+    // SKIPPED `textLayoutFragmentForPosition:`: (return, arg) shape not yet modelled
+    fn text_layout_fragment_for_location(this, location: TextLocation) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("textLayoutFragmentForLocation:\0")), location.raw());
+        return bridge::obj_option(obj);
+    }
+
     // SKIPPED `enumerateTextLayoutFragmentsFromLocation:options:usingBlock:`: block method with non-void return
-    // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: leading param `id<NSTextLocation> _Nonnull` — generic collection
+    // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `setRenderingAttributes:forTextRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     // SKIPPED `addRenderingAttribute:value:forTextRange:`: (return, arg) shape not yet modelled
     // SKIPPED `removeRenderingAttribute:forTextRange:`: (return, arg) shape not yet modelled
-    fn invalidate_rendering_attributes_for_text_range(this, text_range: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateRenderingAttributesForTextRange:\0")), text_range);
+    fn invalidate_rendering_attributes_for_text_range(this, text_range: TextRange) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateRenderingAttributesForTextRange:\0")), text_range.raw());
     }
 
-    // SKIPPED `renderingAttributesForLink:atLocation:`: param `id<NSTextLocation> _Nonnull` — generic collection
+    // SKIPPED `renderingAttributesForLink:atLocation:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `enumerateTextSegmentsInRange:type:options:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `replaceContentsInRange:withTextElements:`: param `NSArray<NSTextElement *> * _Nonnull` — generic collection
     // SKIPPED `replaceContentsInRange:withAttributedString:`: (return, arg) shape not yet modelled
-    // SKIPPED `delegate`: return `id<NSTextLayoutManagerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTextLayoutManagerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn uses_font_leading(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesFontLeading\0"))) != (0 as i8);
     }
@@ -223,23 +231,32 @@ impl TextLayoutManager {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setResolvesNaturalAlignmentWithBaseWritingDirection:\0")), resolves_natural_alignment_with_base_writing_direction as i8);
     }
 
-    fn text_content_manager(this) -> option::Option[*u8] {
+    fn text_content_manager(this) -> option::Option[TextContentManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContentManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContentManager]::None;
+        }
+        return option::some(TextContentManager::from_raw(obj));
     }
 
-    fn text_container(this) -> option::Option[*u8] {
+    fn text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainer\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContainer]::None;
+        }
+        return option::some(TextContainer::from_raw(obj));
     }
 
-    fn set_text_container(this, text_container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContainer:\0")), text_container);
+    fn set_text_container(this, text_container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContainer:\0")), text_container.raw());
     }
 
-    // SKIPPED `usageBoundsForTextContainer`: return `CGRect` — unmapped type `CGRect`
-    fn text_viewport_layout_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textViewportLayoutController\0")));
+    fn usage_bounds_for_text_container(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("usageBoundsForTextContainer\0")));
+    }
+
+    fn text_viewport_layout_controller(this) -> TextViewportLayoutController {
+        return TextViewportLayoutController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textViewportLayoutController\0"))));
     }
 
     fn layout_queue(this) -> option::Option[*u8] {
@@ -253,12 +270,12 @@ impl TextLayoutManager {
 
     // SKIPPED `textSelections`: return `NSArray<NSTextSelection *> * _Nonnull` — generic collection
     // SKIPPED `setTextSelections:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
-    fn text_selection_navigation(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionNavigation\0")));
+    fn text_selection_navigation(this) -> TextSelectionNavigation {
+        return TextSelectionNavigation::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionNavigation\0"))));
     }
 
-    fn set_text_selection_navigation(this, text_selection_navigation: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextSelectionNavigation:\0")), text_selection_navigation);
+    fn set_text_selection_navigation(this, text_selection_navigation: TextSelectionNavigation) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextSelectionNavigation:\0")), text_selection_navigation.raw());
     }
 
     // SKIPPED `renderingAttributesValidator`: return `void (^ _Nullable)(NSTextLayoutManager * _Nonnull, NSTextLayoutFragment * _Nonnull)` — block
@@ -274,5 +291,17 @@ impl TextLayoutManager {
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSTextLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLocation {
+    opaque _obj: *u8,
+}
+
+impl TextLocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
+
 }
 

@@ -14,6 +14,8 @@ struct DataAsset {
 impl DataAsset {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DataAsset { return DataAsset { _obj: ptr }; }
+
     fn new() -> DataAsset {
         let cls: *u8 = rt::get_class(#str_ptr("NSDataAsset\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

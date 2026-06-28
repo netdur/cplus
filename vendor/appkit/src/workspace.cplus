@@ -8,23 +8,9 @@ import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/string_map" as string_map;
 
-// `NSWorkspaceIconCreationOptions` (NS_ENUM)
-enum WorkspaceIconCreationOptions {
-    NSExcludeQuickDrawElementsIconCreationOption,
-    NSExclude10_4ElementsIconCreationOption,
-}
-
-fn workspace_icon_creation_options_raw(v: WorkspaceIconCreationOptions) -> i64 {
-    return match v {
-        WorkspaceIconCreationOptions::NSExcludeQuickDrawElementsIconCreationOption => { 2 as i64 },
-        WorkspaceIconCreationOptions::NSExclude10_4ElementsIconCreationOption => { 4 as i64 },
-    };
-}
-
-fn workspace_icon_creation_options_from_raw(raw: i64) -> WorkspaceIconCreationOptions {
-    if raw == (4 as i64) { return WorkspaceIconCreationOptions::NSExclude10_4ElementsIconCreationOption; }
-    return WorkspaceIconCreationOptions::NSExcludeQuickDrawElementsIconCreationOption;
-}
+// `NSWorkspaceIconCreationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const workspace_icon_creation_options_n_s_exclude_quick_draw_elements_icon_creation_option: u64 = 2 as u64;
+const workspace_icon_creation_options_n_s_exclude10_4_elements_icon_creation_option: u64 = 4 as u64;
 
 // `NSWorkspaceAuthorizationType` (NS_ENUM)
 enum WorkspaceAuthorizationType {
@@ -47,53 +33,19 @@ fn workspace_authorization_type_from_raw(raw: i64) -> WorkspaceAuthorizationType
     return WorkspaceAuthorizationType::CreateSymbolicLink;
 }
 
-// `NSWorkspaceLaunchOptions` (NS_ENUM)
-enum WorkspaceLaunchOptions {
-    NSWorkspaceLaunchAndPrint,
-    NSWorkspaceLaunchWithErrorPresentation,
-    NSWorkspaceLaunchInhibitingBackgroundOnly,
-    NSWorkspaceLaunchWithoutAddingToRecents,
-    NSWorkspaceLaunchWithoutActivation,
-    NSWorkspaceLaunchAsync,
-    NSWorkspaceLaunchNewInstance,
-    NSWorkspaceLaunchAndHide,
-    NSWorkspaceLaunchAndHideOthers,
-    NSWorkspaceLaunchDefault,
-    NSWorkspaceLaunchAllowingClassicStartup,
-    NSWorkspaceLaunchPreferringClassic,
-}
-
-fn workspace_launch_options_raw(v: WorkspaceLaunchOptions) -> i64 {
-    return match v {
-        WorkspaceLaunchOptions::NSWorkspaceLaunchAndPrint => { 2 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchWithErrorPresentation => { 64 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchInhibitingBackgroundOnly => { 128 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchWithoutAddingToRecents => { 256 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchWithoutActivation => { 512 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchAsync => { 65536 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchNewInstance => { 524288 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchAndHide => { 1048576 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchAndHideOthers => { 2097152 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchDefault => { 65536 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchAllowingClassicStartup => { 131072 as i64 },
-        WorkspaceLaunchOptions::NSWorkspaceLaunchPreferringClassic => { 262144 as i64 },
-    };
-}
-
-fn workspace_launch_options_from_raw(raw: i64) -> WorkspaceLaunchOptions {
-    if raw == (64 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchWithErrorPresentation; }
-    if raw == (128 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchInhibitingBackgroundOnly; }
-    if raw == (256 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchWithoutAddingToRecents; }
-    if raw == (512 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchWithoutActivation; }
-    if raw == (65536 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchAsync; }
-    if raw == (524288 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchNewInstance; }
-    if raw == (1048576 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchAndHide; }
-    if raw == (2097152 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchAndHideOthers; }
-    if raw == (65536 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchDefault; }
-    if raw == (131072 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchAllowingClassicStartup; }
-    if raw == (262144 as i64) { return WorkspaceLaunchOptions::NSWorkspaceLaunchPreferringClassic; }
-    return WorkspaceLaunchOptions::NSWorkspaceLaunchAndPrint;
-}
+// `NSWorkspaceLaunchOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const workspace_launch_options_n_s_workspace_launch_and_print: u64 = 2 as u64;
+const workspace_launch_options_n_s_workspace_launch_with_error_presentation: u64 = 64 as u64;
+const workspace_launch_options_n_s_workspace_launch_inhibiting_background_only: u64 = 128 as u64;
+const workspace_launch_options_n_s_workspace_launch_without_adding_to_recents: u64 = 256 as u64;
+const workspace_launch_options_n_s_workspace_launch_without_activation: u64 = 512 as u64;
+const workspace_launch_options_n_s_workspace_launch_async: u64 = 65536 as u64;
+const workspace_launch_options_n_s_workspace_launch_new_instance: u64 = 524288 as u64;
+const workspace_launch_options_n_s_workspace_launch_and_hide: u64 = 1048576 as u64;
+const workspace_launch_options_n_s_workspace_launch_and_hide_others: u64 = 2097152 as u64;
+const workspace_launch_options_n_s_workspace_launch_default: u64 = 65536 as u64;
+const workspace_launch_options_n_s_workspace_launch_allowing_classic_startup: u64 = 131072 as u64;
+const workspace_launch_options_n_s_workspace_launch_preferring_classic: u64 = 262144 as u64;
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
@@ -102,6 +54,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -113,6 +67,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -122,6 +78,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -133,6 +91,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSNotificationCenter` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -142,6 +102,8 @@ struct NotificationCenter {
 
 impl NotificationCenter {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> NotificationCenter { return NotificationCenter { _obj: ptr }; }
 
 }
 
@@ -153,6 +115,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSScreen` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -162,6 +126,8 @@ struct Screen {
 
 impl Screen {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Screen { return Screen { _obj: ptr }; }
 
 }
 
@@ -173,6 +139,8 @@ struct RunningApplication {
 impl RunningApplication {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RunningApplication { return RunningApplication { _obj: ptr }; }
+
 }
 
 // `NSWorkspaceOpenConfiguration` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -182,6 +150,8 @@ struct WorkspaceOpenConfiguration {
 
 impl WorkspaceOpenConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> WorkspaceOpenConfiguration { return WorkspaceOpenConfiguration { _obj: ptr }; }
 
     fn configuration() -> WorkspaceOpenConfiguration {
         return WorkspaceOpenConfiguration { _obj: rt::msg_id(rt::get_class(#str_ptr("NSWorkspaceOpenConfiguration\0")), rt::sel(#str_ptr("configuration\0"))) };
@@ -287,13 +257,16 @@ impl WorkspaceOpenConfiguration {
     }
 
     // SKIPPED `setEnvironment:`: param `NSDictionary<NSString *,NSString *> * _Nonnull` — generic collection
-    fn apple_event(this) -> option::Option[*u8] {
+    fn apple_event(this) -> option::Option[AppleEventDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("appleEvent\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[AppleEventDescriptor]::None;
+        }
+        return option::some(AppleEventDescriptor::from_raw(obj));
     }
 
-    fn set_apple_event(this, apple_event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppleEvent:\0")), apple_event);
+    fn set_apple_event(this, apple_event: AppleEventDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppleEvent:\0")), apple_event.raw());
     }
 
     // SKIPPED `architecture`: return `cpu_type_t` — unmapped type `cpu_type_t`
@@ -316,6 +289,8 @@ struct AppleEventDescriptor {
 impl AppleEventDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AppleEventDescriptor { return AppleEventDescriptor { _obj: ptr }; }
+
 }
 
 // `UTType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -326,6 +301,8 @@ struct UTType {
 impl UTType {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> UTType { return UTType { _obj: ptr }; }
+
 }
 
 // `NSWorkspace` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -335,6 +312,8 @@ struct Workspace {
 
 impl Workspace {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Workspace { return Workspace { _obj: ptr }; }
 
     // SKIPPED `openURL:`: (return, arg) shape not yet modelled
     // SKIPPED `openURL:configuration:completionHandler:`: block-method msgSend shape not modelled
@@ -348,17 +327,20 @@ impl Workspace {
     }
 
     // SKIPPED `isFilePackageAtPath:`: (return, arg) shape not yet modelled
-    fn icon_for_file(this, full_path: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFile:\0")), bridge::nsstring(full_path));
+    fn icon_for_file(this, full_path: str) -> Image {
+        return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFile:\0")), bridge::nsstring(full_path)));
     }
 
-    fn icon_for_files(this, full_paths: vec::Vec[text::Text]) -> option::Option[*u8] {
+    fn icon_for_files(this, full_paths: vec::Vec[text::Text]) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFiles:\0")), bridge::nsarray_of_text(full_paths));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn icon_for_content_type(this, content_type: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForContentType:\0")), content_type);
+    fn icon_for_content_type(this, content_type: UTType) -> Image {
+        return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForContentType:\0")), content_type.raw()));
     }
 
     // SKIPPED `setIcon:forFile:options:`: (return, arg) shape not yet modelled
@@ -372,24 +354,33 @@ impl Workspace {
         rt::msg_void(this._obj, rt::sel(#str_ptr("hideOtherApplications\0")));
     }
 
-    fn u_r_l_for_application_with_bundle_identifier(this, bundle_identifier: str) -> option::Option[*u8] {
+    fn u_r_l_for_application_with_bundle_identifier(this, bundle_identifier: str) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationWithBundleIdentifier:\0")), bridge::nsstring(bundle_identifier));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
     // SKIPPED `URLsForApplicationsWithBundleIdentifier:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
-    fn u_r_l_for_application_to_open_u_r_l(this, url: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenURL:\0")), url);
-        return bridge::obj_option(obj);
+    fn u_r_l_for_application_to_open_u_r_l(this, url: URL) -> option::Option[URL] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenURL:\0")), url.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
     // SKIPPED `URLsForApplicationsToOpenURL:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
     // SKIPPED `setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:`: block-method msgSend shape not modelled
-    fn u_r_l_for_application_to_open_content_type(this, content_type: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenContentType:\0")), content_type);
-        return bridge::obj_option(obj);
+    fn u_r_l_for_application_to_open_content_type(this, content_type: UTType) -> option::Option[URL] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenContentType:\0")), content_type.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
     // SKIPPED `URLsForApplicationsToOpenContentType:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
@@ -398,8 +389,8 @@ impl Workspace {
         return Workspace { _obj: rt::msg_id(rt::get_class(#str_ptr("NSWorkspace\0")), rt::sel(#str_ptr("sharedWorkspace\0"))) };
     }
 
-    fn notification_center(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("notificationCenter\0")));
+    fn notification_center(this) -> NotificationCenter {
+        return NotificationCenter::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("notificationCenter\0"))));
     }
 
     // SKIPPED `fileLabels`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
@@ -413,9 +404,12 @@ impl Workspace {
     }
 
     // SKIPPED `setDesktopImageURL:forScreen:options:error:`: param `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nonnull` — generic collection
-    fn desktop_image_u_r_l_for_screen(this, screen: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("desktopImageURLForScreen:\0")), screen);
-        return bridge::obj_option(obj);
+    fn desktop_image_u_r_l_for_screen(this, screen: Screen) -> option::Option[URL] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("desktopImageURLForScreen:\0")), screen.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
     // SKIPPED `desktopImageOptionsForScreen:`: return `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
@@ -449,7 +443,7 @@ impl Workspace {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteUserDefaultsChanged\0")));
     }
 
-    // SKIPPED `slideImage:from:to:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `slideImage:from:to:`: (return, arg) shape not yet modelled
     fn check_for_removable_media(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkForRemovableMedia\0")));
     }
@@ -488,11 +482,11 @@ impl Workspace {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `openFile:fromImage:at:inView:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `openFile:fromImage:at:inView:`: (return, arg) shape not yet modelled
     // SKIPPED `performFileOperation:source:destination:files:tag:`: (return, arg) shape not yet modelled
     // SKIPPED `getInfoForFile:application:type:`: (return, arg) shape not yet modelled
-    fn icon_for_file_type(this, file_type: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFileType:\0")), bridge::nsstring(file_type));
+    fn icon_for_file_type(this, file_type: str) -> Image {
+        return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFileType:\0")), bridge::nsstring(file_type)));
     }
 
     // SKIPPED `typeOfFile:error:`: (return, arg) shape not yet modelled
@@ -517,6 +511,8 @@ struct WorkspaceAuthorization {
 
 impl WorkspaceAuthorization {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> WorkspaceAuthorization { return WorkspaceAuthorization { _obj: ptr }; }
 
 }
 

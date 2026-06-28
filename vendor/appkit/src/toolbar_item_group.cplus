@@ -57,10 +57,15 @@ struct ToolbarItemGroup {
 impl ToolbarItemGroup {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ToolbarItemGroup { return ToolbarItemGroup { _obj: ptr }; }
+
     // SKIPPED `groupWithItemIdentifier:titles:selectionMode:labels:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `groupWithItemIdentifier:images:selectionMode:labels:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
     // SKIPPED `setSelected:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `isSelectedAtIndex:`: (return, arg) shape not yet modelled
+    fn is_selected_at_index(this, index: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isSelectedAtIndex:\0")), index) != (0 as i8);
+    }
+
     // SKIPPED `subitems`: return `NSArray<__kindof NSToolbarItem *> * _Nonnull` — generic collection
     // SKIPPED `setSubitems:`: param `NSArray<__kindof NSToolbarItem *> * _Nonnull` — generic collection
     fn control_representation(this) -> ToolbarItemGroupControlRepresentation {

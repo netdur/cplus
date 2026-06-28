@@ -74,6 +74,8 @@ struct LayoutConstraint {
 impl LayoutConstraint {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
+
 }
 
 // `NSGridCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -83,6 +85,8 @@ struct GridCell {
 
 impl GridCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GridCell { return GridCell { _obj: ptr }; }
 
     fn content_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
@@ -97,14 +101,20 @@ impl GridCell {
         return rt::msg_id(rt::get_class(#str_ptr("NSGridCell\0")), rt::sel(#str_ptr("emptyContentView\0")));
     }
 
-    fn row(this) -> option::Option[*u8] {
+    fn row(this) -> option::Option[GridRow] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("row\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GridRow]::None;
+        }
+        return option::some(GridRow::from_raw(obj));
     }
 
-    fn column(this) -> option::Option[*u8] {
+    fn column(this) -> option::Option[GridColumn] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("column\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GridColumn]::None;
+        }
+        return option::some(GridColumn::from_raw(obj));
     }
 
     fn x_placement(this) -> GridCellPlacement {
@@ -134,14 +144,19 @@ struct GridColumn {
 impl GridColumn {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn cell_at_index(this, index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index);
+    fn from_raw(ptr: *u8) -> GridColumn { return GridColumn { _obj: ptr }; }
+
+    fn cell_at_index(this, index: i64) -> GridCell {
+        return GridCell::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index));
     }
 
     // SKIPPED `mergeCellsInRange:`: (return, arg) shape not yet modelled
-    fn grid_view(this) -> option::Option[*u8] {
+    fn grid_view(this) -> option::Option[GridView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("gridView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GridView]::None;
+        }
+        return option::some(GridView::from_raw(obj));
     }
 
     fn number_of_cells(this) -> i64 {
@@ -195,14 +210,19 @@ struct GridRow {
 impl GridRow {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn cell_at_index(this, index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index);
+    fn from_raw(ptr: *u8) -> GridRow { return GridRow { _obj: ptr }; }
+
+    fn cell_at_index(this, index: i64) -> GridCell {
+        return GridCell::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index));
     }
 
     // SKIPPED `mergeCellsInRange:`: (return, arg) shape not yet modelled
-    fn grid_view(this) -> option::Option[*u8] {
+    fn grid_view(this) -> option::Option[GridView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("gridView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GridView]::None;
+        }
+        return option::some(GridView::from_raw(obj));
     }
 
     fn number_of_cells(this) -> i64 {
@@ -261,24 +281,34 @@ struct GridView {
 impl GridView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> GridView { return GridView { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> GridView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGridView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return GridView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `gridViewWithNumberOfColumns:rows:`: (return, arg) shape not yet modelled
     // SKIPPED `gridViewWithViews:`: param `NSArray<NSArray<NSView *> *> * _Nonnull` — generic collection
-    fn row_at_index(this, index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("rowAtIndex:\0")), index);
+    fn row_at_index(this, index: i64) -> GridRow {
+        return GridRow::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("rowAtIndex:\0")), index));
     }
 
     // SKIPPED `indexOfRow:`: (return, arg) shape not yet modelled
-    fn column_at_index(this, index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("columnAtIndex:\0")), index);
+    fn column_at_index(this, index: i64) -> GridColumn {
+        return GridColumn::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("columnAtIndex:\0")), index));
     }
 
     // SKIPPED `indexOfColumn:`: (return, arg) shape not yet modelled
     // SKIPPED `cellAtColumnIndex:rowIndex:`: (return, arg) shape not yet modelled
-    fn cell_for_view(this, view: *u8) -> option::Option[*u8] {
+    fn cell_for_view(this, view: *u8) -> option::Option[GridCell] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("cellForView:\0")), view);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GridCell]::None;
+        }
+        return option::some(GridCell::from_raw(obj));
     }
 
     // SKIPPED `addRowWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection

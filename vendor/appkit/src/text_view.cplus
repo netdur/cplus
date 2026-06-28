@@ -95,6 +95,18 @@ fn text_layout_orientation_from_raw(raw: i64) -> TextLayoutOrientation {
     return TextLayoutOrientation::Horizontal;
 }
 
+// `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
+const drag_operation_none: u64 = 0 as u64;
+const drag_operation_copy: u64 = 1 as u64;
+const drag_operation_link: u64 = 2 as u64;
+const drag_operation_generic: u64 = 4 as u64;
+const drag_operation_private: u64 = 8 as u64;
+const drag_operation_move: u64 = 16 as u64;
+const drag_operation_delete: u64 = 32 as u64;
+const drag_operation_every: u64 = 9223372036854775807 as u64;
+const drag_operation_all__obsolete: u64 = 15 as u64;
+const drag_operation_all: u64 = 15 as u64;
+
 // `NSSelectionAffinity` (NS_ENUM)
 enum SelectionAffinity {
     Upstream,
@@ -137,35 +149,13 @@ fn writing_tools_behavior_from_raw(raw: i64) -> WritingToolsBehavior {
     return WritingToolsBehavior::None;
 }
 
-// `NSWritingToolsResultOptions` (NS_ENUM)
-enum WritingToolsResultOptions {
-    NSWritingToolsResultDefault,
-    NSWritingToolsResultPlainText,
-    NSWritingToolsResultRichText,
-    NSWritingToolsResultList,
-    NSWritingToolsResultTable,
-    NSWritingToolsResultPresentationIntent,
-}
-
-fn writing_tools_result_options_raw(v: WritingToolsResultOptions) -> i64 {
-    return match v {
-        WritingToolsResultOptions::NSWritingToolsResultDefault => { 0 as i64 },
-        WritingToolsResultOptions::NSWritingToolsResultPlainText => { 1 as i64 },
-        WritingToolsResultOptions::NSWritingToolsResultRichText => { 2 as i64 },
-        WritingToolsResultOptions::NSWritingToolsResultList => { 4 as i64 },
-        WritingToolsResultOptions::NSWritingToolsResultTable => { 8 as i64 },
-        WritingToolsResultOptions::NSWritingToolsResultPresentationIntent => { 16 as i64 },
-    };
-}
-
-fn writing_tools_result_options_from_raw(raw: i64) -> WritingToolsResultOptions {
-    if raw == (1 as i64) { return WritingToolsResultOptions::NSWritingToolsResultPlainText; }
-    if raw == (2 as i64) { return WritingToolsResultOptions::NSWritingToolsResultRichText; }
-    if raw == (4 as i64) { return WritingToolsResultOptions::NSWritingToolsResultList; }
-    if raw == (8 as i64) { return WritingToolsResultOptions::NSWritingToolsResultTable; }
-    if raw == (16 as i64) { return WritingToolsResultOptions::NSWritingToolsResultPresentationIntent; }
-    return WritingToolsResultOptions::NSWritingToolsResultDefault;
-}
+// `NSWritingToolsResultOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const writing_tools_result_options_n_s_writing_tools_result_default: u64 = 0 as u64;
+const writing_tools_result_options_n_s_writing_tools_result_plain_text: u64 = 1 as u64;
+const writing_tools_result_options_n_s_writing_tools_result_rich_text: u64 = 2 as u64;
+const writing_tools_result_options_n_s_writing_tools_result_list: u64 = 4 as u64;
+const writing_tools_result_options_n_s_writing_tools_result_table: u64 = 8 as u64;
+const writing_tools_result_options_n_s_writing_tools_result_presentation_intent: u64 = 16 as u64;
 
 // `NSTextInputTraitType` (NS_ENUM)
 enum TextInputTraitType {
@@ -196,6 +186,8 @@ struct TextContainer {
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
+
 }
 
 // `NSTextStorage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -205,6 +197,8 @@ struct TextStorage {
 
 impl TextStorage {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextStorage { return TextStorage { _obj: ptr }; }
 
 }
 
@@ -216,6 +210,8 @@ struct LayoutManager {
 impl LayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutManager { return LayoutManager { _obj: ptr }; }
+
 }
 
 // `NSTextContentStorage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -225,6 +221,8 @@ struct TextContentStorage {
 
 impl TextContentStorage {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextContentStorage { return TextContentStorage { _obj: ptr }; }
 
 }
 
@@ -236,6 +234,8 @@ struct TextLayoutManager {
 impl TextLayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLayoutManager { return TextLayoutManager { _obj: ptr }; }
+
 }
 
 // `NSRulerView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -245,6 +245,8 @@ struct RulerView {
 
 impl RulerView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
 
 }
 
@@ -256,6 +258,8 @@ struct RulerMarker {
 impl RulerMarker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
+
 }
 
 // `NSUndoManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -265,6 +269,8 @@ struct UndoManager {
 
 impl UndoManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UndoManager { return UndoManager { _obj: ptr }; }
 
 }
 
@@ -276,6 +282,8 @@ struct ParagraphStyle {
 impl ParagraphStyle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ParagraphStyle { return ParagraphStyle { _obj: ptr }; }
+
 }
 
 // `NSOrthography` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -285,6 +293,8 @@ struct Orthography {
 
 impl Orthography {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Orthography { return Orthography { _obj: ptr }; }
 
 }
 
@@ -296,6 +306,8 @@ struct SharingServicePicker {
 impl SharingServicePicker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharingServicePicker { return SharingServicePicker { _obj: ptr }; }
+
 }
 
 // `NSValue` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -305,6 +317,8 @@ struct Value {
 
 impl Value {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Value { return Value { _obj: ptr }; }
 
 }
 
@@ -316,6 +330,8 @@ struct TextAttachment {
 impl TextAttachment {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextAttachment { return TextAttachment { _obj: ptr }; }
+
 }
 
 // `NSTextRange` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -325,6 +341,8 @@ struct TextRange {
 
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
 
 }
 
@@ -336,13 +354,15 @@ struct TextView {
 impl TextView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:textContainer:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> TextView { return TextView { _obj: ptr }; }
+
+    // SKIPPED `initWithFrame:textContainer:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:`: extra init variant (one `new` per type)
     // SKIPPED `initUsingTextLayoutManager:`: (return, arg) shape not yet modelled
     // SKIPPED `textViewUsingTextLayoutManager:`: (return, arg) shape not yet modelled
-    fn replace_text_container(this, new_container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContainer:\0")), new_container);
+    fn replace_text_container(this, new_container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContainer:\0")), new_container.raw());
     }
 
     fn invalidate_text_container_origin(this) {
@@ -353,7 +373,10 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertText:\0")), insert_string);
     }
 
-    // SKIPPED `setConstrainedFrameSize:`: param `NSSize` — unmapped type `NSSize`
+    fn set_constrained_frame_size(this, desired_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setConstrainedFrameSize:\0")), desired_size);
+    }
+
     // SKIPPED `setAlignment:range:`: (return, arg) shape not yet modelled
     // SKIPPED `setBaseWritingDirection:range:`: (return, arg) shape not yet modelled
     fn turn_off_kerning(this, sender: *u8) {
@@ -445,9 +468,15 @@ impl TextView {
     // SKIPPED `rulerView:shouldRemoveMarker:`: (return, arg) shape not yet modelled
     // SKIPPED `rulerView:willAddMarker:atLocation:`: (return, arg) shape not yet modelled
     // SKIPPED `rulerView:handleMouseDown:`: (return, arg) shape not yet modelled
-    // SKIPPED `setNeedsDisplayInRect:avoidAdditionalLayout:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawInsertionPointInRect:color:turnedOn:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawViewBackgroundInRect:`: param `NSRect` — unmapped type `NSRect`
+    fn set_needs_display_in_rect_avoid_additional_layout(this, rect: rt::Rect, flag: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setNeedsDisplayInRect:avoidAdditionalLayout:\0")), rect, flag as i8);
+    }
+
+    // SKIPPED `drawInsertionPointInRect:color:turnedOn:`: (return, arg) shape not yet modelled
+    fn draw_view_background_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawViewBackgroundInRect:\0")), rect);
+    }
+
     fn update_ruler(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateRuler\0")));
     }
@@ -475,28 +504,46 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeLayoutOrientation:\0")), sender);
     }
 
-    // SKIPPED `characterIndexForInsertionAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `characterIndexForInsertionAtPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `performValidatedReplacementInRange:withAttributedString:`: (return, arg) shape not yet modelled
-    fn text_container(this) -> option::Option[*u8] {
+    fn text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainer\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContainer]::None;
+        }
+        return option::some(TextContainer::from_raw(obj));
     }
 
-    fn set_text_container(this, text_container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContainer:\0")), text_container);
+    fn set_text_container(this, text_container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContainer:\0")), text_container.raw());
     }
 
-    // SKIPPED `textContainerInset`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setTextContainerInset:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `textContainerOrigin`: return `NSPoint` — unmapped type `NSPoint`
-    fn layout_manager(this) -> option::Option[*u8] {
+    fn text_container_inset(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("textContainerInset\0")));
+    }
+
+    fn set_text_container_inset(this, text_container_inset: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setTextContainerInset:\0")), text_container_inset);
+    }
+
+    fn text_container_origin(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("textContainerOrigin\0")));
+    }
+
+    fn layout_manager(this) -> option::Option[LayoutManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("layoutManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[LayoutManager]::None;
+        }
+        return option::some(LayoutManager::from_raw(obj));
     }
 
-    fn text_storage(this) -> option::Option[*u8] {
+    fn text_storage(this) -> option::Option[TextStorage] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textStorage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextStorage]::None;
+        }
+        return option::some(TextStorage::from_raw(obj));
     }
 
     fn text_layout_manager(this) -> *u8 {
@@ -579,9 +626,9 @@ impl TextView {
         return out;
     }
 
-    // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: (return, arg) shape not yet modelled
     // SKIPPED `dragImageForSelectionWithEvent:origin:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
-    // SKIPPED `dragOperationForDraggingInfo:type:`: param `id<NSDraggingInfo> _Nonnull` — generic collection
+    // SKIPPED `dragOperationForDraggingInfo:type:`: (return, arg) shape not yet modelled
     fn clean_up_after_drag_operation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("cleanUpAfterDragOperation\0")));
     }
@@ -729,13 +776,16 @@ impl TextView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsDocumentBackgroundColorChange:\0")), allows_document_background_color_change as i8);
     }
 
-    fn default_paragraph_style(this) -> option::Option[*u8] {
+    fn default_paragraph_style(this) -> option::Option[ParagraphStyle] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("defaultParagraphStyle\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ParagraphStyle]::None;
+        }
+        return option::some(ParagraphStyle::from_raw(obj));
     }
 
-    fn set_default_paragraph_style(this, default_paragraph_style: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultParagraphStyle:\0")), default_paragraph_style);
+    fn set_default_paragraph_style(this, default_paragraph_style: ParagraphStyle) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultParagraphStyle:\0")), default_paragraph_style.raw());
     }
 
     fn allows_undo(this) -> bool {
@@ -766,8 +816,15 @@ impl TextView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setUsesRolloverButtonForSelection:\0")), uses_rollover_button_for_selection as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSTextViewDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTextViewDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn is_editable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8);
     }
@@ -851,8 +908,8 @@ impl TextView {
     }
 
     // SKIPPED `setWritingToolsBehavior:`: (return, arg) shape not yet modelled
-    fn allowed_writing_tools_result_options(this) -> WritingToolsResultOptions {
-        return writing_tools_result_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("allowedWritingToolsResultOptions\0"))));
+    fn allowed_writing_tools_result_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allowedWritingToolsResultOptions\0")));
     }
 
     // SKIPPED `setAllowedWritingToolsResultOptions:`: (return, arg) shape not yet modelled
@@ -1062,7 +1119,7 @@ impl TextView {
         return rt::msg_id(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("scrollablePlainDocumentContentTextView\0")));
     }
 
-    // SKIPPED `drawTextHighlightBackgroundForTextRange:origin:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `drawTextHighlightBackgroundForTextRange:origin:`: (return, arg) shape not yet modelled
     fn highlight(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("highlight:\0")), sender);
     }
@@ -1102,14 +1159,14 @@ impl TextView {
 // SKIPPED `textView:clickedOnCell:inRect:`: arg shape (only <=5 object args modelled)
 // SKIPPED `textView:doubleClickedOnCell:inRect:`: arg shape (only <=5 object args modelled)
 // SKIPPED `textView:draggedCell:inRect:event:`: arg shape (only <=5 object args modelled)
-fn TextViewDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TextViewDelegateProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TextViewDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegateProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegateProtocol_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn TextViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TextViewDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TextViewDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct TextViewDelegateProtocol {
+struct TextViewDelegate {
     text_view_will_change_selection_from_character_ranges_to_character_ranges: fn(*u8, *u8, *u8, *u8) -> *u8,
     text_view_should_change_text_in_ranges_replacement_strings: fn(*u8, *u8, *u8, *u8) -> i8,
     text_view_should_change_typing_attributes_to_attributes: fn(*u8, *u8, *u8, *u8) -> *u8,
@@ -1124,11 +1181,11 @@ struct TextViewDelegateProtocol {
     opaque user: *u8,
 }
 
-fn TextViewDelegateProtocol_new(user: *u8) -> TextViewDelegateProtocol {
-    return TextViewDelegateProtocol { text_view_will_change_selection_from_character_ranges_to_character_ranges: TextViewDelegateProtocol_noop_id_3, text_view_should_change_text_in_ranges_replacement_strings: TextViewDelegateProtocol_noop_i8_3, text_view_should_change_typing_attributes_to_attributes: TextViewDelegateProtocol_noop_id_3, text_view_did_change_selection: TextViewDelegateProtocol_noop_v_1, text_view_did_change_typing_attributes: TextViewDelegateProtocol_noop_v_1, text_view_will_show_sharing_service_picker_for_items: TextViewDelegateProtocol_noop_id_3, undo_manager_for_text_view: TextViewDelegateProtocol_noop_id_1, text_view_should_update_touch_bar_item_identifiers: TextViewDelegateProtocol_noop_id_2, text_view_writing_tools_will_begin: TextViewDelegateProtocol_noop_v_1, text_view_writing_tools_did_end: TextViewDelegateProtocol_noop_v_1, text_view_clicked_on_link: TextViewDelegateProtocol_noop_i8_2, user: user };
+fn TextViewDelegate_new(user: *u8) -> TextViewDelegate {
+    return TextViewDelegate { text_view_will_change_selection_from_character_ranges_to_character_ranges: TextViewDelegate_noop_id_3, text_view_should_change_text_in_ranges_replacement_strings: TextViewDelegate_noop_i8_3, text_view_should_change_typing_attributes_to_attributes: TextViewDelegate_noop_id_3, text_view_did_change_selection: TextViewDelegate_noop_v_1, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_1, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_3, undo_manager_for_text_view: TextViewDelegate_noop_id_1, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_2, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_1, text_view_writing_tools_did_end: TextViewDelegate_noop_v_1, text_view_clicked_on_link: TextViewDelegate_noop_i8_2, user: user };
 }
 
-impl TextViewDelegateProtocol {
+impl TextViewDelegate {
     fn set_text_view_will_change_selection_from_character_ranges_to_character_ranges(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
         this.text_view_will_change_selection_from_character_ranges_to_character_ranges = handler;
         return;
@@ -1175,109 +1232,145 @@ impl TextViewDelegateProtocol {
     }
 }
 
-fn TextViewDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TextViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TextViewDelegateProtocol_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_will_change_selection_from_character_ranges_to_character_ranges };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TextViewDelegateProtocol_text_view_should_change_text_in_ranges_replacement_strings_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).text_view_should_change_text_in_ranges_replacement_strings };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TextViewDelegateProtocol_text_view_should_change_typing_attributes_to_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_should_change_typing_attributes_to_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_should_change_typing_attributes_to_attributes };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TextViewDelegateProtocol_text_view_did_change_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_did_change_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) = { (*c).text_view_did_change_selection };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextViewDelegateProtocol_text_view_did_change_typing_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_did_change_typing_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) = { (*c).text_view_did_change_typing_attributes };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextViewDelegateProtocol_text_view_will_show_sharing_service_picker_for_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_will_show_sharing_service_picker_for_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_will_show_sharing_service_picker_for_items };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TextViewDelegateProtocol_undo_manager_for_text_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_undo_manager_for_text_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).undo_manager_for_text_view };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn TextViewDelegateProtocol_text_view_should_update_touch_bar_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).text_view_should_update_touch_bar_item_identifiers };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TextViewDelegateProtocol_text_view_writing_tools_will_begin_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_writing_tools_will_begin_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) = { (*c).text_view_writing_tools_will_begin };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextViewDelegateProtocol_text_view_writing_tools_did_end_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_writing_tools_did_end_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) = { (*c).text_view_writing_tools_did_end };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextViewDelegateProtocol_text_view_clicked_on_link_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *TextViewDelegateProtocol = { synth::get_associated(self_obj, TextViewDelegateProtocol_key()) as *TextViewDelegateProtocol };
+fn TextViewDelegate_text_view_clicked_on_link_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).text_view_clicked_on_link };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn create_TextViewDelegateProtocol(ctx: *TextViewDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextViewDelegateProtocol\0");
+fn create_TextViewDelegate(ctx: *TextViewDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextViewDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_view_will_change_selection_from_character_ranges_to_character_ranges: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:\0")), TextViewDelegateProtocol_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp, #str_ptr("@@:@@@\0"));
-        let add_text_view_should_change_text_in_ranges_replacement_strings: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTextInRanges:replacementStrings:\0")), TextViewDelegateProtocol_text_view_should_change_text_in_ranges_replacement_strings_imp, #str_ptr("c@:@@@\0"));
-        let add_text_view_should_change_typing_attributes_to_attributes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTypingAttributes:toAttributes:\0")), TextViewDelegateProtocol_text_view_should_change_typing_attributes_to_attributes_imp, #str_ptr("@@:@@@\0"));
-        let add_text_view_did_change_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegateProtocol_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
-        let add_text_view_did_change_typing_attributes: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegateProtocol_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));
-        let add_text_view_will_show_sharing_service_picker_for_items: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willShowSharingServicePicker:forItems:\0")), TextViewDelegateProtocol_text_view_will_show_sharing_service_picker_for_items_imp, #str_ptr("@@:@@@\0"));
-        let add_undo_manager_for_text_view: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("undoManagerForTextView:\0")), TextViewDelegateProtocol_undo_manager_for_text_view_imp, #str_ptr("@@:@\0"));
-        let add_text_view_should_update_touch_bar_item_identifiers: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("textView:shouldUpdateTouchBarItemIdentifiers:\0")), TextViewDelegateProtocol_text_view_should_update_touch_bar_item_identifiers_imp, #str_ptr("@@:@@\0"));
-        let add_text_view_writing_tools_will_begin: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsWillBegin:\0")), TextViewDelegateProtocol_text_view_writing_tools_will_begin_imp, #str_ptr("v@:@\0"));
-        let add_text_view_writing_tools_did_end: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsDidEnd:\0")), TextViewDelegateProtocol_text_view_writing_tools_did_end_imp, #str_ptr("v@:@\0"));
-        let add_text_view_clicked_on_link: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("textView:clickedOnLink:\0")), TextViewDelegateProtocol_text_view_clicked_on_link_imp, #str_ptr("c@:@@\0"));
+        let add_text_view_will_change_selection_from_character_ranges_to_character_ranges: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:\0")), TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp, #str_ptr("@@:@@@\0"));
+        let add_text_view_should_change_text_in_ranges_replacement_strings: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTextInRanges:replacementStrings:\0")), TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp, #str_ptr("c@:@@@\0"));
+        let add_text_view_should_change_typing_attributes_to_attributes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTypingAttributes:toAttributes:\0")), TextViewDelegate_text_view_should_change_typing_attributes_to_attributes_imp, #str_ptr("@@:@@@\0"));
+        let add_text_view_did_change_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegate_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
+        let add_text_view_did_change_typing_attributes: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegate_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));
+        let add_text_view_will_show_sharing_service_picker_for_items: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willShowSharingServicePicker:forItems:\0")), TextViewDelegate_text_view_will_show_sharing_service_picker_for_items_imp, #str_ptr("@@:@@@\0"));
+        let add_undo_manager_for_text_view: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("undoManagerForTextView:\0")), TextViewDelegate_undo_manager_for_text_view_imp, #str_ptr("@@:@\0"));
+        let add_text_view_should_update_touch_bar_item_identifiers: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("textView:shouldUpdateTouchBarItemIdentifiers:\0")), TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp, #str_ptr("@@:@@\0"));
+        let add_text_view_writing_tools_will_begin: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsWillBegin:\0")), TextViewDelegate_text_view_writing_tools_will_begin_imp, #str_ptr("v@:@\0"));
+        let add_text_view_writing_tools_did_end: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsDidEnd:\0")), TextViewDelegate_text_view_writing_tools_did_end_imp, #str_ptr("v@:@\0"));
+        let add_text_view_clicked_on_link: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("textView:clickedOnLink:\0")), TextViewDelegate_text_view_clicked_on_link_imp, #str_ptr("c@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextViewDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TextViewDelegate_key(), { ctx as *u8 });
     return d;
+}
+
+// `NSTextLayoutOrientationProvider` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLayoutOrientationProvider {
+    opaque _obj: *u8,
+}
+
+impl TextLayoutOrientationProvider {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLayoutOrientationProvider { return TextLayoutOrientationProvider { _obj: ptr }; }
+
+}
+
+// `NSTextAttachmentCell` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextAttachmentCell {
+    opaque _obj: *u8,
+}
+
+impl TextAttachmentCell {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextAttachmentCell { return TextAttachmentCell { _obj: ptr }; }
+
+}
+
+// `QLPreviewItem` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct QLPreviewItem {
+    opaque _obj: *u8,
+}
+
+impl QLPreviewItem {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> QLPreviewItem { return QLPreviewItem { _obj: ptr }; }
+
 }
 

@@ -16,6 +16,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSSpeechRecognizer` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -25,6 +27,8 @@ struct SpeechRecognizer {
 
 impl SpeechRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SpeechRecognizer { return SpeechRecognizer { _obj: ptr }; }
 
     fn new() -> SpeechRecognizer {
         let cls: *u8 = rt::get_class(#str_ptr("NSSpeechRecognizer\0"));
@@ -40,8 +44,15 @@ impl SpeechRecognizer {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopListening\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSSpeechRecognizerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSpeechRecognizerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn commands(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("commands\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -91,44 +102,44 @@ impl SpeechRecognizer {
 }
 
 // `NSSpeechRecognizerDelegate` delegate protocol -> runtime class-synthesis helper.
-fn SpeechRecognizerDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn SpeechRecognizerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct SpeechRecognizerDelegateProtocol {
+struct SpeechRecognizerDelegate {
     speech_recognizer_did_recognize_command: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn SpeechRecognizerDelegateProtocol_new(user: *u8) -> SpeechRecognizerDelegateProtocol {
-    return SpeechRecognizerDelegateProtocol { speech_recognizer_did_recognize_command: SpeechRecognizerDelegateProtocol_noop_v_2, user: user };
+fn SpeechRecognizerDelegate_new(user: *u8) -> SpeechRecognizerDelegate {
+    return SpeechRecognizerDelegate { speech_recognizer_did_recognize_command: SpeechRecognizerDelegate_noop_v_2, user: user };
 }
 
-impl SpeechRecognizerDelegateProtocol {
+impl SpeechRecognizerDelegate {
     fn set_speech_recognizer_did_recognize_command(ref this, handler: fn(*u8, *u8, *u8)) {
         this.speech_recognizer_did_recognize_command = handler;
         return;
     }
 }
 
-fn SpeechRecognizerDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn SpeechRecognizerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn SpeechRecognizerDelegateProtocol_speech_recognizer_did_recognize_command_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *SpeechRecognizerDelegateProtocol = { synth::get_associated(self_obj, SpeechRecognizerDelegateProtocol_key()) as *SpeechRecognizerDelegateProtocol };
+fn SpeechRecognizerDelegate_speech_recognizer_did_recognize_command_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *SpeechRecognizerDelegate = { synth::get_associated(self_obj, SpeechRecognizerDelegate_key()) as *SpeechRecognizerDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).speech_recognizer_did_recognize_command };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_SpeechRecognizerDelegateProtocol(ctx: *SpeechRecognizerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SpeechRecognizerDelegateProtocol\0");
+fn create_SpeechRecognizerDelegate(ctx: *SpeechRecognizerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SpeechRecognizerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_speech_recognizer_did_recognize_command: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("speechRecognizer:didRecognizeCommand:\0")), SpeechRecognizerDelegateProtocol_speech_recognizer_did_recognize_command_imp, #str_ptr("v@:@@\0"));
+        let add_speech_recognizer_did_recognize_command: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("speechRecognizer:didRecognizeCommand:\0")), SpeechRecognizerDelegate_speech_recognizer_did_recognize_command_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SpeechRecognizerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, SpeechRecognizerDelegate_key(), { ctx as *u8 });
     return d;
 }
 

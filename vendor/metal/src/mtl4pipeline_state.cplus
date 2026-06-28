@@ -73,13 +73,16 @@ impl MTL4PipelineDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
     }
 
-    fn options(this) -> option::Option[*u8] {
+    fn options(this) -> option::Option[MTL4PipelineOptions] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("options\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4PipelineOptions]::None;
+        }
+        return option::some(MTL4PipelineOptions::from_raw(obj));
     }
 
-    fn set_options(this, options: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOptions:\0")), options);
+    fn set_options(this, options: MTL4PipelineOptions) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOptions:\0")), options.raw());
     }
 
 }

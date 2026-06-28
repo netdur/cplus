@@ -6,47 +6,17 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSTrackingAreaOptions` (NS_ENUM)
-enum TrackingAreaOptions {
-    NSTrackingMouseEnteredAndExited,
-    NSTrackingMouseMoved,
-    NSTrackingCursorUpdate,
-    NSTrackingActiveWhenFirstResponder,
-    NSTrackingActiveInKeyWindow,
-    NSTrackingActiveInActiveApp,
-    NSTrackingActiveAlways,
-    NSTrackingAssumeInside,
-    NSTrackingInVisibleRect,
-    NSTrackingEnabledDuringMouseDrag,
-}
-
-fn tracking_area_options_raw(v: TrackingAreaOptions) -> i64 {
-    return match v {
-        TrackingAreaOptions::NSTrackingMouseEnteredAndExited => { 1 as i64 },
-        TrackingAreaOptions::NSTrackingMouseMoved => { 2 as i64 },
-        TrackingAreaOptions::NSTrackingCursorUpdate => { 4 as i64 },
-        TrackingAreaOptions::NSTrackingActiveWhenFirstResponder => { 16 as i64 },
-        TrackingAreaOptions::NSTrackingActiveInKeyWindow => { 32 as i64 },
-        TrackingAreaOptions::NSTrackingActiveInActiveApp => { 64 as i64 },
-        TrackingAreaOptions::NSTrackingActiveAlways => { 128 as i64 },
-        TrackingAreaOptions::NSTrackingAssumeInside => { 256 as i64 },
-        TrackingAreaOptions::NSTrackingInVisibleRect => { 512 as i64 },
-        TrackingAreaOptions::NSTrackingEnabledDuringMouseDrag => { 1024 as i64 },
-    };
-}
-
-fn tracking_area_options_from_raw(raw: i64) -> TrackingAreaOptions {
-    if raw == (2 as i64) { return TrackingAreaOptions::NSTrackingMouseMoved; }
-    if raw == (4 as i64) { return TrackingAreaOptions::NSTrackingCursorUpdate; }
-    if raw == (16 as i64) { return TrackingAreaOptions::NSTrackingActiveWhenFirstResponder; }
-    if raw == (32 as i64) { return TrackingAreaOptions::NSTrackingActiveInKeyWindow; }
-    if raw == (64 as i64) { return TrackingAreaOptions::NSTrackingActiveInActiveApp; }
-    if raw == (128 as i64) { return TrackingAreaOptions::NSTrackingActiveAlways; }
-    if raw == (256 as i64) { return TrackingAreaOptions::NSTrackingAssumeInside; }
-    if raw == (512 as i64) { return TrackingAreaOptions::NSTrackingInVisibleRect; }
-    if raw == (1024 as i64) { return TrackingAreaOptions::NSTrackingEnabledDuringMouseDrag; }
-    return TrackingAreaOptions::NSTrackingMouseEnteredAndExited;
-}
+// `NSTrackingAreaOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const tracking_area_options_n_s_tracking_mouse_entered_and_exited: u64 = 1 as u64;
+const tracking_area_options_n_s_tracking_mouse_moved: u64 = 2 as u64;
+const tracking_area_options_n_s_tracking_cursor_update: u64 = 4 as u64;
+const tracking_area_options_n_s_tracking_active_when_first_responder: u64 = 16 as u64;
+const tracking_area_options_n_s_tracking_active_in_key_window: u64 = 32 as u64;
+const tracking_area_options_n_s_tracking_active_in_active_app: u64 = 64 as u64;
+const tracking_area_options_n_s_tracking_active_always: u64 = 128 as u64;
+const tracking_area_options_n_s_tracking_assume_inside: u64 = 256 as u64;
+const tracking_area_options_n_s_tracking_in_visible_rect: u64 = 512 as u64;
+const tracking_area_options_n_s_tracking_enabled_during_mouse_drag: u64 = 1024 as u64;
 
 // `NSTrackingArea` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TrackingArea {
@@ -56,10 +26,15 @@ struct TrackingArea {
 impl TrackingArea {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithRect:options:owner:userInfo:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `rect`: return `NSRect` — unmapped type `NSRect`
-    fn options(this) -> TrackingAreaOptions {
-        return tracking_area_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("options\0"))));
+    fn from_raw(ptr: *u8) -> TrackingArea { return TrackingArea { _obj: ptr }; }
+
+    // SKIPPED `initWithRect:options:owner:userInfo:`: param `NSDictionary<id,id> * _Nullable` — generic collection
+    fn rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("rect\0")));
+    }
+
+    fn options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
     fn owner(this) -> option::Option[*u8] {

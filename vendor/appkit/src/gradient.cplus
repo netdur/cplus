@@ -6,6 +6,10 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSGradientDrawingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const gradient_drawing_options_n_s_gradient_draws_before_starting_location: u64 = 1 as u64;
+const gradient_drawing_options_n_s_gradient_draws_after_ending_location: u64 = 2 as u64;
+
 // `NSBezierPath` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct BezierPath {
     opaque _obj: *u8,
@@ -13,6 +17,8 @@ struct BezierPath {
 
 impl BezierPath {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BezierPath { return BezierPath { _obj: ptr }; }
 
 }
 
@@ -24,6 +30,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSColorSpace` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +41,8 @@ struct ColorSpace {
 
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
 
 }
 
@@ -44,24 +54,26 @@ struct Gradient {
 impl Gradient {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Gradient { return Gradient { _obj: ptr }; }
+
     // SKIPPED `initWithStartingColor:endingColor:`: init arg shape not yet modelled
     // SKIPPED `initWithColors:`: extra init variant (one `new` per type)
     // SKIPPED `initWithColorsAndLocations:`: extra init variant (one `new` per type)
     // SKIPPED `initWithColors:atLocations:colorSpace:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `drawFromPoint:toPoint:options:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `drawInRect:angle:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawFromPoint:toPoint:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:angle:`: (return, arg) shape not yet modelled
     // SKIPPED `drawInBezierPath:angle:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawFromCenter:radius:toCenter:radius:options:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `drawInRect:relativeCenterPosition:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawInBezierPath:relativeCenterPosition:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `drawFromCenter:radius:toCenter:radius:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:relativeCenterPosition:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInBezierPath:relativeCenterPosition:`: (return, arg) shape not yet modelled
     // SKIPPED `getColor:location:atIndex:`: (return, arg) shape not yet modelled
-    fn interpolated_color_at_location(this, location: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("interpolatedColorAtLocation:\0")), location);
+    fn interpolated_color_at_location(this, location: f64) -> Color {
+        return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("interpolatedColorAtLocation:\0")), location));
     }
 
-    fn color_space(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0")));
+    fn color_space(this) -> ColorSpace {
+        return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
 
     fn number_of_color_stops(this) -> i64 {

@@ -14,13 +14,18 @@ struct OpenGLLayer {
 impl OpenGLLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `openGLPixelFormatForDisplayMask:`: param `uint32_t` — unmapped type `uint32_t`
+    fn from_raw(ptr: *u8) -> OpenGLLayer { return OpenGLLayer { _obj: ptr }; }
+
+    fn open_g_l_pixel_format_for_display_mask(this, mask: u32) -> *u8 {
+        return rt::msg_id_u32(this._obj, rt::sel(#str_ptr("openGLPixelFormatForDisplayMask:\0")), mask);
+    }
+
     fn open_g_l_context_for_pixel_format(this, pixel_format: *u8) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("openGLContextForPixelFormat:\0")), pixel_format);
     }
 
-    // SKIPPED `canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: param `CFTimeInterval` — unmapped type `CFTimeInterval`
-    // SKIPPED `drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: param `CFTimeInterval` — unmapped type `CFTimeInterval`
+    // SKIPPED `canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: (return, arg) shape not yet modelled
     fn view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
         return bridge::obj_option(obj);

@@ -14,6 +14,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSItemBadge` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct ItemBadge {
 
 impl ItemBadge {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ItemBadge { return ItemBadge { _obj: ptr }; }
 
     fn badge_with_count(count: i64) -> ItemBadge {
         return ItemBadge { _obj: rt::msg_id_i64(rt::get_class(#str_ptr("NSItemBadge\0")), rt::sel(#str_ptr("badgeWithCount:\0")), count) };

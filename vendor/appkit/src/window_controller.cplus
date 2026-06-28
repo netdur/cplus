@@ -14,6 +14,8 @@ struct Array {
 impl Array {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Array { return Array { _obj: ptr }; }
+
 }
 
 // `NSDocument` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct Document {
 
 impl Document {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Document { return Document { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct Storyboard {
 impl Storyboard {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Storyboard { return Storyboard { _obj: ptr }; }
+
 }
 
 // `NSViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +49,8 @@ struct ViewController {
 
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
 
 }
 
@@ -54,6 +62,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSWindowController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -64,10 +74,12 @@ struct WindowController {
 impl WindowController {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn new(window: *u8) -> WindowController {
+    fn from_raw(ptr: *u8) -> WindowController { return WindowController { _obj: ptr }; }
+
+    fn new(window: Window) -> WindowController {
         let cls: *u8 = rt::get_class(#str_ptr("NSWindowController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return WindowController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithWindow:\0")), window) };
+        return WindowController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithWindow:\0")), window.raw()) };
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
@@ -166,13 +178,16 @@ impl WindowController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller);
     }
 
-    fn window(this) -> option::Option[*u8] {
+    fn window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("window\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
-    fn set_window(this, window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindow:\0")), window);
+    fn set_window(this, window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindow:\0")), window.raw());
     }
 
     fn is_window_loaded(this) -> bool {

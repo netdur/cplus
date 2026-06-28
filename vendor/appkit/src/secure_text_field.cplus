@@ -14,6 +14,8 @@ struct SecureTextField {
 impl SecureTextField {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SecureTextField { return SecureTextField { _obj: ptr }; }
+
 }
 
 // `NSSecureTextFieldCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct SecureTextFieldCell {
 
 impl SecureTextFieldCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SecureTextFieldCell { return SecureTextFieldCell { _obj: ptr }; }
 
     fn echos_bullets(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("echosBullets\0"))) != (0 as i8);

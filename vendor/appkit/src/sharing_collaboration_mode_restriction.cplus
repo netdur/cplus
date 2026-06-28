@@ -32,6 +32,8 @@ struct SharingCollaborationModeRestriction {
 impl SharingCollaborationModeRestriction {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharingCollaborationModeRestriction { return SharingCollaborationModeRestriction { _obj: ptr }; }
+
     fn new(disabled_mode: SharingCollaborationMode) -> SharingCollaborationModeRestriction {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

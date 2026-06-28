@@ -5,46 +5,17 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `NSColorPanelOptions` (NS_ENUM)
-enum ColorPanelOptions {
-    NSColorPanelGrayModeMask,
-    NSColorPanelRGBModeMask,
-    NSColorPanelCMYKModeMask,
-    NSColorPanelHSBModeMask,
-    NSColorPanelCustomPaletteModeMask,
-    NSColorPanelColorListModeMask,
-    NSColorPanelWheelModeMask,
-    NSColorPanelCrayonModeMask,
-    NSColorPanelAllModesMask,
-}
-
-fn color_panel_options_raw(v: ColorPanelOptions) -> i64 {
-    return match v {
-        ColorPanelOptions::NSColorPanelGrayModeMask => { 1 as i64 },
-        ColorPanelOptions::NSColorPanelRGBModeMask => { 2 as i64 },
-        ColorPanelOptions::NSColorPanelCMYKModeMask => { 4 as i64 },
-        ColorPanelOptions::NSColorPanelHSBModeMask => { 8 as i64 },
-        ColorPanelOptions::NSColorPanelCustomPaletteModeMask => { 16 as i64 },
-        ColorPanelOptions::NSColorPanelColorListModeMask => { 32 as i64 },
-        ColorPanelOptions::NSColorPanelWheelModeMask => { 64 as i64 },
-        ColorPanelOptions::NSColorPanelCrayonModeMask => { 128 as i64 },
-        ColorPanelOptions::NSColorPanelAllModesMask => { 65535 as i64 },
-    };
-}
-
-fn color_panel_options_from_raw(raw: i64) -> ColorPanelOptions {
-    if raw == (2 as i64) { return ColorPanelOptions::NSColorPanelRGBModeMask; }
-    if raw == (4 as i64) { return ColorPanelOptions::NSColorPanelCMYKModeMask; }
-    if raw == (8 as i64) { return ColorPanelOptions::NSColorPanelHSBModeMask; }
-    if raw == (16 as i64) { return ColorPanelOptions::NSColorPanelCustomPaletteModeMask; }
-    if raw == (32 as i64) { return ColorPanelOptions::NSColorPanelColorListModeMask; }
-    if raw == (64 as i64) { return ColorPanelOptions::NSColorPanelWheelModeMask; }
-    if raw == (128 as i64) { return ColorPanelOptions::NSColorPanelCrayonModeMask; }
-    if raw == (65535 as i64) { return ColorPanelOptions::NSColorPanelAllModesMask; }
-    return ColorPanelOptions::NSColorPanelGrayModeMask;
-}
+// `NSColorPanelOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const color_panel_options_n_s_color_panel_gray_mode_mask: u64 = 1 as u64;
+const color_panel_options_n_s_color_panel_r_g_b_mode_mask: u64 = 2 as u64;
+const color_panel_options_n_s_color_panel_c_m_y_k_mode_mask: u64 = 4 as u64;
+const color_panel_options_n_s_color_panel_h_s_b_mode_mask: u64 = 8 as u64;
+const color_panel_options_n_s_color_panel_custom_palette_mode_mask: u64 = 16 as u64;
+const color_panel_options_n_s_color_panel_color_list_mode_mask: u64 = 32 as u64;
+const color_panel_options_n_s_color_panel_wheel_mode_mask: u64 = 64 as u64;
+const color_panel_options_n_s_color_panel_crayon_mode_mask: u64 = 128 as u64;
+const color_panel_options_n_s_color_panel_all_modes_mask: u64 = 65535 as u64;
 
 // `NSColorPanelMode` (NS_ENUM)
 enum ColorPanelMode {
@@ -93,6 +64,8 @@ struct ColorList {
 impl ColorList {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorList { return ColorList { _obj: ptr }; }
+
 }
 
 // `NSMutableArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -102,6 +75,8 @@ struct MutableArray {
 
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
 
 }
 
@@ -113,6 +88,8 @@ struct ColorPanel {
 impl ColorPanel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorPanel { return ColorPanel { _obj: ptr }; }
+
     // SKIPPED `dragColor:withEvent:fromView:`: (return, arg) shape not yet modelled
     // SKIPPED `setPickerMask:`: (return, arg) shape not yet modelled
     // SKIPPED `setPickerMode:`: (return, arg) shape not yet modelled
@@ -121,12 +98,12 @@ impl ColorPanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    fn attach_color_list(this, color_list: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("attachColorList:\0")), color_list);
+    fn attach_color_list(this, color_list: ColorList) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("attachColorList:\0")), color_list.raw());
     }
 
-    fn detach_color_list(this, color_list: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("detachColorList:\0")), color_list);
+    fn detach_color_list(this, color_list: ColorList) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("detachColorList:\0")), color_list.raw());
     }
 
     fn shared_color_panel() -> ColorPanel {
@@ -189,45 +166,19 @@ impl ColorPanel {
 
 }
 
-// `NSColorChanging` delegate protocol -> runtime class-synthesis helper.
-fn ColorChanging_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSColorChanging` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct ColorChanging {
-    change_color: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn ColorChanging_new(user: *u8) -> ColorChanging {
-    return ColorChanging { change_color: ColorChanging_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl ColorChanging {
-    fn set_change_color(ref this, handler: fn(*u8, *u8)) {
-        this.change_color = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorChanging { return ColorChanging { _obj: ptr }; }
+
+    fn change_color(this, sender: ColorPanel) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeColor:\0")), sender.raw());
     }
-}
 
-fn ColorChanging_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ColorChanging_change_color_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorChanging = { synth::get_associated(self_obj, ColorChanging_key()) as *ColorChanging };
-    let f: fn(*u8, *u8) = { (*c).change_color };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_ColorChanging(ctx: *ColorChanging) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ColorChanging\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_change_color: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("changeColor:\0")), ColorChanging_change_color_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ColorChanging_key(), { ctx as *u8 });
-    return d;
 }
 

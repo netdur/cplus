@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTL4MachineLearningPipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4MachineLearningPipelineDescriptor {
@@ -61,72 +60,36 @@ impl MTL4MachineLearningPipelineReflection {
     // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
 }
 
-// `MTL4MachineLearningPipelineState` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-fn MTL4MachineLearningPipelineState_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn MTL4MachineLearningPipelineState_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTL4MachineLearningPipelineState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct MTL4MachineLearningPipelineState {
-    label: fn(*u8) -> *u8,
-    reflection: fn(*u8) -> *u8,
-    intermediates_heap_size: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn MTL4MachineLearningPipelineState_new(user: *u8) -> MTL4MachineLearningPipelineState {
-    return MTL4MachineLearningPipelineState { label: MTL4MachineLearningPipelineState_noop_id_0, reflection: MTL4MachineLearningPipelineState_noop_id_0, intermediates_heap_size: MTL4MachineLearningPipelineState_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl MTL4MachineLearningPipelineState {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineState { return MTL4MachineLearningPipelineState { _obj: ptr }; }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
     }
-    fn set_reflection(ref this, handler: fn(*u8) -> *u8) {
-        this.reflection = handler;
-        return;
+
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
     }
-    fn set_intermediates_heap_size(ref this, handler: fn(*u8) -> u64) {
-        this.intermediates_heap_size = handler;
-        return;
+
+    fn reflection(this) -> option::Option[MTL4MachineLearningPipelineReflection] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("reflection\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4MachineLearningPipelineReflection]::None;
+        }
+        return option::some(MTL4MachineLearningPipelineReflection::from_raw(obj));
     }
-}
 
-fn MTL4MachineLearningPipelineState_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4MachineLearningPipelineState_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *MTL4MachineLearningPipelineState = { synth::get_associated(self_obj, MTL4MachineLearningPipelineState_key()) as *MTL4MachineLearningPipelineState };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn MTL4MachineLearningPipelineState_reflection_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *MTL4MachineLearningPipelineState = { synth::get_associated(self_obj, MTL4MachineLearningPipelineState_key()) as *MTL4MachineLearningPipelineState };
-    let f: fn(*u8) -> *u8 = { (*c).reflection };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn MTL4MachineLearningPipelineState_intermediates_heap_size_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *MTL4MachineLearningPipelineState = { synth::get_associated(self_obj, MTL4MachineLearningPipelineState_key()) as *MTL4MachineLearningPipelineState };
-    let f: fn(*u8) -> u64 = { (*c).intermediates_heap_size };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_MTL4MachineLearningPipelineState(ctx: *MTL4MachineLearningPipelineState) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4MachineLearningPipelineState\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), MTL4MachineLearningPipelineState_label_imp, #str_ptr("@@:\0"));
-        let add_reflection: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("reflection\0")), MTL4MachineLearningPipelineState_reflection_imp, #str_ptr("@@:\0"));
-        let add_intermediates_heap_size: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("intermediatesHeapSize\0")), MTL4MachineLearningPipelineState_intermediates_heap_size_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    fn intermediates_heap_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("intermediatesHeapSize\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4MachineLearningPipelineState_key(), { ctx as *u8 });
-    return d;
+
 }
 

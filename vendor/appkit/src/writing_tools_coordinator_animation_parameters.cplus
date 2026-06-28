@@ -52,6 +52,8 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
 }
 
 // `NSUUID` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -62,6 +64,8 @@ struct UUID {
 impl UUID {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> UUID { return UUID { _obj: ptr }; }
+
 }
 
 // `NSWritingToolsCoordinatorAnimationParameters` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -71,6 +75,8 @@ struct WritingToolsCoordinatorAnimationParameters {
 
 impl WritingToolsCoordinatorAnimationParameters {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> WritingToolsCoordinatorAnimationParameters { return WritingToolsCoordinatorAnimationParameters { _obj: ptr }; }
 
     fn new() -> WritingToolsCoordinatorAnimationParameters {
         let cls: *u8 = rt::get_class(#str_ptr("NSWritingToolsCoordinatorAnimationParameters\0"));

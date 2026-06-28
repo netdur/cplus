@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLTensorDataType` (NS_ENUM)
 enum TensorDataType {
@@ -167,21 +166,24 @@ impl TensorDescriptor {
 
     fn from_raw(ptr: *u8) -> TensorDescriptor { return TensorDescriptor { _obj: ptr }; }
 
-    fn dimensions(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("dimensions\0")));
+    fn dimensions(this) -> TensorExtents {
+        return TensorExtents::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("dimensions\0"))));
     }
 
-    fn set_dimensions(this, dimensions: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDimensions:\0")), dimensions);
+    fn set_dimensions(this, dimensions: TensorExtents) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDimensions:\0")), dimensions.raw());
     }
 
-    fn strides(this) -> option::Option[*u8] {
+    fn strides(this) -> option::Option[TensorExtents] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("strides\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorExtents]::None;
+        }
+        return option::some(TensorExtents::from_raw(obj));
     }
 
-    fn set_strides(this, strides: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStrides:\0")), strides);
+    fn set_strides(this, strides: TensorExtents) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStrides:\0")), strides.raw());
     }
 
     fn data_type(this) -> TensorDataType {
@@ -216,128 +218,65 @@ impl TensorDescriptor {
     // SKIPPED `setHazardTrackingMode:`: (return, arg) shape not yet modelled
 }
 
-// `MTLTensor` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `gpuResourceID`: return `MTLResourceID` not modelled
-// SKIPPED `buffer`: return `id<MTLBuffer> _Nullable` not modelled
-fn Tensor_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn Tensor_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn Tensor_noop_v_4(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
-
-struct Tensor {
-    replace_slice_origin_slice_dimensions_with_bytes_strides: fn(*u8, *u8, *u8, *u8, *u8),
-    get_bytes_strides_from_slice_origin_slice_dimensions: fn(*u8, *u8, *u8, *u8, *u8),
-    buffer_offset: fn(*u8) -> u64,
-    strides: fn(*u8) -> *u8,
-    dimensions: fn(*u8) -> *u8,
-    data_type: fn(*u8) -> u64,
-    usage: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
 }
 
-fn Tensor_new(user: *u8) -> Tensor {
-    return Tensor { replace_slice_origin_slice_dimensions_with_bytes_strides: Tensor_noop_v_4, get_bytes_strides_from_slice_origin_slice_dimensions: Tensor_noop_v_4, buffer_offset: Tensor_noop_u64_0, strides: Tensor_noop_id_0, dimensions: Tensor_noop_id_0, data_type: Tensor_noop_u64_0, usage: Tensor_noop_u64_0, user: user };
+impl Buffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
+
+}
+
+// `MTLTensor` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Tensor {
+    opaque _obj: *u8,
 }
 
 impl Tensor {
-    fn set_replace_slice_origin_slice_dimensions_with_bytes_strides(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
-        this.replace_slice_origin_slice_dimensions_with_bytes_strides = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Tensor { return Tensor { _obj: ptr }; }
+
+    // SKIPPED `replaceSliceOrigin:sliceDimensions:withBytes:strides:`: (return, arg) shape not yet modelled
+    // SKIPPED `getBytes:strides:fromSliceOrigin:sliceDimensions:`: (return, arg) shape not yet modelled
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
     }
-    fn set_get_bytes_strides_from_slice_origin_slice_dimensions(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
-        this.get_bytes_strides_from_slice_origin_slice_dimensions = handler;
-        return;
+
+    fn buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("buffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
     }
-    fn set_buffer_offset(ref this, handler: fn(*u8) -> u64) {
-        this.buffer_offset = handler;
-        return;
+
+    fn buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferOffset\0")));
     }
-    fn set_strides(ref this, handler: fn(*u8) -> *u8) {
-        this.strides = handler;
-        return;
+
+    fn strides(this) -> option::Option[TensorExtents] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("strides\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorExtents]::None;
+        }
+        return option::some(TensorExtents::from_raw(obj));
     }
-    fn set_dimensions(ref this, handler: fn(*u8) -> *u8) {
-        this.dimensions = handler;
-        return;
+
+    fn dimensions(this) -> TensorExtents {
+        return TensorExtents::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("dimensions\0"))));
     }
-    fn set_data_type(ref this, handler: fn(*u8) -> u64) {
-        this.data_type = handler;
-        return;
+
+    fn data_type(this) -> TensorDataType {
+        return tensor_data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dataType\0"))));
     }
-    fn set_usage(ref this, handler: fn(*u8) -> u64) {
-        this.usage = handler;
-        return;
+
+    fn usage(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("usage\0")));
     }
-}
 
-fn Tensor_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Tensor_replace_slice_origin_slice_dimensions_with_bytes_strides_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).replace_slice_origin_slice_dimensions_with_bytes_strides };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1, a2, a3);
-    return;
-}
-
-fn Tensor_get_bytes_strides_from_slice_origin_slice_dimensions_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).get_bytes_strides_from_slice_origin_slice_dimensions };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1, a2, a3);
-    return;
-}
-
-fn Tensor_buffer_offset_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8) -> u64 = { (*c).buffer_offset };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Tensor_strides_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8) -> *u8 = { (*c).strides };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Tensor_dimensions_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8) -> *u8 = { (*c).dimensions };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Tensor_data_type_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8) -> u64 = { (*c).data_type };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Tensor_usage_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Tensor = { synth::get_associated(self_obj, Tensor_key()) as *Tensor };
-    let f: fn(*u8) -> u64 = { (*c).usage };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_Tensor(ctx: *Tensor) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Tensor\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_replace_slice_origin_slice_dimensions_with_bytes_strides: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("replaceSliceOrigin:sliceDimensions:withBytes:strides:\0")), Tensor_replace_slice_origin_slice_dimensions_with_bytes_strides_imp, #str_ptr("v@:@@@@\0"));
-        let add_get_bytes_strides_from_slice_origin_slice_dimensions: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("getBytes:strides:fromSliceOrigin:sliceDimensions:\0")), Tensor_get_bytes_strides_from_slice_origin_slice_dimensions_imp, #str_ptr("v@:@@@@\0"));
-        let add_buffer_offset: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("bufferOffset\0")), Tensor_buffer_offset_imp, #str_ptr("Q@:\0"));
-        let add_strides: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("strides\0")), Tensor_strides_imp, #str_ptr("@@:\0"));
-        let add_dimensions: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("dimensions\0")), Tensor_dimensions_imp, #str_ptr("@@:\0"));
-        let add_data_type: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("dataType\0")), Tensor_data_type_imp, #str_ptr("Q@:\0"));
-        let add_usage: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("usage\0")), Tensor_usage_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Tensor_key(), { ctx as *u8 });
-    return d;
 }
 

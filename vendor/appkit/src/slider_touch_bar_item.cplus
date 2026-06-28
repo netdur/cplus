@@ -14,6 +14,8 @@ struct SliderAccessory {
 impl SliderAccessory {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SliderAccessory { return SliderAccessory { _obj: ptr }; }
+
 }
 
 // `NSSlider` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct Slider {
 impl Slider {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Slider { return Slider { _obj: ptr }; }
+
 }
 
 // `NSSliderTouchBarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct SliderTouchBarItem {
 
 impl SliderTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SliderTouchBarItem { return SliderTouchBarItem { _obj: ptr }; }
 
     // SKIPPED `view`: return `API_UNAVAILABLE NSView<NSUserInterfaceCompression> *` — generic collection
     fn slider(this) -> *u8 {
@@ -76,22 +82,28 @@ impl SliderTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
     }
 
-    fn minimum_value_accessory(this) -> option::Option[*u8] {
+    fn minimum_value_accessory(this) -> option::Option[SliderAccessory] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("minimumValueAccessory\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[SliderAccessory]::None;
+        }
+        return option::some(SliderAccessory::from_raw(obj));
     }
 
-    fn set_minimum_value_accessory(this, minimum_value_accessory: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMinimumValueAccessory:\0")), minimum_value_accessory);
+    fn set_minimum_value_accessory(this, minimum_value_accessory: SliderAccessory) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMinimumValueAccessory:\0")), minimum_value_accessory.raw());
     }
 
-    fn maximum_value_accessory(this) -> option::Option[*u8] {
+    fn maximum_value_accessory(this) -> option::Option[SliderAccessory] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("maximumValueAccessory\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[SliderAccessory]::None;
+        }
+        return option::some(SliderAccessory::from_raw(obj));
     }
 
-    fn set_maximum_value_accessory(this, maximum_value_accessory: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMaximumValueAccessory:\0")), maximum_value_accessory);
+    fn set_maximum_value_accessory(this, maximum_value_accessory: SliderAccessory) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMaximumValueAccessory:\0")), maximum_value_accessory.raw());
     }
 
     // SKIPPED `valueAccessoryWidth`: return `NSSliderAccessoryWidth` — unmapped type `NSSliderAccessoryWidth`

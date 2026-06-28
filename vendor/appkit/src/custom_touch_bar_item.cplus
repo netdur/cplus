@@ -14,6 +14,8 @@ struct CustomTouchBarItem {
 impl CustomTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CustomTouchBarItem { return CustomTouchBarItem { _obj: ptr }; }
+
     fn view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
     }

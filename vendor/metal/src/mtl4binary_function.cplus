@@ -5,60 +5,58 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTL4BinaryFunction` delegate protocol -> runtime class-synthesis helper.
-fn MTL4BinaryFunction_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn MTL4BinaryFunction_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
-struct MTL4BinaryFunction {
-    name: fn(*u8) -> *u8,
-    function_type: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLFunctionType` (NS_ENUM)
+enum FunctionType {
+    Vertex,
+    Fragment,
+    Kernel,
+    Visible,
+    Intersection,
+    Mesh,
+    Object,
 }
 
-fn MTL4BinaryFunction_new(user: *u8) -> MTL4BinaryFunction {
-    return MTL4BinaryFunction { name: MTL4BinaryFunction_noop_id_0, function_type: MTL4BinaryFunction_noop_u64_0, user: user };
+fn function_type_raw(v: FunctionType) -> i64 {
+    return match v {
+        FunctionType::Vertex => { 1 as i64 },
+        FunctionType::Fragment => { 2 as i64 },
+        FunctionType::Kernel => { 3 as i64 },
+        FunctionType::Visible => { 5 as i64 },
+        FunctionType::Intersection => { 6 as i64 },
+        FunctionType::Mesh => { 7 as i64 },
+        FunctionType::Object => { 8 as i64 },
+    };
+}
+
+fn function_type_from_raw(raw: i64) -> FunctionType {
+    if raw == (2 as i64) { return FunctionType::Fragment; }
+    if raw == (3 as i64) { return FunctionType::Kernel; }
+    if raw == (5 as i64) { return FunctionType::Visible; }
+    if raw == (6 as i64) { return FunctionType::Intersection; }
+    if raw == (7 as i64) { return FunctionType::Mesh; }
+    if raw == (8 as i64) { return FunctionType::Object; }
+    return FunctionType::Vertex;
+}
+
+// `MTL4BinaryFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4BinaryFunction {
+    opaque _obj: *u8,
 }
 
 impl MTL4BinaryFunction {
-    fn set_name(ref this, handler: fn(*u8) -> *u8) {
-        this.name = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunction { return MTL4BinaryFunction { _obj: ptr }; }
+
+    fn name(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text_option(ns);
     }
-    fn set_function_type(ref this, handler: fn(*u8) -> u64) {
-        this.function_type = handler;
-        return;
+
+    fn function_type(this) -> FunctionType {
+        return function_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("functionType\0"))));
     }
-}
 
-fn MTL4BinaryFunction_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4BinaryFunction_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *MTL4BinaryFunction = { synth::get_associated(self_obj, MTL4BinaryFunction_key()) as *MTL4BinaryFunction };
-    let f: fn(*u8) -> *u8 = { (*c).name };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn MTL4BinaryFunction_function_type_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *MTL4BinaryFunction = { synth::get_associated(self_obj, MTL4BinaryFunction_key()) as *MTL4BinaryFunction };
-    let f: fn(*u8) -> u64 = { (*c).function_type };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_MTL4BinaryFunction(ctx: *MTL4BinaryFunction) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4BinaryFunction\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), MTL4BinaryFunction_name_imp, #str_ptr("@@:\0"));
-        let add_function_type: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("functionType\0")), MTL4BinaryFunction_function_type_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4BinaryFunction_key(), { ctx as *u8 });
-    return d;
 }
 

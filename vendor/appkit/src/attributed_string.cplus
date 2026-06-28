@@ -14,6 +14,8 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
     // SKIPPED `initWithURL:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentReadingOptionKey,id> * _Nonnull` — generic collection
     // SKIPPED `initWithData:options:documentAttributes:error:`: extra init variant (one `new` per type)
     // SKIPPED `dataFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
@@ -82,6 +84,8 @@ struct FileWrapper {
 impl FileWrapper {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FileWrapper { return FileWrapper { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -91,6 +95,8 @@ struct URL {
 
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
 
 }
 
@@ -102,6 +108,8 @@ struct TextBlock {
 impl TextBlock {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextBlock { return TextBlock { _obj: ptr }; }
+
 }
 
 // `NSTextTable` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -112,6 +120,8 @@ struct TextTable {
 impl TextTable {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextTable { return TextTable { _obj: ptr }; }
+
 }
 
 // `NSTextList` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -121,6 +131,8 @@ struct TextList {
 
 impl TextList {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
 
 }
 

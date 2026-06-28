@@ -14,14 +14,16 @@ struct TextLineFragment {
 impl TextLineFragment {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLineFragment { return TextLineFragment { _obj: ptr }; }
+
     // SKIPPED `initWithAttributedString:range:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithString:attributes:range:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `drawAtPoint:inContext:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `locationForCharacterAtIndex:`: return `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `characterIndexForPoint:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: param `CGPoint` — unmapped type `CGPoint`
+    // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
+    // SKIPPED `locationForCharacterAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `characterIndexForPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: (return, arg) shape not yet modelled
     fn attributed_string(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }
@@ -30,8 +32,14 @@ impl TextLineFragment {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("characterRange\0")));
     }
 
-    // SKIPPED `typographicBounds`: return `CGRect` — unmapped type `CGRect`
-    // SKIPPED `glyphOrigin`: return `CGPoint` — unmapped type `CGPoint`
+    fn typographic_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("typographicBounds\0")));
+    }
+
+    fn glyph_origin(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("glyphOrigin\0")));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

@@ -15,6 +15,8 @@ struct ButtonCell {
 impl ButtonCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ButtonCell { return ButtonCell { _obj: ptr }; }
+
 }
 
 // `NSTableView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -25,6 +27,8 @@ struct TableView {
 impl TableView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableView { return TableView { _obj: ptr }; }
+
 }
 
 // `NSComboBoxCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -34,6 +38,8 @@ struct ComboBoxCell {
 
 impl ComboBoxCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComboBoxCell { return ComboBoxCell { _obj: ptr }; }
 
     fn reload_data(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadData\0")));
@@ -87,8 +93,14 @@ impl ComboBoxCell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasVerticalScroller:\0")), has_vertical_scroller as i8);
     }
 
-    // SKIPPED `intercellSpacing`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setIntercellSpacing:`: param `NSSize` — unmapped type `NSSize`
+    fn intercell_spacing(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("intercellSpacing\0")));
+    }
+
+    fn set_intercell_spacing(this, intercell_spacing: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setIntercellSpacing:\0")), intercell_spacing);
+    }
+
     fn item_height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("itemHeight\0")));
     }
@@ -134,8 +146,15 @@ impl ComboBoxCell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCompletes:\0")), completes as i8);
     }
 
-    // SKIPPED `dataSource`: return `id<NSComboBoxCellDataSource> _Nullable` — generic collection
-    // SKIPPED `setDataSource:`: param `id<NSComboBoxCellDataSource> _Nullable` — generic collection
+    fn data_source(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_data_source(this, data_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
     fn object_value_of_selected_item(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectValueOfSelectedItem\0")));
         return bridge::obj_option(obj);
@@ -150,20 +169,20 @@ impl ComboBoxCell {
 // `NSComboBoxCellDataSource` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `comboBoxCell:objectValueForItemAtIndex:`: arg shape (only <=5 object args modelled)
 // SKIPPED `comboBoxCell:indexOfItemWithStringValue:`: no `u64`-return / 2-arg IMP shape
-fn ComboBoxCellDataSourceProtocol_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
-fn ComboBoxCellDataSourceProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn ComboBoxCellDataSource_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn ComboBoxCellDataSource_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 
-struct ComboBoxCellDataSourceProtocol {
+struct ComboBoxCellDataSource {
     number_of_items_in_combo_box_cell: fn(*u8, *u8) -> i64,
     combo_box_cell_completed_string: fn(*u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
-fn ComboBoxCellDataSourceProtocol_new(user: *u8) -> ComboBoxCellDataSourceProtocol {
-    return ComboBoxCellDataSourceProtocol { number_of_items_in_combo_box_cell: ComboBoxCellDataSourceProtocol_noop_i64_1, combo_box_cell_completed_string: ComboBoxCellDataSourceProtocol_noop_id_2, user: user };
+fn ComboBoxCellDataSource_new(user: *u8) -> ComboBoxCellDataSource {
+    return ComboBoxCellDataSource { number_of_items_in_combo_box_cell: ComboBoxCellDataSource_noop_i64_1, combo_box_cell_completed_string: ComboBoxCellDataSource_noop_id_2, user: user };
 }
 
-impl ComboBoxCellDataSourceProtocol {
+impl ComboBoxCellDataSource {
     fn set_number_of_items_in_combo_box_cell(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_items_in_combo_box_cell = handler;
         return;
@@ -174,33 +193,33 @@ impl ComboBoxCellDataSourceProtocol {
     }
 }
 
-fn ComboBoxCellDataSourceProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn ComboBoxCellDataSource_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn ComboBoxCellDataSourceProtocol_number_of_items_in_combo_box_cell_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
-    let c: *ComboBoxCellDataSourceProtocol = { synth::get_associated(self_obj, ComboBoxCellDataSourceProtocol_key()) as *ComboBoxCellDataSourceProtocol };
+fn ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
+    let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
     let f: fn(*u8, *u8) -> i64 = { (*c).number_of_items_in_combo_box_cell };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn ComboBoxCellDataSourceProtocol_combo_box_cell_completed_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *ComboBoxCellDataSourceProtocol = { synth::get_associated(self_obj, ComboBoxCellDataSourceProtocol_key()) as *ComboBoxCellDataSourceProtocol };
+fn ComboBoxCellDataSource_combo_box_cell_completed_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).combo_box_cell_completed_string };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn create_ComboBoxCellDataSourceProtocol(ctx: *ComboBoxCellDataSourceProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ComboBoxCellDataSourceProtocol\0");
+fn create_ComboBoxCellDataSource(ctx: *ComboBoxCellDataSource) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_ComboBoxCellDataSource\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_number_of_items_in_combo_box_cell: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfItemsInComboBoxCell:\0")), ComboBoxCellDataSourceProtocol_number_of_items_in_combo_box_cell_imp, #str_ptr("q@:@\0"));
-        let add_combo_box_cell_completed_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("comboBoxCell:completedString:\0")), ComboBoxCellDataSourceProtocol_combo_box_cell_completed_string_imp, #str_ptr("@@:@@\0"));
+        let add_number_of_items_in_combo_box_cell: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfItemsInComboBoxCell:\0")), ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp, #str_ptr("q@:@\0"));
+        let add_combo_box_cell_completed_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("comboBoxCell:completedString:\0")), ComboBoxCellDataSource_combo_box_cell_completed_string_imp, #str_ptr("@@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ComboBoxCellDataSourceProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, ComboBoxCellDataSource_key(), { ctx as *u8 });
     return d;
 }
 

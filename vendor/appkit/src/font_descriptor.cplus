@@ -6,83 +6,29 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSFontDescriptorSymbolicTraits` (NS_ENUM)
-enum FontDescriptorSymbolicTraits {
-    NSFontDescriptorTraitItalic,
-    NSFontDescriptorTraitBold,
-    NSFontDescriptorTraitExpanded,
-    NSFontDescriptorTraitCondensed,
-    NSFontDescriptorTraitMonoSpace,
-    NSFontDescriptorTraitVertical,
-    NSFontDescriptorTraitUIOptimized,
-    NSFontDescriptorTraitTightLeading,
-    NSFontDescriptorTraitLooseLeading,
-    NSFontDescriptorTraitEmphasized,
-    NSFontDescriptorClassMask,
-    NSFontDescriptorClassUnknown,
-    NSFontDescriptorClassOldStyleSerifs,
-    NSFontDescriptorClassTransitionalSerifs,
-    NSFontDescriptorClassModernSerifs,
-    NSFontDescriptorClassClarendonSerifs,
-    NSFontDescriptorClassSlabSerifs,
-    NSFontDescriptorClassFreeformSerifs,
-    NSFontDescriptorClassSansSerif,
-    NSFontDescriptorClassOrnamentals,
-    NSFontDescriptorClassScripts,
-    NSFontDescriptorClassSymbolic,
-}
-
-fn font_descriptor_symbolic_traits_raw(v: FontDescriptorSymbolicTraits) -> i64 {
-    return match v {
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitItalic => { 1 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitBold => { 2 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitExpanded => { 32 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitCondensed => { 64 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitMonoSpace => { 1024 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitVertical => { 2048 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitUIOptimized => { 4096 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitTightLeading => { 32768 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitLooseLeading => { 65536 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorTraitEmphasized => { 2 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassMask => { 4026531840 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassUnknown => { 0 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassOldStyleSerifs => { 268435456 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassTransitionalSerifs => { 536870912 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassModernSerifs => { 805306368 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassClarendonSerifs => { 1073741824 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassSlabSerifs => { 1342177280 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassFreeformSerifs => { 1879048192 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassSansSerif => { 2147483648 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassOrnamentals => { 2415919104 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassScripts => { 2684354560 as i64 },
-        FontDescriptorSymbolicTraits::NSFontDescriptorClassSymbolic => { 3221225472 as i64 },
-    };
-}
-
-fn font_descriptor_symbolic_traits_from_raw(raw: i64) -> FontDescriptorSymbolicTraits {
-    if raw == (2 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitBold; }
-    if raw == (32 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitExpanded; }
-    if raw == (64 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitCondensed; }
-    if raw == (1024 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitMonoSpace; }
-    if raw == (2048 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitVertical; }
-    if raw == (4096 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitUIOptimized; }
-    if raw == (32768 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitTightLeading; }
-    if raw == (65536 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitLooseLeading; }
-    if raw == (2 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorTraitEmphasized; }
-    if raw == (4026531840 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassMask; }
-    if raw == (0 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassUnknown; }
-    if raw == (268435456 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassOldStyleSerifs; }
-    if raw == (536870912 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassTransitionalSerifs; }
-    if raw == (805306368 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassModernSerifs; }
-    if raw == (1073741824 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassClarendonSerifs; }
-    if raw == (1342177280 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassSlabSerifs; }
-    if raw == (1879048192 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassFreeformSerifs; }
-    if raw == (2147483648 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassSansSerif; }
-    if raw == (2415919104 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassOrnamentals; }
-    if raw == (2684354560 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassScripts; }
-    if raw == (3221225472 as i64) { return FontDescriptorSymbolicTraits::NSFontDescriptorClassSymbolic; }
-    return FontDescriptorSymbolicTraits::NSFontDescriptorTraitItalic;
-}
+// `NSFontDescriptorSymbolicTraits` (NS_OPTIONS) — bitfield; combine with `|`.
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_italic: u64 = 1 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_bold: u64 = 2 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_expanded: u64 = 32 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_condensed: u64 = 64 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_mono_space: u64 = 1024 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_vertical: u64 = 2048 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_u_i_optimized: u64 = 4096 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_tight_leading: u64 = 32768 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_loose_leading: u64 = 65536 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_trait_emphasized: u64 = 2 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_mask: u64 = 4026531840 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_unknown: u64 = 0 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_old_style_serifs: u64 = 268435456 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_transitional_serifs: u64 = 536870912 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_modern_serifs: u64 = 805306368 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_clarendon_serifs: u64 = 1073741824 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_slab_serifs: u64 = 1342177280 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_freeform_serifs: u64 = 1879048192 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_sans_serif: u64 = 2147483648 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_ornamentals: u64 = 2415919104 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_scripts: u64 = 2684354560 as u64;
+const font_descriptor_symbolic_traits_n_s_font_descriptor_class_symbolic: u64 = 3221225472 as u64;
 
 // `NSAffineTransform` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct AffineTransform {
@@ -91,6 +37,8 @@ struct AffineTransform {
 
 impl AffineTransform {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AffineTransform { return AffineTransform { _obj: ptr }; }
 
 }
 
@@ -101,6 +49,8 @@ struct FontDescriptor {
 
 impl FontDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontDescriptor { return FontDescriptor { _obj: ptr }; }
 
     fn object_for_key(this, attribute: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("objectForKey:\0")), bridge::nsstring(attribute));
@@ -114,24 +64,24 @@ impl FontDescriptor {
     // SKIPPED `matchingFontDescriptorsWithMandatoryKeys:`: param `NSSet<NSFontDescriptorAttributeName> * _Nullable` — generic collection
     // SKIPPED `matchingFontDescriptorWithMandatoryKeys:`: param `NSSet<NSFontDescriptorAttributeName> * _Nullable` — generic collection
     // SKIPPED `fontDescriptorByAddingAttributes:`: param `NSDictionary<NSFontDescriptorAttributeName,id> * _Nonnull` — generic collection
-    fn font_descriptor_with_symbolic_traits(this, symbolic_traits: FontDescriptorSymbolicTraits) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("fontDescriptorWithSymbolicTraits:\0")), font_descriptor_symbolic_traits_raw(symbolic_traits));
+    fn font_descriptor_with_symbolic_traits(this, symbolic_traits: u64) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("fontDescriptorWithSymbolicTraits:\0")), symbolic_traits));
     }
 
-    fn font_descriptor_with_size(this, new_point_size: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontDescriptorWithSize:\0")), new_point_size);
+    fn font_descriptor_with_size(this, new_point_size: f64) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontDescriptorWithSize:\0")), new_point_size));
     }
 
-    fn font_descriptor_with_matrix(this, matrix: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithMatrix:\0")), matrix);
+    fn font_descriptor_with_matrix(this, matrix: AffineTransform) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithMatrix:\0")), matrix.raw()));
     }
 
-    fn font_descriptor_with_face(this, new_face: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithFace:\0")), bridge::nsstring(new_face));
+    fn font_descriptor_with_face(this, new_face: str) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithFace:\0")), bridge::nsstring(new_face)));
     }
 
-    fn font_descriptor_with_family(this, new_family: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithFamily:\0")), bridge::nsstring(new_family));
+    fn font_descriptor_with_family(this, new_family: str) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("fontDescriptorWithFamily:\0")), bridge::nsstring(new_family)));
     }
 
     fn font_descriptor_with_design(this, design: str) -> *u8 {
@@ -147,13 +97,16 @@ impl FontDescriptor {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("pointSize\0")));
     }
 
-    fn matrix(this) -> option::Option[*u8] {
+    fn matrix(this) -> option::Option[AffineTransform] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("matrix\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[AffineTransform]::None;
+        }
+        return option::some(AffineTransform::from_raw(obj));
     }
 
-    fn symbolic_traits(this) -> FontDescriptorSymbolicTraits {
-        return font_descriptor_symbolic_traits_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("symbolicTraits\0"))));
+    fn symbolic_traits(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("symbolicTraits\0")));
     }
 
     fn requires_font_asset_request(this) -> bool {

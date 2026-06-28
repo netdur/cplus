@@ -183,6 +183,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSSegmentedControl` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -193,13 +195,21 @@ struct SegmentedControl {
 impl SegmentedControl {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `selectSegmentWithTag:`: (return, arg) shape not yet modelled
+    fn from_raw(ptr: *u8) -> SegmentedControl { return SegmentedControl { _obj: ptr }; }
+
+    fn select_segment_with_tag(this, tag: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectSegmentWithTag:\0")), tag) != (0 as i8);
+    }
+
     // SKIPPED `setWidth:forSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `widthForSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `setImage:forSegment:`: (return, arg) shape not yet modelled
-    fn image_for_segment(this, segment: i64) -> option::Option[*u8] {
+    fn image_for_segment(this, segment: i64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageForSegment:\0")), segment);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
     // SKIPPED `setImageScaling:forSegment:`: (return, arg) shape not yet modelled
@@ -217,9 +227,15 @@ impl SegmentedControl {
     }
 
     // SKIPPED `setSelected:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `isSelectedForSegment:`: (return, arg) shape not yet modelled
+    fn is_selected_for_segment(this, segment: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isSelectedForSegment:\0")), segment) != (0 as i8);
+    }
+
     // SKIPPED `setEnabled:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `isEnabledForSegment:`: (return, arg) shape not yet modelled
+    fn is_enabled_for_segment(this, segment: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledForSegment:\0")), segment) != (0 as i8);
+    }
+
     // SKIPPED `setToolTip:forSegment:`: (return, arg) shape not yet modelled
     fn tool_tip_for_segment(this, segment: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("toolTipForSegment:\0")), segment);
@@ -229,7 +245,10 @@ impl SegmentedControl {
     // SKIPPED `setTag:forSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `tagForSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `setShowsMenuIndicator:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `showsMenuIndicatorForSegment:`: (return, arg) shape not yet modelled
+    fn shows_menu_indicator_for_segment(this, segment: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("showsMenuIndicatorForSegment:\0")), segment) != (0 as i8);
+    }
+
     // SKIPPED `setAlignment:forSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `alignmentForSegment:`: (return, arg) shape not yet modelled
     // SKIPPED `compressWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection

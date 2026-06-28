@@ -35,6 +35,8 @@ struct ColorWell {
 impl ColorWell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorWell { return ColorWell { _obj: ptr }; }
+
     fn color_well_with_style(style: ColorWellStyle) -> ColorWell {
         return ColorWell { _obj: rt::msg_id_i64(rt::get_class(#str_ptr("NSColorWell\0")), rt::sel(#str_ptr("colorWellWithStyle:\0")), color_well_style_raw(style)) };
     }
@@ -47,7 +49,10 @@ impl ColorWell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("activate:\0")), exclusive as i8);
     }
 
-    // SKIPPED `drawWellInside:`: param `NSRect` — unmapped type `NSRect`
+    fn draw_well_inside(this, inside_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawWellInside:\0")), inside_rect);
+    }
+
     fn take_color_from(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeColorFrom:\0")), sender);
     }

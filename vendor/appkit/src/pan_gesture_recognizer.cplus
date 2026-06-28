@@ -14,9 +14,11 @@ struct PanGestureRecognizer {
 impl PanGestureRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `translationInView:`: return `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `setTranslation:inView:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `velocityInView:`: return `NSPoint` — unmapped type `NSPoint`
+    fn from_raw(ptr: *u8) -> PanGestureRecognizer { return PanGestureRecognizer { _obj: ptr }; }
+
+    // SKIPPED `translationInView:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTranslation:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `velocityInView:`: (return, arg) shape not yet modelled
     fn button_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }

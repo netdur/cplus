@@ -6,38 +6,14 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSTouchPhase` (NS_ENUM)
-enum TouchPhase {
-    Began,
-    Moved,
-    Stationary,
-    Ended,
-    Cancelled,
-    Touching,
-    Any,
-}
-
-fn touch_phase_raw(v: TouchPhase) -> i64 {
-    return match v {
-        TouchPhase::Began => { 1 as i64 },
-        TouchPhase::Moved => { 2 as i64 },
-        TouchPhase::Stationary => { 4 as i64 },
-        TouchPhase::Ended => { 8 as i64 },
-        TouchPhase::Cancelled => { 16 as i64 },
-        TouchPhase::Touching => { 7 as i64 },
-        TouchPhase::Any => { 9223372036854775807 as i64 },
-    };
-}
-
-fn touch_phase_from_raw(raw: i64) -> TouchPhase {
-    if raw == (2 as i64) { return TouchPhase::Moved; }
-    if raw == (4 as i64) { return TouchPhase::Stationary; }
-    if raw == (8 as i64) { return TouchPhase::Ended; }
-    if raw == (16 as i64) { return TouchPhase::Cancelled; }
-    if raw == (7 as i64) { return TouchPhase::Touching; }
-    if raw == (9223372036854775807 as i64) { return TouchPhase::Any; }
-    return TouchPhase::Began;
-}
+// `NSTouchPhase` (NS_OPTIONS) — bitfield; combine with `|`.
+const touch_phase_began: u64 = 1 as u64;
+const touch_phase_moved: u64 = 2 as u64;
+const touch_phase_stationary: u64 = 4 as u64;
+const touch_phase_ended: u64 = 8 as u64;
+const touch_phase_cancelled: u64 = 16 as u64;
+const touch_phase_touching: u64 = 7 as u64;
+const touch_phase_any: u64 = 9223372036854775807 as u64;
 
 // `NSTouchType` (NS_ENUM)
 enum TouchType {
@@ -65,6 +41,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSTouch` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -75,12 +53,20 @@ struct Touch {
 impl Touch {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `identity`: return `id<NSObject,NSCopying> _Nonnull` — generic collection
-    fn phase(this) -> TouchPhase {
-        return touch_phase_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("phase\0"))));
+    fn from_raw(ptr: *u8) -> Touch { return Touch { _obj: ptr }; }
+
+    fn identity(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("identity\0")));
     }
 
-    // SKIPPED `normalizedPosition`: return `NSPoint` — unmapped type `NSPoint`
+    fn phase(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("phase\0")));
+    }
+
+    fn normalized_position(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("normalizedPosition\0")));
+    }
+
     fn is_resting(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isResting\0"))) != (0 as i8);
     }
@@ -90,9 +76,12 @@ impl Touch {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `deviceSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `locationInView:`: return `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `previousLocationInView:`: return `NSPoint` — unmapped type `NSPoint`
+    fn device_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("deviceSize\0")));
+    }
+
+    // SKIPPED `locationInView:`: (return, arg) shape not yet modelled
+    // SKIPPED `previousLocationInView:`: (return, arg) shape not yet modelled
     fn type_(this) -> TouchType {
         return touch_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }

@@ -14,6 +14,8 @@ struct Data {
 impl Data {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Data { return Data { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSSound` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -33,6 +37,8 @@ struct Sound {
 
 impl Sound {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Sound { return Sound { _obj: ptr }; }
 
     fn sound_named(name: str) -> option::Option[Sound] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSound\0")), rt::sel(#str_ptr("soundNamed:\0")), bridge::nsstring(name));
@@ -87,8 +93,15 @@ impl Sound {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isPlaying\0"))) != (0 as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSSoundDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSoundDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn duration(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("duration\0")));
     }

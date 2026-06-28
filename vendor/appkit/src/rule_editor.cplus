@@ -58,6 +58,8 @@ struct IndexSet {
 impl IndexSet {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexSet { return IndexSet { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -67,6 +69,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -78,6 +82,8 @@ struct Predicate {
 impl Predicate {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Predicate { return Predicate { _obj: ptr }; }
+
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -87,6 +93,8 @@ struct String {
 
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
 }
 
@@ -98,6 +106,8 @@ struct ViewAnimation {
 impl ViewAnimation {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ViewAnimation { return ViewAnimation { _obj: ptr }; }
+
 }
 
 // `NSRuleEditor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -108,6 +118,8 @@ struct RuleEditor {
 impl RuleEditor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RuleEditor { return RuleEditor { _obj: ptr }; }
+
     fn reload_criteria(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadCriteria\0")));
     }
@@ -116,13 +128,16 @@ impl RuleEditor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadPredicate\0")));
     }
 
-    fn predicate_for_row(this, row: i64) -> option::Option[*u8] {
+    fn predicate_for_row(this, row: i64) -> option::Option[Predicate] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("predicateForRow:\0")), row);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Predicate]::None;
+        }
+        return option::some(Predicate::from_raw(obj));
     }
 
-    fn subrow_indexes_for_row(this, row_index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("subrowIndexesForRow:\0")), row_index);
+    fn subrow_indexes_for_row(this, row_index: i64) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("subrowIndexesForRow:\0")), row_index));
     }
 
     fn criteria_for_row(this, row: i64) -> *u8 {
@@ -145,8 +160,15 @@ impl RuleEditor {
     // SKIPPED `removeRowAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `removeRowsAtIndexes:includeSubrows:`: (return, arg) shape not yet modelled
     // SKIPPED `selectRowIndexes:byExtendingSelection:`: (return, arg) shape not yet modelled
-    // SKIPPED `delegate`: return `id<NSRuleEditorDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSRuleEditorDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn formatting_strings_filename(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("formattingStringsFilename\0")));
         return bridge::to_text_option(ns);
@@ -203,17 +225,20 @@ impl RuleEditor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCanRemoveAllRows:\0")), can_remove_all_rows as i8);
     }
 
-    fn predicate(this) -> option::Option[*u8] {
+    fn predicate(this) -> option::Option[Predicate] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("predicate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Predicate]::None;
+        }
+        return option::some(Predicate::from_raw(obj));
     }
 
     fn number_of_rows(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfRows\0")));
     }
 
-    fn selected_row_indexes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowIndexes\0")));
+    fn selected_row_indexes(this) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowIndexes\0"))));
     }
 
     // SKIPPED `rowClass`: return `Class _Nonnull` — unmapped type `Class`
@@ -261,44 +286,44 @@ impl RuleEditor {
 // SKIPPED `ruleEditor:child:forCriterion:withRowType:`: arg shape (only <=5 object args modelled)
 // SKIPPED `ruleEditor:displayValueForCriterion:inRow:`: arg shape (only <=5 object args modelled)
 // SKIPPED `ruleEditor:predicatePartsForCriterion:withDisplayValue:inRow:`: arg shape (only <=5 object args modelled)
-fn RuleEditorDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn RuleEditorDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct RuleEditorDelegateProtocol {
+struct RuleEditorDelegate {
     rule_editor_rows_did_change: fn(*u8, *u8),
     opaque user: *u8,
 }
 
-fn RuleEditorDelegateProtocol_new(user: *u8) -> RuleEditorDelegateProtocol {
-    return RuleEditorDelegateProtocol { rule_editor_rows_did_change: RuleEditorDelegateProtocol_noop_v_1, user: user };
+fn RuleEditorDelegate_new(user: *u8) -> RuleEditorDelegate {
+    return RuleEditorDelegate { rule_editor_rows_did_change: RuleEditorDelegate_noop_v_1, user: user };
 }
 
-impl RuleEditorDelegateProtocol {
+impl RuleEditorDelegate {
     fn set_rule_editor_rows_did_change(ref this, handler: fn(*u8, *u8)) {
         this.rule_editor_rows_did_change = handler;
         return;
     }
 }
 
-fn RuleEditorDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn RuleEditorDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn RuleEditorDelegateProtocol_rule_editor_rows_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *RuleEditorDelegateProtocol = { synth::get_associated(self_obj, RuleEditorDelegateProtocol_key()) as *RuleEditorDelegateProtocol };
+fn RuleEditorDelegate_rule_editor_rows_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *RuleEditorDelegate = { synth::get_associated(self_obj, RuleEditorDelegate_key()) as *RuleEditorDelegate };
     let f: fn(*u8, *u8) = { (*c).rule_editor_rows_did_change };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_RuleEditorDelegateProtocol(ctx: *RuleEditorDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_RuleEditorDelegateProtocol\0");
+fn create_RuleEditorDelegate(ctx: *RuleEditorDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_RuleEditorDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_rule_editor_rows_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("ruleEditorRowsDidChange:\0")), RuleEditorDelegateProtocol_rule_editor_rows_did_change_imp, #str_ptr("v@:@\0"));
+        let add_rule_editor_rows_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("ruleEditorRowsDidChange:\0")), RuleEditorDelegate_rule_editor_rows_did_change_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, RuleEditorDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, RuleEditorDelegate_key(), { ctx as *u8 });
     return d;
 }
 

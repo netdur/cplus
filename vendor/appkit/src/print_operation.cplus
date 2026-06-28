@@ -56,6 +56,8 @@ struct MutableData {
 impl MutableData {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableData { return MutableData { _obj: ptr }; }
+
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -65,6 +67,8 @@ struct GraphicsContext {
 
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
 
 }
 
@@ -76,6 +80,8 @@ struct PDFPanel {
 impl PDFPanel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PDFPanel { return PDFPanel { _obj: ptr }; }
+
 }
 
 // `NSPrintPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -85,6 +91,8 @@ struct PrintPanel {
 
 impl PrintPanel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrintPanel { return PrintPanel { _obj: ptr }; }
 
 }
 
@@ -96,6 +104,8 @@ struct PrintInfo {
 impl PrintInfo {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -105,6 +115,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -116,6 +128,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSPrintOperation` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -126,25 +140,30 @@ struct PrintOperation {
 impl PrintOperation {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PrintOperation { return PrintOperation { _obj: ptr }; }
+
     // SKIPPED `printOperationWithView:printInfo:`: (return, arg) shape not yet modelled
-    // SKIPPED `PDFOperationWithView:insideRect:toData:printInfo:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `PDFOperationWithView:insideRect:toPath:printInfo:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `EPSOperationWithView:insideRect:toData:printInfo:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `EPSOperationWithView:insideRect:toPath:printInfo:`: param `NSRect` — unmapped type `NSRect`
-    fn print_operation_with_view(view: *u8) -> PrintOperation {
-        return PrintOperation { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:\0")), view) };
+    // SKIPPED `PDFOperationWithView:insideRect:toData:printInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `PDFOperationWithView:insideRect:toPath:printInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toData:printInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toPath:printInfo:`: (return, arg) shape not yet modelled
+    fn print_operation_with_view(view: View) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:\0")), view.raw()) };
     }
 
-    // SKIPPED `PDFOperationWithView:insideRect:toData:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `EPSOperationWithView:insideRect:toData:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `PDFOperationWithView:insideRect:toData:`: (return, arg) shape not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toData:`: (return, arg) shape not yet modelled
     // SKIPPED `runOperationModalForWindow:delegate:didRunSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     fn run_operation(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("runOperation\0"))) != (0 as i8);
     }
 
-    fn create_context(this) -> option::Option[*u8] {
+    fn create_context(this) -> option::Option[GraphicsContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("createContext\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GraphicsContext]::None;
+        }
+        return option::some(GraphicsContext::from_raw(obj));
     }
 
     fn destroy_context(this) {
@@ -167,8 +186,8 @@ impl PrintOperation {
         return option::some(PrintOperation { _obj: obj });
     }
 
-    fn set_current_operation(current_operation: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("setCurrentOperation:\0")), current_operation);
+    fn set_current_operation(current_operation: PrintOperation) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("setCurrentOperation:\0")), current_operation.raw());
     }
 
     fn is_copying_operation(this) -> bool {
@@ -203,12 +222,12 @@ impl PrintOperation {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsProgressPanel:\0")), shows_progress_panel as i8);
     }
 
-    fn print_panel(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("printPanel\0")));
+    fn print_panel(this) -> PrintPanel {
+        return PrintPanel::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("printPanel\0"))));
     }
 
-    fn set_print_panel(this, print_panel: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintPanel:\0")), print_panel);
+    fn set_print_panel(this, print_panel: PrintPanel) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintPanel:\0")), print_panel.raw());
     }
 
     fn p_d_f_panel(this) -> *u8 {
@@ -232,22 +251,28 @@ impl PrintOperation {
     }
 
     // SKIPPED `setPageOrder:`: (return, arg) shape not yet modelled
-    fn view(this) -> option::Option[*u8] {
+    fn view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn print_info(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0")));
+    fn print_info(this) -> PrintInfo {
+        return PrintInfo::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0"))));
     }
 
-    fn set_print_info(this, print_info: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintInfo:\0")), print_info);
+    fn set_print_info(this, print_info: PrintInfo) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintInfo:\0")), print_info.raw());
     }
 
-    fn context(this) -> option::Option[*u8] {
+    fn context(this) -> option::Option[GraphicsContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("context\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[GraphicsContext]::None;
+        }
+        return option::some(GraphicsContext::from_raw(obj));
     }
 
     fn page_range(this) -> rt::Range {
@@ -258,13 +283,16 @@ impl PrintOperation {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("currentPage\0")));
     }
 
-    fn set_accessory_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), view);
+    fn set_accessory_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), view.raw());
     }
 
-    fn accessory_view(this) -> option::Option[*u8] {
+    fn accessory_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accessoryView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     fn set_job_style_hint(this, hint: str) {

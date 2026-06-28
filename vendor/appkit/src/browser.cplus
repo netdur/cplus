@@ -7,47 +7,17 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `NSDragOperation` (NS_ENUM)
-enum DragOperation {
-    None,
-    Copy,
-    Link,
-    Generic,
-    Private,
-    Move,
-    Delete,
-    Every,
-    All_Obsolete,
-    All,
-}
-
-fn drag_operation_raw(v: DragOperation) -> i64 {
-    return match v {
-        DragOperation::None => { 0 as i64 },
-        DragOperation::Copy => { 1 as i64 },
-        DragOperation::Link => { 2 as i64 },
-        DragOperation::Generic => { 4 as i64 },
-        DragOperation::Private => { 8 as i64 },
-        DragOperation::Move => { 16 as i64 },
-        DragOperation::Delete => { 32 as i64 },
-        DragOperation::Every => { 9223372036854775807 as i64 },
-        DragOperation::All_Obsolete => { 15 as i64 },
-        DragOperation::All => { 15 as i64 },
-    };
-}
-
-fn drag_operation_from_raw(raw: i64) -> DragOperation {
-    if raw == (1 as i64) { return DragOperation::Copy; }
-    if raw == (2 as i64) { return DragOperation::Link; }
-    if raw == (4 as i64) { return DragOperation::Generic; }
-    if raw == (8 as i64) { return DragOperation::Private; }
-    if raw == (16 as i64) { return DragOperation::Move; }
-    if raw == (32 as i64) { return DragOperation::Delete; }
-    if raw == (9223372036854775807 as i64) { return DragOperation::Every; }
-    if raw == (15 as i64) { return DragOperation::All_Obsolete; }
-    if raw == (15 as i64) { return DragOperation::All; }
-    return DragOperation::None;
-}
+// `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
+const drag_operation_none: u64 = 0 as u64;
+const drag_operation_copy: u64 = 1 as u64;
+const drag_operation_link: u64 = 2 as u64;
+const drag_operation_generic: u64 = 4 as u64;
+const drag_operation_private: u64 = 8 as u64;
+const drag_operation_move: u64 = 16 as u64;
+const drag_operation_delete: u64 = 32 as u64;
+const drag_operation_every: u64 = 9223372036854775807 as u64;
+const drag_operation_all__obsolete: u64 = 15 as u64;
+const drag_operation_all: u64 = 15 as u64;
 
 // `NSBrowserColumnResizingType` (NS_ENUM)
 enum BrowserColumnResizingType {
@@ -78,6 +48,8 @@ struct Matrix {
 impl Matrix {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Matrix { return Matrix { _obj: ptr }; }
+
 }
 
 // `NSScroller` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -87,6 +59,8 @@ struct Scroller {
 
 impl Scroller {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
 
 }
 
@@ -98,6 +72,8 @@ struct IndexSet {
 impl IndexSet {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexSet { return IndexSet { _obj: ptr }; }
+
 }
 
 // `NSBrowser` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -107,6 +83,8 @@ struct Browser {
 
 impl Browser {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Browser { return Browser { _obj: ptr }; }
 
     fn load_column_zero(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadColumnZero\0")));
@@ -156,9 +134,12 @@ impl Browser {
     // SKIPPED `selectRow:inColumn:`: (return, arg) shape not yet modelled
     // SKIPPED `selectedRowInColumn:`: (return, arg) shape not yet modelled
     // SKIPPED `selectRowIndexes:inColumn:`: (return, arg) shape not yet modelled
-    fn selected_row_indexes_in_column(this, column: i64) -> option::Option[*u8] {
+    fn selected_row_indexes_in_column(this, column: i64) -> option::Option[IndexSet] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("selectedRowIndexesInColumn:\0")), column);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[IndexSet]::None;
+        }
+        return option::some(IndexSet::from_raw(obj));
     }
 
     // SKIPPED `reloadColumn:`: (return, arg) shape not yet modelled
@@ -194,12 +175,12 @@ impl Browser {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
 
-    // SKIPPED `titleFrameOfColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawTitleOfColumn:inRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `frameOfColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `frameOfInsideOfColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `frameOfRow:inColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `getRow:column:forPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `titleFrameOfColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawTitleOfColumn:inRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameOfColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameOfInsideOfColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameOfRow:inColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `getRow:column:forPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `columnWidthForColumnContentWidth:`: (return, arg) shape not yet modelled
     // SKIPPED `columnContentWidthForColumnWidth:`: (return, arg) shape not yet modelled
     // SKIPPED `setWidth:ofColumn:`: (return, arg) shape not yet modelled
@@ -236,8 +217,15 @@ impl Browser {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCellPrototype:\0")), cell_prototype);
     }
 
-    // SKIPPED `delegate`: return `id<NSBrowserDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSBrowserDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn reuses_columns(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("reusesColumns\0"))) != (0 as i8);
     }
@@ -448,8 +436,8 @@ impl Browser {
         rt::msg_void(this._obj, rt::sel(#str_ptr("displayAllColumns\0")));
     }
 
-    fn scroll_via_scroller(this, sender: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollViaScroller:\0")), sender);
+    fn scroll_via_scroller(this, sender: Scroller) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollViaScroller:\0")), sender.raw());
     }
 
     fn update_scroller(this) {
@@ -459,9 +447,12 @@ impl Browser {
     // SKIPPED `setMatrixClass:`: param `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `matrixClass`: return `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `columnOfMatrix:`: (return, arg) shape not yet modelled
-    fn matrix_in_column(this, column: i64) -> option::Option[*u8] {
+    fn matrix_in_column(this, column: i64) -> option::Option[Matrix] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("matrixInColumn:\0")), column);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Matrix]::None;
+        }
+        return option::some(Matrix::from_raw(obj));
     }
 
 }
@@ -489,15 +480,15 @@ impl Browser {
 // SKIPPED `browser:nextTypeSelectMatchFromRow:toRow:inColumn:forString:`: arg shape (only <=5 object args modelled)
 // SKIPPED `browser:didChangeLastColumn:toColumn:`: arg shape (only <=5 object args modelled)
 // SKIPPED `browser:selectionIndexesForProposedSelection:inColumn:`: arg shape (only <=5 object args modelled)
-fn BrowserDelegateProtocol_noop_i64_2(user: *u8, a0: *u8, a1: *u8) -> i64 { return 0 as i64; }
-fn BrowserDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn BrowserDelegateProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn BrowserDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn BrowserDelegateProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn BrowserDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-fn BrowserDelegateProtocol_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn BrowserDelegate_noop_i64_2(user: *u8, a0: *u8, a1: *u8) -> i64 { return 0 as i64; }
+fn BrowserDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn BrowserDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn BrowserDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn BrowserDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn BrowserDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+fn BrowserDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
 
-struct BrowserDelegateProtocol {
+struct BrowserDelegate {
     browser_number_of_children_of_item: fn(*u8, *u8, *u8) -> i64,
     browser_is_leaf_item: fn(*u8, *u8, *u8) -> i8,
     browser_object_value_for_item: fn(*u8, *u8, *u8) -> *u8,
@@ -513,11 +504,11 @@ struct BrowserDelegateProtocol {
     opaque user: *u8,
 }
 
-fn BrowserDelegateProtocol_new(user: *u8) -> BrowserDelegateProtocol {
-    return BrowserDelegateProtocol { browser_number_of_children_of_item: BrowserDelegateProtocol_noop_i64_2, browser_is_leaf_item: BrowserDelegateProtocol_noop_i8_2, browser_object_value_for_item: BrowserDelegateProtocol_noop_id_2, root_item_for_browser: BrowserDelegateProtocol_noop_id_1, browser_set_object_value_for_item: BrowserDelegateProtocol_noop_v_3, browser_should_edit_item: BrowserDelegateProtocol_noop_i8_2, browser_will_scroll: BrowserDelegateProtocol_noop_v_1, browser_did_scroll: BrowserDelegateProtocol_noop_v_1, browser_column_configuration_did_change: BrowserDelegateProtocol_noop_v_1, browser_should_type_select_for_event_with_current_search_string: BrowserDelegateProtocol_noop_i8_3, browser_preview_view_controller_for_leaf_item: BrowserDelegateProtocol_noop_id_2, browser_header_view_controller_for_item: BrowserDelegateProtocol_noop_id_2, user: user };
+fn BrowserDelegate_new(user: *u8) -> BrowserDelegate {
+    return BrowserDelegate { browser_number_of_children_of_item: BrowserDelegate_noop_i64_2, browser_is_leaf_item: BrowserDelegate_noop_i8_2, browser_object_value_for_item: BrowserDelegate_noop_id_2, root_item_for_browser: BrowserDelegate_noop_id_1, browser_set_object_value_for_item: BrowserDelegate_noop_v_3, browser_should_edit_item: BrowserDelegate_noop_i8_2, browser_will_scroll: BrowserDelegate_noop_v_1, browser_did_scroll: BrowserDelegate_noop_v_1, browser_column_configuration_did_change: BrowserDelegate_noop_v_1, browser_should_type_select_for_event_with_current_search_string: BrowserDelegate_noop_i8_3, browser_preview_view_controller_for_leaf_item: BrowserDelegate_noop_id_2, browser_header_view_controller_for_item: BrowserDelegate_noop_id_2, user: user };
 }
 
-impl BrowserDelegateProtocol {
+impl BrowserDelegate {
     fn set_browser_number_of_children_of_item(ref this, handler: fn(*u8, *u8, *u8) -> i64) {
         this.browser_number_of_children_of_item = handler;
         return;
@@ -568,117 +559,117 @@ impl BrowserDelegateProtocol {
     }
 }
 
-fn BrowserDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn BrowserDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn BrowserDelegateProtocol_browser_number_of_children_of_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i64 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_number_of_children_of_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i64 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> i64 = { (*c).browser_number_of_children_of_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn BrowserDelegateProtocol_browser_is_leaf_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_is_leaf_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).browser_is_leaf_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn BrowserDelegateProtocol_browser_object_value_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_object_value_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).browser_object_value_for_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn BrowserDelegateProtocol_root_item_for_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_root_item_for_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).root_item_for_browser };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn BrowserDelegateProtocol_browser_set_object_value_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_set_object_value_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8, *u8) = { (*c).browser_set_object_value_for_item };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn BrowserDelegateProtocol_browser_should_edit_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_should_edit_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).browser_should_edit_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn BrowserDelegateProtocol_browser_will_scroll_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_will_scroll_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8) = { (*c).browser_will_scroll };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn BrowserDelegateProtocol_browser_did_scroll_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_did_scroll_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8) = { (*c).browser_did_scroll };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn BrowserDelegateProtocol_browser_column_configuration_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_column_configuration_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8) = { (*c).browser_column_configuration_did_change };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn BrowserDelegateProtocol_browser_should_type_select_for_event_with_current_search_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_should_type_select_for_event_with_current_search_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).browser_should_type_select_for_event_with_current_search_string };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn BrowserDelegateProtocol_browser_preview_view_controller_for_leaf_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_preview_view_controller_for_leaf_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).browser_preview_view_controller_for_leaf_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn BrowserDelegateProtocol_browser_header_view_controller_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *BrowserDelegateProtocol = { synth::get_associated(self_obj, BrowserDelegateProtocol_key()) as *BrowserDelegateProtocol };
+fn BrowserDelegate_browser_header_view_controller_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).browser_header_view_controller_for_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn create_BrowserDelegateProtocol(ctx: *BrowserDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_BrowserDelegateProtocol\0");
+fn create_BrowserDelegate(ctx: *BrowserDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_BrowserDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_browser_number_of_children_of_item: i8 = synth::add_method_i64_2id(cls, rt::sel(#str_ptr("browser:numberOfChildrenOfItem:\0")), BrowserDelegateProtocol_browser_number_of_children_of_item_imp, #str_ptr("q@:@@\0"));
-        let add_browser_is_leaf_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("browser:isLeafItem:\0")), BrowserDelegateProtocol_browser_is_leaf_item_imp, #str_ptr("c@:@@\0"));
-        let add_browser_object_value_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:objectValueForItem:\0")), BrowserDelegateProtocol_browser_object_value_for_item_imp, #str_ptr("@@:@@\0"));
-        let add_root_item_for_browser: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("rootItemForBrowser:\0")), BrowserDelegateProtocol_root_item_for_browser_imp, #str_ptr("@@:@\0"));
-        let add_browser_set_object_value_for_item: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("browser:setObjectValue:forItem:\0")), BrowserDelegateProtocol_browser_set_object_value_for_item_imp, #str_ptr("v@:@@@\0"));
-        let add_browser_should_edit_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("browser:shouldEditItem:\0")), BrowserDelegateProtocol_browser_should_edit_item_imp, #str_ptr("c@:@@\0"));
-        let add_browser_will_scroll: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserWillScroll:\0")), BrowserDelegateProtocol_browser_will_scroll_imp, #str_ptr("v@:@\0"));
-        let add_browser_did_scroll: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserDidScroll:\0")), BrowserDelegateProtocol_browser_did_scroll_imp, #str_ptr("v@:@\0"));
-        let add_browser_column_configuration_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserColumnConfigurationDidChange:\0")), BrowserDelegateProtocol_browser_column_configuration_did_change_imp, #str_ptr("v@:@\0"));
-        let add_browser_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("browser:shouldTypeSelectForEvent:withCurrentSearchString:\0")), BrowserDelegateProtocol_browser_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
-        let add_browser_preview_view_controller_for_leaf_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:previewViewControllerForLeafItem:\0")), BrowserDelegateProtocol_browser_preview_view_controller_for_leaf_item_imp, #str_ptr("@@:@@\0"));
-        let add_browser_header_view_controller_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:headerViewControllerForItem:\0")), BrowserDelegateProtocol_browser_header_view_controller_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_browser_number_of_children_of_item: i8 = synth::add_method_i64_2id(cls, rt::sel(#str_ptr("browser:numberOfChildrenOfItem:\0")), BrowserDelegate_browser_number_of_children_of_item_imp, #str_ptr("q@:@@\0"));
+        let add_browser_is_leaf_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("browser:isLeafItem:\0")), BrowserDelegate_browser_is_leaf_item_imp, #str_ptr("c@:@@\0"));
+        let add_browser_object_value_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:objectValueForItem:\0")), BrowserDelegate_browser_object_value_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_root_item_for_browser: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("rootItemForBrowser:\0")), BrowserDelegate_root_item_for_browser_imp, #str_ptr("@@:@\0"));
+        let add_browser_set_object_value_for_item: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("browser:setObjectValue:forItem:\0")), BrowserDelegate_browser_set_object_value_for_item_imp, #str_ptr("v@:@@@\0"));
+        let add_browser_should_edit_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("browser:shouldEditItem:\0")), BrowserDelegate_browser_should_edit_item_imp, #str_ptr("c@:@@\0"));
+        let add_browser_will_scroll: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserWillScroll:\0")), BrowserDelegate_browser_will_scroll_imp, #str_ptr("v@:@\0"));
+        let add_browser_did_scroll: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserDidScroll:\0")), BrowserDelegate_browser_did_scroll_imp, #str_ptr("v@:@\0"));
+        let add_browser_column_configuration_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("browserColumnConfigurationDidChange:\0")), BrowserDelegate_browser_column_configuration_did_change_imp, #str_ptr("v@:@\0"));
+        let add_browser_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("browser:shouldTypeSelectForEvent:withCurrentSearchString:\0")), BrowserDelegate_browser_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
+        let add_browser_preview_view_controller_for_leaf_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:previewViewControllerForLeafItem:\0")), BrowserDelegate_browser_preview_view_controller_for_leaf_item_imp, #str_ptr("@@:@@\0"));
+        let add_browser_header_view_controller_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("browser:headerViewControllerForItem:\0")), BrowserDelegate_browser_header_view_controller_for_item_imp, #str_ptr("@@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, BrowserDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, BrowserDelegate_key(), { ctx as *u8 });
     return d;
 }
 

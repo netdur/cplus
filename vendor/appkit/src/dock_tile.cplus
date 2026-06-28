@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct View {
@@ -14,6 +13,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -25,18 +26,26 @@ struct DockTile {
 impl DockTile {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DockTile { return DockTile { _obj: ptr }; }
+
     fn display(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("display\0")));
     }
 
-    // SKIPPED `size`: return `NSSize` — unmapped type `NSSize`
-    fn content_view(this) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
-        return bridge::obj_option(obj);
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
     }
 
-    fn set_content_view(this, content_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view);
+    fn content_view(this) -> option::Option[View] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
+    }
+
+    fn set_content_view(this, content_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view.raw());
     }
 
     fn shows_application_badge(this) -> bool {
@@ -71,61 +80,31 @@ struct Menu {
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
+
 }
 
-// `NSDockTilePlugIn` delegate protocol -> runtime class-synthesis helper.
-fn DockTilePlugIn_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn DockTilePlugIn_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSDockTilePlugIn` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct DockTilePlugIn {
-    set_dock_tile: fn(*u8, *u8),
-    dock_menu: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn DockTilePlugIn_new(user: *u8) -> DockTilePlugIn {
-    return DockTilePlugIn { set_dock_tile: DockTilePlugIn_noop_v_1, dock_menu: DockTilePlugIn_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl DockTilePlugIn {
-    fn set_set_dock_tile(ref this, handler: fn(*u8, *u8)) {
-        this.set_dock_tile = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DockTilePlugIn { return DockTilePlugIn { _obj: ptr }; }
+
+    fn set_dock_tile(this, dock_tile: DockTile) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDockTile:\0")), dock_tile.raw());
     }
-    fn set_dock_menu(ref this, handler: fn(*u8) -> *u8) {
-        this.dock_menu = handler;
-        return;
+
+    fn dock_menu(this) -> option::Option[Menu] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dockMenu\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
-}
 
-fn DockTilePlugIn_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn DockTilePlugIn_set_dock_tile_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *DockTilePlugIn = { synth::get_associated(self_obj, DockTilePlugIn_key()) as *DockTilePlugIn };
-    let f: fn(*u8, *u8) = { (*c).set_dock_tile };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn DockTilePlugIn_dock_menu_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *DockTilePlugIn = { synth::get_associated(self_obj, DockTilePlugIn_key()) as *DockTilePlugIn };
-    let f: fn(*u8) -> *u8 = { (*c).dock_menu };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_DockTilePlugIn(ctx: *DockTilePlugIn) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_DockTilePlugIn\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_set_dock_tile: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setDockTile:\0")), DockTilePlugIn_set_dock_tile_imp, #str_ptr("v@:@\0"));
-        let add_dock_menu: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("dockMenu\0")), DockTilePlugIn_dock_menu_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, DockTilePlugIn_key(), { ctx as *u8 });
-    return d;
 }
 

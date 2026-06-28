@@ -14,6 +14,8 @@ struct Nib {
 impl Nib {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Nib { return Nib { _obj: ptr }; }
+
     // SKIPPED `initWithNibNamed:bundle:`: init arg shape not yet modelled
     // SKIPPED `initWithNibData:bundle:`: extra init variant (one `new` per type)
     // SKIPPED `instantiateWithOwner:topLevelObjects:`: (return, arg) shape not yet modelled

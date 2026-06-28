@@ -6,6 +6,19 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `MTLIntersectionFunctionSignature` (NS_OPTIONS) — bitfield; combine with `|`.
+const intersection_function_signature_none: u64 = 0 as u64;
+const intersection_function_signature_instancing: u64 = 1 as u64;
+const intersection_function_signature_triangle_data: u64 = 2 as u64;
+const intersection_function_signature_world_space_data: u64 = 4 as u64;
+const intersection_function_signature_instance_motion: u64 = 8 as u64;
+const intersection_function_signature_primitive_motion: u64 = 16 as u64;
+const intersection_function_signature_extended_limits: u64 = 32 as u64;
+const intersection_function_signature_max_levels: u64 = 64 as u64;
+const intersection_function_signature_curve_data: u64 = 128 as u64;
+const intersection_function_signature_intersection_function_buffer: u64 = 256 as u64;
+const intersection_function_signature_user_data: u64 = 512 as u64;
+
 // `MTLIntersectionFunctionTableDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct IntersectionFunctionTableDescriptor {
     opaque _obj: *u8,
@@ -25,5 +38,31 @@ impl IntersectionFunctionTableDescriptor {
     }
 
     // SKIPPED `setFunctionCount:`: (return, arg) shape not yet modelled
+}
+
+// `MTLIntersectionFunctionTable` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct IntersectionFunctionTable {
+    opaque _obj: *u8,
+}
+
+impl IntersectionFunctionTable {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IntersectionFunctionTable { return IntersectionFunctionTable { _obj: ptr }; }
+
+    // SKIPPED `setBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFunction:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFunctions:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setOpaqueTriangleIntersectionFunctionWithSignature:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setOpaqueTriangleIntersectionFunctionWithSignature:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setOpaqueCurveIntersectionFunctionWithSignature:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setOpaqueCurveIntersectionFunctionWithSignature:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVisibleFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVisibleFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
+
 }
 

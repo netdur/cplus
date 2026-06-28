@@ -167,6 +167,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -176,6 +178,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
 }
 
@@ -187,6 +191,8 @@ struct BitmapImageRep {
 impl BitmapImageRep {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BitmapImageRep { return BitmapImageRep { _obj: ptr }; }
+
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -197,9 +203,11 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
     // SKIPPED `graphicsContextWithAttributes:`: param `NSDictionary<NSGraphicsContextAttributeKey,id> * _Nonnull` — generic collection
-    fn graphics_context_with_bitmap_image_rep(bitmap_rep: *u8) -> option::Option[GraphicsContext] {
-        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithBitmapImageRep:\0")), bitmap_rep);
+    fn graphics_context_with_bitmap_image_rep(bitmap_rep: BitmapImageRep) -> option::Option[GraphicsContext] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithBitmapImageRep:\0")), bitmap_rep.raw());
         if obj == { 0 as *u8 } {
             return option::Option[GraphicsContext]::None;
         }
@@ -231,8 +239,8 @@ impl GraphicsContext {
         return option::some(GraphicsContext { _obj: obj });
     }
 
-    fn set_current_context(current_context: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("setCurrentContext:\0")), current_context);
+    fn set_current_context(current_context: GraphicsContext) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("setCurrentContext:\0")), current_context.raw());
     }
 
     // SKIPPED `attributes`: return `NSDictionary<NSGraphicsContextAttributeKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
@@ -258,8 +266,14 @@ impl GraphicsContext {
     }
 
     // SKIPPED `setImageInterpolation:`: (return, arg) shape not yet modelled
-    // SKIPPED `patternPhase`: return `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `setPatternPhase:`: param `NSPoint` — unmapped type `NSPoint`
+    fn pattern_phase(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("patternPhase\0")));
+    }
+
+    fn set_pattern_phase(this, pattern_phase: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setPatternPhase:\0")), pattern_phase);
+    }
+
     fn compositing_operation(this) -> CompositingOperation {
         return compositing_operation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("compositingOperation\0"))));
     }
@@ -270,9 +284,12 @@ impl GraphicsContext {
     }
 
     // SKIPPED `setColorRenderingIntent:`: (return, arg) shape not yet modelled
-    fn c_i_context(this) -> option::Option[*u8] {
+    fn c_i_context(this) -> option::Option[CIContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("CIContext\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CIContext]::None;
+        }
+        return option::some(CIContext::from_raw(obj));
     }
 
     // SKIPPED `setGraphicsState:`: (return, arg) shape not yet modelled
@@ -286,8 +303,8 @@ impl GraphicsContext {
     }
 
     // SKIPPED `graphicsContextWithGraphicsPort:flipped:`: (return, arg) shape not yet modelled
-    fn graphics_context_with_window(window: *u8) -> GraphicsContext {
-        return GraphicsContext { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithWindow:\0")), window) };
+    fn graphics_context_with_window(window: Window) -> GraphicsContext {
+        return GraphicsContext { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithWindow:\0")), window.raw()) };
     }
 
     fn graphics_port(this) -> *u8 {
@@ -303,6 +320,8 @@ struct CIContext {
 
 impl CIContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CIContext { return CIContext { _obj: ptr }; }
 
 }
 

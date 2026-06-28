@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTL4CommitOptions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4CommitOptions {
@@ -43,59 +42,98 @@ impl MTL4CommandQueueDescriptor {
     // SKIPPED `setFeedbackQueue:`: param `dispatch_queue_t _Nullable` — unmapped type `dispatch_queue_t`
 }
 
-// `MTL4CommandQueue` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `commit:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `commit:count:options:`: arg shape (only <=5 object args modelled)
-// SKIPPED `signalEvent:value:`: arg shape (only <=5 object args modelled)
-// SKIPPED `waitForEvent:value:`: arg shape (only <=5 object args modelled)
-// SKIPPED `signalDrawable:`: arg shape (only <=5 object args modelled)
-// SKIPPED `waitForDrawable:`: arg shape (only <=5 object args modelled)
-// SKIPPED `addResidencySet:`: arg shape (only <=5 object args modelled)
-// SKIPPED `addResidencySets:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `removeResidencySet:`: arg shape (only <=5 object args modelled)
-// SKIPPED `removeResidencySets:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `updateTextureMappings:heap:operations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `copyTextureMappingsFromTexture:toTexture:operations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `updateBufferMappings:heap:operations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `copyBufferMappingsFromBuffer:toBuffer:operations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-fn MTL4CommandQueue_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
-struct MTL4CommandQueue {
-    label: fn(*u8) -> *u8,
-    opaque user: *u8,
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
 }
 
-fn MTL4CommandQueue_new(user: *u8) -> MTL4CommandQueue {
-    return MTL4CommandQueue { label: MTL4CommandQueue_noop_id_0, user: user };
+impl Buffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
+
+}
+
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Texture {
+    opaque _obj: *u8,
+}
+
+impl Texture {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+}
+
+// `MTLDrawable` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Drawable {
+    opaque _obj: *u8,
+}
+
+impl Drawable {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Drawable { return Drawable { _obj: ptr }; }
+
+}
+
+// `MTLResidencySet` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ResidencySet {
+    opaque _obj: *u8,
+}
+
+impl ResidencySet {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResidencySet { return ResidencySet { _obj: ptr }; }
+
+}
+
+// `MTL4CommandQueue` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4CommandQueue {
+    opaque _obj: *u8,
 }
 
 impl MTL4CommandQueue {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CommandQueue { return MTL4CommandQueue { _obj: ptr }; }
+
+    // SKIPPED `commit:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `commit:count:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `signalEvent:value:`: (return, arg) shape not yet modelled
+    // SKIPPED `waitForEvent:value:`: (return, arg) shape not yet modelled
+    fn signal_drawable(this, drawable: Drawable) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("signalDrawable:\0")), drawable.raw());
     }
-}
 
-fn MTL4CommandQueue_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4CommandQueue_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *MTL4CommandQueue = { synth::get_associated(self_obj, MTL4CommandQueue_key()) as *MTL4CommandQueue };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_MTL4CommandQueue(ctx: *MTL4CommandQueue) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4CommandQueue\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), MTL4CommandQueue_label_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn wait_for_drawable(this, drawable: Drawable) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("waitForDrawable:\0")), drawable.raw());
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4CommandQueue_key(), { ctx as *u8 });
-    return d;
+
+    fn add_residency_set(this, residency_set: ResidencySet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addResidencySet:\0")), residency_set.raw());
+    }
+
+    // SKIPPED `addResidencySets:count:`: (return, arg) shape not yet modelled
+    fn remove_residency_set(this, residency_set: ResidencySet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeResidencySet:\0")), residency_set.raw());
+    }
+
+    // SKIPPED `removeResidencySets:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `updateTextureMappings:heap:operations:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `copyTextureMappingsFromTexture:toTexture:operations:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `updateBufferMappings:heap:operations:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `copyBufferMappingsFromBuffer:toBuffer:operations:count:`: (return, arg) shape not yet modelled
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
+    }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
 }
 

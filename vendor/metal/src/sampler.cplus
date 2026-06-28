@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLSamplerMinMagFilter` (NS_ENUM)
 enum SamplerMinMagFilter {
@@ -273,46 +272,28 @@ impl SamplerDescriptor {
 
 }
 
-// `MTLSamplerState` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-// SKIPPED `gpuResourceID`: return `MTLResourceID` not modelled
-fn SamplerState_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `MTLSamplerState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct SamplerState {
-    label: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn SamplerState_new(user: *u8) -> SamplerState {
-    return SamplerState { label: SamplerState_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl SamplerState {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SamplerState { return SamplerState { _obj: ptr }; }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
     }
-}
 
-fn SamplerState_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn SamplerState_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *SamplerState = { synth::get_associated(self_obj, SamplerState_key()) as *SamplerState };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_SamplerState(ctx: *SamplerState) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SamplerState\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), SamplerState_label_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SamplerState_key(), { ctx as *u8 });
-    return d;
+
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
+
 }
 

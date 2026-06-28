@@ -14,6 +14,8 @@ struct Predicate {
 impl Predicate {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Predicate { return Predicate { _obj: ptr }; }
+
 }
 
 // `NSManagedObjectContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct ManagedObjectContext {
 
 impl ManagedObjectContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ManagedObjectContext { return ManagedObjectContext { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct FetchRequest {
 impl FetchRequest {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FetchRequest { return FetchRequest { _obj: ptr }; }
+
 }
 
 // `NSError` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,6 +50,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSObjectController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -53,6 +61,8 @@ struct ObjectController {
 
 impl ObjectController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ObjectController { return ObjectController { _obj: ptr }; }
 
     fn new(content: *u8) -> ObjectController {
         let cls: *u8 = rt::get_class(#str_ptr("NSObjectController\0"));
@@ -85,7 +95,7 @@ impl ObjectController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("remove:\0")), sender);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: param `id<NSValidatedUserInterfaceItem> _Nonnull` — generic collection
+    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
     fn content(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("content\0")));
         return bridge::obj_option(obj);
@@ -134,17 +144,20 @@ impl ObjectController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("fetch:\0")), sender);
     }
 
-    fn default_fetch_request(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("defaultFetchRequest\0")));
+    fn default_fetch_request(this) -> FetchRequest {
+        return FetchRequest::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("defaultFetchRequest\0"))));
     }
 
-    fn managed_object_context(this) -> option::Option[*u8] {
+    fn managed_object_context(this) -> option::Option[ManagedObjectContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("managedObjectContext\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ManagedObjectContext]::None;
+        }
+        return option::some(ManagedObjectContext::from_raw(obj));
     }
 
-    fn set_managed_object_context(this, managed_object_context: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setManagedObjectContext:\0")), managed_object_context);
+    fn set_managed_object_context(this, managed_object_context: ManagedObjectContext) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setManagedObjectContext:\0")), managed_object_context.raw());
     }
 
     fn entity_name(this) -> option::Option[text::Text] {
@@ -156,13 +169,16 @@ impl ObjectController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEntityName:\0")), bridge::nsstring(entity_name));
     }
 
-    fn fetch_predicate(this) -> option::Option[*u8] {
+    fn fetch_predicate(this) -> option::Option[Predicate] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fetchPredicate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Predicate]::None;
+        }
+        return option::some(Predicate::from_raw(obj));
     }
 
-    fn set_fetch_predicate(this, fetch_predicate: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFetchPredicate:\0")), fetch_predicate);
+    fn set_fetch_predicate(this, fetch_predicate: Predicate) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFetchPredicate:\0")), fetch_predicate.raw());
     }
 
     fn uses_lazy_fetching(this) -> bool {

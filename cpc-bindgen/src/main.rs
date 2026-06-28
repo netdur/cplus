@@ -1234,11 +1234,17 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
     if name.starts_with(|c: char| c.is_ascii_digit()) {
         return format!("_{name}");
     }
+    // Full superset of the cplus-core lexer keyword set (cplus-core/src/lexer.rs)
+    // plus a few historical spellings (self/Self/ref/take/var), which are harmless
+    // to over-escape. An ObjC selector/param/field that collides with any of these
+    // (AppKit's `convertFont:toHaveTrait:` -> param `trait`) would otherwise emit a
+    // bare keyword and fail to parse.
     const RESERVED: &[&str] = &[
-        "as", "async", "await", "borrow", "break", "const", "continue", "defer", "else", "enum",
-        "export", "extern", "false", "fn", "for", "gen", "guard", "if", "impl", "import", "in",
-        "let", "loop", "match", "move", "mut", "opaque", "pub", "ref", "restrict", "return", "self",
-        "Self", "static", "struct", "take", "this", "true", "type", "unsafe", "var", "while",
+        "as", "assert", "async", "await", "borrow", "break", "const", "continue", "defer", "else",
+        "enum", "export", "extern", "false", "fn", "for", "gen", "guard", "if", "impl", "import",
+        "in", "interface", "let", "loop", "match", "mod", "move", "mut", "opaque", "pub", "ref",
+        "restrict", "return", "self", "Self", "static", "struct", "take", "this", "This", "trait",
+        "true", "try", "type", "union", "unsafe", "use", "var", "while", "yield",
     ];
     if RESERVED.iter().any(|r| *r == name) {
         return format!("{name}_");

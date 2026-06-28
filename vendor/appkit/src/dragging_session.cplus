@@ -6,23 +6,9 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSDraggingItemEnumerationOptions` (NS_ENUM)
-enum DraggingItemEnumerationOptions {
-    NSDraggingItemEnumerationConcurrent,
-    NSDraggingItemEnumerationClearNonenumeratedImages,
-}
-
-fn dragging_item_enumeration_options_raw(v: DraggingItemEnumerationOptions) -> i64 {
-    return match v {
-        DraggingItemEnumerationOptions::NSDraggingItemEnumerationConcurrent => { 1 as i64 },
-        DraggingItemEnumerationOptions::NSDraggingItemEnumerationClearNonenumeratedImages => { 65536 as i64 },
-    };
-}
-
-fn dragging_item_enumeration_options_from_raw(raw: i64) -> DraggingItemEnumerationOptions {
-    if raw == (65536 as i64) { return DraggingItemEnumerationOptions::NSDraggingItemEnumerationClearNonenumeratedImages; }
-    return DraggingItemEnumerationOptions::NSDraggingItemEnumerationConcurrent;
-}
+// `NSDraggingItemEnumerationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const dragging_item_enumeration_options_n_s_dragging_item_enumeration_concurrent: u64 = 1 as u64;
+const dragging_item_enumeration_options_n_s_dragging_item_enumeration_clear_nonenumerated_images: u64 = 65536 as u64;
 
 // `NSDraggingFormation` (NS_ENUM)
 enum DraggingFormation {
@@ -59,6 +45,8 @@ struct Pasteboard {
 impl Pasteboard {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Pasteboard { return Pasteboard { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -68,6 +56,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -79,6 +69,8 @@ struct DraggingItem {
 impl DraggingItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DraggingItem { return DraggingItem { _obj: ptr }; }
+
 }
 
 // `NSDraggingSession` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -88,6 +80,8 @@ struct DraggingSession {
 
 impl DraggingSession {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DraggingSession { return DraggingSession { _obj: ptr }; }
 
     // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: leading param `NSArray<Class> * _Nonnull` — generic collection
     fn dragging_formation(this) -> DraggingFormation {
@@ -108,14 +102,41 @@ impl DraggingSession {
     }
 
     // SKIPPED `setDraggingLeaderIndex:`: (return, arg) shape not yet modelled
-    fn dragging_pasteboard(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("draggingPasteboard\0")));
+    fn dragging_pasteboard(this) -> Pasteboard {
+        return Pasteboard::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggingPasteboard\0"))));
     }
 
     fn dragging_sequence_number(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingSequenceNumber\0")));
     }
 
-    // SKIPPED `draggingLocation`: return `NSPoint` — unmapped type `NSPoint`
+    fn dragging_location(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("draggingLocation\0")));
+    }
+
+}
+
+// `NSDraggingSource` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct DraggingSource {
+    opaque _obj: *u8,
+}
+
+impl DraggingSource {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
+
+}
+
+// `NSPasteboardWriting` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct PasteboardWriting {
+    opaque _obj: *u8,
+}
+
+impl PasteboardWriting {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PasteboardWriting { return PasteboardWriting { _obj: ptr }; }
+
 }
 

@@ -15,7 +15,14 @@ struct TextCheckingController {
 impl TextCheckingController {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithClient:`: param `id<NSTextCheckingClient> _Nonnull` — generic collection
+    fn from_raw(ptr: *u8) -> TextCheckingController { return TextCheckingController { _obj: ptr }; }
+
+    fn new(client: *u8) -> TextCheckingController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextCheckingController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextCheckingController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithClient:\0")), client) };
+    }
+
     // SKIPPED `init`: extra init variant (one `new` per type)
     fn invalidate(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidate\0")));
@@ -76,7 +83,10 @@ impl TextCheckingController {
     }
 
     // SKIPPED `menuAtIndex:clickedOnSelection:effectiveRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
-    // SKIPPED `client`: return `id<NSTextCheckingClient> _Nonnull` — generic collection
+    fn client(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("client\0")));
+    }
+
     fn spell_checker_document_tag(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("spellCheckerDocumentTag\0")));
     }

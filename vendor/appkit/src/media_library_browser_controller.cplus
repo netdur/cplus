@@ -6,26 +6,10 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSMediaLibrary` (NS_ENUM)
-enum MediaLibrary {
-    Audio,
-    Image,
-    Movie,
-}
-
-fn media_library_raw(v: MediaLibrary) -> i64 {
-    return match v {
-        MediaLibrary::Audio => { 1 as i64 },
-        MediaLibrary::Image => { 2 as i64 },
-        MediaLibrary::Movie => { 4 as i64 },
-    };
-}
-
-fn media_library_from_raw(raw: i64) -> MediaLibrary {
-    if raw == (2 as i64) { return MediaLibrary::Image; }
-    if raw == (4 as i64) { return MediaLibrary::Movie; }
-    return MediaLibrary::Audio;
-}
+// `NSMediaLibrary` (NS_OPTIONS) — bitfield; combine with `|`.
+const media_library_audio: u64 = 1 as u64;
+const media_library_image: u64 = 2 as u64;
+const media_library_movie: u64 = 4 as u64;
 
 // `NSMediaLibraryBrowserController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MediaLibraryBrowserController {
@@ -34,6 +18,8 @@ struct MediaLibraryBrowserController {
 
 impl MediaLibraryBrowserController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MediaLibraryBrowserController { return MediaLibraryBrowserController { _obj: ptr }; }
 
     fn toggle_panel(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("togglePanel:\0")), sender);
@@ -51,10 +37,16 @@ impl MediaLibraryBrowserController {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setVisible:\0")), visible as i8);
     }
 
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setFrame:`: param `NSRect` — unmapped type `NSRect`
-    fn media_libraries(this) -> MediaLibrary {
-        return media_library_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mediaLibraries\0"))));
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
+    fn set_frame(this, frame: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setFrame:\0")), frame);
+    }
+
+    fn media_libraries(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("mediaLibraries\0")));
     }
 
     // SKIPPED `setMediaLibraries:`: (return, arg) shape not yet modelled

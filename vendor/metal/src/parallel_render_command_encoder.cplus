@@ -6,3 +6,87 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `MTLStoreAction` (NS_ENUM)
+enum StoreAction {
+    DontCare,
+    Store,
+    MultisampleResolve,
+    StoreAndMultisampleResolve,
+    Unknown,
+    CustomSampleDepthStore,
+}
+
+fn store_action_raw(v: StoreAction) -> i64 {
+    return match v {
+        StoreAction::DontCare => { 0 as i64 },
+        StoreAction::Store => { 1 as i64 },
+        StoreAction::MultisampleResolve => { 2 as i64 },
+        StoreAction::StoreAndMultisampleResolve => { 3 as i64 },
+        StoreAction::Unknown => { 4 as i64 },
+        StoreAction::CustomSampleDepthStore => { 5 as i64 },
+    };
+}
+
+fn store_action_from_raw(raw: i64) -> StoreAction {
+    if raw == (1 as i64) { return StoreAction::Store; }
+    if raw == (2 as i64) { return StoreAction::MultisampleResolve; }
+    if raw == (3 as i64) { return StoreAction::StoreAndMultisampleResolve; }
+    if raw == (4 as i64) { return StoreAction::Unknown; }
+    if raw == (5 as i64) { return StoreAction::CustomSampleDepthStore; }
+    return StoreAction::DontCare;
+}
+
+// `MTLStoreActionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const store_action_options_m_t_l_store_action_option_none: u64 = 0 as u64;
+const store_action_options_m_t_l_store_action_option_custom_sample_positions: u64 = 1 as u64;
+
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
+}
+
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct RenderCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl RenderCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderCommandEncoder { return RenderCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLParallelRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ParallelRenderCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl ParallelRenderCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ParallelRenderCommandEncoder { return ParallelRenderCommandEncoder { _obj: ptr }; }
+
+    fn render_command_encoder(this) -> option::Option[RenderCommandEncoder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("renderCommandEncoder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[RenderCommandEncoder]::None;
+        }
+        return option::some(RenderCommandEncoder::from_raw(obj));
+    }
+
+    // SKIPPED `setColorStoreAction:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthStoreAction:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStencilStoreAction:`: (return, arg) shape not yet modelled
+    // SKIPPED `setColorStoreActionOptions:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthStoreActionOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStencilStoreActionOptions:`: (return, arg) shape not yet modelled
+}
+

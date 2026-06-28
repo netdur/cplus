@@ -123,6 +123,8 @@ struct TextSelection {
 impl TextSelection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextSelection { return TextSelection { _obj: ptr }; }
+
 }
 
 // `NSTextRange` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -132,6 +134,8 @@ struct TextRange {
 
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
 
 }
 
@@ -143,6 +147,8 @@ struct TextLineFragment {
 impl TextLineFragment {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLineFragment { return TextLineFragment { _obj: ptr }; }
+
 }
 
 // `NSTextSelectionNavigation` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -153,23 +159,31 @@ struct TextSelectionNavigation {
 impl TextSelectionNavigation {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithDataSource:`: param `id<NSTextSelectionDataSource> _Nonnull` — generic collection
-    fn new() -> TextSelectionNavigation {
-        return TextSelectionNavigation { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTextSelectionNavigation\0")), rt::sel(#str_ptr("new\0")))) };
+    fn from_raw(ptr: *u8) -> TextSelectionNavigation { return TextSelectionNavigation { _obj: ptr }; }
+
+    fn new(data_source: *u8) -> TextSelectionNavigation {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextSelectionNavigation\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextSelectionNavigation { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDataSource:\0")), data_source) };
     }
 
+    // SKIPPED `new`: method `new` already defined
     // SKIPPED `init`: extra init variant (one `new` per type)
     fn flush_layout_cache(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushLayoutCache\0")));
     }
 
     // SKIPPED `destinationSelectionForTextSelection:direction:destination:extending:confined:`: (return, arg) shape not yet modelled
-    // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: param `CGPoint` — unmapped type `CGPoint`
+    // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
     // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: (return, arg) shape not yet modelled
-    // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `resolvedInsertionLocationForTextSelection:writingDirection:`: return `id<NSTextLocation> _Nullable` — generic collection
+    // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: (return, arg) shape not yet modelled
+    // SKIPPED `resolvedInsertionLocationForTextSelection:writingDirection:`: (return, arg) shape not yet modelled
     // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: return `NSArray<NSTextRange *> * _Nonnull` — generic collection
-    // SKIPPED `textSelectionDataSource`: return `id<NSTextSelectionDataSource> _Nullable` — generic collection
+    fn text_selection_data_source(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionDataSource\0")));
+        return bridge::obj_option(obj);
+    }
+
     fn allows_non_contiguous_ranges(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsNonContiguousRanges\0"))) != (0 as i8);
     }
@@ -191,6 +205,18 @@ impl TextSelectionNavigation {
     }
 }
 
+// `NSTextLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLocation {
+    opaque _obj: *u8,
+}
+
+impl TextLocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
+
+}
+
 // `NSTextSelectionDataSource` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `enumerateSubstringsFromLocation:options:usingBlock:`: arg shape (only <=5 object args modelled)
 // SKIPPED `textRangeForSelectionGranularity:enclosingLocation:`: arg shape (only <=5 object args modelled)
@@ -201,43 +227,43 @@ impl TextSelectionNavigation {
 // SKIPPED `lineFragmentRangeForPoint:inContainerAtLocation:`: arg shape (only <=5 object args modelled)
 // SKIPPED `enumerateContainerBoundariesFromLocation:reverse:usingBlock:`: arg shape (only <=5 object args modelled)
 // SKIPPED `textLayoutOrientationAtLocation:`: arg shape (only <=5 object args modelled)
-fn TextSelectionDataSourceProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextSelectionDataSource_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
 
-struct TextSelectionDataSourceProtocol {
+struct TextSelectionDataSource {
     document_range: fn(*u8) -> *u8,
     opaque user: *u8,
 }
 
-fn TextSelectionDataSourceProtocol_new(user: *u8) -> TextSelectionDataSourceProtocol {
-    return TextSelectionDataSourceProtocol { document_range: TextSelectionDataSourceProtocol_noop_id_0, user: user };
+fn TextSelectionDataSource_new(user: *u8) -> TextSelectionDataSource {
+    return TextSelectionDataSource { document_range: TextSelectionDataSource_noop_id_0, user: user };
 }
 
-impl TextSelectionDataSourceProtocol {
+impl TextSelectionDataSource {
     fn set_document_range(ref this, handler: fn(*u8) -> *u8) {
         this.document_range = handler;
         return;
     }
 }
 
-fn TextSelectionDataSourceProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TextSelectionDataSource_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TextSelectionDataSourceProtocol_document_range_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *TextSelectionDataSourceProtocol = { synth::get_associated(self_obj, TextSelectionDataSourceProtocol_key()) as *TextSelectionDataSourceProtocol };
+fn TextSelectionDataSource_document_range_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    let c: *TextSelectionDataSource = { synth::get_associated(self_obj, TextSelectionDataSource_key()) as *TextSelectionDataSource };
     let f: fn(*u8) -> *u8 = { (*c).document_range };
     let u: *u8 = { (*c).user };
     return f(u);
 }
 
-fn create_TextSelectionDataSourceProtocol(ctx: *TextSelectionDataSourceProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextSelectionDataSourceProtocol\0");
+fn create_TextSelectionDataSource(ctx: *TextSelectionDataSource) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextSelectionDataSource\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_document_range: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("documentRange\0")), TextSelectionDataSourceProtocol_document_range_imp, #str_ptr("@@:\0"));
+        let add_document_range: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("documentRange\0")), TextSelectionDataSource_document_range_imp, #str_ptr("@@:\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextSelectionDataSourceProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TextSelectionDataSource_key(), { ctx as *u8 });
     return d;
 }
 

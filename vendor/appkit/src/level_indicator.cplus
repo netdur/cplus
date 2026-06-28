@@ -83,8 +83,10 @@ struct LevelIndicator {
 impl LevelIndicator {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LevelIndicator { return LevelIndicator { _obj: ptr }; }
+
     // SKIPPED `tickMarkValueAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `rectOfTickMarkAtIndex:`: (return, arg) shape not yet modelled
     fn level_indicator_style(this) -> LevelIndicatorStyle {
         return level_indicator_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("levelIndicatorStyle\0"))));
     }

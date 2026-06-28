@@ -57,6 +57,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -66,6 +68,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -77,12 +81,17 @@ struct PickerTouchBarItem {
 impl PickerTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PickerTouchBarItem { return PickerTouchBarItem { _obj: ptr }; }
+
     // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
     // SKIPPED `setImage:atIndex:`: (return, arg) shape not yet modelled
-    fn image_at_index(this, index: i64) -> option::Option[*u8] {
+    fn image_at_index(this, index: i64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageAtIndex:\0")), index);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
     // SKIPPED `setLabel:atIndex:`: (return, arg) shape not yet modelled
@@ -92,7 +101,10 @@ impl PickerTouchBarItem {
     }
 
     // SKIPPED `setEnabled:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `isEnabledAtIndex:`: (return, arg) shape not yet modelled
+    fn is_enabled_at_index(this, index: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledAtIndex:\0")), index) != (0 as i8);
+    }
+
     fn control_representation(this) -> PickerTouchBarItemControlRepresentation {
         return picker_touch_bar_item_control_representation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlRepresentation\0"))));
     }
@@ -107,13 +119,16 @@ impl PickerTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCollapsedRepresentationLabel:\0")), bridge::nsstring(collapsed_representation_label));
     }
 
-    fn collapsed_representation_image(this) -> option::Option[*u8] {
+    fn collapsed_representation_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("collapsedRepresentationImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_collapsed_representation_image(this, collapsed_representation_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCollapsedRepresentationImage:\0")), collapsed_representation_image);
+    fn set_collapsed_representation_image(this, collapsed_representation_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCollapsedRepresentationImage:\0")), collapsed_representation_image.raw());
     }
 
     fn selected_index(this) -> i64 {
@@ -121,13 +136,16 @@ impl PickerTouchBarItem {
     }
 
     // SKIPPED `setSelectedIndex:`: (return, arg) shape not yet modelled
-    fn selection_color(this) -> option::Option[*u8] {
+    fn selection_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectionColor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn set_selection_color(this, selection_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionColor:\0")), selection_color);
+    fn set_selection_color(this, selection_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionColor:\0")), selection_color.raw());
     }
 
     fn selection_mode(this) -> PickerTouchBarItemSelectionMode {

@@ -14,5 +14,7 @@ struct BezierPath {
 impl BezierPath {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BezierPath { return BezierPath { _obj: ptr }; }
+
 }
 

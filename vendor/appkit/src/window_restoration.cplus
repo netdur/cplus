@@ -6,3 +6,16 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSWindowRestoration` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct WindowRestoration {
+    opaque _obj: *u8,
+}
+
+impl WindowRestoration {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> WindowRestoration { return WindowRestoration { _obj: ptr }; }
+
+    // SKIPPED `restoreWindowWithIdentifier:state:completionHandler:`: block-method msgSend shape not modelled
+}
+

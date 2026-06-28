@@ -62,6 +62,8 @@ struct FormCell {
 impl FormCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FormCell { return FormCell { _obj: ptr }; }
+
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
     }
@@ -76,11 +78,8 @@ impl FormCell {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
     }
 
-    // SKIPPED `titleWidth:`: param `NSSize` — unmapped type `NSSize`
-    fn title_width(this) -> f64 {
-        return rt::msg_f64(this._obj, rt::sel(#str_ptr("titleWidth\0")));
-    }
-
+    // SKIPPED `titleWidth:`: (return, arg) shape not yet modelled
+    // SKIPPED `titleWidth`: method `title_width` already defined
     fn set_title_width(this, title_width: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setTitleWidth:\0")), title_width);
     }

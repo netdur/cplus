@@ -42,8 +42,17 @@ struct TokenField {
 impl TokenField {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `delegate`: return `id<NSTokenFieldDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTokenFieldDelegate> _Nullable` — generic collection
+    fn from_raw(ptr: *u8) -> TokenField { return TokenField { _obj: ptr }; }
+
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn token_style(this) -> TokenStyle {
         return token_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tokenStyle\0"))));
     }

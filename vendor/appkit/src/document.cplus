@@ -347,6 +347,8 @@ struct Data {
 impl Data {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Data { return Data { _obj: ptr }; }
+
 }
 
 // `NSDate` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -356,6 +358,8 @@ struct Date {
 
 impl Date {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Date { return Date { _obj: ptr }; }
 
 }
 
@@ -367,6 +371,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSFileWrapper` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -376,6 +382,8 @@ struct FileWrapper {
 
 impl FileWrapper {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FileWrapper { return FileWrapper { _obj: ptr }; }
 
 }
 
@@ -387,6 +395,8 @@ struct MenuItem {
 impl MenuItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItem { return MenuItem { _obj: ptr }; }
+
 }
 
 // `NSPageLayout` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -396,6 +406,8 @@ struct PageLayout {
 
 impl PageLayout {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PageLayout { return PageLayout { _obj: ptr }; }
 
 }
 
@@ -407,6 +419,8 @@ struct PrintInfo {
 impl PrintInfo {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
+
 }
 
 // `NSPrintOperation` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -416,6 +430,8 @@ struct PrintOperation {
 
 impl PrintOperation {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrintOperation { return PrintOperation { _obj: ptr }; }
 
 }
 
@@ -427,6 +443,8 @@ struct SavePanel {
 impl SavePanel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SavePanel { return SavePanel { _obj: ptr }; }
+
 }
 
 // `NSSharingService` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -436,6 +454,8 @@ struct SharingService {
 
 impl SharingService {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SharingService { return SharingService { _obj: ptr }; }
 
 }
 
@@ -447,6 +467,8 @@ struct SharingServicePicker {
 impl SharingServicePicker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharingServicePicker { return SharingServicePicker { _obj: ptr }; }
+
 }
 
 // `NSUndoManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -456,6 +478,8 @@ struct UndoManager {
 
 impl UndoManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UndoManager { return UndoManager { _obj: ptr }; }
 
 }
 
@@ -467,6 +491,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -476,6 +502,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -487,6 +515,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSWindowController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -497,6 +527,8 @@ struct WindowController {
 impl WindowController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> WindowController { return WindowController { _obj: ptr }; }
+
 }
 
 // `NSDocument` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -506,6 +538,8 @@ struct Document {
 
 impl Document {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Document { return Document { _obj: ptr }; }
 
     fn new() -> Document {
         let cls: *u8 = rt::get_class(#str_ptr("NSDocument\0"));
@@ -615,9 +649,12 @@ impl Document {
     }
 
     // SKIPPED `duplicateDocumentWithDelegate:didDuplicateSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    fn duplicate_and_return_error(this, out_error: *u8) -> option::Option[*u8] {
+    fn duplicate_and_return_error(this, out_error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("duplicateAndReturnError:\0")), out_error);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
     }
 
     fn rename_document(this, sender: *u8) {
@@ -700,8 +737,8 @@ impl Document {
     }
 
     // SKIPPED `shareDocumentWithSharingService:completionHandler:`: block-method msgSend shape not modelled
-    fn prepare_sharing_service_picker(this, sharing_service_picker: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareSharingServicePicker:\0")), sharing_service_picker);
+    fn prepare_sharing_service_picker(this, sharing_service_picker: SharingServicePicker) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareSharingServicePicker:\0")), sharing_service_picker.raw());
     }
 
     // SKIPPED `updateChangeCount:`: (return, arg) shape not yet modelled
@@ -712,36 +749,36 @@ impl Document {
     // SKIPPED `updateChangeCountWithToken:forSaveOperation:`: (return, arg) shape not yet modelled
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `presentError:`: (return, arg) shape not yet modelled
-    fn will_present_error(this, error: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error);
+    fn will_present_error(this, error: Error) -> Error {
+        return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
 
-    fn will_not_present_error(this, error: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("willNotPresentError:\0")), error);
+    fn will_not_present_error(this, error: Error) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("willNotPresentError:\0")), error.raw());
     }
 
     fn make_window_controllers(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("makeWindowControllers\0")));
     }
 
-    fn window_controller_will_load_nib(this, window_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("windowControllerWillLoadNib:\0")), window_controller);
+    fn window_controller_will_load_nib(this, window_controller: WindowController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("windowControllerWillLoadNib:\0")), window_controller.raw());
     }
 
-    fn window_controller_did_load_nib(this, window_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("windowControllerDidLoadNib:\0")), window_controller);
+    fn window_controller_did_load_nib(this, window_controller: WindowController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("windowControllerDidLoadNib:\0")), window_controller.raw());
     }
 
-    fn set_window(this, window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindow:\0")), window);
+    fn set_window(this, window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindow:\0")), window.raw());
     }
 
-    fn add_window_controller(this, window_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addWindowController:\0")), window_controller);
+    fn add_window_controller(this, window_controller: WindowController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addWindowController:\0")), window_controller.raw());
     }
 
-    fn remove_window_controller(this, window_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeWindowController:\0")), window_controller);
+    fn remove_window_controller(this, window_controller: WindowController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeWindowController:\0")), window_controller.raw());
     }
 
     fn show_windows(this) {
@@ -774,7 +811,7 @@ impl Document {
     }
 
     // SKIPPED `fileNameExtensionForType:saveOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `validateUserInterfaceItem:`: param `id<NSValidatedUserInterfaceItem> _Nonnull` — generic collection
+    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
     fn relinquish_presented_item_to_reader(this, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Document_relinquish_presented_item_to_reader_block = Document_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -807,8 +844,8 @@ impl Document {
         return;
     }
 
-    fn presented_item_did_move_to_u_r_l(this, new_u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentedItemDidMoveToURL:\0")), new_u_r_l);
+    fn presented_item_did_move_to_u_r_l(this, new_u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentedItemDidMoveToURL:\0")), new_u_r_l.raw());
     }
 
     fn presented_item_did_change(this) {
@@ -837,22 +874,28 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileType:\0")), bridge::nsstring(file_type));
     }
 
-    fn file_u_r_l(this) -> option::Option[*u8] {
+    fn file_u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileURL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
-    fn set_file_u_r_l(this, file_u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileURL:\0")), file_u_r_l);
+    fn set_file_u_r_l(this, file_u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileURL:\0")), file_u_r_l.raw());
     }
 
-    fn file_modification_date(this) -> option::Option[*u8] {
+    fn file_modification_date(this) -> option::Option[Date] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileModificationDate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Date]::None;
+        }
+        return option::some(Date::from_raw(obj));
     }
 
-    fn set_file_modification_date(this, file_modification_date: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileModificationDate:\0")), file_modification_date);
+    fn set_file_modification_date(this, file_modification_date: Date) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileModificationDate:\0")), file_modification_date.raw());
     }
 
     fn is_draft(this) -> bool {
@@ -917,25 +960,28 @@ impl Document {
         return bridge::to_text_option(ns);
     }
 
-    fn autosaved_contents_file_u_r_l(this) -> option::Option[*u8] {
+    fn autosaved_contents_file_u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("autosavedContentsFileURL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
-    fn set_autosaved_contents_file_u_r_l(this, autosaved_contents_file_u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAutosavedContentsFileURL:\0")), autosaved_contents_file_u_r_l);
+    fn set_autosaved_contents_file_u_r_l(this, autosaved_contents_file_u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAutosavedContentsFileURL:\0")), autosaved_contents_file_u_r_l.raw());
     }
 
     fn is_locked(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isLocked\0"))) != (0 as i8);
     }
 
-    fn print_info(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0")));
+    fn print_info(this) -> PrintInfo {
+        return PrintInfo::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0"))));
     }
 
-    fn set_print_info(this, print_info: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintInfo:\0")), print_info);
+    fn set_print_info(this, print_info: PrintInfo) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintInfo:\0")), print_info.raw());
     }
 
     fn p_d_f_print_operation(this) -> *u8 {
@@ -956,13 +1002,16 @@ impl Document {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isInViewingMode\0"))) != (0 as i8);
     }
 
-    fn undo_manager(this) -> option::Option[*u8] {
+    fn undo_manager(this) -> option::Option[UndoManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("undoManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[UndoManager]::None;
+        }
+        return option::some(UndoManager::from_raw(obj));
     }
 
-    fn set_undo_manager(this, undo_manager: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setUndoManager:\0")), undo_manager);
+    fn set_undo_manager(this, undo_manager: UndoManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setUndoManager:\0")), undo_manager.raw());
     }
 
     fn has_undo_manager(this) -> bool {
@@ -984,9 +1033,12 @@ impl Document {
         return bridge::to_text(ns);
     }
 
-    fn window_for_sheet(this) -> option::Option[*u8] {
+    fn window_for_sheet(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windowForSheet\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
     fn readable_types() -> vec::Vec[text::Text] {
@@ -1027,9 +1079,12 @@ impl Document {
 
     // SKIPPED `observedPresentedItemUbiquityAttributes`: return `API_AVAILABLE NSSet<NSURLResourceKey> *` — generic collection
     // SKIPPED `saveToURL:ofType:forSaveOperation:error:`: (return, arg) shape not yet modelled
-    fn data_representation_of_type(this, type_: str) -> option::Option[*u8] {
+    fn data_representation_of_type(this, type_: str) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("dataRepresentationOfType:\0")), bridge::nsstring(type_));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
     }
 
     // SKIPPED `fileAttributesToWriteToFile:ofType:saveOperation:`: (return, arg) shape not yet modelled
@@ -1038,9 +1093,12 @@ impl Document {
         return bridge::to_text_option(ns);
     }
 
-    fn file_wrapper_representation_of_type(this, type_: str) -> option::Option[*u8] {
+    fn file_wrapper_representation_of_type(this, type_: str) -> option::Option[FileWrapper] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fileWrapperRepresentationOfType:\0")), bridge::nsstring(type_));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[FileWrapper]::None;
+        }
+        return option::some(FileWrapper::from_raw(obj));
     }
 
     // SKIPPED `initWithContentsOfFile:ofType:`: extra init variant (one `new` per type)

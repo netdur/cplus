@@ -244,8 +244,8 @@ impl VertexBufferLayoutDescriptorArray {
 
     fn from_raw(ptr: *u8) -> VertexBufferLayoutDescriptorArray { return VertexBufferLayoutDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index);
+    fn object_at_indexed_subscript(this, index: u64) -> VertexBufferLayoutDescriptor {
+        return VertexBufferLayoutDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -288,8 +288,8 @@ impl VertexAttributeDescriptorArray {
 
     fn from_raw(ptr: *u8) -> VertexAttributeDescriptorArray { return VertexAttributeDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index);
+    fn object_at_indexed_subscript(this, index: u64) -> VertexAttributeDescriptor {
+        return VertexAttributeDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -313,12 +313,12 @@ impl VertexDescriptor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    fn layouts(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("layouts\0")));
+    fn layouts(this) -> VertexBufferLayoutDescriptorArray {
+        return VertexBufferLayoutDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layouts\0"))));
     }
 
-    fn attributes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
+    fn attributes(this) -> VertexAttributeDescriptorArray {
+        return VertexAttributeDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0"))));
     }
 
 }

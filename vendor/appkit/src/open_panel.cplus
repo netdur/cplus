@@ -14,6 +14,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSOpenPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct OpenPanel {
 
 impl OpenPanel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> OpenPanel { return OpenPanel { _obj: ptr }; }
 
     fn open_panel() -> OpenPanel {
         return OpenPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSOpenPanel\0")), rt::sel(#str_ptr("openPanel\0"))) };

@@ -104,31 +104,40 @@ impl MTL4MeshRenderPipelineDescriptor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    fn object_function_descriptor(this) -> option::Option[*u8] {
+    fn object_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_object_function_descriptor(this, object_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectFunctionDescriptor:\0")), object_function_descriptor);
+    fn set_object_function_descriptor(this, object_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectFunctionDescriptor:\0")), object_function_descriptor.raw());
     }
 
-    fn mesh_function_descriptor(this) -> option::Option[*u8] {
+    fn mesh_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("meshFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_mesh_function_descriptor(this, mesh_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMeshFunctionDescriptor:\0")), mesh_function_descriptor);
+    fn set_mesh_function_descriptor(this, mesh_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMeshFunctionDescriptor:\0")), mesh_function_descriptor.raw());
     }
 
-    fn fragment_function_descriptor(this) -> option::Option[*u8] {
+    fn fragment_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_fragment_function_descriptor(this, fragment_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentFunctionDescriptor:\0")), fragment_function_descriptor);
+    fn set_fragment_function_descriptor(this, fragment_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentFunctionDescriptor:\0")), fragment_function_descriptor.raw());
     }
 
     fn max_total_threads_per_object_threadgroup(this) -> u64 {

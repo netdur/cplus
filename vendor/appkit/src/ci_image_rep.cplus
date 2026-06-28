@@ -14,6 +14,8 @@ struct BitmapImageRep {
 impl BitmapImageRep {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BitmapImageRep { return BitmapImageRep { _obj: ptr }; }
+
 }
 
 // `NSCIImageRep` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -23,6 +25,8 @@ struct CIImageRep {
 
 impl CIImageRep {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CIImageRep { return CIImageRep { _obj: ptr }; }
 
     fn image_rep_with_c_i_image(image: *u8) -> CIImageRep {
         return CIImageRep { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCIImageRep\0")), rt::sel(#str_ptr("imageRepWithCIImage:\0")), image)) };

@@ -6,6 +6,15 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSStringDrawingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const string_drawing_options_n_s_string_drawing_uses_line_fragment_origin: u64 = 1 as u64;
+const string_drawing_options_n_s_string_drawing_uses_font_leading: u64 = 2 as u64;
+const string_drawing_options_n_s_string_drawing_uses_device_metrics: u64 = 8 as u64;
+const string_drawing_options_n_s_string_drawing_truncates_last_visible_line: u64 = 32 as u64;
+const string_drawing_options_resolves_natural_alignment_with_base_writing_direction: u64 = 512 as u64;
+const string_drawing_options_n_s_string_drawing_disable_screen_font_substitution: u64 = 4 as u64;
+const string_drawing_options_n_s_string_drawing_one_shot: u64 = 16 as u64;
+
 // `NSAttributedString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct AttributedString {
     opaque _obj: *u8,
@@ -14,13 +23,24 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `size`: return `CGSize` — unmapped type `CGSize`
-    // SKIPPED `drawAtPoint:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `drawInRect:`: param `CGRect` — unmapped type `CGRect`
-    // SKIPPED `drawWithRect:options:context:`: param `CGRect` — unmapped type `CGRect`
-    // SKIPPED `boundingRectWithSize:options:context:`: param `CGSize` — unmapped type `CGSize`
-    // SKIPPED `drawWithRect:options:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `boundingRectWithSize:options:`: param `NSSize` — unmapped type `NSSize`
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
+    }
+
+    fn draw_at_point(this, point: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("drawAtPoint:\0")), point);
+    }
+
+    fn draw_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
+    }
+
+    // SKIPPED `drawWithRect:options:context:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundingRectWithSize:options:context:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithRect:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundingRectWithSize:options:`: (return, arg) shape not yet modelled
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -31,13 +51,15 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
     // SKIPPED `sizeWithAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawAtPoint:withAttributes:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `drawInRect:withAttributes:`: param `CGRect` — unmapped type `CGRect`
-    // SKIPPED `drawWithRect:options:attributes:context:`: param `CGRect` — unmapped type `CGRect`
-    // SKIPPED `boundingRectWithSize:options:attributes:context:`: param `CGSize` — unmapped type `CGSize`
-    // SKIPPED `drawWithRect:options:attributes:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `boundingRectWithSize:options:attributes:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `drawAtPoint:withAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    // SKIPPED `drawInRect:withAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    // SKIPPED `drawWithRect:options:attributes:context:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    // SKIPPED `boundingRectWithSize:options:attributes:context:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    // SKIPPED `drawWithRect:options:attributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    // SKIPPED `boundingRectWithSize:options:attributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
 }
 
 // `NSStringDrawingContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -47,6 +69,8 @@ struct StringDrawingContext {
 
 impl StringDrawingContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StringDrawingContext { return StringDrawingContext { _obj: ptr }; }
 
     fn minimum_scale_factor(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("minimumScaleFactor\0")));
@@ -60,6 +84,9 @@ impl StringDrawingContext {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("actualScaleFactor\0")));
     }
 
-    // SKIPPED `totalBounds`: return `CGRect` — unmapped type `CGRect`
+    fn total_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("totalBounds\0")));
+    }
+
 }
 

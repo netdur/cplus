@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Image {
@@ -14,6 +13,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -25,6 +26,8 @@ struct ItemProvider {
 impl ItemProvider {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ItemProvider { return ItemProvider { _obj: ptr }; }
+
 }
 
 // `NSPreviewRepresentingActivityItem` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -34,6 +37,8 @@ struct PreviewRepresentingActivityItem {
 
 impl PreviewRepresentingActivityItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PreviewRepresentingActivityItem { return PreviewRepresentingActivityItem { _obj: ptr }; }
 
     // SKIPPED `initWithItem:title:image:icon:`: init arg shape not yet modelled
     // SKIPPED `initWithItem:title:imageProvider:iconProvider:`: extra init variant (one `new` per type)
@@ -47,83 +52,40 @@ impl PreviewRepresentingActivityItem {
     }
 }
 
-// `NSPreviewRepresentableActivityItem` delegate protocol -> runtime class-synthesis helper.
-fn PreviewRepresentableActivityItem_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `NSPreviewRepresentableActivityItem` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct PreviewRepresentableActivityItem {
-    item: fn(*u8) -> *u8,
-    title: fn(*u8) -> *u8,
-    image_provider: fn(*u8) -> *u8,
-    icon_provider: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn PreviewRepresentableActivityItem_new(user: *u8) -> PreviewRepresentableActivityItem {
-    return PreviewRepresentableActivityItem { item: PreviewRepresentableActivityItem_noop_id_0, title: PreviewRepresentableActivityItem_noop_id_0, image_provider: PreviewRepresentableActivityItem_noop_id_0, icon_provider: PreviewRepresentableActivityItem_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl PreviewRepresentableActivityItem {
-    fn set_item(ref this, handler: fn(*u8) -> *u8) {
-        this.item = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PreviewRepresentableActivityItem { return PreviewRepresentableActivityItem { _obj: ptr }; }
+
+    fn item(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("item\0")));
     }
-    fn set_title(ref this, handler: fn(*u8) -> *u8) {
-        this.title = handler;
-        return;
+
+    fn title(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
+        return bridge::to_text_option(ns);
     }
-    fn set_image_provider(ref this, handler: fn(*u8) -> *u8) {
-        this.image_provider = handler;
-        return;
+
+    fn image_provider(this) -> option::Option[ItemProvider] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("imageProvider\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ItemProvider]::None;
+        }
+        return option::some(ItemProvider::from_raw(obj));
     }
-    fn set_icon_provider(ref this, handler: fn(*u8) -> *u8) {
-        this.icon_provider = handler;
-        return;
+
+    fn icon_provider(this) -> option::Option[ItemProvider] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("iconProvider\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ItemProvider]::None;
+        }
+        return option::some(ItemProvider::from_raw(obj));
     }
-}
 
-fn PreviewRepresentableActivityItem_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn PreviewRepresentableActivityItem_item_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PreviewRepresentableActivityItem = { synth::get_associated(self_obj, PreviewRepresentableActivityItem_key()) as *PreviewRepresentableActivityItem };
-    let f: fn(*u8) -> *u8 = { (*c).item };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn PreviewRepresentableActivityItem_title_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PreviewRepresentableActivityItem = { synth::get_associated(self_obj, PreviewRepresentableActivityItem_key()) as *PreviewRepresentableActivityItem };
-    let f: fn(*u8) -> *u8 = { (*c).title };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn PreviewRepresentableActivityItem_image_provider_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PreviewRepresentableActivityItem = { synth::get_associated(self_obj, PreviewRepresentableActivityItem_key()) as *PreviewRepresentableActivityItem };
-    let f: fn(*u8) -> *u8 = { (*c).image_provider };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn PreviewRepresentableActivityItem_icon_provider_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *PreviewRepresentableActivityItem = { synth::get_associated(self_obj, PreviewRepresentableActivityItem_key()) as *PreviewRepresentableActivityItem };
-    let f: fn(*u8) -> *u8 = { (*c).icon_provider };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_PreviewRepresentableActivityItem(ctx: *PreviewRepresentableActivityItem) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PreviewRepresentableActivityItem\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_item: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("item\0")), PreviewRepresentableActivityItem_item_imp, #str_ptr("@@:\0"));
-        let add_title: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("title\0")), PreviewRepresentableActivityItem_title_imp, #str_ptr("@@:\0"));
-        let add_image_provider: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("imageProvider\0")), PreviewRepresentableActivityItem_image_provider_imp, #str_ptr("@@:\0"));
-        let add_icon_provider: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("iconProvider\0")), PreviewRepresentableActivityItem_icon_provider_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PreviewRepresentableActivityItem_key(), { ctx as *u8 });
-    return d;
 }
 

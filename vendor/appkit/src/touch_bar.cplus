@@ -6,7 +6,6 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
-import "objc/synthesis" as synth;
 
 // `NSTouchBar` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TouchBar {
@@ -15,6 +14,8 @@ struct TouchBar {
 
 impl TouchBar {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TouchBar { return TouchBar { _obj: ptr }; }
 
     fn new() -> TouchBar {
         let cls: *u8 = rt::get_class(#str_ptr("NSTouchBar\0"));
@@ -125,8 +126,15 @@ impl TouchBar {
 
     // SKIPPED `templateItems`: return `NSSet<NSTouchBarItem *> * _Nonnull` — generic collection
     // SKIPPED `setTemplateItems:`: param `NSSet<NSTouchBarItem *> * _Nonnull` — generic collection
-    // SKIPPED `delegate`: return `id<NSTouchBarDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTouchBarDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn is_visible(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVisible\0"))) != (0 as i8);
     }
@@ -144,44 +152,19 @@ impl TouchBar {
     }
 }
 
-// `NSTouchBarProvider` delegate protocol -> runtime class-synthesis helper.
-fn TouchBarProviderProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
-struct TouchBarProviderProtocol {
-    touch_bar: fn(*u8) -> *u8,
-    opaque user: *u8,
+// `NSTouchBarProvider` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TouchBarProvider {
+    opaque _obj: *u8,
 }
 
-fn TouchBarProviderProtocol_new(user: *u8) -> TouchBarProviderProtocol {
-    return TouchBarProviderProtocol { touch_bar: TouchBarProviderProtocol_noop_id_0, user: user };
-}
+impl TouchBarProvider {
+    fn raw(this) -> *u8 { return this._obj; }
 
-impl TouchBarProviderProtocol {
-    fn set_touch_bar(ref this, handler: fn(*u8) -> *u8) {
-        this.touch_bar = handler;
-        return;
+    fn from_raw(ptr: *u8) -> TouchBarProvider { return TouchBarProvider { _obj: ptr }; }
+
+    fn touch_bar(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("touchBar\0")));
     }
-}
 
-fn TouchBarProviderProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn TouchBarProviderProtocol_touch_bar_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *TouchBarProviderProtocol = { synth::get_associated(self_obj, TouchBarProviderProtocol_key()) as *TouchBarProviderProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).touch_bar };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_TouchBarProviderProtocol(ctx: *TouchBarProviderProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TouchBarProviderProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_touch_bar: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("touchBar\0")), TouchBarProviderProtocol_touch_bar_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TouchBarProviderProtocol_key(), { ctx as *u8 });
-    return d;
 }
 

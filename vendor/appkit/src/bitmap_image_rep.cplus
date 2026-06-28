@@ -69,38 +69,14 @@ fn color_rendering_intent_from_raw(raw: i64) -> ColorRenderingIntent {
     return ColorRenderingIntent::Default;
 }
 
-// `NSBitmapFormat` (NS_ENUM)
-enum BitmapFormat {
-    AlphaFirst,
-    AlphaNonpremultiplied,
-    FloatingPointSamples,
-    SixteenBitLittleEndian,
-    ThirtyTwoBitLittleEndian,
-    SixteenBitBigEndian,
-    ThirtyTwoBitBigEndian,
-}
-
-fn bitmap_format_raw(v: BitmapFormat) -> i64 {
-    return match v {
-        BitmapFormat::AlphaFirst => { 1 as i64 },
-        BitmapFormat::AlphaNonpremultiplied => { 2 as i64 },
-        BitmapFormat::FloatingPointSamples => { 4 as i64 },
-        BitmapFormat::SixteenBitLittleEndian => { 256 as i64 },
-        BitmapFormat::ThirtyTwoBitLittleEndian => { 512 as i64 },
-        BitmapFormat::SixteenBitBigEndian => { 1024 as i64 },
-        BitmapFormat::ThirtyTwoBitBigEndian => { 2048 as i64 },
-    };
-}
-
-fn bitmap_format_from_raw(raw: i64) -> BitmapFormat {
-    if raw == (2 as i64) { return BitmapFormat::AlphaNonpremultiplied; }
-    if raw == (4 as i64) { return BitmapFormat::FloatingPointSamples; }
-    if raw == (256 as i64) { return BitmapFormat::SixteenBitLittleEndian; }
-    if raw == (512 as i64) { return BitmapFormat::ThirtyTwoBitLittleEndian; }
-    if raw == (1024 as i64) { return BitmapFormat::SixteenBitBigEndian; }
-    if raw == (2048 as i64) { return BitmapFormat::ThirtyTwoBitBigEndian; }
-    return BitmapFormat::AlphaFirst;
-}
+// `NSBitmapFormat` (NS_OPTIONS) — bitfield; combine with `|`.
+const bitmap_format_alpha_first: u64 = 1 as u64;
+const bitmap_format_alpha_nonpremultiplied: u64 = 2 as u64;
+const bitmap_format_floating_point_samples: u64 = 4 as u64;
+const bitmap_format_sixteen_bit_little_endian: u64 = 256 as u64;
+const bitmap_format_thirty_two_bit_little_endian: u64 = 512 as u64;
+const bitmap_format_sixteen_bit_big_endian: u64 = 1024 as u64;
+const bitmap_format_thirty_two_bit_big_endian: u64 = 2048 as u64;
 
 // `NSBitmapImageFileType` (NS_ENUM)
 enum BitmapImageFileType {
@@ -140,6 +116,8 @@ struct CIImage {
 impl CIImage {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CIImage { return CIImage { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -149,6 +127,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -160,6 +140,8 @@ struct ColorSpace {
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
+
 }
 
 // `NSBitmapImageRep` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -170,7 +152,14 @@ struct BitmapImageRep {
 impl BitmapImageRep {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFocusedViewRect:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> BitmapImageRep { return BitmapImageRep { _obj: ptr }; }
+
+    fn new(rect: rt::Rect) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFocusedViewRect:\0")), rect) };
+    }
+
     // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:`: extra init variant (one `new` per type)
     // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCGImage:`: extra init variant (one `new` per type)
@@ -200,7 +189,10 @@ impl BitmapImageRep {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `canBeCompressedUsing:`: (return, arg) shape not yet modelled
+    fn can_be_compressed_using(this, compression: TIFFCompression) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("canBeCompressedUsing:\0")), t_i_f_f_compression_raw(compression)) != (0 as i8);
+    }
+
     // SKIPPED `colorizeByMappingGray:toColor:blackMapping:whiteMapping:`: (return, arg) shape not yet modelled
     fn init_for_incremental_load(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("initForIncrementalLoad\0")));
@@ -212,9 +204,12 @@ impl BitmapImageRep {
     // SKIPPED `getPixel:atX:y:`: (return, arg) shape not yet modelled
     // SKIPPED `setPixel:atX:y:`: (return, arg) shape not yet modelled
     // SKIPPED `bitmapImageRepByConvertingToColorSpace:renderingIntent:`: (return, arg) shape not yet modelled
-    fn bitmap_image_rep_by_retagging_with_color_space(this, new_space: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bitmapImageRepByRetaggingWithColorSpace:\0")), new_space);
-        return bridge::obj_option(obj);
+    fn bitmap_image_rep_by_retagging_with_color_space(this, new_space: ColorSpace) -> option::Option[BitmapImageRep] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bitmapImageRepByRetaggingWithColorSpace:\0")), new_space.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[BitmapImageRep]::None;
+        }
+        return option::some(BitmapImageRep::from_raw(obj));
     }
 
     fn bitmap_data(this) -> *u8 {
@@ -245,8 +240,8 @@ impl BitmapImageRep {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfPlanes\0")));
     }
 
-    fn bitmap_format(this) -> BitmapFormat {
-        return bitmap_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bitmapFormat\0"))));
+    fn bitmap_format(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bitmapFormat\0")));
     }
 
     fn t_i_f_f_representation(this) -> option::Option[*u8] {

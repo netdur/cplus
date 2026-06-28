@@ -80,6 +80,8 @@ struct Slider {
 impl Slider {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Slider { return Slider { _obj: ptr }; }
+
     // SKIPPED `acceptsFirstMouse:`: (return, arg) shape not yet modelled
     fn slider_type(this) -> SliderType {
         return slider_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sliderType\0"))));
@@ -144,8 +146,8 @@ impl Slider {
 
     // SKIPPED `setTintProminence:`: (return, arg) shape not yet modelled
     // SKIPPED `tickMarkValueAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `indexOfTickMarkAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `rectOfTickMarkAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfTickMarkAtPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `closestTickMarkValueToValue:`: (return, arg) shape not yet modelled
     fn number_of_tick_marks(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTickMarks\0")));

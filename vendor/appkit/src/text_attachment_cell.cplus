@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSTextAttachment` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextAttachment {
@@ -14,6 +13,8 @@ struct TextAttachment {
 
 impl TextAttachment {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextAttachment { return TextAttachment { _obj: ptr }; }
 
 }
 
@@ -25,6 +26,8 @@ struct LayoutManager {
 impl LayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutManager { return LayoutManager { _obj: ptr }; }
+
 }
 
 // `NSTextContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -34,6 +37,8 @@ struct TextContainer {
 
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
 
 }
 
@@ -45,72 +50,51 @@ struct TextAttachmentCell {
 impl TextAttachmentCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextAttachmentCell { return TextAttachmentCell { _obj: ptr }; }
+
 }
 
-// `NSTextAttachmentCell` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `drawWithFrame:inView:`: arg shape (only <=5 object args modelled)
-// SKIPPED `wantsToTrackMouse`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `highlight:withFrame:inView:`: arg shape (only <=5 object args modelled)
-// SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: arg shape (only <=5 object args modelled)
-// SKIPPED `cellSize`: return `NSSize` not modelled
-// SKIPPED `cellBaselineOffset`: return `NSPoint` not modelled
-// SKIPPED `drawWithFrame:inView:characterIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawWithFrame:inView:characterIndex:layoutManager:`: arg shape (only <=5 object args modelled)
-// SKIPPED `wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:`: arg shape (only <=5 object args modelled)
-// SKIPPED `cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: arg shape (only <=5 object args modelled)
-fn TextAttachmentCellProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextAttachmentCellProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSTextAttachmentCell` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct TextAttachmentCellProtocol {
-    attachment: fn(*u8) -> *u8,
-    set_attachment: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn TextAttachmentCellProtocol_new(user: *u8) -> TextAttachmentCellProtocol {
-    return TextAttachmentCellProtocol { attachment: TextAttachmentCellProtocol_noop_id_0, set_attachment: TextAttachmentCellProtocol_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl TextAttachmentCellProtocol {
-    fn set_attachment(ref this, handler: fn(*u8) -> *u8) {
-        this.attachment = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextAttachmentCellProtocol { return TextAttachmentCellProtocol { _obj: ptr }; }
+
+    // SKIPPED `drawWithFrame:inView:`: (return, arg) shape not yet modelled
+    fn wants_to_track_mouse(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToTrackMouse\0"))) != (0 as i8);
     }
-    fn set_set_attachment(ref this, handler: fn(*u8, *u8)) {
-        this.set_attachment = handler;
-        return;
+
+    // SKIPPED `highlight:withFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: (return, arg) shape not yet modelled
+    fn cell_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("cellSize\0")));
     }
-}
 
-fn TextAttachmentCellProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn TextAttachmentCellProtocol_attachment_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *TextAttachmentCellProtocol = { synth::get_associated(self_obj, TextAttachmentCellProtocol_key()) as *TextAttachmentCellProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).attachment };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn TextAttachmentCellProtocol_set_attachment_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextAttachmentCellProtocol = { synth::get_associated(self_obj, TextAttachmentCellProtocol_key()) as *TextAttachmentCellProtocol };
-    let f: fn(*u8, *u8) = { (*c).set_attachment };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_TextAttachmentCellProtocol(ctx: *TextAttachmentCellProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextAttachmentCellProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_attachment: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("attachment\0")), TextAttachmentCellProtocol_attachment_imp, #str_ptr("@@:\0"));
-        let add_set_attachment: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setAttachment:\0")), TextAttachmentCellProtocol_set_attachment_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
+    fn cell_baseline_offset(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("cellBaselineOffset\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextAttachmentCellProtocol_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `drawWithFrame:inView:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithFrame:inView:characterIndex:layoutManager:`: (return, arg) shape not yet modelled
+    // SKIPPED `wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:`: (return, arg) shape not yet modelled
+    // SKIPPED `cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: (return, arg) shape not yet modelled
+    fn attachment(this) -> option::Option[TextAttachment] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attachment\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextAttachment]::None;
+        }
+        return option::some(TextAttachment::from_raw(obj));
+    }
+
+    fn set_attachment(this, attachment: TextAttachment) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttachment:\0")), attachment.raw());
+    }
+
 }
 

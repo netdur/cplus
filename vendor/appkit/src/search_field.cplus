@@ -16,9 +16,20 @@ struct SearchField {
 impl SearchField {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `searchTextBounds`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `searchButtonBounds`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `cancelButtonBounds`: return `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> SearchField { return SearchField { _obj: ptr }; }
+
+    fn search_text_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("searchTextBounds\0")));
+    }
+
+    fn search_button_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("searchButtonBounds\0")));
+    }
+
+    fn cancel_button_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("cancelButtonBounds\0")));
+    }
+
     fn recent_searches(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("recentSearches\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -77,9 +88,9 @@ impl SearchField {
 
     // SKIPPED `delegate`: return `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
     // SKIPPED `setDelegate:`: param `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
-    // SKIPPED `rectForSearchTextWhenCentered:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `rectForSearchButtonWhenCentered:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `rectForCancelButtonWhenCentered:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `rectForSearchTextWhenCentered:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectForSearchButtonWhenCentered:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectForCancelButtonWhenCentered:`: (return, arg) shape not yet modelled
     fn centers_placeholder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("centersPlaceholder\0"))) != (0 as i8);
     }

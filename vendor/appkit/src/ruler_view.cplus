@@ -32,6 +32,8 @@ struct ScrollView {
 impl ScrollView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrollView { return ScrollView { _obj: ptr }; }
+
 }
 
 // `NSRulerMarker` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -41,6 +43,8 @@ struct RulerMarker {
 
 impl RulerMarker {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
 
 }
 
@@ -52,6 +56,8 @@ struct RulerView {
 impl RulerView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
+
     // SKIPPED `registerUnitWithName:abbreviation:unitToPointsConversionFactor:stepUpCycle:stepDownCycle:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
     fn new(coder: *u8) -> RulerView {
         let cls: *u8 = rt::get_class(#str_ptr("NSRulerView\0"));
@@ -60,12 +66,12 @@ impl RulerView {
     }
 
     // SKIPPED `initWithScrollView:orientation:`: extra init variant (one `new` per type)
-    fn add_marker(this, marker: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addMarker:\0")), marker);
+    fn add_marker(this, marker: RulerMarker) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addMarker:\0")), marker.raw());
     }
 
-    fn remove_marker(this, marker: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeMarker:\0")), marker);
+    fn remove_marker(this, marker: RulerMarker) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeMarker:\0")), marker.raw());
     }
 
     // SKIPPED `trackMarker:withMouseEvent:`: (return, arg) shape not yet modelled
@@ -74,15 +80,24 @@ impl RulerView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateHashMarks\0")));
     }
 
-    // SKIPPED `drawHashMarksAndLabelsInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawMarkersInRect:`: param `NSRect` — unmapped type `NSRect`
-    fn scroll_view(this) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("scrollView\0")));
-        return bridge::obj_option(obj);
+    fn draw_hash_marks_and_labels_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawHashMarksAndLabelsInRect:\0")), rect);
     }
 
-    fn set_scroll_view(this, scroll_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setScrollView:\0")), scroll_view);
+    fn draw_markers_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawMarkersInRect:\0")), rect);
+    }
+
+    fn scroll_view(this) -> option::Option[ScrollView] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("scrollView\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrollView]::None;
+        }
+        return option::some(ScrollView::from_raw(obj));
+    }
+
+    fn set_scroll_view(this, scroll_view: ScrollView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setScrollView:\0")), scroll_view.raw());
     }
 
     fn orientation(this) -> RulerOrientation {

@@ -14,6 +14,8 @@ struct UTType {
 impl UTType {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> UTType { return UTType { _obj: ptr }; }
+
 }
 
 // `NSAdaptiveImageGlyph` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -23,6 +25,8 @@ struct AdaptiveImageGlyph {
 
 impl AdaptiveImageGlyph {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AdaptiveImageGlyph { return AdaptiveImageGlyph { _obj: ptr }; }
 
     fn new(image_content: *u8) -> AdaptiveImageGlyph {
         let cls: *u8 = rt::get_class(#str_ptr("NSAdaptiveImageGlyph\0"));
@@ -46,12 +50,24 @@ impl AdaptiveImageGlyph {
         return bridge::to_text(ns);
     }
 
-    fn content_type() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSAdaptiveImageGlyph\0")), rt::sel(#str_ptr("contentType\0")));
+    fn content_type() -> UTType {
+        return UTType::from_raw(rt::msg_id(rt::get_class(#str_ptr("NSAdaptiveImageGlyph\0")), rt::sel(#str_ptr("contentType\0"))));
     }
 
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `CTAdaptiveImageProviding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CTAdaptiveImageProviding {
+    opaque _obj: *u8,
+}
+
+impl CTAdaptiveImageProviding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CTAdaptiveImageProviding { return CTAdaptiveImageProviding { _obj: ptr }; }
+
 }
 

@@ -47,6 +47,8 @@ struct PressureConfiguration {
 impl PressureConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PressureConfiguration { return PressureConfiguration { _obj: ptr }; }
+
     fn new(pressure_behavior: PressureBehavior) -> PressureConfiguration {
         let cls: *u8 = rt::get_class(#str_ptr("NSPressureConfiguration\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

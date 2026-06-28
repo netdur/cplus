@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLResidencySetDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct ResidencySetDescriptor {
@@ -33,135 +32,108 @@ impl ResidencySetDescriptor {
     // SKIPPED `setInitialCapacity:`: (return, arg) shape not yet modelled
 }
 
-// `MTLResidencySet` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `addAllocation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `addAllocations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `removeAllocation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `removeAllocations:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `containsAllocation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-// SKIPPED `allocatedSize`: return `uint64_t` not modelled
-fn ResidencySet_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ResidencySet_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn ResidencySet_noop_v_0(user: *u8) { return; }
-
-struct ResidencySet {
-    request_residency: fn(*u8),
-    end_residency: fn(*u8),
-    remove_all_allocations: fn(*u8),
-    commit: fn(*u8),
-    label: fn(*u8) -> *u8,
-    all_allocations: fn(*u8) -> *u8,
-    allocation_count: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
 }
 
-fn ResidencySet_new(user: *u8) -> ResidencySet {
-    return ResidencySet { request_residency: ResidencySet_noop_v_0, end_residency: ResidencySet_noop_v_0, remove_all_allocations: ResidencySet_noop_v_0, commit: ResidencySet_noop_v_0, label: ResidencySet_noop_id_0, all_allocations: ResidencySet_noop_id_0, allocation_count: ResidencySet_noop_u64_0, user: user };
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLAllocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Allocation {
+    opaque _obj: *u8,
+}
+
+impl Allocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Allocation { return Allocation { _obj: ptr }; }
+
+}
+
+// `MTLResource` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Resource {
+    opaque _obj: *u8,
+}
+
+impl Resource {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Resource { return Resource { _obj: ptr }; }
+
+}
+
+// `MTLHeap` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Heap {
+    opaque _obj: *u8,
+}
+
+impl Heap {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Heap { return Heap { _obj: ptr }; }
+
+}
+
+// `MTLResidencySet` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ResidencySet {
+    opaque _obj: *u8,
 }
 
 impl ResidencySet {
-    fn set_request_residency(ref this, handler: fn(*u8)) {
-        this.request_residency = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResidencySet { return ResidencySet { _obj: ptr }; }
+
+    fn request_residency(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("requestResidency\0")));
     }
-    fn set_end_residency(ref this, handler: fn(*u8)) {
-        this.end_residency = handler;
-        return;
+
+    fn end_residency(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("endResidency\0")));
     }
-    fn set_remove_all_allocations(ref this, handler: fn(*u8)) {
-        this.remove_all_allocations = handler;
-        return;
+
+    fn add_allocation(this, allocation: Allocation) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addAllocation:\0")), allocation.raw());
     }
-    fn set_commit(ref this, handler: fn(*u8)) {
-        this.commit = handler;
-        return;
+
+    // SKIPPED `addAllocations:count:`: (return, arg) shape not yet modelled
+    fn remove_allocation(this, allocation: Allocation) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeAllocation:\0")), allocation.raw());
     }
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+
+    // SKIPPED `removeAllocations:count:`: (return, arg) shape not yet modelled
+    fn remove_all_allocations(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllAllocations\0")));
     }
-    fn set_all_allocations(ref this, handler: fn(*u8) -> *u8) {
-        this.all_allocations = handler;
-        return;
+
+    // SKIPPED `containsAllocation:`: (return, arg) shape not yet modelled
+    fn commit(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("commit\0")));
     }
-    fn set_allocation_count(ref this, handler: fn(*u8) -> u64) {
-        this.allocation_count = handler;
-        return;
+
+    fn device(this) -> Device {
+        return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
     }
-}
 
-fn ResidencySet_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ResidencySet_request_residency_imp(self_obj: *u8, cmd: *u8) {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) = { (*c).request_residency };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn ResidencySet_end_residency_imp(self_obj: *u8, cmd: *u8) {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) = { (*c).end_residency };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn ResidencySet_remove_all_allocations_imp(self_obj: *u8, cmd: *u8) {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) = { (*c).remove_all_allocations };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn ResidencySet_commit_imp(self_obj: *u8, cmd: *u8) {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) = { (*c).commit };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn ResidencySet_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn ResidencySet_all_allocations_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) -> *u8 = { (*c).all_allocations };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn ResidencySet_allocation_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *ResidencySet = { synth::get_associated(self_obj, ResidencySet_key()) as *ResidencySet };
-    let f: fn(*u8) -> u64 = { (*c).allocation_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_ResidencySet(ctx: *ResidencySet) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ResidencySet\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_request_residency: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("requestResidency\0")), ResidencySet_request_residency_imp, #str_ptr("v@:\0"));
-        let add_end_residency: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("endResidency\0")), ResidencySet_end_residency_imp, #str_ptr("v@:\0"));
-        let add_remove_all_allocations: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("removeAllAllocations\0")), ResidencySet_remove_all_allocations_imp, #str_ptr("v@:\0"));
-        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), ResidencySet_commit_imp, #str_ptr("v@:\0"));
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), ResidencySet_label_imp, #str_ptr("@@:\0"));
-        let add_all_allocations: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("allAllocations\0")), ResidencySet_all_allocations_imp, #str_ptr("@@:\0"));
-        let add_allocation_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("allocationCount\0")), ResidencySet_allocation_count_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ResidencySet_key(), { ctx as *u8 });
-    return d;
+
+    fn allocated_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocatedSize\0")));
+    }
+
+    // SKIPPED `allAllocations`: return `NSArray<id<MTLAllocation>> * _Nonnull` — generic collection
+    fn allocation_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocationCount\0")));
+    }
+
 }
 

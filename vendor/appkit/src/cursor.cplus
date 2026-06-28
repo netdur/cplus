@@ -6,47 +6,15 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSHorizontalDirections` (NS_ENUM)
-enum HorizontalDirections {
-    Left,
-    Right,
-    All,
-}
+// `NSHorizontalDirections` (NS_OPTIONS) — bitfield; combine with `|`.
+const horizontal_directions_left: u64 = 1 as u64;
+const horizontal_directions_right: u64 = 2 as u64;
+const horizontal_directions_all: u64 = 3 as u64;
 
-fn horizontal_directions_raw(v: HorizontalDirections) -> i64 {
-    return match v {
-        HorizontalDirections::Left => { 1 as i64 },
-        HorizontalDirections::Right => { 2 as i64 },
-        HorizontalDirections::All => { 3 as i64 },
-    };
-}
-
-fn horizontal_directions_from_raw(raw: i64) -> HorizontalDirections {
-    if raw == (2 as i64) { return HorizontalDirections::Right; }
-    if raw == (3 as i64) { return HorizontalDirections::All; }
-    return HorizontalDirections::Left;
-}
-
-// `NSVerticalDirections` (NS_ENUM)
-enum VerticalDirections {
-    Up,
-    Down,
-    All,
-}
-
-fn vertical_directions_raw(v: VerticalDirections) -> i64 {
-    return match v {
-        VerticalDirections::Up => { 1 as i64 },
-        VerticalDirections::Down => { 2 as i64 },
-        VerticalDirections::All => { 3 as i64 },
-    };
-}
-
-fn vertical_directions_from_raw(raw: i64) -> VerticalDirections {
-    if raw == (2 as i64) { return VerticalDirections::Down; }
-    if raw == (3 as i64) { return VerticalDirections::All; }
-    return VerticalDirections::Up;
-}
+// `NSVerticalDirections` (NS_OPTIONS) — bitfield; combine with `|`.
+const vertical_directions_up: u64 = 1 as u64;
+const vertical_directions_down: u64 = 2 as u64;
+const vertical_directions_all: u64 = 3 as u64;
 
 // `NSCursorFrameResizePosition` (NS_ENUM)
 enum CursorFrameResizePosition {
@@ -84,26 +52,10 @@ fn cursor_frame_resize_position_from_raw(raw: i64) -> CursorFrameResizePosition 
     return CursorFrameResizePosition::Top;
 }
 
-// `NSCursorFrameResizeDirections` (NS_ENUM)
-enum CursorFrameResizeDirections {
-    Inward,
-    Outward,
-    All,
-}
-
-fn cursor_frame_resize_directions_raw(v: CursorFrameResizeDirections) -> i64 {
-    return match v {
-        CursorFrameResizeDirections::Inward => { 1 as i64 },
-        CursorFrameResizeDirections::Outward => { 2 as i64 },
-        CursorFrameResizeDirections::All => { 3 as i64 },
-    };
-}
-
-fn cursor_frame_resize_directions_from_raw(raw: i64) -> CursorFrameResizeDirections {
-    if raw == (2 as i64) { return CursorFrameResizeDirections::Outward; }
-    if raw == (3 as i64) { return CursorFrameResizeDirections::All; }
-    return CursorFrameResizeDirections::Inward;
-}
+// `NSCursorFrameResizeDirections` (NS_OPTIONS) — bitfield; combine with `|`.
+const cursor_frame_resize_directions_inward: u64 = 1 as u64;
+const cursor_frame_resize_directions_outward: u64 = 2 as u64;
+const cursor_frame_resize_directions_all: u64 = 3 as u64;
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
@@ -112,6 +64,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -123,6 +77,8 @@ struct Event {
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -132,6 +88,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -143,7 +101,9 @@ struct Cursor {
 impl Cursor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithImage:hotSpot:`: param `NSPoint` — unmapped type `NSPoint`
+    fn from_raw(ptr: *u8) -> Cursor { return Cursor { _obj: ptr }; }
+
+    // SKIPPED `initWithImage:hotSpot:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn hide() {
         rt::msg_void(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("hide\0")));
@@ -169,20 +129,23 @@ impl Cursor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("set\0")));
     }
 
-    fn column_resize_cursor_in_directions(directions: HorizontalDirections) -> Cursor {
-        return Cursor { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("columnResizeCursorInDirections:\0")), horizontal_directions_raw(directions))) };
+    fn column_resize_cursor_in_directions(directions: u64) -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("columnResizeCursorInDirections:\0")), directions)) };
     }
 
-    fn row_resize_cursor_in_directions(directions: VerticalDirections) -> Cursor {
-        return Cursor { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("rowResizeCursorInDirections:\0")), vertical_directions_raw(directions))) };
+    fn row_resize_cursor_in_directions(directions: u64) -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("rowResizeCursorInDirections:\0")), directions)) };
     }
 
     // SKIPPED `frameResizeCursorFromPosition:inDirections:`: (return, arg) shape not yet modelled
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
-    // SKIPPED `hotSpot`: return `NSPoint` — unmapped type `NSPoint`
+    fn hot_spot(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("hotSpot\0")));
+    }
+
     fn current_cursor() -> Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("currentCursor\0")))) };
     }
@@ -288,12 +251,12 @@ impl Cursor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setOnMouseEntered:\0")), flag as i8);
     }
 
-    fn mouse_entered(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseEntered:\0")), event);
+    fn mouse_entered(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseEntered:\0")), event.raw());
     }
 
-    fn mouse_exited(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event);
+    fn mouse_exited(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event.raw());
     }
 
     fn is_set_on_mouse_exited(this) -> bool {

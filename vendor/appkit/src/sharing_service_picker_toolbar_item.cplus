@@ -15,48 +15,57 @@ struct SharingServicePickerToolbarItem {
 impl SharingServicePickerToolbarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `delegate`: return `id<NSSharingServicePickerToolbarItemDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSharingServicePickerToolbarItemDelegate> _Nullable` — generic collection
+    fn from_raw(ptr: *u8) -> SharingServicePickerToolbarItem { return SharingServicePickerToolbarItem { _obj: ptr }; }
+
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
 }
 
 // `NSSharingServicePickerToolbarItemDelegate` delegate protocol -> runtime class-synthesis helper.
-fn SharingServicePickerToolbarItemDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn SharingServicePickerToolbarItemDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
 
-struct SharingServicePickerToolbarItemDelegateProtocol {
+struct SharingServicePickerToolbarItemDelegate {
     items_for_sharing_service_picker_toolbar_item: fn(*u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
-fn SharingServicePickerToolbarItemDelegateProtocol_new(user: *u8) -> SharingServicePickerToolbarItemDelegateProtocol {
-    return SharingServicePickerToolbarItemDelegateProtocol { items_for_sharing_service_picker_toolbar_item: SharingServicePickerToolbarItemDelegateProtocol_noop_id_1, user: user };
+fn SharingServicePickerToolbarItemDelegate_new(user: *u8) -> SharingServicePickerToolbarItemDelegate {
+    return SharingServicePickerToolbarItemDelegate { items_for_sharing_service_picker_toolbar_item: SharingServicePickerToolbarItemDelegate_noop_id_1, user: user };
 }
 
-impl SharingServicePickerToolbarItemDelegateProtocol {
+impl SharingServicePickerToolbarItemDelegate {
     fn set_items_for_sharing_service_picker_toolbar_item(ref this, handler: fn(*u8, *u8) -> *u8) {
         this.items_for_sharing_service_picker_toolbar_item = handler;
         return;
     }
 }
 
-fn SharingServicePickerToolbarItemDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn SharingServicePickerToolbarItemDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn SharingServicePickerToolbarItemDelegateProtocol_items_for_sharing_service_picker_toolbar_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *SharingServicePickerToolbarItemDelegateProtocol = { synth::get_associated(self_obj, SharingServicePickerToolbarItemDelegateProtocol_key()) as *SharingServicePickerToolbarItemDelegateProtocol };
+fn SharingServicePickerToolbarItemDelegate_items_for_sharing_service_picker_toolbar_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *SharingServicePickerToolbarItemDelegate = { synth::get_associated(self_obj, SharingServicePickerToolbarItemDelegate_key()) as *SharingServicePickerToolbarItemDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).items_for_sharing_service_picker_toolbar_item };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn create_SharingServicePickerToolbarItemDelegateProtocol(ctx: *SharingServicePickerToolbarItemDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SharingServicePickerToolbarItemDelegateProtocol\0");
+fn create_SharingServicePickerToolbarItemDelegate(ctx: *SharingServicePickerToolbarItemDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SharingServicePickerToolbarItemDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_items_for_sharing_service_picker_toolbar_item: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("itemsForSharingServicePickerToolbarItem:\0")), SharingServicePickerToolbarItemDelegateProtocol_items_for_sharing_service_picker_toolbar_item_imp, #str_ptr("@@:@\0"));
+        let add_items_for_sharing_service_picker_toolbar_item: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("itemsForSharingServicePickerToolbarItem:\0")), SharingServicePickerToolbarItemDelegate_items_for_sharing_service_picker_toolbar_item_imp, #str_ptr("@@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SharingServicePickerToolbarItemDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, SharingServicePickerToolbarItemDelegate_key(), { ctx as *u8 });
     return d;
 }
 

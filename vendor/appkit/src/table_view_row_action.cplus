@@ -32,6 +32,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSButton` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -41,6 +43,8 @@ struct Button {
 
 impl Button {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
 }
 
@@ -52,6 +56,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSTableViewRowAction` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -61,6 +67,8 @@ struct TableViewRowAction {
 
 impl TableViewRowAction {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableViewRowAction { return TableViewRowAction { _obj: ptr }; }
 
     // SKIPPED `rowActionWithStyle:title:handler:`: block method with non-void return
     fn style(this) -> TableViewRowActionStyle {
@@ -76,12 +84,12 @@ impl TableViewRowAction {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn image(this) -> *u8 {

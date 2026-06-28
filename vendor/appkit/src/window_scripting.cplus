@@ -14,6 +14,8 @@ struct CloseCommand {
 impl CloseCommand {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CloseCommand { return CloseCommand { _obj: ptr }; }
+
 }
 
 // `NSScriptCommand` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct ScriptCommand {
 
 impl ScriptCommand {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ScriptCommand { return ScriptCommand { _obj: ptr }; }
 
 }
 

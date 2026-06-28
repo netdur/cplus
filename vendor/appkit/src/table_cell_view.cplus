@@ -65,6 +65,8 @@ struct TextField {
 impl TextField {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextField { return TextField { _obj: ptr }; }
+
 }
 
 // `NSImageView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -74,6 +76,8 @@ struct ImageView {
 
 impl ImageView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageView { return ImageView { _obj: ptr }; }
 
 }
 
@@ -85,6 +89,8 @@ struct DraggingImageComponent {
 impl DraggingImageComponent {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DraggingImageComponent { return DraggingImageComponent { _obj: ptr }; }
+
 }
 
 // `NSTableCellView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -95,6 +101,8 @@ struct TableCellView {
 impl TableCellView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableCellView { return TableCellView { _obj: ptr }; }
+
     fn object_value(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectValue\0")));
         return bridge::obj_option(obj);
@@ -104,22 +112,28 @@ impl TableCellView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectValue:\0")), object_value);
     }
 
-    fn text_field(this) -> option::Option[*u8] {
+    fn text_field(this) -> option::Option[TextField] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textField\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextField]::None;
+        }
+        return option::some(TextField::from_raw(obj));
     }
 
-    fn set_text_field(this, text_field: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field);
+    fn set_text_field(this, text_field: TextField) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field.raw());
     }
 
-    fn image_view(this) -> option::Option[*u8] {
+    fn image_view(this) -> option::Option[ImageView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ImageView]::None;
+        }
+        return option::some(ImageView::from_raw(obj));
     }
 
-    fn set_image_view(this, image_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view);
+    fn set_image_view(this, image_view: ImageView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view.raw());
     }
 
     fn background_style(this) -> BackgroundStyle {

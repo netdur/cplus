@@ -14,5 +14,7 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 

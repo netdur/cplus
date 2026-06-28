@@ -14,6 +14,8 @@ struct IndexPath {
 impl IndexPath {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexPath { return IndexPath { _obj: ptr }; }
+
 }
 
 // `NSSortDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct SortDescriptor {
 
 impl SortDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SortDescriptor { return SortDescriptor { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct TreeController {
 impl TreeController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TreeController { return TreeController { _obj: ptr }; }
+
 }
 
 // `NSTreeNode` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -43,6 +49,8 @@ struct TreeNode {
 
 impl TreeNode {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TreeNode { return TreeNode { _obj: ptr }; }
 
     fn tree_node_with_represented_object(model_object: *u8) -> TreeNode {
         return TreeNode { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSTreeNode\0")), rt::sel(#str_ptr("treeNodeWithRepresentedObject:\0")), model_object)) };
@@ -54,9 +62,12 @@ impl TreeNode {
         return TreeNode { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithRepresentedObject:\0")), model_object) };
     }
 
-    fn descendant_node_at_index_path(this, index_path: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("descendantNodeAtIndexPath:\0")), index_path);
-        return bridge::obj_option(obj);
+    fn descendant_node_at_index_path(this, index_path: IndexPath) -> option::Option[TreeNode] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("descendantNodeAtIndexPath:\0")), index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[TreeNode]::None;
+        }
+        return option::some(TreeNode::from_raw(obj));
     }
 
     // SKIPPED `sortWithSortDescriptors:recursively:`: param `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
@@ -65,8 +76,8 @@ impl TreeNode {
         return bridge::obj_option(obj);
     }
 
-    fn index_path(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("indexPath\0")));
+    fn index_path(this) -> IndexPath {
+        return IndexPath::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("indexPath\0"))));
     }
 
     fn is_leaf(this) -> bool {
@@ -75,9 +86,12 @@ impl TreeNode {
 
     // SKIPPED `childNodes`: return `NSArray<NSTreeNode *> * _Nullable` — generic collection
     // SKIPPED `mutableChildNodes`: return `NSMutableArray<NSTreeNode *> * _Nonnull` — generic collection
-    fn parent_node(this) -> option::Option[*u8] {
+    fn parent_node(this) -> option::Option[TreeNode] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentNode\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TreeNode]::None;
+        }
+        return option::some(TreeNode::from_raw(obj));
     }
 
     fn drop(ref this) {

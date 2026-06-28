@@ -86,6 +86,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSColorSpace` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -95,6 +97,8 @@ struct ColorSpace {
 
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
 
 }
 
@@ -106,6 +110,8 @@ struct Appearance {
 impl Appearance {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Appearance { return Appearance { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -115,6 +121,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
     fn new() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
@@ -149,42 +157,54 @@ impl Color {
     // SKIPPED `colorWithCalibratedWhite:alpha:`: (return, arg) shape not yet modelled
     // SKIPPED `colorWithCalibratedRed:green:blue:alpha:`: (return, arg) shape not yet modelled
     // SKIPPED `colorWithCalibratedHue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
-    fn color_with_pattern_image(image: *u8) -> Color {
-        return Color { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithPatternImage:\0")), image)) };
+    fn color_with_pattern_image(image: Image) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithPatternImage:\0")), image.raw())) };
     }
 
-    fn color_using_type(this, type_: ColorType) -> option::Option[*u8] {
+    fn color_using_type(this, type_: ColorType) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("colorUsingType:\0")), color_type_raw(type_));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn color_using_color_space(this, space: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("colorUsingColorSpace:\0")), space);
-        return bridge::obj_option(obj);
+    fn color_using_color_space(this, space: ColorSpace) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("colorUsingColorSpace:\0")), space.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
     // SKIPPED `colorWithRed:green:blue:alpha:exposure:`: (return, arg) shape not yet modelled
     // SKIPPED `colorWithRed:green:blue:alpha:linearExposure:`: (return, arg) shape not yet modelled
-    fn color_by_applying_content_headroom(this, content_headroom: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorByApplyingContentHeadroom:\0")), content_headroom);
+    fn color_by_applying_content_headroom(this, content_headroom: f64) -> Color {
+        return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorByApplyingContentHeadroom:\0")), content_headroom));
     }
 
     fn color_for_control_tint(control_tint: ControlTint) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorForControlTint:\0")), control_tint_raw(control_tint))) };
     }
 
-    fn highlight_with_level(this, val: f64) -> option::Option[*u8] {
+    fn highlight_with_level(this, val: f64) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_f64(this._obj, rt::sel(#str_ptr("highlightWithLevel:\0")), val);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn shadow_with_level(this, val: f64) -> option::Option[*u8] {
+    fn shadow_with_level(this, val: f64) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_f64(this._obj, rt::sel(#str_ptr("shadowWithLevel:\0")), val);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn color_with_system_effect(this, system_effect: ColorSystemEffect) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("colorWithSystemEffect:\0")), color_system_effect_raw(system_effect));
+    fn color_with_system_effect(this, system_effect: ColorSystemEffect) -> Color {
+        return Color::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("colorWithSystemEffect:\0")), color_system_effect_raw(system_effect)));
     }
 
     fn set(this) {
@@ -200,8 +220,8 @@ impl Color {
     }
 
     // SKIPPED `blendedColorWithFraction:ofColor:`: (return, arg) shape not yet modelled
-    fn color_with_alpha_component(this, alpha: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha);
+    fn color_with_alpha_component(this, alpha: f64) -> Color {
+        return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha));
     }
 
     // SKIPPED `getRed:green:blue:alpha:`: (return, arg) shape not yet modelled
@@ -224,7 +244,10 @@ impl Color {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("writeToPasteboard:\0")), paste_board);
     }
 
-    // SKIPPED `drawSwatchInRect:`: param `NSRect` — unmapped type `NSRect`
+    fn draw_swatch_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawSwatchInRect:\0")), rect);
+    }
+
     // SKIPPED `colorWithCGColor:`: param `CGColorRef _Nonnull` — unmapped type `CGColorRef`
     fn type_(this) -> ColorType {
         return color_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
@@ -579,16 +602,16 @@ impl Color {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("blackComponent\0")));
     }
 
-    fn color_space(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0")));
+    fn color_space(this) -> ColorSpace {
+        return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
 
     fn number_of_components(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfComponents\0")));
     }
 
-    fn pattern_image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("patternImage\0")));
+    fn pattern_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("patternImage\0"))));
     }
 
     fn alpha_component(this) -> f64 {
@@ -609,9 +632,12 @@ impl Color {
     }
 
     // SKIPPED `colorUsingColorSpaceName:device:`: param `NSDictionary<NSDeviceDescriptionKey,id> * _Nullable` — generic collection
-    fn color_using_color_space_name(this, name: str) -> option::Option[*u8] {
+    fn color_using_color_space_name(this, name: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("colorUsingColorSpaceName:\0")), bridge::nsstring(name));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
     fn control_highlight_color() -> *u8 {

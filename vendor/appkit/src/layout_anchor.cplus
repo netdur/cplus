@@ -14,6 +14,8 @@ struct LayoutConstraint {
 impl LayoutConstraint {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
+
 }
 
 // `NSLayoutDimension` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,16 +26,18 @@ struct LayoutDimension {
 impl LayoutDimension {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn constraint_equal_to_constant(this, c: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToConstant:\0")), c);
+    fn from_raw(ptr: *u8) -> LayoutDimension { return LayoutDimension { _obj: ptr }; }
+
+    fn constraint_equal_to_constant(this, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToConstant:\0")), c));
     }
 
-    fn constraint_greater_than_or_equal_to_constant(this, c: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToConstant:\0")), c);
+    fn constraint_greater_than_or_equal_to_constant(this, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToConstant:\0")), c));
     }
 
-    fn constraint_less_than_or_equal_to_constant(this, c: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), c);
+    fn constraint_less_than_or_equal_to_constant(this, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), c));
     }
 
     // SKIPPED `constraintEqualToAnchor:multiplier:`: (return, arg) shape not yet modelled
@@ -51,6 +55,8 @@ struct LayoutAnchor {
 
 impl LayoutAnchor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LayoutAnchor { return LayoutAnchor { _obj: ptr }; }
 
     // SKIPPED `constraintEqualToAnchor:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
     // SKIPPED `constraintGreaterThanOrEqualToAnchor:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
@@ -78,8 +84,10 @@ struct LayoutXAxisAnchor {
 impl LayoutXAxisAnchor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn anchor_with_offset_to_anchor(this, other_anchor: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor);
+    fn from_raw(ptr: *u8) -> LayoutXAxisAnchor { return LayoutXAxisAnchor { _obj: ptr }; }
+
+    fn anchor_with_offset_to_anchor(this, other_anchor: LayoutXAxisAnchor) -> LayoutDimension {
+        return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
     // SKIPPED `constraintEqualToSystemSpacingAfterAnchor:multiplier:`: (return, arg) shape not yet modelled
@@ -95,8 +103,10 @@ struct LayoutYAxisAnchor {
 impl LayoutYAxisAnchor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn anchor_with_offset_to_anchor(this, other_anchor: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor);
+    fn from_raw(ptr: *u8) -> LayoutYAxisAnchor { return LayoutYAxisAnchor { _obj: ptr }; }
+
+    fn anchor_with_offset_to_anchor(this, other_anchor: LayoutYAxisAnchor) -> LayoutDimension {
+        return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
     // SKIPPED `constraintEqualToSystemSpacingBelowAnchor:multiplier:`: (return, arg) shape not yet modelled

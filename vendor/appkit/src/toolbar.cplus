@@ -61,6 +61,8 @@ struct ToolbarItem {
 impl ToolbarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ToolbarItem { return ToolbarItem { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -70,6 +72,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
 }
 
@@ -81,6 +85,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSToolbar` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -90,6 +96,8 @@ struct Toolbar {
 
 impl Toolbar {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Toolbar { return Toolbar { _obj: ptr }; }
 
     fn new(identifier: str) -> Toolbar {
         let cls: *u8 = rt::get_class(#str_ptr("NSToolbar\0"));
@@ -112,8 +120,15 @@ impl Toolbar {
         rt::msg_void(this._obj, rt::sel(#str_ptr("validateVisibleItems\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSToolbarDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSToolbarDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn is_visible(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVisible\0"))) != (0 as i8);
     }
@@ -255,10 +270,10 @@ impl Toolbar {
 // `NSToolbarDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: arg shape (only <=5 object args modelled)
 // SKIPPED `toolbar:itemIdentifier:canBeInsertedAtIndex:`: arg shape (only <=5 object args modelled)
-fn ToolbarDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ToolbarDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn ToolbarDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn ToolbarDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct ToolbarDelegateProtocol {
+struct ToolbarDelegate {
     toolbar_default_item_identifiers: fn(*u8, *u8) -> *u8,
     toolbar_allowed_item_identifiers: fn(*u8, *u8) -> *u8,
     toolbar_selectable_item_identifiers: fn(*u8, *u8) -> *u8,
@@ -268,11 +283,11 @@ struct ToolbarDelegateProtocol {
     opaque user: *u8,
 }
 
-fn ToolbarDelegateProtocol_new(user: *u8) -> ToolbarDelegateProtocol {
-    return ToolbarDelegateProtocol { toolbar_default_item_identifiers: ToolbarDelegateProtocol_noop_id_1, toolbar_allowed_item_identifiers: ToolbarDelegateProtocol_noop_id_1, toolbar_selectable_item_identifiers: ToolbarDelegateProtocol_noop_id_1, toolbar_immovable_item_identifiers: ToolbarDelegateProtocol_noop_id_1, toolbar_will_add_item: ToolbarDelegateProtocol_noop_v_1, toolbar_did_remove_item: ToolbarDelegateProtocol_noop_v_1, user: user };
+fn ToolbarDelegate_new(user: *u8) -> ToolbarDelegate {
+    return ToolbarDelegate { toolbar_default_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_allowed_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_selectable_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_immovable_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_will_add_item: ToolbarDelegate_noop_v_1, toolbar_did_remove_item: ToolbarDelegate_noop_v_1, user: user };
 }
 
-impl ToolbarDelegateProtocol {
+impl ToolbarDelegate {
     fn set_toolbar_default_item_identifiers(ref this, handler: fn(*u8, *u8) -> *u8) {
         this.toolbar_default_item_identifiers = handler;
         return;
@@ -299,67 +314,67 @@ impl ToolbarDelegateProtocol {
     }
 }
 
-fn ToolbarDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn ToolbarDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn ToolbarDelegateProtocol_toolbar_default_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_default_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).toolbar_default_item_identifiers };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn ToolbarDelegateProtocol_toolbar_allowed_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_allowed_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).toolbar_allowed_item_identifiers };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn ToolbarDelegateProtocol_toolbar_selectable_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_selectable_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).toolbar_selectable_item_identifiers };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn ToolbarDelegateProtocol_toolbar_immovable_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_immovable_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).toolbar_immovable_item_identifiers };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn ToolbarDelegateProtocol_toolbar_will_add_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_will_add_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) = { (*c).toolbar_will_add_item };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn ToolbarDelegateProtocol_toolbar_did_remove_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ToolbarDelegateProtocol = { synth::get_associated(self_obj, ToolbarDelegateProtocol_key()) as *ToolbarDelegateProtocol };
+fn ToolbarDelegate_toolbar_did_remove_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
     let f: fn(*u8, *u8) = { (*c).toolbar_did_remove_item };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_ToolbarDelegateProtocol(ctx: *ToolbarDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ToolbarDelegateProtocol\0");
+fn create_ToolbarDelegate(ctx: *ToolbarDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_ToolbarDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_toolbar_default_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), ToolbarDelegateProtocol_toolbar_default_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_allowed_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarAllowedItemIdentifiers:\0")), ToolbarDelegateProtocol_toolbar_allowed_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_selectable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarSelectableItemIdentifiers:\0")), ToolbarDelegateProtocol_toolbar_selectable_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_immovable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarImmovableItemIdentifiers:\0")), ToolbarDelegateProtocol_toolbar_immovable_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_will_add_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarWillAddItem:\0")), ToolbarDelegateProtocol_toolbar_will_add_item_imp, #str_ptr("v@:@\0"));
-        let add_toolbar_did_remove_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarDidRemoveItem:\0")), ToolbarDelegateProtocol_toolbar_did_remove_item_imp, #str_ptr("v@:@\0"));
+        let add_toolbar_default_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), ToolbarDelegate_toolbar_default_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_allowed_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarAllowedItemIdentifiers:\0")), ToolbarDelegate_toolbar_allowed_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_selectable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarSelectableItemIdentifiers:\0")), ToolbarDelegate_toolbar_selectable_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_immovable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarImmovableItemIdentifiers:\0")), ToolbarDelegate_toolbar_immovable_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_will_add_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarWillAddItem:\0")), ToolbarDelegate_toolbar_will_add_item_imp, #str_ptr("v@:@\0"));
+        let add_toolbar_did_remove_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarDidRemoveItem:\0")), ToolbarDelegate_toolbar_did_remove_item_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ToolbarDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, ToolbarDelegate_key(), { ctx as *u8 });
     return d;
 }
 

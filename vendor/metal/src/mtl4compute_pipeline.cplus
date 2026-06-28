@@ -74,13 +74,16 @@ impl MTL4ComputePipelineDescriptor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    fn compute_function_descriptor(this) -> option::Option[*u8] {
+    fn compute_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("computeFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_compute_function_descriptor(this, compute_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setComputeFunctionDescriptor:\0")), compute_function_descriptor);
+    fn set_compute_function_descriptor(this, compute_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setComputeFunctionDescriptor:\0")), compute_function_descriptor.raw());
     }
 
     fn thread_group_size_is_multiple_of_thread_execution_width(this) -> bool {
@@ -106,13 +109,16 @@ impl MTL4ComputePipelineDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSupportBinaryLinking:\0")), support_binary_linking as i8);
     }
 
-    fn static_linking_descriptor(this) -> option::Option[*u8] {
+    fn static_linking_descriptor(this) -> option::Option[MTL4StaticLinkingDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("staticLinkingDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4StaticLinkingDescriptor]::None;
+        }
+        return option::some(MTL4StaticLinkingDescriptor::from_raw(obj));
     }
 
-    fn set_static_linking_descriptor(this, static_linking_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStaticLinkingDescriptor:\0")), static_linking_descriptor);
+    fn set_static_linking_descriptor(this, static_linking_descriptor: MTL4StaticLinkingDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStaticLinkingDescriptor:\0")), static_linking_descriptor.raw());
     }
 
     fn support_indirect_command_buffers(this) -> MTL4IndirectCommandBufferSupportState {
@@ -120,5 +126,29 @@ impl MTL4ComputePipelineDescriptor {
     }
 
     // SKIPPED `setSupportIndirectCommandBuffers:`: (return, arg) shape not yet modelled
+}
+
+// `MTL4BinaryFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4BinaryFunction {
+    opaque _obj: *u8,
+}
+
+impl MTL4BinaryFunction {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunction { return MTL4BinaryFunction { _obj: ptr }; }
+
+}
+
+// `MTLDynamicLibrary` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct DynamicLibrary {
+    opaque _obj: *u8,
+}
+
+impl DynamicLibrary {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DynamicLibrary { return DynamicLibrary { _obj: ptr }; }
+
 }
 

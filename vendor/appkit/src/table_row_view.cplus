@@ -83,6 +83,8 @@ struct LayoutConstraint {
 impl LayoutConstraint {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
+
 }
 
 // `NSTableRowView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -93,10 +95,24 @@ struct TableRowView {
 impl TableRowView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `drawBackgroundInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawSelectionInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawSeparatorInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawDraggingDestinationFeedbackInRect:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> TableRowView { return TableRowView { _obj: ptr }; }
+
+    fn draw_background_in_rect(this, dirty_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawBackgroundInRect:\0")), dirty_rect);
+    }
+
+    fn draw_selection_in_rect(this, dirty_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawSelectionInRect:\0")), dirty_rect);
+    }
+
+    fn draw_separator_in_rect(this, dirty_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawSeparatorInRect:\0")), dirty_rect);
+    }
+
+    fn draw_dragging_destination_feedback_in_rect(this, dirty_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawDraggingDestinationFeedbackInRect:\0")), dirty_rect);
+    }
+
     fn view_at_column(this, column: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("viewAtColumn:\0")), column);
         return bridge::obj_option(obj);

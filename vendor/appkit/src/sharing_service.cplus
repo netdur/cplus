@@ -7,6 +7,42 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
+// `NSRectEdge` (NS_ENUM)
+enum RectEdge {
+    MinX,
+    MinY,
+    MaxX,
+    MaxY,
+    NSMinXEdge,
+    NSMinYEdge,
+    NSMaxXEdge,
+    NSMaxYEdge,
+}
+
+fn rect_edge_raw(v: RectEdge) -> i64 {
+    return match v {
+        RectEdge::MinX => { 0 as i64 },
+        RectEdge::MinY => { 1 as i64 },
+        RectEdge::MaxX => { 2 as i64 },
+        RectEdge::MaxY => { 3 as i64 },
+        RectEdge::NSMinXEdge => { 0 as i64 },
+        RectEdge::NSMinYEdge => { 1 as i64 },
+        RectEdge::NSMaxXEdge => { 2 as i64 },
+        RectEdge::NSMaxYEdge => { 3 as i64 },
+    };
+}
+
+fn rect_edge_from_raw(raw: i64) -> RectEdge {
+    if raw == (1 as i64) { return RectEdge::MinY; }
+    if raw == (2 as i64) { return RectEdge::MaxX; }
+    if raw == (3 as i64) { return RectEdge::MaxY; }
+    if raw == (0 as i64) { return RectEdge::NSMinXEdge; }
+    if raw == (1 as i64) { return RectEdge::NSMinYEdge; }
+    if raw == (2 as i64) { return RectEdge::NSMaxXEdge; }
+    if raw == (3 as i64) { return RectEdge::NSMaxYEdge; }
+    return RectEdge::MinX;
+}
+
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct String {
     opaque _obj: *u8,
@@ -14,6 +50,8 @@ struct String {
 
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
 }
 
@@ -25,6 +63,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSMenuItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -34,6 +74,8 @@ struct MenuItem {
 
 impl MenuItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MenuItem { return MenuItem { _obj: ptr }; }
 
 }
 
@@ -45,6 +87,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSError` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -54,6 +98,8 @@ struct Error {
 
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
 
 }
 
@@ -65,6 +111,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSSharingCollaborationModeRestriction` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -74,6 +122,8 @@ struct SharingCollaborationModeRestriction {
 
 impl SharingCollaborationModeRestriction {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SharingCollaborationModeRestriction { return SharingCollaborationModeRestriction { _obj: ptr }; }
 
 }
 
@@ -85,6 +135,8 @@ struct CKShare {
 impl CKShare {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CKShare { return CKShare { _obj: ptr }; }
+
 }
 
 // `CKContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -95,6 +147,8 @@ struct CKContainer {
 impl CKContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CKContainer { return CKContainer { _obj: ptr }; }
+
 }
 
 // `NSSharingService` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -104,6 +158,8 @@ struct SharingService {
 
 impl SharingService {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SharingService { return SharingService { _obj: ptr }; }
 
     // SKIPPED `sharingServicesForItems:`: return `NSArray<NSSharingService *> * _Nonnull` — generic collection
     fn sharing_service_named(service_name: str) -> option::Option[SharingService] {
@@ -121,20 +177,30 @@ impl SharingService {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performWithItems:\0")), items);
     }
 
-    // SKIPPED `delegate`: return `id<NSSharingServiceDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSharingServiceDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);
     }
 
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
-    fn alternate_image(this) -> option::Option[*u8] {
+    fn alternate_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("alternateImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
     fn menu_item_title(this) -> *u8 {
@@ -181,6 +247,8 @@ struct SharingServicePicker {
 impl SharingServicePicker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SharingServicePicker { return SharingServicePicker { _obj: ptr }; }
+
     fn new(items: *u8) -> SharingServicePicker {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingServicePicker\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -188,13 +256,20 @@ impl SharingServicePicker {
     }
 
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: (return, arg) shape not yet modelled
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSSharingServicePickerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSharingServicePickerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn standard_share_menu_item(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0")));
     }
@@ -206,11 +281,11 @@ impl SharingServicePicker {
 
 // `NSSharingServiceDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `sharingService:sourceFrameOnScreenForShareItem:`: return `NSRect` not modelled
-fn SharingServiceDelegateProtocol_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn SharingServiceDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn SharingServiceDelegateProtocol_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn SharingServiceDelegate_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn SharingServiceDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn SharingServiceDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
 
-struct SharingServiceDelegateProtocol {
+struct SharingServiceDelegate {
     sharing_service_will_share_items: fn(*u8, *u8, *u8),
     sharing_service_did_fail_to_share_items_error: fn(*u8, *u8, *u8, *u8),
     sharing_service_did_share_items: fn(*u8, *u8, *u8),
@@ -220,11 +295,11 @@ struct SharingServiceDelegateProtocol {
     opaque user: *u8,
 }
 
-fn SharingServiceDelegateProtocol_new(user: *u8) -> SharingServiceDelegateProtocol {
-    return SharingServiceDelegateProtocol { sharing_service_will_share_items: SharingServiceDelegateProtocol_noop_v_2, sharing_service_did_fail_to_share_items_error: SharingServiceDelegateProtocol_noop_v_3, sharing_service_did_share_items: SharingServiceDelegateProtocol_noop_v_2, sharing_service_transition_image_for_share_item_content_rect: SharingServiceDelegateProtocol_noop_id_3, sharing_service_source_window_for_share_items_sharing_content_scope: SharingServiceDelegateProtocol_noop_id_3, anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge: SharingServiceDelegateProtocol_noop_id_3, user: user };
+fn SharingServiceDelegate_new(user: *u8) -> SharingServiceDelegate {
+    return SharingServiceDelegate { sharing_service_will_share_items: SharingServiceDelegate_noop_v_2, sharing_service_did_fail_to_share_items_error: SharingServiceDelegate_noop_v_3, sharing_service_did_share_items: SharingServiceDelegate_noop_v_2, sharing_service_transition_image_for_share_item_content_rect: SharingServiceDelegate_noop_id_3, sharing_service_source_window_for_share_items_sharing_content_scope: SharingServiceDelegate_noop_id_3, anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge: SharingServiceDelegate_noop_id_3, user: user };
 }
 
-impl SharingServiceDelegateProtocol {
+impl SharingServiceDelegate {
     fn set_sharing_service_will_share_items(ref this, handler: fn(*u8, *u8, *u8)) {
         this.sharing_service_will_share_items = handler;
         return;
@@ -251,68 +326,68 @@ impl SharingServiceDelegateProtocol {
     }
 }
 
-fn SharingServiceDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn SharingServiceDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn SharingServiceDelegateProtocol_sharing_service_will_share_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_sharing_service_will_share_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).sharing_service_will_share_items };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn SharingServiceDelegateProtocol_sharing_service_did_fail_to_share_items_error_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_sharing_service_did_fail_to_share_items_error_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8, *u8) = { (*c).sharing_service_did_fail_to_share_items_error };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn SharingServiceDelegateProtocol_sharing_service_did_share_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_sharing_service_did_share_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).sharing_service_did_share_items };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn SharingServiceDelegateProtocol_sharing_service_transition_image_for_share_item_content_rect_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_sharing_service_transition_image_for_share_item_content_rect_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).sharing_service_transition_image_for_share_item_content_rect };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn SharingServiceDelegateProtocol_sharing_service_source_window_for_share_items_sharing_content_scope_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_sharing_service_source_window_for_share_items_sharing_content_scope_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).sharing_service_source_window_for_share_items_sharing_content_scope };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn SharingServiceDelegateProtocol_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *SharingServiceDelegateProtocol = { synth::get_associated(self_obj, SharingServiceDelegateProtocol_key()) as *SharingServiceDelegateProtocol };
+fn SharingServiceDelegate_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *SharingServiceDelegate = { synth::get_associated(self_obj, SharingServiceDelegate_key()) as *SharingServiceDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn create_SharingServiceDelegateProtocol(ctx: *SharingServiceDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SharingServiceDelegateProtocol\0");
+fn create_SharingServiceDelegate(ctx: *SharingServiceDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SharingServiceDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_sharing_service_will_share_items: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingService:willShareItems:\0")), SharingServiceDelegateProtocol_sharing_service_will_share_items_imp, #str_ptr("v@:@@\0"));
-        let add_sharing_service_did_fail_to_share_items_error: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("sharingService:didFailToShareItems:error:\0")), SharingServiceDelegateProtocol_sharing_service_did_fail_to_share_items_error_imp, #str_ptr("v@:@@@\0"));
-        let add_sharing_service_did_share_items: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingService:didShareItems:\0")), SharingServiceDelegateProtocol_sharing_service_did_share_items_imp, #str_ptr("v@:@@\0"));
-        let add_sharing_service_transition_image_for_share_item_content_rect: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingService:transitionImageForShareItem:contentRect:\0")), SharingServiceDelegateProtocol_sharing_service_transition_image_for_share_item_content_rect_imp, #str_ptr("@@:@@@\0"));
-        let add_sharing_service_source_window_for_share_items_sharing_content_scope: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingService:sourceWindowForShareItems:sharingContentScope:\0")), SharingServiceDelegateProtocol_sharing_service_source_window_for_share_items_sharing_content_scope_imp, #str_ptr("@@:@@@\0"));
-        let add_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("anchoringViewForSharingService:showRelativeToRect:preferredEdge:\0")), SharingServiceDelegateProtocol_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge_imp, #str_ptr("@@:@@@\0"));
+        let add_sharing_service_will_share_items: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingService:willShareItems:\0")), SharingServiceDelegate_sharing_service_will_share_items_imp, #str_ptr("v@:@@\0"));
+        let add_sharing_service_did_fail_to_share_items_error: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("sharingService:didFailToShareItems:error:\0")), SharingServiceDelegate_sharing_service_did_fail_to_share_items_error_imp, #str_ptr("v@:@@@\0"));
+        let add_sharing_service_did_share_items: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingService:didShareItems:\0")), SharingServiceDelegate_sharing_service_did_share_items_imp, #str_ptr("v@:@@\0"));
+        let add_sharing_service_transition_image_for_share_item_content_rect: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingService:transitionImageForShareItem:contentRect:\0")), SharingServiceDelegate_sharing_service_transition_image_for_share_item_content_rect_imp, #str_ptr("@@:@@@\0"));
+        let add_sharing_service_source_window_for_share_items_sharing_content_scope: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingService:sourceWindowForShareItems:sharingContentScope:\0")), SharingServiceDelegate_sharing_service_source_window_for_share_items_sharing_content_scope_imp, #str_ptr("@@:@@@\0"));
+        let add_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("anchoringViewForSharingService:showRelativeToRect:preferredEdge:\0")), SharingServiceDelegate_anchoring_view_for_sharing_service_show_relative_to_rect_preferred_edge_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SharingServiceDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, SharingServiceDelegate_key(), { ctx as *u8 });
     return d;
 }
 
@@ -390,22 +465,22 @@ fn create_CloudSharingServiceDelegate(ctx: *CloudSharingServiceDelegate) -> *u8 
 
 // `NSSharingServicePickerDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `sharingServicePicker:delegateForSharingService:`: return `id<NSSharingServiceDelegate> _Nullable` not modelled
-fn SharingServicePickerDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn SharingServicePickerDelegateProtocol_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn SharingServicePickerDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn SharingServicePickerDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn SharingServicePickerDelegate_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn SharingServicePickerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct SharingServicePickerDelegateProtocol {
+struct SharingServicePickerDelegate {
     sharing_service_picker_sharing_services_for_items_proposed_sharing_services: fn(*u8, *u8, *u8, *u8) -> *u8,
     sharing_service_picker_did_choose_sharing_service: fn(*u8, *u8, *u8),
     sharing_service_picker_collaboration_mode_restrictions: fn(*u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
-fn SharingServicePickerDelegateProtocol_new(user: *u8) -> SharingServicePickerDelegateProtocol {
-    return SharingServicePickerDelegateProtocol { sharing_service_picker_sharing_services_for_items_proposed_sharing_services: SharingServicePickerDelegateProtocol_noop_id_3, sharing_service_picker_did_choose_sharing_service: SharingServicePickerDelegateProtocol_noop_v_2, sharing_service_picker_collaboration_mode_restrictions: SharingServicePickerDelegateProtocol_noop_id_1, user: user };
+fn SharingServicePickerDelegate_new(user: *u8) -> SharingServicePickerDelegate {
+    return SharingServicePickerDelegate { sharing_service_picker_sharing_services_for_items_proposed_sharing_services: SharingServicePickerDelegate_noop_id_3, sharing_service_picker_did_choose_sharing_service: SharingServicePickerDelegate_noop_v_2, sharing_service_picker_collaboration_mode_restrictions: SharingServicePickerDelegate_noop_id_1, user: user };
 }
 
-impl SharingServicePickerDelegateProtocol {
+impl SharingServicePickerDelegate {
     fn set_sharing_service_picker_sharing_services_for_items_proposed_sharing_services(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
         this.sharing_service_picker_sharing_services_for_items_proposed_sharing_services = handler;
         return;
@@ -420,42 +495,42 @@ impl SharingServicePickerDelegateProtocol {
     }
 }
 
-fn SharingServicePickerDelegateProtocol_key() -> *u8 { return { 28674 as *u8 }; }
+fn SharingServicePickerDelegate_key() -> *u8 { return { 28674 as *u8 }; }
 
-fn SharingServicePickerDelegateProtocol_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *SharingServicePickerDelegateProtocol = { synth::get_associated(self_obj, SharingServicePickerDelegateProtocol_key()) as *SharingServicePickerDelegateProtocol };
+fn SharingServicePickerDelegate_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *SharingServicePickerDelegate = { synth::get_associated(self_obj, SharingServicePickerDelegate_key()) as *SharingServicePickerDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).sharing_service_picker_sharing_services_for_items_proposed_sharing_services };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn SharingServicePickerDelegateProtocol_sharing_service_picker_did_choose_sharing_service_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *SharingServicePickerDelegateProtocol = { synth::get_associated(self_obj, SharingServicePickerDelegateProtocol_key()) as *SharingServicePickerDelegateProtocol };
+fn SharingServicePickerDelegate_sharing_service_picker_did_choose_sharing_service_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *SharingServicePickerDelegate = { synth::get_associated(self_obj, SharingServicePickerDelegate_key()) as *SharingServicePickerDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).sharing_service_picker_did_choose_sharing_service };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn SharingServicePickerDelegateProtocol_sharing_service_picker_collaboration_mode_restrictions_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *SharingServicePickerDelegateProtocol = { synth::get_associated(self_obj, SharingServicePickerDelegateProtocol_key()) as *SharingServicePickerDelegateProtocol };
+fn SharingServicePickerDelegate_sharing_service_picker_collaboration_mode_restrictions_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *SharingServicePickerDelegate = { synth::get_associated(self_obj, SharingServicePickerDelegate_key()) as *SharingServicePickerDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).sharing_service_picker_collaboration_mode_restrictions };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn create_SharingServicePickerDelegateProtocol(ctx: *SharingServicePickerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SharingServicePickerDelegateProtocol\0");
+fn create_SharingServicePickerDelegate(ctx: *SharingServicePickerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SharingServicePickerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_sharing_service_picker_sharing_services_for_items_proposed_sharing_services: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingServicePicker:sharingServicesForItems:proposedSharingServices:\0")), SharingServicePickerDelegateProtocol_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp, #str_ptr("@@:@@@\0"));
-        let add_sharing_service_picker_did_choose_sharing_service: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingServicePicker:didChooseSharingService:\0")), SharingServicePickerDelegateProtocol_sharing_service_picker_did_choose_sharing_service_imp, #str_ptr("v@:@@\0"));
-        let add_sharing_service_picker_collaboration_mode_restrictions: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("sharingServicePickerCollaborationModeRestrictions:\0")), SharingServicePickerDelegateProtocol_sharing_service_picker_collaboration_mode_restrictions_imp, #str_ptr("@@:@\0"));
+        let add_sharing_service_picker_sharing_services_for_items_proposed_sharing_services: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("sharingServicePicker:sharingServicesForItems:proposedSharingServices:\0")), SharingServicePickerDelegate_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp, #str_ptr("@@:@@@\0"));
+        let add_sharing_service_picker_did_choose_sharing_service: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("sharingServicePicker:didChooseSharingService:\0")), SharingServicePickerDelegate_sharing_service_picker_did_choose_sharing_service_imp, #str_ptr("v@:@@\0"));
+        let add_sharing_service_picker_collaboration_mode_restrictions: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("sharingServicePickerCollaborationModeRestrictions:\0")), SharingServicePickerDelegate_sharing_service_picker_collaboration_mode_restrictions_imp, #str_ptr("@@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SharingServicePickerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, SharingServicePickerDelegate_key(), { ctx as *u8 });
     return d;
 }
 

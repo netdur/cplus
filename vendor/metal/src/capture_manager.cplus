@@ -79,23 +79,51 @@ impl CaptureManager {
         return CaptureManager { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `newCaptureScopeWithDevice:`: param `id<MTLDevice> _Nonnull` — generic collection
-    // SKIPPED `newCaptureScopeWithCommandQueue:`: param `id<MTLCommandQueue> _Nonnull` — generic collection
-    // SKIPPED `newCaptureScopeWithMTL4CommandQueue:`: param `id<MTL4CommandQueue> _Nonnull` — generic collection
+    fn new_capture_scope_with_device(this, device: Device) -> CaptureScope {
+        return CaptureScope::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newCaptureScopeWithDevice:\0")), device.raw()));
+    }
+
+    fn new_capture_scope_with_command_queue(this, command_queue: CommandQueue) -> CaptureScope {
+        return CaptureScope::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newCaptureScopeWithCommandQueue:\0")), command_queue.raw()));
+    }
+
+    fn new_capture_scope_with_m_t_l4_command_queue(this, command_queue: *u8) -> CaptureScope {
+        return CaptureScope::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newCaptureScopeWithMTL4CommandQueue:\0")), command_queue));
+    }
+
     fn supports_destination(this, destination: CaptureDestination) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("supportsDestination:\0")), capture_destination_raw(destination)) != (0 as i8);
     }
 
     // SKIPPED `startCaptureWithDescriptor:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `startCaptureWithDevice:`: param `id<MTLDevice> _Nonnull` — generic collection
-    // SKIPPED `startCaptureWithCommandQueue:`: param `id<MTLCommandQueue> _Nonnull` — generic collection
-    // SKIPPED `startCaptureWithScope:`: param `id<MTLCaptureScope> _Nonnull` — generic collection
+    fn start_capture_with_device(this, device: Device) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("startCaptureWithDevice:\0")), device.raw());
+    }
+
+    fn start_capture_with_command_queue(this, command_queue: CommandQueue) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("startCaptureWithCommandQueue:\0")), command_queue.raw());
+    }
+
+    fn start_capture_with_scope(this, capture_scope: CaptureScope) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("startCaptureWithScope:\0")), capture_scope.raw());
+    }
+
     fn stop_capture(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopCapture\0")));
     }
 
-    // SKIPPED `defaultCaptureScope`: return `id<MTLCaptureScope> _Nullable` — generic collection
-    // SKIPPED `setDefaultCaptureScope:`: param `id<MTLCaptureScope> _Nullable` — generic collection
+    fn default_capture_scope(this) -> option::Option[CaptureScope] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("defaultCaptureScope\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[CaptureScope]::None;
+        }
+        return option::some(CaptureScope::from_raw(obj));
+    }
+
+    fn set_default_capture_scope(this, default_capture_scope: CaptureScope) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultCaptureScope:\0")), default_capture_scope.raw());
+    }
+
     fn is_capturing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isCapturing\0"))) != (0 as i8);
     }
@@ -103,5 +131,41 @@ impl CaptureManager {
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `MTLCaptureScope` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CaptureScope {
+    opaque _obj: *u8,
+}
+
+impl CaptureScope {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CaptureScope { return CaptureScope { _obj: ptr }; }
+
+}
+
+// `MTLCommandQueue` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CommandQueue {
+    opaque _obj: *u8,
+}
+
+impl CommandQueue {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandQueue { return CommandQueue { _obj: ptr }; }
+
+}
+
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
+}
+
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
 }
 

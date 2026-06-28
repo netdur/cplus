@@ -83,6 +83,8 @@ struct ProgressIndicator {
 impl ProgressIndicator {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ProgressIndicator { return ProgressIndicator { _obj: ptr }; }
+
     fn increment_by(this, delta: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("incrementBy:\0")), delta);
     }

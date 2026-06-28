@@ -126,32 +126,12 @@ fn bezel_style_from_raw(raw: i64) -> BezelStyle {
     return BezelStyle::Automatic;
 }
 
-// `NSCellStyleMask` (NS_ENUM)
-enum CellStyleMask {
-    NSNoCellMask,
-    NSContentsCellMask,
-    NSPushInCellMask,
-    NSChangeGrayCellMask,
-    NSChangeBackgroundCellMask,
-}
-
-fn cell_style_mask_raw(v: CellStyleMask) -> i64 {
-    return match v {
-        CellStyleMask::NSNoCellMask => { 0 as i64 },
-        CellStyleMask::NSContentsCellMask => { 1 as i64 },
-        CellStyleMask::NSPushInCellMask => { 2 as i64 },
-        CellStyleMask::NSChangeGrayCellMask => { 4 as i64 },
-        CellStyleMask::NSChangeBackgroundCellMask => { 8 as i64 },
-    };
-}
-
-fn cell_style_mask_from_raw(raw: i64) -> CellStyleMask {
-    if raw == (1 as i64) { return CellStyleMask::NSContentsCellMask; }
-    if raw == (2 as i64) { return CellStyleMask::NSPushInCellMask; }
-    if raw == (4 as i64) { return CellStyleMask::NSChangeGrayCellMask; }
-    if raw == (8 as i64) { return CellStyleMask::NSChangeBackgroundCellMask; }
-    return CellStyleMask::NSNoCellMask;
-}
+// `NSCellStyleMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const cell_style_mask_n_s_no_cell_mask: u64 = 0 as u64;
+const cell_style_mask_n_s_contents_cell_mask: u64 = 1 as u64;
+const cell_style_mask_n_s_push_in_cell_mask: u64 = 2 as u64;
+const cell_style_mask_n_s_change_gray_cell_mask: u64 = 4 as u64;
+const cell_style_mask_n_s_change_background_cell_mask: u64 = 8 as u64;
 
 // `NSCellImagePosition` (NS_ENUM)
 enum CellImagePosition {
@@ -225,44 +205,16 @@ fn image_scaling_from_raw(raw: i64) -> ImageScaling {
     return ImageScaling::NSImageScaleProportionallyDown;
 }
 
-// `NSEventModifierFlags` (NS_ENUM)
-enum EventModifierFlags {
-    NSEventModifierFlagCapsLock,
-    NSEventModifierFlagShift,
-    NSEventModifierFlagControl,
-    NSEventModifierFlagOption,
-    NSEventModifierFlagCommand,
-    NSEventModifierFlagNumericPad,
-    NSEventModifierFlagHelp,
-    NSEventModifierFlagFunction,
-    NSEventModifierFlagDeviceIndependentFlagsMask,
-}
-
-fn event_modifier_flags_raw(v: EventModifierFlags) -> i64 {
-    return match v {
-        EventModifierFlags::NSEventModifierFlagCapsLock => { 65536 as i64 },
-        EventModifierFlags::NSEventModifierFlagShift => { 131072 as i64 },
-        EventModifierFlags::NSEventModifierFlagControl => { 262144 as i64 },
-        EventModifierFlags::NSEventModifierFlagOption => { 524288 as i64 },
-        EventModifierFlags::NSEventModifierFlagCommand => { 1048576 as i64 },
-        EventModifierFlags::NSEventModifierFlagNumericPad => { 2097152 as i64 },
-        EventModifierFlags::NSEventModifierFlagHelp => { 4194304 as i64 },
-        EventModifierFlags::NSEventModifierFlagFunction => { 8388608 as i64 },
-        EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask => { 4294901760 as i64 },
-    };
-}
-
-fn event_modifier_flags_from_raw(raw: i64) -> EventModifierFlags {
-    if raw == (131072 as i64) { return EventModifierFlags::NSEventModifierFlagShift; }
-    if raw == (262144 as i64) { return EventModifierFlags::NSEventModifierFlagControl; }
-    if raw == (524288 as i64) { return EventModifierFlags::NSEventModifierFlagOption; }
-    if raw == (1048576 as i64) { return EventModifierFlags::NSEventModifierFlagCommand; }
-    if raw == (2097152 as i64) { return EventModifierFlags::NSEventModifierFlagNumericPad; }
-    if raw == (4194304 as i64) { return EventModifierFlags::NSEventModifierFlagHelp; }
-    if raw == (8388608 as i64) { return EventModifierFlags::NSEventModifierFlagFunction; }
-    if raw == (4294901760 as i64) { return EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask; }
-    return EventModifierFlags::NSEventModifierFlagCapsLock;
-}
+// `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_shift: u64 = 131072 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_control: u64 = 262144 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_option: u64 = 524288 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_command: u64 = 1048576 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_numeric_pad: u64 = 2097152 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_help: u64 = 4194304 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_function: u64 = 8388608 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_device_independent_flags_mask: u64 = 4294901760 as u64;
 
 // `NSGradientType` (NS_ENUM)
 enum GradientType {
@@ -299,6 +251,8 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -308,6 +262,8 @@ struct Font {
 
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
 }
 
@@ -319,6 +275,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSSound` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -328,6 +286,8 @@ struct Sound {
 
 impl Sound {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Sound { return Sound { _obj: ptr }; }
 
 }
 
@@ -339,12 +299,14 @@ struct ButtonCell {
 impl ButtonCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ButtonCell { return ButtonCell { _obj: ptr }; }
+
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
     }
 
-    fn init_image_cell(this, image: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
+    fn init_image_cell(this, image: Image) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image.raw());
     }
 
     fn new(coder: *u8) -> ButtonCell {
@@ -368,21 +330,21 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event);
     }
 
-    // SKIPPED `drawBezelWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawImage:withFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawTitle:withFrame:inView:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawBezelWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawImage:withFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawTitle:withFrame:inView:`: (return, arg) shape not yet modelled
     fn bezel_style(this) -> BezelStyle {
         return bezel_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bezelStyle\0"))));
     }
 
     // SKIPPED `setBezelStyle:`: (return, arg) shape not yet modelled
-    fn highlights_by(this) -> CellStyleMask {
-        return cell_style_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("highlightsBy\0"))));
+    fn highlights_by(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("highlightsBy\0")));
     }
 
     // SKIPPED `setHighlightsBy:`: (return, arg) shape not yet modelled
-    fn shows_state_by(this) -> CellStyleMask {
-        return cell_style_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("showsStateBy\0"))));
+    fn shows_state_by(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("showsStateBy\0")));
     }
 
     // SKIPPED `setShowsStateBy:`: (return, arg) shape not yet modelled
@@ -395,12 +357,12 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn attributed_title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedTitle\0")));
+    fn attributed_title(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedTitle\0"))));
     }
 
-    fn set_attributed_title(this, attributed_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title);
+    fn set_attributed_title(this, attributed_title: AttributedString) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title.raw());
     }
 
     fn alternate_title(this) -> text::Text {
@@ -412,21 +374,24 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateTitle:\0")), bridge::nsstring(alternate_title));
     }
 
-    fn attributed_alternate_title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedAlternateTitle\0")));
+    fn attributed_alternate_title(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedAlternateTitle\0"))));
     }
 
-    fn set_attributed_alternate_title(this, attributed_alternate_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedAlternateTitle:\0")), attributed_alternate_title);
+    fn set_attributed_alternate_title(this, attributed_alternate_title: AttributedString) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedAlternateTitle:\0")), attributed_alternate_title.raw());
     }
 
-    fn alternate_image(this) -> option::Option[*u8] {
+    fn alternate_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("alternateImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_alternate_image(this, alternate_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image);
+    fn set_alternate_image(this, alternate_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image.raw());
     }
 
     fn image_position(this) -> CellImagePosition {
@@ -448,8 +413,8 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeyEquivalent:\0")), bridge::nsstring(key_equivalent));
     }
 
-    fn key_equivalent_modifier_mask(this) -> EventModifierFlags {
-        return event_modifier_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0"))));
+    fn key_equivalent_modifier_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0")));
     }
 
     // SKIPPED `setKeyEquivalentModifierMask:`: (return, arg) shape not yet modelled
@@ -481,13 +446,16 @@ impl ButtonCell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsBorderOnlyWhileMouseInside:\0")), shows_border_only_while_mouse_inside as i8);
     }
 
-    fn sound(this) -> option::Option[*u8] {
+    fn sound(this) -> option::Option[Sound] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sound\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Sound]::None;
+        }
+        return option::some(Sound::from_raw(obj));
     }
 
-    fn set_sound(this, sound: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSound:\0")), sound);
+    fn set_sound(this, sound: Sound) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSound:\0")), sound.raw());
     }
 
     fn background_color(this) -> option::Option[*u8] {

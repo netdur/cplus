@@ -5,7 +5,24 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
+
+// `MTLBufferSparseTier` (NS_ENUM)
+enum BufferSparseTier {
+    None,
+    _1,
+}
+
+fn buffer_sparse_tier_raw(v: BufferSparseTier) -> i64 {
+    return match v {
+        BufferSparseTier::None => { 0 as i64 },
+        BufferSparseTier::_1 => { 1 as i64 },
+    };
+}
+
+fn buffer_sparse_tier_from_raw(raw: i64) -> BufferSparseTier {
+    if raw == (1 as i64) { return BufferSparseTier::_1; }
+    return BufferSparseTier::None;
+}
 
 // `MTLTextureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextureDescriptor {
@@ -19,93 +36,72 @@ impl TextureDescriptor {
 
 }
 
-// `MTLBuffer` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `didModifyRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTextureWithDescriptor:offset:bytesPerRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTensorWithDescriptor:offset:error:`: arg shape (only <=5 object args modelled)
-// SKIPPED `addDebugMarker:range:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newRemoteBufferViewForDevice:`: arg shape (only <=5 object args modelled)
-// SKIPPED `remoteStorageBuffer`: return `API_AVAILABLE id<MTLBuffer>` not modelled
-// SKIPPED `gpuAddress`: return `MTLGPUAddress` not modelled
-fn Buffer_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn Buffer_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn Buffer_noop_v_0(user: *u8) { return; }
-
-struct Buffer {
-    contents: fn(*u8) -> *u8,
-    remove_all_debug_markers: fn(*u8),
-    length: fn(*u8) -> u64,
-    sparse_buffer_tier: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Texture {
+    opaque _obj: *u8,
 }
 
-fn Buffer_new(user: *u8) -> Buffer {
-    return Buffer { contents: Buffer_noop_id_0, remove_all_debug_markers: Buffer_noop_v_0, length: Buffer_noop_u64_0, sparse_buffer_tier: Buffer_noop_u64_0, user: user };
+impl Texture {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+}
+
+// `MTLResource` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Resource {
+    opaque _obj: *u8,
+}
+
+impl Resource {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Resource { return Resource { _obj: ptr }; }
+
+}
+
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
 }
 
 impl Buffer {
-    fn set_contents(ref this, handler: fn(*u8) -> *u8) {
-        this.contents = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
+
+    fn contents(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("contents\0")));
     }
-    fn set_remove_all_debug_markers(ref this, handler: fn(*u8)) {
-        this.remove_all_debug_markers = handler;
-        return;
+
+    // SKIPPED `didModifyRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `newTextureWithDescriptor:offset:bytesPerRow:`: (return, arg) shape not yet modelled
+    // SKIPPED `newTensorWithDescriptor:offset:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `addDebugMarker:range:`: (return, arg) shape not yet modelled
+    fn remove_all_debug_markers(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllDebugMarkers\0")));
     }
-    fn set_length(ref this, handler: fn(*u8) -> u64) {
-        this.length = handler;
-        return;
+
+    fn new_remote_buffer_view_for_device(this, device: *u8) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newRemoteBufferViewForDevice:\0")), device);
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
     }
-    fn set_sparse_buffer_tier(ref this, handler: fn(*u8) -> u64) {
-        this.sparse_buffer_tier = handler;
-        return;
+
+    fn length(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("length\0")));
     }
-}
 
-fn Buffer_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Buffer_contents_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Buffer = { synth::get_associated(self_obj, Buffer_key()) as *Buffer };
-    let f: fn(*u8) -> *u8 = { (*c).contents };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Buffer_remove_all_debug_markers_imp(self_obj: *u8, cmd: *u8) {
-    let c: *Buffer = { synth::get_associated(self_obj, Buffer_key()) as *Buffer };
-    let f: fn(*u8) = { (*c).remove_all_debug_markers };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn Buffer_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Buffer = { synth::get_associated(self_obj, Buffer_key()) as *Buffer };
-    let f: fn(*u8) -> u64 = { (*c).length };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Buffer_sparse_buffer_tier_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Buffer = { synth::get_associated(self_obj, Buffer_key()) as *Buffer };
-    let f: fn(*u8) -> u64 = { (*c).sparse_buffer_tier };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_Buffer(ctx: *Buffer) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Buffer\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_contents: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("contents\0")), Buffer_contents_imp, #str_ptr("@@:\0"));
-        let add_remove_all_debug_markers: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("removeAllDebugMarkers\0")), Buffer_remove_all_debug_markers_imp, #str_ptr("v@:\0"));
-        let add_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("length\0")), Buffer_length_imp, #str_ptr("Q@:\0"));
-        let add_sparse_buffer_tier: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sparseBufferTier\0")), Buffer_sparse_buffer_tier_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `remoteStorageBuffer`: return `API_AVAILABLE id<MTLBuffer>` — generic collection
+    fn gpu_address(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuAddress\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Buffer_key(), { ctx as *u8 });
-    return d;
+
+    fn sparse_buffer_tier(this) -> BufferSparseTier {
+        return buffer_sparse_tier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sparseBufferTier\0"))));
+    }
+
 }
 

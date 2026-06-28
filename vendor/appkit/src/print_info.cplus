@@ -53,6 +53,8 @@ struct PDFInfo {
 impl PDFInfo {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PDFInfo { return PDFInfo { _obj: ptr }; }
+
 }
 
 // `NSPrinter` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -63,6 +65,8 @@ struct Printer {
 impl Printer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Printer { return Printer { _obj: ptr }; }
+
 }
 
 // `NSPrintInfo` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -72,6 +76,8 @@ struct PrintInfo {
 
 impl PrintInfo {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
 
     // SKIPPED `initWithDictionary:`: param `NSDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
@@ -101,16 +107,16 @@ impl PrintInfo {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateFromPMPrintSettings\0")));
     }
 
-    fn take_settings_from_p_d_f_info(this, in_p_d_f_info: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeSettingsFromPDFInfo:\0")), in_p_d_f_info);
+    fn take_settings_from_p_d_f_info(this, in_p_d_f_info: PDFInfo) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeSettingsFromPDFInfo:\0")), in_p_d_f_info.raw());
     }
 
     fn shared_print_info() -> PrintInfo {
         return PrintInfo { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("sharedPrintInfo\0")))) };
     }
 
-    fn set_shared_print_info(shared_print_info: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setSharedPrintInfo:\0")), shared_print_info);
+    fn set_shared_print_info(shared_print_info: PrintInfo) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setSharedPrintInfo:\0")), shared_print_info.raw());
     }
 
     fn paper_name(this) -> option::Option[text::Text] {
@@ -122,8 +128,14 @@ impl PrintInfo {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPaperName:\0")), bridge::nsstring(paper_name));
     }
 
-    // SKIPPED `paperSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setPaperSize:`: param `NSSize` — unmapped type `NSSize`
+    fn paper_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("paperSize\0")));
+    }
+
+    fn set_paper_size(this, paper_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setPaperSize:\0")), paper_size);
+    }
+
     fn orientation(this) -> PaperOrientation {
         return paper_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
@@ -204,23 +216,29 @@ impl PrintInfo {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setJobDisposition:\0")), bridge::nsstring(job_disposition));
     }
 
-    fn printer(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("printer\0")));
+    fn printer(this) -> Printer {
+        return Printer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("printer\0"))));
     }
 
-    fn set_printer(this, printer: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrinter:\0")), printer);
+    fn set_printer(this, printer: Printer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrinter:\0")), printer.raw());
     }
 
-    // SKIPPED `imageablePageBounds`: return `NSRect` — unmapped type `NSRect`
+    fn imageable_page_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("imageablePageBounds\0")));
+    }
+
     fn localized_paper_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("localizedPaperName\0")));
         return bridge::to_text_option(ns);
     }
 
-    fn default_printer() -> option::Option[*u8] {
+    fn default_printer() -> option::Option[Printer] {
         let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("defaultPrinter\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Printer]::None;
+        }
+        return option::some(Printer::from_raw(obj));
     }
 
     // SKIPPED `printSettings`: return `API_AVAILABLE NSMutableDictionary<NSPrintInfoSettingKey,id> *` — generic collection
@@ -232,11 +250,11 @@ impl PrintInfo {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSelectionOnly:\0")), selection_only as i8);
     }
 
-    fn set_default_printer(printer: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setDefaultPrinter:\0")), printer);
+    fn set_default_printer(printer: Printer) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setDefaultPrinter:\0")), printer.raw());
     }
 
-    // SKIPPED `sizeForPaperName:`: return `NSSize` — unmapped type `NSSize`
+    // SKIPPED `sizeForPaperName:`: (return, arg) shape not yet modelled
     fn drop(ref this) {
         rt::release(this._obj);
     }

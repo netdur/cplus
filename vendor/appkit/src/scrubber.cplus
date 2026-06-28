@@ -76,7 +76,14 @@ struct Scrubber {
 impl Scrubber {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> Scrubber { return Scrubber { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> Scrubber {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrubber\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Scrubber { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn reload_data(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadData\0")));
@@ -104,24 +111,41 @@ impl Scrubber {
 
     // SKIPPED `moveItemAtIndex:toIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `scrollItemAtIndex:toAlignment:`: (return, arg) shape not yet modelled
-    fn item_view_for_item_at_index(this, index: i64) -> option::Option[*u8] {
+    fn item_view_for_item_at_index(this, index: i64) -> option::Option[ScrubberItemView] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemViewForItemAtIndex:\0")), index);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberItemView]::None;
+        }
+        return option::some(ScrubberItemView::from_raw(obj));
     }
 
     // SKIPPED `registerClass:forItemIdentifier:`: param `Class _Nullable` — unmapped type `Class`
     // SKIPPED `registerNib:forItemIdentifier:`: (return, arg) shape not yet modelled
     // SKIPPED `makeItemWithIdentifier:owner:`: (return, arg) shape not yet modelled
-    // SKIPPED `dataSource`: return `id<NSScrubberDataSource> _Nullable` — generic collection
-    // SKIPPED `setDataSource:`: param `id<NSScrubberDataSource> _Nullable` — generic collection
-    // SKIPPED `delegate`: return `id<NSScrubberDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSScrubberDelegate> _Nullable` — generic collection
-    fn scrubber_layout(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("scrubberLayout\0")));
+    fn data_source(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
+        return bridge::obj_option(obj);
     }
 
-    fn set_scrubber_layout(this, scrubber_layout: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setScrubberLayout:\0")), scrubber_layout);
+    fn set_data_source(this, data_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    fn scrubber_layout(this) -> ScrubberLayout {
+        return ScrubberLayout::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("scrubberLayout\0"))));
+    }
+
+    fn set_scrubber_layout(this, scrubber_layout: ScrubberLayout) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setScrubberLayout:\0")), scrubber_layout.raw());
     }
 
     fn number_of_items(this) -> i64 {
@@ -163,22 +187,28 @@ impl Scrubber {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setFloatsSelectionViews:\0")), floats_selection_views as i8);
     }
 
-    fn selection_background_style(this) -> option::Option[*u8] {
+    fn selection_background_style(this) -> option::Option[ScrubberSelectionStyle] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectionBackgroundStyle\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberSelectionStyle]::None;
+        }
+        return option::some(ScrubberSelectionStyle::from_raw(obj));
     }
 
-    fn set_selection_background_style(this, selection_background_style: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionBackgroundStyle:\0")), selection_background_style);
+    fn set_selection_background_style(this, selection_background_style: ScrubberSelectionStyle) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionBackgroundStyle:\0")), selection_background_style.raw());
     }
 
-    fn selection_overlay_style(this) -> option::Option[*u8] {
+    fn selection_overlay_style(this) -> option::Option[ScrubberSelectionStyle] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectionOverlayStyle\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberSelectionStyle]::None;
+        }
+        return option::some(ScrubberSelectionStyle::from_raw(obj));
     }
 
-    fn set_selection_overlay_style(this, selection_overlay_style: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionOverlayStyle:\0")), selection_overlay_style);
+    fn set_selection_overlay_style(this, selection_overlay_style: ScrubberSelectionStyle) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionOverlayStyle:\0")), selection_overlay_style.raw());
     }
 
     fn shows_arrow_buttons(this) -> bool {
@@ -228,6 +258,8 @@ struct ScrubberItemView {
 impl ScrubberItemView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberItemView { return ScrubberItemView { _obj: ptr }; }
+
 }
 
 // `NSScrubberSelectionView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -237,6 +269,8 @@ struct ScrubberSelectionView {
 
 impl ScrubberSelectionView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ScrubberSelectionView { return ScrubberSelectionView { _obj: ptr }; }
 
 }
 
@@ -248,6 +282,8 @@ struct ScrubberLayout {
 impl ScrubberLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberLayout { return ScrubberLayout { _obj: ptr }; }
+
 }
 
 // `NSPanGestureRecognizer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -257,6 +293,8 @@ struct PanGestureRecognizer {
 
 impl PanGestureRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PanGestureRecognizer { return PanGestureRecognizer { _obj: ptr }; }
 
 }
 
@@ -268,6 +306,8 @@ struct PressGestureRecognizer {
 impl PressGestureRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PressGestureRecognizer { return PressGestureRecognizer { _obj: ptr }; }
+
 }
 
 // `NSButton` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -277,6 +317,8 @@ struct Button {
 
 impl Button {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
 }
 
@@ -288,6 +330,8 @@ struct Nib {
 impl Nib {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Nib { return Nib { _obj: ptr }; }
+
 }
 
 // `NSScrubberSelectionStyle` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -298,6 +342,8 @@ struct ScrubberSelectionStyle {
 impl ScrubberSelectionStyle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrubberSelectionStyle { return ScrubberSelectionStyle { _obj: ptr }; }
+
     fn new() -> ScrubberSelectionStyle {
         let cls: *u8 = rt::get_class(#str_ptr("NSScrubberSelectionStyle\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -305,9 +351,12 @@ impl ScrubberSelectionStyle {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    fn make_selection_view(this) -> option::Option[*u8] {
+    fn make_selection_view(this) -> option::Option[ScrubberSelectionView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("makeSelectionView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberSelectionView]::None;
+        }
+        return option::some(ScrubberSelectionView::from_raw(obj));
     }
 
     fn outline_overlay_style() -> ScrubberSelectionStyle {

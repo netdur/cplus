@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSToolbarItemStyle` (NS_ENUM)
 enum ToolbarItemStyle {
@@ -33,6 +32,8 @@ struct MenuItem {
 impl MenuItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItem { return MenuItem { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -42,6 +43,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -53,6 +56,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `CKShare` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -62,6 +67,8 @@ struct CKShare {
 
 impl CKShare {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CKShare { return CKShare { _obj: ptr }; }
 
 }
 
@@ -73,6 +80,8 @@ struct ItemBadge {
 impl ItemBadge {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ItemBadge { return ItemBadge { _obj: ptr }; }
+
 }
 
 // `NSToolbarItem` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -82,6 +91,8 @@ struct ToolbarItem {
 
 impl ToolbarItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ToolbarItem { return ToolbarItem { _obj: ptr }; }
 
     fn new(item_identifier: str) -> ToolbarItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSToolbarItem\0"));
@@ -164,13 +175,16 @@ impl ToolbarItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setEnabled:\0")), enabled as i8);
     }
 
-    fn image(this) -> option::Option[*u8] {
+    fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
     fn title(this) -> text::Text {
@@ -231,10 +245,22 @@ impl ToolbarItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHidden:\0")), hidden as i8);
     }
 
-    // SKIPPED `minSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `maxSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaxSize:`: param `NSSize` — unmapped type `NSSize`
+    fn min_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minSize\0")));
+    }
+
+    fn set_min_size(this, min_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinSize:\0")), min_size);
+    }
+
+    fn max_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maxSize\0")));
+    }
+
+    fn set_max_size(this, max_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxSize:\0")), max_size);
+    }
+
     // SKIPPED `visibilityPriority`: return `NSToolbarItemVisibilityPriority` — unmapped type `NSToolbarItemVisibilityPriority`
     // SKIPPED `setVisibilityPriority:`: param `NSToolbarItemVisibilityPriority` — unmapped type `NSToolbarItemVisibilityPriority`
     fn badge(this) -> *u8 {
@@ -262,44 +288,36 @@ impl ToolbarItem {
     }
 }
 
-// `NSToolbarItemValidation` delegate protocol -> runtime class-synthesis helper.
-fn ToolbarItemValidation_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-
+// `NSToolbarItemValidation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct ToolbarItemValidation {
-    validate_toolbar_item: fn(*u8, *u8) -> i8,
-    opaque user: *u8,
-}
-
-fn ToolbarItemValidation_new(user: *u8) -> ToolbarItemValidation {
-    return ToolbarItemValidation { validate_toolbar_item: ToolbarItemValidation_noop_i8_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl ToolbarItemValidation {
-    fn set_validate_toolbar_item(ref this, handler: fn(*u8, *u8) -> i8) {
-        this.validate_toolbar_item = handler;
-        return;
-    }
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ToolbarItemValidation { return ToolbarItemValidation { _obj: ptr }; }
+
+    // SKIPPED `validateToolbarItem:`: (return, arg) shape not yet modelled
 }
 
-fn ToolbarItemValidation_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ToolbarItemValidation_validate_toolbar_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *ToolbarItemValidation = { synth::get_associated(self_obj, ToolbarItemValidation_key()) as *ToolbarItemValidation };
-    let f: fn(*u8, *u8) -> i8 = { (*c).validate_toolbar_item };
-    let u: *u8 = { (*c).user };
-    return f(u, a0);
+// `NSCloudSharingValidation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CloudSharingValidation {
+    opaque _obj: *u8,
 }
 
-fn create_ToolbarItemValidation(ctx: *ToolbarItemValidation) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ToolbarItemValidation\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_validate_toolbar_item: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("validateToolbarItem:\0")), ToolbarItemValidation_validate_toolbar_item_imp, #str_ptr("c@:@\0"));
-        synth::register_class_pair(cls);
+impl CloudSharingValidation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CloudSharingValidation { return CloudSharingValidation { _obj: ptr }; }
+
+    fn cloud_share_for_user_interface_item(this, item: *u8) -> option::Option[CKShare] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("cloudShareForUserInterfaceItem:\0")), item);
+        if obj == { 0 as *u8 } {
+            return option::Option[CKShare]::None;
+        }
+        return option::some(CKShare::from_raw(obj));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ToolbarItemValidation_key(), { ctx as *u8 });
-    return d;
+
 }
 

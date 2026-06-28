@@ -16,6 +16,8 @@ struct DictionaryControllerKeyValuePair {
 impl DictionaryControllerKeyValuePair {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DictionaryControllerKeyValuePair { return DictionaryControllerKeyValuePair { _obj: ptr }; }
+
     fn new() -> DictionaryControllerKeyValuePair {
         let cls: *u8 = rt::get_class(#str_ptr("NSDictionaryControllerKeyValuePair\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -66,8 +68,10 @@ struct DictionaryController {
 impl DictionaryController {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn new_object(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("newObject\0")));
+    fn from_raw(ptr: *u8) -> DictionaryController { return DictionaryController { _obj: ptr }; }
+
+    fn new_object(this) -> DictionaryControllerKeyValuePair {
+        return DictionaryControllerKeyValuePair::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("newObject\0"))));
     }
 
     fn initial_key(this) -> text::Text {

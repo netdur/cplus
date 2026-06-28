@@ -5,62 +5,64 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTL4CompilerTask` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `compiler`: return `id<MTL4Compiler> _Nonnull` not modelled
-fn MTL4CompilerTask_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn MTL4CompilerTask_noop_v_0(user: *u8) { return; }
-
-struct MTL4CompilerTask {
-    wait_until_completed: fn(*u8),
-    status: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTL4CompilerTaskStatus` (NS_ENUM)
+enum MTL4CompilerTaskStatus {
+    None,
+    Scheduled,
+    Compiling,
+    Finished,
 }
 
-fn MTL4CompilerTask_new(user: *u8) -> MTL4CompilerTask {
-    return MTL4CompilerTask { wait_until_completed: MTL4CompilerTask_noop_v_0, status: MTL4CompilerTask_noop_u64_0, user: user };
+fn m_t_l4_compiler_task_status_raw(v: MTL4CompilerTaskStatus) -> i64 {
+    return match v {
+        MTL4CompilerTaskStatus::None => { 0 as i64 },
+        MTL4CompilerTaskStatus::Scheduled => { 1 as i64 },
+        MTL4CompilerTaskStatus::Compiling => { 2 as i64 },
+        MTL4CompilerTaskStatus::Finished => { 3 as i64 },
+    };
+}
+
+fn m_t_l4_compiler_task_status_from_raw(raw: i64) -> MTL4CompilerTaskStatus {
+    if raw == (1 as i64) { return MTL4CompilerTaskStatus::Scheduled; }
+    if raw == (2 as i64) { return MTL4CompilerTaskStatus::Compiling; }
+    if raw == (3 as i64) { return MTL4CompilerTaskStatus::Finished; }
+    return MTL4CompilerTaskStatus::None;
+}
+
+// `MTL4Compiler` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4Compiler {
+    opaque _obj: *u8,
+}
+
+impl MTL4Compiler {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4Compiler { return MTL4Compiler { _obj: ptr }; }
+
+}
+
+// `MTL4CompilerTask` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4CompilerTask {
+    opaque _obj: *u8,
 }
 
 impl MTL4CompilerTask {
-    fn set_wait_until_completed(ref this, handler: fn(*u8)) {
-        this.wait_until_completed = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4CompilerTask { return MTL4CompilerTask { _obj: ptr }; }
+
+    fn wait_until_completed(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("waitUntilCompleted\0")));
     }
-    fn set_status(ref this, handler: fn(*u8) -> u64) {
-        this.status = handler;
-        return;
+
+    fn compiler(this) -> MTL4Compiler {
+        return MTL4Compiler::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("compiler\0"))));
     }
-}
 
-fn MTL4CompilerTask_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4CompilerTask_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
-    let c: *MTL4CompilerTask = { synth::get_associated(self_obj, MTL4CompilerTask_key()) as *MTL4CompilerTask };
-    let f: fn(*u8) = { (*c).wait_until_completed };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn MTL4CompilerTask_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *MTL4CompilerTask = { synth::get_associated(self_obj, MTL4CompilerTask_key()) as *MTL4CompilerTask };
-    let f: fn(*u8) -> u64 = { (*c).status };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_MTL4CompilerTask(ctx: *MTL4CompilerTask) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4CompilerTask\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), MTL4CompilerTask_wait_until_completed_imp, #str_ptr("v@:\0"));
-        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), MTL4CompilerTask_status_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    fn status(this) -> MTL4CompilerTaskStatus {
+        return m_t_l4_compiler_task_status_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("status\0"))));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4CompilerTask_key(), { ctx as *u8 });
-    return d;
+
 }
 

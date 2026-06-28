@@ -65,6 +65,8 @@ struct IndexPath {
 impl IndexPath {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexPath { return IndexPath { _obj: ptr }; }
+
 }
 
 // `NSCollectionViewLayoutAttributes` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -75,20 +77,34 @@ struct CollectionViewLayoutAttributes {
 impl CollectionViewLayoutAttributes {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn layout_attributes_for_item_with_index_path(index_path: *u8) -> CollectionViewLayoutAttributes {
-        return CollectionViewLayoutAttributes { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")), rt::sel(#str_ptr("layoutAttributesForItemWithIndexPath:\0")), index_path) };
+    fn from_raw(ptr: *u8) -> CollectionViewLayoutAttributes { return CollectionViewLayoutAttributes { _obj: ptr }; }
+
+    fn layout_attributes_for_item_with_index_path(index_path: IndexPath) -> CollectionViewLayoutAttributes {
+        return CollectionViewLayoutAttributes { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")), rt::sel(#str_ptr("layoutAttributesForItemWithIndexPath:\0")), index_path.raw()) };
     }
 
-    fn layout_attributes_for_inter_item_gap_before_index_path(index_path: *u8) -> CollectionViewLayoutAttributes {
-        return CollectionViewLayoutAttributes { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")), rt::sel(#str_ptr("layoutAttributesForInterItemGapBeforeIndexPath:\0")), index_path) };
+    fn layout_attributes_for_inter_item_gap_before_index_path(index_path: IndexPath) -> CollectionViewLayoutAttributes {
+        return CollectionViewLayoutAttributes { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")), rt::sel(#str_ptr("layoutAttributesForInterItemGapBeforeIndexPath:\0")), index_path.raw()) };
     }
 
     // SKIPPED `layoutAttributesForSupplementaryViewOfKind:withIndexPath:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutAttributesForDecorationViewOfKind:withIndexPath:`: (return, arg) shape not yet modelled
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setFrame:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `size`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setSize:`: param `NSSize` — unmapped type `NSSize`
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
+    fn set_frame(this, frame: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setFrame:\0")), frame);
+    }
+
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
+    }
+
+    fn set_size(this, size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setSize:\0")), size);
+    }
+
     fn alpha(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("alpha\0")));
     }
@@ -110,13 +126,16 @@ impl CollectionViewLayoutAttributes {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHidden:\0")), hidden as i8);
     }
 
-    fn index_path(this) -> option::Option[*u8] {
+    fn index_path(this) -> option::Option[IndexPath] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexPath\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[IndexPath]::None;
+        }
+        return option::some(IndexPath::from_raw(obj));
     }
 
-    fn set_index_path(this, index_path: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexPath:\0")), index_path);
+    fn set_index_path(this, index_path: IndexPath) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexPath:\0")), index_path.raw());
     }
 
     fn represented_element_category(this) -> CollectionElementCategory {
@@ -138,6 +157,8 @@ struct CollectionView {
 impl CollectionView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionView { return CollectionView { _obj: ptr }; }
+
 }
 
 // `NSNib` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -147,6 +168,8 @@ struct Nib {
 
 impl Nib {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Nib { return Nib { _obj: ptr }; }
 
 }
 
@@ -158,14 +181,22 @@ struct CollectionViewUpdateItem {
 impl CollectionViewUpdateItem {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn index_path_before_update(this) -> option::Option[*u8] {
+    fn from_raw(ptr: *u8) -> CollectionViewUpdateItem { return CollectionViewUpdateItem { _obj: ptr }; }
+
+    fn index_path_before_update(this) -> option::Option[IndexPath] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexPathBeforeUpdate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[IndexPath]::None;
+        }
+        return option::some(IndexPath::from_raw(obj));
     }
 
-    fn index_path_after_update(this) -> option::Option[*u8] {
+    fn index_path_after_update(this) -> option::Option[IndexPath] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexPathAfterUpdate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[IndexPath]::None;
+        }
+        return option::some(IndexPath::from_raw(obj));
     }
 
     fn update_action(this) -> CollectionUpdateAction {
@@ -182,6 +213,8 @@ struct CollectionViewLayoutInvalidationContext {
 impl CollectionViewLayoutInvalidationContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionViewLayoutInvalidationContext { return CollectionViewLayoutInvalidationContext { _obj: ptr }; }
+
     // SKIPPED `invalidateItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `invalidateSupplementaryElementsOfKind:atIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `invalidateDecorationElementsOfKind:atIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
@@ -196,10 +229,22 @@ impl CollectionViewLayoutInvalidationContext {
     // SKIPPED `invalidatedItemIndexPaths`: return `NSSet<NSIndexPath *> * _Nullable` — generic collection
     // SKIPPED `invalidatedSupplementaryIndexPaths`: return `NSDictionary<NSCollectionViewSupplementaryElementKind,NSSet<NSIndexPath *> *> * _Nullable` — NSDictionary value `NSSet<NSIndexPath *> *` not modelled (NSString / NSNumber only)
     // SKIPPED `invalidatedDecorationIndexPaths`: return `NSDictionary<NSCollectionViewDecorationElementKind,NSSet<NSIndexPath *> *> * _Nullable` — NSDictionary value `NSSet<NSIndexPath *> *` not modelled (NSString / NSNumber only)
-    // SKIPPED `contentOffsetAdjustment`: return `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `setContentOffsetAdjustment:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `contentSizeAdjustment`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentSizeAdjustment:`: param `NSSize` — unmapped type `NSSize`
+    fn content_offset_adjustment(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("contentOffsetAdjustment\0")));
+    }
+
+    fn set_content_offset_adjustment(this, content_offset_adjustment: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setContentOffsetAdjustment:\0")), content_offset_adjustment);
+    }
+
+    fn content_size_adjustment(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentSizeAdjustment\0")));
+    }
+
+    fn set_content_size_adjustment(this, content_size_adjustment: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentSizeAdjustment:\0")), content_size_adjustment);
+    }
+
 }
 
 // `NSCollectionViewLayout` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -210,78 +255,107 @@ struct CollectionViewLayout {
 impl CollectionViewLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionViewLayout { return CollectionViewLayout { _obj: ptr }; }
+
     fn invalidate_layout(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }
 
-    fn invalidate_layout_with_context(this, context: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutWithContext:\0")), context);
+    fn invalidate_layout_with_context(this, context: CollectionViewLayoutInvalidationContext) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutWithContext:\0")), context.raw());
     }
 
     // SKIPPED `registerClass:forDecorationViewOfKind:`: param `Class _Nullable` — unmapped type `Class`
     // SKIPPED `registerNib:forDecorationViewOfKind:`: (return, arg) shape not yet modelled
-    fn collection_view(this) -> option::Option[*u8] {
+    fn collection_view(this) -> option::Option[CollectionView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("collectionView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionView]::None;
+        }
+        return option::some(CollectionView::from_raw(obj));
     }
 
     fn prepare_layout(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareLayout\0")));
     }
 
-    // SKIPPED `layoutAttributesForElementsInRect:`: param `NSRect` — unmapped type `NSRect`
-    fn layout_attributes_for_item_at_index_path(this, index_path: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), index_path);
-        return bridge::obj_option(obj);
+    // SKIPPED `layoutAttributesForElementsInRect:`: return `NSArray<__kindof NSCollectionViewLayoutAttributes *> * _Nonnull` — generic collection
+    fn layout_attributes_for_item_at_index_path(this, index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
     // SKIPPED `layoutAttributesForSupplementaryViewOfKind:atIndexPath:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutAttributesForDecorationViewOfKind:atIndexPath:`: (return, arg) shape not yet modelled
-    // SKIPPED `layoutAttributesForDropTargetAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    fn layout_attributes_for_inter_item_gap_before_index_path(this, index_path: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForInterItemGapBeforeIndexPath:\0")), index_path);
-        return bridge::obj_option(obj);
+    // SKIPPED `layoutAttributesForDropTargetAtPoint:`: (return, arg) shape not yet modelled
+    fn layout_attributes_for_inter_item_gap_before_index_path(this, index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForInterItemGapBeforeIndexPath:\0")), index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `shouldInvalidateLayoutForBoundsChange:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `invalidationContextForBoundsChange:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `shouldInvalidateLayoutForBoundsChange:`: (return, arg) shape not yet modelled
+    fn invalidation_context_for_bounds_change(this, new_bounds: rt::Rect) -> CollectionViewLayoutInvalidationContext {
+        return CollectionViewLayoutInvalidationContext::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("invalidationContextForBoundsChange:\0")), new_bounds));
+    }
+
     // SKIPPED `shouldInvalidateLayoutForPreferredLayoutAttributes:withOriginalAttributes:`: (return, arg) shape not yet modelled
     // SKIPPED `invalidationContextForPreferredLayoutAttributes:withOriginalAttributes:`: (return, arg) shape not yet modelled
-    // SKIPPED `targetContentOffsetForProposedContentOffset:withScrollingVelocity:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `targetContentOffsetForProposedContentOffset:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `targetContentOffsetForProposedContentOffset:withScrollingVelocity:`: (return, arg) shape not yet modelled
+    fn target_content_offset_for_proposed_content_offset(this, proposed_content_offset: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("targetContentOffsetForProposedContentOffset:\0")), proposed_content_offset);
+    }
+
     // SKIPPED `layoutAttributesClass`: return `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `invalidationContextClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `collectionViewContentSize`: return `NSSize` — unmapped type `NSSize`
+    fn collection_view_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("collectionViewContentSize\0")));
+    }
+
     // SKIPPED `prepareForCollectionViewUpdates:`: param `NSArray<NSCollectionViewUpdateItem *> * _Nonnull` — generic collection
     fn finalize_collection_view_updates(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("finalizeCollectionViewUpdates\0")));
     }
 
-    // SKIPPED `prepareForAnimatedBoundsChange:`: param `NSRect` — unmapped type `NSRect`
+    fn prepare_for_animated_bounds_change(this, old_bounds: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("prepareForAnimatedBoundsChange:\0")), old_bounds);
+    }
+
     fn finalize_animated_bounds_change(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("finalizeAnimatedBoundsChange\0")));
     }
 
-    fn prepare_for_transition_to_layout(this, new_layout: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareForTransitionToLayout:\0")), new_layout);
+    fn prepare_for_transition_to_layout(this, new_layout: CollectionViewLayout) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareForTransitionToLayout:\0")), new_layout.raw());
     }
 
-    fn prepare_for_transition_from_layout(this, old_layout: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareForTransitionFromLayout:\0")), old_layout);
+    fn prepare_for_transition_from_layout(this, old_layout: CollectionViewLayout) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareForTransitionFromLayout:\0")), old_layout.raw());
     }
 
     fn finalize_layout_transition(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("finalizeLayoutTransition\0")));
     }
 
-    fn initial_layout_attributes_for_appearing_item_at_index_path(this, item_index_path: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("initialLayoutAttributesForAppearingItemAtIndexPath:\0")), item_index_path);
-        return bridge::obj_option(obj);
+    fn initial_layout_attributes_for_appearing_item_at_index_path(this, item_index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("initialLayoutAttributesForAppearingItemAtIndexPath:\0")), item_index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    fn final_layout_attributes_for_disappearing_item_at_index_path(this, item_index_path: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("finalLayoutAttributesForDisappearingItemAtIndexPath:\0")), item_index_path);
-        return bridge::obj_option(obj);
+    fn final_layout_attributes_for_disappearing_item_at_index_path(this, item_index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("finalLayoutAttributesForDisappearingItemAtIndexPath:\0")), item_index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
     // SKIPPED `initialLayoutAttributesForAppearingSupplementaryElementOfKind:atIndexPath:`: (return, arg) shape not yet modelled

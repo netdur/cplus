@@ -6,95 +6,29 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSEventModifierFlags` (NS_ENUM)
-enum EventModifierFlags {
-    NSEventModifierFlagCapsLock,
-    NSEventModifierFlagShift,
-    NSEventModifierFlagControl,
-    NSEventModifierFlagOption,
-    NSEventModifierFlagCommand,
-    NSEventModifierFlagNumericPad,
-    NSEventModifierFlagHelp,
-    NSEventModifierFlagFunction,
-    NSEventModifierFlagDeviceIndependentFlagsMask,
-}
+// `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_shift: u64 = 131072 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_control: u64 = 262144 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_option: u64 = 524288 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_command: u64 = 1048576 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_numeric_pad: u64 = 2097152 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_help: u64 = 4194304 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_function: u64 = 8388608 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_device_independent_flags_mask: u64 = 4294901760 as u64;
 
-fn event_modifier_flags_raw(v: EventModifierFlags) -> i64 {
-    return match v {
-        EventModifierFlags::NSEventModifierFlagCapsLock => { 65536 as i64 },
-        EventModifierFlags::NSEventModifierFlagShift => { 131072 as i64 },
-        EventModifierFlags::NSEventModifierFlagControl => { 262144 as i64 },
-        EventModifierFlags::NSEventModifierFlagOption => { 524288 as i64 },
-        EventModifierFlags::NSEventModifierFlagCommand => { 1048576 as i64 },
-        EventModifierFlags::NSEventModifierFlagNumericPad => { 2097152 as i64 },
-        EventModifierFlags::NSEventModifierFlagHelp => { 4194304 as i64 },
-        EventModifierFlags::NSEventModifierFlagFunction => { 8388608 as i64 },
-        EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask => { 4294901760 as i64 },
-    };
-}
+// `NSTouchPhase` (NS_OPTIONS) — bitfield; combine with `|`.
+const touch_phase_began: u64 = 1 as u64;
+const touch_phase_moved: u64 = 2 as u64;
+const touch_phase_stationary: u64 = 4 as u64;
+const touch_phase_ended: u64 = 8 as u64;
+const touch_phase_cancelled: u64 = 16 as u64;
+const touch_phase_touching: u64 = 7 as u64;
+const touch_phase_any: u64 = 9223372036854775807 as u64;
 
-fn event_modifier_flags_from_raw(raw: i64) -> EventModifierFlags {
-    if raw == (131072 as i64) { return EventModifierFlags::NSEventModifierFlagShift; }
-    if raw == (262144 as i64) { return EventModifierFlags::NSEventModifierFlagControl; }
-    if raw == (524288 as i64) { return EventModifierFlags::NSEventModifierFlagOption; }
-    if raw == (1048576 as i64) { return EventModifierFlags::NSEventModifierFlagCommand; }
-    if raw == (2097152 as i64) { return EventModifierFlags::NSEventModifierFlagNumericPad; }
-    if raw == (4194304 as i64) { return EventModifierFlags::NSEventModifierFlagHelp; }
-    if raw == (8388608 as i64) { return EventModifierFlags::NSEventModifierFlagFunction; }
-    if raw == (4294901760 as i64) { return EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask; }
-    return EventModifierFlags::NSEventModifierFlagCapsLock;
-}
-
-// `NSTouchPhase` (NS_ENUM)
-enum TouchPhase {
-    Began,
-    Moved,
-    Stationary,
-    Ended,
-    Cancelled,
-    Touching,
-    Any,
-}
-
-fn touch_phase_raw(v: TouchPhase) -> i64 {
-    return match v {
-        TouchPhase::Began => { 1 as i64 },
-        TouchPhase::Moved => { 2 as i64 },
-        TouchPhase::Stationary => { 4 as i64 },
-        TouchPhase::Ended => { 8 as i64 },
-        TouchPhase::Cancelled => { 16 as i64 },
-        TouchPhase::Touching => { 7 as i64 },
-        TouchPhase::Any => { 9223372036854775807 as i64 },
-    };
-}
-
-fn touch_phase_from_raw(raw: i64) -> TouchPhase {
-    if raw == (2 as i64) { return TouchPhase::Moved; }
-    if raw == (4 as i64) { return TouchPhase::Stationary; }
-    if raw == (8 as i64) { return TouchPhase::Ended; }
-    if raw == (16 as i64) { return TouchPhase::Cancelled; }
-    if raw == (7 as i64) { return TouchPhase::Touching; }
-    if raw == (9223372036854775807 as i64) { return TouchPhase::Any; }
-    return TouchPhase::Began;
-}
-
-// `NSEventSwipeTrackingOptions` (NS_ENUM)
-enum EventSwipeTrackingOptions {
-    NSEventSwipeTrackingLockDirection,
-    NSEventSwipeTrackingClampGestureAmount,
-}
-
-fn event_swipe_tracking_options_raw(v: EventSwipeTrackingOptions) -> i64 {
-    return match v {
-        EventSwipeTrackingOptions::NSEventSwipeTrackingLockDirection => { 1 as i64 },
-        EventSwipeTrackingOptions::NSEventSwipeTrackingClampGestureAmount => { 2 as i64 },
-    };
-}
-
-fn event_swipe_tracking_options_from_raw(raw: i64) -> EventSwipeTrackingOptions {
-    if raw == (2 as i64) { return EventSwipeTrackingOptions::NSEventSwipeTrackingClampGestureAmount; }
-    return EventSwipeTrackingOptions::NSEventSwipeTrackingLockDirection;
-}
+// `NSEventSwipeTrackingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_swipe_tracking_options_n_s_event_swipe_tracking_lock_direction: u64 = 1 as u64;
+const event_swipe_tracking_options_n_s_event_swipe_tracking_clamp_gesture_amount: u64 = 2 as u64;
 
 // `NSEventType` (NS_ENUM)
 enum EventType {
@@ -213,38 +147,14 @@ fn event_type_from_raw(raw: i64) -> EventType {
     return EventType::LeftMouseDown;
 }
 
-// `NSEventPhase` (NS_ENUM)
-enum EventPhase {
-    None,
-    Began,
-    Stationary,
-    Changed,
-    Ended,
-    Cancelled,
-    MayBegin,
-}
-
-fn event_phase_raw(v: EventPhase) -> i64 {
-    return match v {
-        EventPhase::None => { 0 as i64 },
-        EventPhase::Began => { 1 as i64 },
-        EventPhase::Stationary => { 2 as i64 },
-        EventPhase::Changed => { 4 as i64 },
-        EventPhase::Ended => { 8 as i64 },
-        EventPhase::Cancelled => { 16 as i64 },
-        EventPhase::MayBegin => { 32 as i64 },
-    };
-}
-
-fn event_phase_from_raw(raw: i64) -> EventPhase {
-    if raw == (1 as i64) { return EventPhase::Began; }
-    if raw == (2 as i64) { return EventPhase::Stationary; }
-    if raw == (4 as i64) { return EventPhase::Changed; }
-    if raw == (8 as i64) { return EventPhase::Ended; }
-    if raw == (16 as i64) { return EventPhase::Cancelled; }
-    if raw == (32 as i64) { return EventPhase::MayBegin; }
-    return EventPhase::None;
-}
+// `NSEventPhase` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_phase_none: u64 = 0 as u64;
+const event_phase_began: u64 = 1 as u64;
+const event_phase_stationary: u64 = 2 as u64;
+const event_phase_changed: u64 = 4 as u64;
+const event_phase_ended: u64 = 8 as u64;
+const event_phase_cancelled: u64 = 16 as u64;
+const event_phase_may_begin: u64 = 32 as u64;
 
 // `NSEventSubtype` (NS_ENUM)
 enum EventSubtype {
@@ -288,26 +198,10 @@ fn event_subtype_from_raw(raw: i64) -> EventSubtype {
     return EventSubtype::WindowExposed;
 }
 
-// `NSEventButtonMask` (NS_ENUM)
-enum EventButtonMask {
-    PenTip,
-    PenLowerSide,
-    PenUpperSide,
-}
-
-fn event_button_mask_raw(v: EventButtonMask) -> i64 {
-    return match v {
-        EventButtonMask::PenTip => { 1 as i64 },
-        EventButtonMask::PenLowerSide => { 2 as i64 },
-        EventButtonMask::PenUpperSide => { 4 as i64 },
-    };
-}
-
-fn event_button_mask_from_raw(raw: i64) -> EventButtonMask {
-    if raw == (2 as i64) { return EventButtonMask::PenLowerSide; }
-    if raw == (4 as i64) { return EventButtonMask::PenUpperSide; }
-    return EventButtonMask::PenTip;
-}
+// `NSEventButtonMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_button_mask_pen_tip: u64 = 1 as u64;
+const event_button_mask_pen_lower_side: u64 = 2 as u64;
+const event_button_mask_pen_upper_side: u64 = 4 as u64;
 
 // `NSPointingDeviceType` (NS_ENUM)
 enum PointingDeviceType {
@@ -333,122 +227,42 @@ fn pointing_device_type_from_raw(raw: i64) -> PointingDeviceType {
     return PointingDeviceType::Unknown;
 }
 
-// `NSEventMask` (NS_ENUM)
-enum EventMask {
-    LeftMouseDown,
-    LeftMouseUp,
-    RightMouseDown,
-    RightMouseUp,
-    MouseMoved,
-    LeftMouseDragged,
-    RightMouseDragged,
-    MouseEntered,
-    MouseExited,
-    KeyDown,
-    KeyUp,
-    FlagsChanged,
-    AppKitDefined,
-    SystemDefined,
-    ApplicationDefined,
-    Periodic,
-    CursorUpdate,
-    ScrollWheel,
-    TabletPoint,
-    TabletProximity,
-    OtherMouseDown,
-    OtherMouseUp,
-    OtherMouseDragged,
-    Gesture,
-    Magnify,
-    Swipe,
-    Rotate,
-    BeginGesture,
-    EndGesture,
-    SmartMagnify,
-    Pressure,
-    DirectTouch,
-    ChangeMode,
-    MouseCancelled,
-    Any,
-}
-
-fn event_mask_raw(v: EventMask) -> i64 {
-    return match v {
-        EventMask::LeftMouseDown => { 2 as i64 },
-        EventMask::LeftMouseUp => { 4 as i64 },
-        EventMask::RightMouseDown => { 8 as i64 },
-        EventMask::RightMouseUp => { 16 as i64 },
-        EventMask::MouseMoved => { 32 as i64 },
-        EventMask::LeftMouseDragged => { 64 as i64 },
-        EventMask::RightMouseDragged => { 128 as i64 },
-        EventMask::MouseEntered => { 256 as i64 },
-        EventMask::MouseExited => { 512 as i64 },
-        EventMask::KeyDown => { 1024 as i64 },
-        EventMask::KeyUp => { 2048 as i64 },
-        EventMask::FlagsChanged => { 4096 as i64 },
-        EventMask::AppKitDefined => { 8192 as i64 },
-        EventMask::SystemDefined => { 16384 as i64 },
-        EventMask::ApplicationDefined => { 32768 as i64 },
-        EventMask::Periodic => { 65536 as i64 },
-        EventMask::CursorUpdate => { 131072 as i64 },
-        EventMask::ScrollWheel => { 4194304 as i64 },
-        EventMask::TabletPoint => { 8388608 as i64 },
-        EventMask::TabletProximity => { 16777216 as i64 },
-        EventMask::OtherMouseDown => { 33554432 as i64 },
-        EventMask::OtherMouseUp => { 67108864 as i64 },
-        EventMask::OtherMouseDragged => { 134217728 as i64 },
-        EventMask::Gesture => { 536870912 as i64 },
-        EventMask::Magnify => { 1073741824 as i64 },
-        EventMask::Swipe => { 2147483648 as i64 },
-        EventMask::Rotate => { 262144 as i64 },
-        EventMask::BeginGesture => { 524288 as i64 },
-        EventMask::EndGesture => { 1048576 as i64 },
-        EventMask::SmartMagnify => { 4294967296 as i64 },
-        EventMask::Pressure => { 17179869184 as i64 },
-        EventMask::DirectTouch => { 137438953472 as i64 },
-        EventMask::ChangeMode => { 274877906944 as i64 },
-        EventMask::MouseCancelled => { 1099511627776 as i64 },
-        EventMask::Any => { 9223372036854775807 as i64 },
-    };
-}
-
-fn event_mask_from_raw(raw: i64) -> EventMask {
-    if raw == (4 as i64) { return EventMask::LeftMouseUp; }
-    if raw == (8 as i64) { return EventMask::RightMouseDown; }
-    if raw == (16 as i64) { return EventMask::RightMouseUp; }
-    if raw == (32 as i64) { return EventMask::MouseMoved; }
-    if raw == (64 as i64) { return EventMask::LeftMouseDragged; }
-    if raw == (128 as i64) { return EventMask::RightMouseDragged; }
-    if raw == (256 as i64) { return EventMask::MouseEntered; }
-    if raw == (512 as i64) { return EventMask::MouseExited; }
-    if raw == (1024 as i64) { return EventMask::KeyDown; }
-    if raw == (2048 as i64) { return EventMask::KeyUp; }
-    if raw == (4096 as i64) { return EventMask::FlagsChanged; }
-    if raw == (8192 as i64) { return EventMask::AppKitDefined; }
-    if raw == (16384 as i64) { return EventMask::SystemDefined; }
-    if raw == (32768 as i64) { return EventMask::ApplicationDefined; }
-    if raw == (65536 as i64) { return EventMask::Periodic; }
-    if raw == (131072 as i64) { return EventMask::CursorUpdate; }
-    if raw == (4194304 as i64) { return EventMask::ScrollWheel; }
-    if raw == (8388608 as i64) { return EventMask::TabletPoint; }
-    if raw == (16777216 as i64) { return EventMask::TabletProximity; }
-    if raw == (33554432 as i64) { return EventMask::OtherMouseDown; }
-    if raw == (67108864 as i64) { return EventMask::OtherMouseUp; }
-    if raw == (134217728 as i64) { return EventMask::OtherMouseDragged; }
-    if raw == (536870912 as i64) { return EventMask::Gesture; }
-    if raw == (1073741824 as i64) { return EventMask::Magnify; }
-    if raw == (2147483648 as i64) { return EventMask::Swipe; }
-    if raw == (262144 as i64) { return EventMask::Rotate; }
-    if raw == (524288 as i64) { return EventMask::BeginGesture; }
-    if raw == (1048576 as i64) { return EventMask::EndGesture; }
-    if raw == (4294967296 as i64) { return EventMask::SmartMagnify; }
-    if raw == (17179869184 as i64) { return EventMask::Pressure; }
-    if raw == (137438953472 as i64) { return EventMask::DirectTouch; }
-    if raw == (274877906944 as i64) { return EventMask::ChangeMode; }
-    if raw == (1099511627776 as i64) { return EventMask::MouseCancelled; }
-    if raw == (9223372036854775807 as i64) { return EventMask::Any; }
-    return EventMask::LeftMouseDown;
-}
+// `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_mask_left_mouse_down: u64 = 2 as u64;
+const event_mask_left_mouse_up: u64 = 4 as u64;
+const event_mask_right_mouse_down: u64 = 8 as u64;
+const event_mask_right_mouse_up: u64 = 16 as u64;
+const event_mask_mouse_moved: u64 = 32 as u64;
+const event_mask_left_mouse_dragged: u64 = 64 as u64;
+const event_mask_right_mouse_dragged: u64 = 128 as u64;
+const event_mask_mouse_entered: u64 = 256 as u64;
+const event_mask_mouse_exited: u64 = 512 as u64;
+const event_mask_key_down: u64 = 1024 as u64;
+const event_mask_key_up: u64 = 2048 as u64;
+const event_mask_flags_changed: u64 = 4096 as u64;
+const event_mask_app_kit_defined: u64 = 8192 as u64;
+const event_mask_system_defined: u64 = 16384 as u64;
+const event_mask_application_defined: u64 = 32768 as u64;
+const event_mask_periodic: u64 = 65536 as u64;
+const event_mask_cursor_update: u64 = 131072 as u64;
+const event_mask_scroll_wheel: u64 = 4194304 as u64;
+const event_mask_tablet_point: u64 = 8388608 as u64;
+const event_mask_tablet_proximity: u64 = 16777216 as u64;
+const event_mask_other_mouse_down: u64 = 33554432 as u64;
+const event_mask_other_mouse_up: u64 = 67108864 as u64;
+const event_mask_other_mouse_dragged: u64 = 134217728 as u64;
+const event_mask_gesture: u64 = 536870912 as u64;
+const event_mask_magnify: u64 = 1073741824 as u64;
+const event_mask_swipe: u64 = 2147483648 as u64;
+const event_mask_rotate: u64 = 262144 as u64;
+const event_mask_begin_gesture: u64 = 524288 as u64;
+const event_mask_end_gesture: u64 = 1048576 as u64;
+const event_mask_smart_magnify: u64 = 4294967296 as u64;
+const event_mask_pressure: u64 = 17179869184 as u64;
+const event_mask_direct_touch: u64 = 137438953472 as u64;
+const event_mask_change_mode: u64 = 274877906944 as u64;
+const event_mask_mouse_cancelled: u64 = 1099511627776 as u64;
+const event_mask_any: u64 = 9223372036854775807 as u64;
 
 // `NSPressureBehavior` (NS_ENUM)
 enum PressureBehavior {
@@ -491,6 +305,8 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -500,6 +316,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
 }
 
@@ -511,6 +329,8 @@ struct TrackingArea {
 impl TrackingArea {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TrackingArea { return TrackingArea { _obj: ptr }; }
+
 }
 
 // `NSEvent` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -521,8 +341,10 @@ struct Event {
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn characters_by_applying_modifiers(this, modifiers: EventModifierFlags) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("charactersByApplyingModifiers:\0")), event_modifier_flags_raw(modifiers));
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
+
+    fn characters_by_applying_modifiers(this, modifiers: u64) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("charactersByApplyingModifiers:\0")), modifiers);
         return bridge::to_text_option(ns);
     }
 
@@ -545,10 +367,10 @@ impl Event {
         rt::msg_void(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("stopPeriodicEvents\0")));
     }
 
-    // SKIPPED `mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:`: (return, arg) shape not yet modelled
+    // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `unsigned short` — unmapped type `unsigned short`
+    // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: (return, arg) shape not yet modelled
+    // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `short` — unmapped type `short`
     // SKIPPED `addGlobalMonitorForEventsMatchingMask:handler:`: block method with non-void return
     // SKIPPED `addLocalMonitorForEventsMatchingMask:handler:`: block method with non-void return
     fn remove_monitor(event_monitor: *u8) {
@@ -559,17 +381,20 @@ impl Event {
         return event_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }
 
-    fn modifier_flags(this) -> EventModifierFlags {
-        return event_modifier_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("modifierFlags\0"))));
+    fn modifier_flags(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("modifierFlags\0")));
     }
 
     fn timestamp(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("timestamp\0")));
     }
 
-    fn window(this) -> option::Option[*u8] {
+    fn window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("window\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
     fn window_number(this) -> i64 {
@@ -596,7 +421,10 @@ impl Event {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("pressure\0")));
     }
 
-    // SKIPPED `locationInWindow`: return `NSPoint` — unmapped type `NSPoint`
+    fn location_in_window(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("locationInWindow\0")));
+    }
+
     fn delta_x(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("deltaX\0")));
     }
@@ -621,8 +449,8 @@ impl Event {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("scrollingDeltaY\0")));
     }
 
-    fn momentum_phase(this) -> EventPhase {
-        return event_phase_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("momentumPhase\0"))));
+    fn momentum_phase(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("momentumPhase\0")));
     }
 
     fn is_direction_inverted_from_device(this) -> bool {
@@ -705,11 +533,14 @@ impl Event {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("absoluteZ\0")));
     }
 
-    fn button_mask(this) -> EventButtonMask {
-        return event_button_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("buttonMask\0"))));
+    fn button_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }
 
-    // SKIPPED `tilt`: return `NSPoint` — unmapped type `NSPoint`
+    fn tilt(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("tilt\0")));
+    }
+
     fn tangential_pressure(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("tangentialPressure\0")));
     }
@@ -742,7 +573,10 @@ impl Event {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("pointingDeviceSerialNumber\0")));
     }
 
-    // SKIPPED `uniqueID`: return `unsigned long long` — unmapped type `unsigned long long`
+    fn unique_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("uniqueID\0")));
+    }
+
     fn capability_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("capabilityMask\0")));
     }
@@ -755,8 +589,8 @@ impl Event {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEnteringProximity\0"))) != (0 as i8);
     }
 
-    fn phase(this) -> EventPhase {
-        return event_phase_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("phase\0"))));
+    fn phase(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("phase\0")));
     }
 
     fn stage(this) -> i64 {
@@ -767,8 +601,8 @@ impl Event {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("stageTransition\0")));
     }
 
-    fn associated_events_mask(this) -> EventMask {
-        return event_mask_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("associatedEventsMask\0"))));
+    fn associated_events_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("associatedEventsMask\0")));
     }
 
     fn pressure_behavior(this) -> PressureBehavior {
@@ -779,7 +613,10 @@ impl Event {
         return rt::msg_i8(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("isSwipeTrackingFromScrollEventsEnabled\0"))) != (0 as i8);
     }
 
-    // SKIPPED `mouseLocation`: return `NSPoint` — unmapped type `NSPoint`
+    fn mouse_location() -> rt::Point {
+        return rt::msg_point(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("mouseLocation\0")));
+    }
+
     fn pressed_mouse_buttons() -> u64 {
         return rt::msg_u64(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("pressedMouseButtons\0")));
     }

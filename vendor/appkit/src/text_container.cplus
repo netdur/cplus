@@ -6,6 +6,27 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSWritingDirection` (NS_ENUM)
+enum WritingDirection {
+    Natural,
+    LeftToRight,
+    RightToLeft,
+}
+
+fn writing_direction_raw(v: WritingDirection) -> i64 {
+    return match v {
+        WritingDirection::Natural => { -1 as i64 },
+        WritingDirection::LeftToRight => { 0 as i64 },
+        WritingDirection::RightToLeft => { 1 as i64 },
+    };
+}
+
+fn writing_direction_from_raw(raw: i64) -> WritingDirection {
+    if raw == (0 as i64) { return WritingDirection::LeftToRight; }
+    if raw == (1 as i64) { return WritingDirection::RightToLeft; }
+    return WritingDirection::Natural;
+}
+
 // `NSLineBreakMode` (NS_ENUM)
 enum LineBreakMode {
     NSLineBreakByWordWrapping,
@@ -36,6 +57,57 @@ fn line_break_mode_from_raw(raw: i64) -> LineBreakMode {
     return LineBreakMode::NSLineBreakByWordWrapping;
 }
 
+// `NSLineSweepDirection` (NS_ENUM)
+enum LineSweepDirection {
+    NSLineSweepLeft,
+    NSLineSweepRight,
+    NSLineSweepDown,
+    NSLineSweepUp,
+}
+
+fn line_sweep_direction_raw(v: LineSweepDirection) -> i64 {
+    return match v {
+        LineSweepDirection::NSLineSweepLeft => { 0 as i64 },
+        LineSweepDirection::NSLineSweepRight => { 1 as i64 },
+        LineSweepDirection::NSLineSweepDown => { 2 as i64 },
+        LineSweepDirection::NSLineSweepUp => { 3 as i64 },
+    };
+}
+
+fn line_sweep_direction_from_raw(raw: i64) -> LineSweepDirection {
+    if raw == (1 as i64) { return LineSweepDirection::NSLineSweepRight; }
+    if raw == (2 as i64) { return LineSweepDirection::NSLineSweepDown; }
+    if raw == (3 as i64) { return LineSweepDirection::NSLineSweepUp; }
+    return LineSweepDirection::NSLineSweepLeft;
+}
+
+// `NSLineMovementDirection` (NS_ENUM)
+enum LineMovementDirection {
+    NSLineDoesntMove,
+    NSLineMovesLeft,
+    NSLineMovesRight,
+    NSLineMovesDown,
+    NSLineMovesUp,
+}
+
+fn line_movement_direction_raw(v: LineMovementDirection) -> i64 {
+    return match v {
+        LineMovementDirection::NSLineDoesntMove => { 0 as i64 },
+        LineMovementDirection::NSLineMovesLeft => { 1 as i64 },
+        LineMovementDirection::NSLineMovesRight => { 2 as i64 },
+        LineMovementDirection::NSLineMovesDown => { 3 as i64 },
+        LineMovementDirection::NSLineMovesUp => { 4 as i64 },
+    };
+}
+
+fn line_movement_direction_from_raw(raw: i64) -> LineMovementDirection {
+    if raw == (1 as i64) { return LineMovementDirection::NSLineMovesLeft; }
+    if raw == (2 as i64) { return LineMovementDirection::NSLineMovesRight; }
+    if raw == (3 as i64) { return LineMovementDirection::NSLineMovesDown; }
+    if raw == (4 as i64) { return LineMovementDirection::NSLineMovesUp; }
+    return LineMovementDirection::NSLineDoesntMove;
+}
+
 // `NSTextLayoutManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextLayoutManager {
     opaque _obj: *u8,
@@ -43,6 +115,8 @@ struct TextLayoutManager {
 
 impl TextLayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLayoutManager { return TextLayoutManager { _obj: ptr }; }
 
 }
 
@@ -54,15 +128,23 @@ struct TextContainer {
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithSize:`: param `CGSize` — unmapped type `CGSize`
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
+
+    // SKIPPED `initWithSize:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:`: param `CGRect` — unmapped type `CGRect`
+    // SKIPPED `lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:`: (return, arg) shape not yet modelled
     fn text_layout_manager(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
     }
 
-    // SKIPPED `size`: return `CGSize` — unmapped type `CGSize`
-    // SKIPPED `setSize:`: param `CGSize` — unmapped type `CGSize`
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
+    }
+
+    fn set_size(this, size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setSize:\0")), size);
+    }
+
     fn line_break_mode(this) -> LineBreakMode {
         return line_break_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakMode\0"))));
     }
@@ -125,10 +207,16 @@ impl TextContainer {
     }
 
     // SKIPPED `initWithContainerSize:`: extra init variant (one `new` per type)
-    // SKIPPED `lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `containsPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `containerSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContainerSize:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
+    // SKIPPED `containsPoint:`: (return, arg) shape not yet modelled
+    fn container_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("containerSize\0")));
+    }
+
+    fn set_container_size(this, container_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContainerSize:\0")), container_size);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -141,6 +229,8 @@ struct BezierPath {
 
 impl BezierPath {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BezierPath { return BezierPath { _obj: ptr }; }
 
 }
 

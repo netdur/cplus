@@ -6,44 +6,16 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSEventModifierFlags` (NS_ENUM)
-enum EventModifierFlags {
-    NSEventModifierFlagCapsLock,
-    NSEventModifierFlagShift,
-    NSEventModifierFlagControl,
-    NSEventModifierFlagOption,
-    NSEventModifierFlagCommand,
-    NSEventModifierFlagNumericPad,
-    NSEventModifierFlagHelp,
-    NSEventModifierFlagFunction,
-    NSEventModifierFlagDeviceIndependentFlagsMask,
-}
-
-fn event_modifier_flags_raw(v: EventModifierFlags) -> i64 {
-    return match v {
-        EventModifierFlags::NSEventModifierFlagCapsLock => { 65536 as i64 },
-        EventModifierFlags::NSEventModifierFlagShift => { 131072 as i64 },
-        EventModifierFlags::NSEventModifierFlagControl => { 262144 as i64 },
-        EventModifierFlags::NSEventModifierFlagOption => { 524288 as i64 },
-        EventModifierFlags::NSEventModifierFlagCommand => { 1048576 as i64 },
-        EventModifierFlags::NSEventModifierFlagNumericPad => { 2097152 as i64 },
-        EventModifierFlags::NSEventModifierFlagHelp => { 4194304 as i64 },
-        EventModifierFlags::NSEventModifierFlagFunction => { 8388608 as i64 },
-        EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask => { 4294901760 as i64 },
-    };
-}
-
-fn event_modifier_flags_from_raw(raw: i64) -> EventModifierFlags {
-    if raw == (131072 as i64) { return EventModifierFlags::NSEventModifierFlagShift; }
-    if raw == (262144 as i64) { return EventModifierFlags::NSEventModifierFlagControl; }
-    if raw == (524288 as i64) { return EventModifierFlags::NSEventModifierFlagOption; }
-    if raw == (1048576 as i64) { return EventModifierFlags::NSEventModifierFlagCommand; }
-    if raw == (2097152 as i64) { return EventModifierFlags::NSEventModifierFlagNumericPad; }
-    if raw == (4194304 as i64) { return EventModifierFlags::NSEventModifierFlagHelp; }
-    if raw == (8388608 as i64) { return EventModifierFlags::NSEventModifierFlagFunction; }
-    if raw == (4294901760 as i64) { return EventModifierFlags::NSEventModifierFlagDeviceIndependentFlagsMask; }
-    return EventModifierFlags::NSEventModifierFlagCapsLock;
-}
+// `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_shift: u64 = 131072 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_control: u64 = 262144 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_option: u64 = 524288 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_command: u64 = 1048576 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_numeric_pad: u64 = 2097152 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_help: u64 = 4194304 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_function: u64 = 8388608 as u64;
+const event_modifier_flags_n_s_event_modifier_flag_device_independent_flags_mask: u64 = 4294901760 as u64;
 
 // `NSMenu` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Menu {
@@ -52,6 +24,8 @@ struct Menu {
 
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
 
 }
 
@@ -63,6 +37,8 @@ struct MenuItemBadge {
 impl MenuItemBadge {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItemBadge { return MenuItemBadge { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -72,6 +48,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -83,6 +61,8 @@ struct AttributedString {
 impl AttributedString {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -92,6 +72,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
     fn enclosing_menu_item(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("enclosingMenuItem\0")));
@@ -106,6 +88,8 @@ struct MenuItem {
 
 impl MenuItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MenuItem { return MenuItem { _obj: ptr }; }
 
     fn separator_item() -> MenuItem {
         return MenuItem { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("separatorItem\0")))) };
@@ -126,26 +110,32 @@ impl MenuItem {
     }
 
     // SKIPPED `writingToolsItems`: return `API_AVAILABLE NSArray<NSMenuItem *> *` — generic collection
-    fn menu(this) -> option::Option[*u8] {
+    fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
 
-    fn set_menu(this, menu: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu);
+    fn set_menu(this, menu: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
     }
 
     fn has_submenu(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasSubmenu\0"))) != (0 as i8);
     }
 
-    fn submenu(this) -> option::Option[*u8] {
+    fn submenu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("submenu\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
 
-    fn set_submenu(this, submenu: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu);
+    fn set_submenu(this, submenu: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu.raw());
     }
 
     fn parent_item(this) -> *u8 {
@@ -161,13 +151,16 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn attributed_title(this) -> option::Option[*u8] {
+    fn attributed_title(this) -> option::Option[AttributedString] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributedTitle\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[AttributedString]::None;
+        }
+        return option::some(AttributedString::from_raw(obj));
     }
 
-    fn set_attributed_title(this, attributed_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title);
+    fn set_attributed_title(this, attributed_title: AttributedString) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title.raw());
     }
 
     fn subtitle(this) -> *u8 {
@@ -195,8 +188,8 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeyEquivalent:\0")), bridge::nsstring(key_equivalent));
     }
 
-    fn key_equivalent_modifier_mask(this) -> EventModifierFlags {
-        return event_modifier_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0"))));
+    fn key_equivalent_modifier_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0")));
     }
 
     // SKIPPED `setKeyEquivalentModifierMask:`: (return, arg) shape not yet modelled
@@ -229,40 +222,46 @@ impl MenuItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsAutomaticKeyEquivalentMirroring:\0")), allows_automatic_key_equivalent_mirroring as i8);
     }
 
-    fn image(this) -> option::Option[*u8] {
+    fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
     // SKIPPED `state`: return `NSControlStateValue` — unmapped type `NSControlStateValue`
     // SKIPPED `setState:`: param `NSControlStateValue` — unmapped type `NSControlStateValue`
-    fn on_state_image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("onStateImage\0")));
+    fn on_state_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("onStateImage\0"))));
     }
 
-    fn set_on_state_image(this, on_state_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOnStateImage:\0")), on_state_image);
+    fn set_on_state_image(this, on_state_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOnStateImage:\0")), on_state_image.raw());
     }
 
-    fn off_state_image(this) -> option::Option[*u8] {
+    fn off_state_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("offStateImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_off_state_image(this, off_state_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOffStateImage:\0")), off_state_image);
+    fn set_off_state_image(this, off_state_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOffStateImage:\0")), off_state_image.raw());
     }
 
-    fn mixed_state_image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("mixedStateImage\0")));
+    fn mixed_state_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("mixedStateImage\0"))));
     }
 
-    fn set_mixed_state_image(this, mixed_state_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMixedStateImage:\0")), mixed_state_image);
+    fn set_mixed_state_image(this, mixed_state_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMixedStateImage:\0")), mixed_state_image.raw());
     }
 
     fn is_enabled(this) -> bool {
@@ -369,5 +368,17 @@ impl MenuItem {
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSMenuItem` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MenuItemProtocol {
+    opaque _obj: *u8,
+}
+
+impl MenuItemProtocol {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MenuItemProtocol { return MenuItemProtocol { _obj: ptr }; }
+
 }
 

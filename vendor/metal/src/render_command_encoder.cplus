@@ -5,7 +5,198 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
+
+// `MTLWinding` (NS_ENUM)
+enum Winding {
+    Clockwise,
+    CounterClockwise,
+}
+
+fn winding_raw(v: Winding) -> i64 {
+    return match v {
+        Winding::Clockwise => { 0 as i64 },
+        Winding::CounterClockwise => { 1 as i64 },
+    };
+}
+
+fn winding_from_raw(raw: i64) -> Winding {
+    if raw == (1 as i64) { return Winding::CounterClockwise; }
+    return Winding::Clockwise;
+}
+
+// `MTLCullMode` (NS_ENUM)
+enum CullMode {
+    None,
+    Front,
+    Back,
+}
+
+fn cull_mode_raw(v: CullMode) -> i64 {
+    return match v {
+        CullMode::None => { 0 as i64 },
+        CullMode::Front => { 1 as i64 },
+        CullMode::Back => { 2 as i64 },
+    };
+}
+
+fn cull_mode_from_raw(raw: i64) -> CullMode {
+    if raw == (1 as i64) { return CullMode::Front; }
+    if raw == (2 as i64) { return CullMode::Back; }
+    return CullMode::None;
+}
+
+// `MTLDepthClipMode` (NS_ENUM)
+enum DepthClipMode {
+    Clip,
+    Clamp,
+}
+
+fn depth_clip_mode_raw(v: DepthClipMode) -> i64 {
+    return match v {
+        DepthClipMode::Clip => { 0 as i64 },
+        DepthClipMode::Clamp => { 1 as i64 },
+    };
+}
+
+fn depth_clip_mode_from_raw(raw: i64) -> DepthClipMode {
+    if raw == (1 as i64) { return DepthClipMode::Clamp; }
+    return DepthClipMode::Clip;
+}
+
+// `MTLTriangleFillMode` (NS_ENUM)
+enum TriangleFillMode {
+    Fill,
+    Lines,
+}
+
+fn triangle_fill_mode_raw(v: TriangleFillMode) -> i64 {
+    return match v {
+        TriangleFillMode::Fill => { 0 as i64 },
+        TriangleFillMode::Lines => { 1 as i64 },
+    };
+}
+
+fn triangle_fill_mode_from_raw(raw: i64) -> TriangleFillMode {
+    if raw == (1 as i64) { return TriangleFillMode::Lines; }
+    return TriangleFillMode::Fill;
+}
+
+// `MTLVisibilityResultMode` (NS_ENUM)
+enum VisibilityResultMode {
+    Disabled,
+    Boolean,
+    Counting,
+}
+
+fn visibility_result_mode_raw(v: VisibilityResultMode) -> i64 {
+    return match v {
+        VisibilityResultMode::Disabled => { 0 as i64 },
+        VisibilityResultMode::Boolean => { 1 as i64 },
+        VisibilityResultMode::Counting => { 2 as i64 },
+    };
+}
+
+fn visibility_result_mode_from_raw(raw: i64) -> VisibilityResultMode {
+    if raw == (1 as i64) { return VisibilityResultMode::Boolean; }
+    if raw == (2 as i64) { return VisibilityResultMode::Counting; }
+    return VisibilityResultMode::Disabled;
+}
+
+// `MTLStoreAction` (NS_ENUM)
+enum StoreAction {
+    DontCare,
+    Store,
+    MultisampleResolve,
+    StoreAndMultisampleResolve,
+    Unknown,
+    CustomSampleDepthStore,
+}
+
+fn store_action_raw(v: StoreAction) -> i64 {
+    return match v {
+        StoreAction::DontCare => { 0 as i64 },
+        StoreAction::Store => { 1 as i64 },
+        StoreAction::MultisampleResolve => { 2 as i64 },
+        StoreAction::StoreAndMultisampleResolve => { 3 as i64 },
+        StoreAction::Unknown => { 4 as i64 },
+        StoreAction::CustomSampleDepthStore => { 5 as i64 },
+    };
+}
+
+fn store_action_from_raw(raw: i64) -> StoreAction {
+    if raw == (1 as i64) { return StoreAction::Store; }
+    if raw == (2 as i64) { return StoreAction::MultisampleResolve; }
+    if raw == (3 as i64) { return StoreAction::StoreAndMultisampleResolve; }
+    if raw == (4 as i64) { return StoreAction::Unknown; }
+    if raw == (5 as i64) { return StoreAction::CustomSampleDepthStore; }
+    return StoreAction::DontCare;
+}
+
+// `MTLStoreActionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const store_action_options_m_t_l_store_action_option_none: u64 = 0 as u64;
+const store_action_options_m_t_l_store_action_option_custom_sample_positions: u64 = 1 as u64;
+
+// `MTLPrimitiveType` (NS_ENUM)
+enum PrimitiveType {
+    Point,
+    Line,
+    LineStrip,
+    Triangle,
+    TriangleStrip,
+}
+
+fn primitive_type_raw(v: PrimitiveType) -> i64 {
+    return match v {
+        PrimitiveType::Point => { 0 as i64 },
+        PrimitiveType::Line => { 1 as i64 },
+        PrimitiveType::LineStrip => { 2 as i64 },
+        PrimitiveType::Triangle => { 3 as i64 },
+        PrimitiveType::TriangleStrip => { 4 as i64 },
+    };
+}
+
+fn primitive_type_from_raw(raw: i64) -> PrimitiveType {
+    if raw == (1 as i64) { return PrimitiveType::Line; }
+    if raw == (2 as i64) { return PrimitiveType::LineStrip; }
+    if raw == (3 as i64) { return PrimitiveType::Triangle; }
+    if raw == (4 as i64) { return PrimitiveType::TriangleStrip; }
+    return PrimitiveType::Point;
+}
+
+// `MTLIndexType` (NS_ENUM)
+enum IndexType {
+    UInt16,
+    UInt32,
+}
+
+fn index_type_raw(v: IndexType) -> i64 {
+    return match v {
+        IndexType::UInt16 => { 0 as i64 },
+        IndexType::UInt32 => { 1 as i64 },
+    };
+}
+
+fn index_type_from_raw(raw: i64) -> IndexType {
+    if raw == (1 as i64) { return IndexType::UInt32; }
+    return IndexType::UInt16;
+}
+
+// `MTLRenderStages` (NS_OPTIONS) — bitfield; combine with `|`.
+const render_stages_m_t_l_render_stage_vertex: u64 = 1 as u64;
+const render_stages_m_t_l_render_stage_fragment: u64 = 2 as u64;
+const render_stages_m_t_l_render_stage_tile: u64 = 4 as u64;
+const render_stages_m_t_l_render_stage_object: u64 = 8 as u64;
+const render_stages_m_t_l_render_stage_mesh: u64 = 16 as u64;
+
+// `MTLResourceUsage` (NS_OPTIONS) — bitfield; combine with `|`.
+const resource_usage_read: u64 = 1 as u64;
+const resource_usage_write: u64 = 2 as u64;
+const resource_usage_sample: u64 = 4 as u64;
+
+// `MTLBarrierScope` (NS_OPTIONS) — bitfield; combine with `|`.
+const barrier_scope_buffers: u64 = 1 as u64;
+const barrier_scope_textures: u64 = 2 as u64;
+const barrier_scope_render_targets: u64 = 4 as u64;
 
 // `MTLLogicalToPhysicalColorAttachmentMap` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct LogicalToPhysicalColorAttachmentMap {
@@ -19,214 +210,257 @@ impl LogicalToPhysicalColorAttachmentMap {
 
 }
 
-// `MTLRenderCommandEncoder` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `setRenderPipelineState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffer:offset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffers:offsets:attributeStrides:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBufferOffset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBytes:length:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexVisibleFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexVisibleFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexIntersectionFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexIntersectionFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexAccelerationStructure:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setViewport:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setViewports:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFrontFacingWinding:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexAmplificationCount:viewMappings:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setCullMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthClipMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthBias:slopeScale:clamp:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthTestMinBound:maxBound:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setScissorRect:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setScissorRects:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTriangleFillMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentVisibleFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentVisibleFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentIntersectionFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentIntersectionFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentAccelerationStructure:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBlendColorRed:green:blue:alpha:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthStencilState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStencilReferenceValue:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStencilFrontReferenceValue:backReferenceValue:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVisibilityResultMode:offset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setColorStoreAction:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthStoreAction:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStencilStoreAction:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setColorStoreActionOptions:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthStoreActionOptions:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStencilStoreActionOptions:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectThreadgroupMemoryLength:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawMeshThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPrimitives:vertexStart:vertexCount:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPrimitives:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPrimitives:indexType:indexBuffer:indexBufferOffset:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `updateFence:afterStages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `waitForFence:beforeStages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTessellationFactorBuffer:offset:instanceStride:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTessellationFactorScale:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPatches:patchIndexBuffer:patchIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPatches:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileVisibleFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileVisibleFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileIntersectionFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileIntersectionFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTileAccelerationStructure:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `dispatchThreadsPerTile:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setThreadgroupMemoryLength:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResource:usage:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResources:count:usage:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResource:usage:stages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResources:count:usage:stages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeap:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeaps:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeap:stages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeaps:count:stages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `executeCommandsInBuffer:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `executeCommandsInBuffer:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `memoryBarrierWithScope:afterStages:beforeStages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `memoryBarrierWithResources:count:afterStages:beforeStages:`: arg shape (only <=5 object args modelled)
-// SKIPPED `sampleCountersInBuffer:atSampleIndex:withBarrier:`: arg shape (only <=5 object args modelled)
-fn RenderCommandEncoder_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn RenderCommandEncoder_noop_v_0(user: *u8) { return; }
-fn RenderCommandEncoder_noop_v_1(user: *u8, a0: *u8) { return; }
-
-struct RenderCommandEncoder {
-    texture_barrier: fn(*u8),
-    set_color_attachment_map: fn(*u8, *u8),
-    tile_width: fn(*u8) -> u64,
-    tile_height: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
 }
 
-fn RenderCommandEncoder_new(user: *u8) -> RenderCommandEncoder {
-    return RenderCommandEncoder { texture_barrier: RenderCommandEncoder_noop_v_0, set_color_attachment_map: RenderCommandEncoder_noop_v_1, tile_width: RenderCommandEncoder_noop_u64_0, tile_height: RenderCommandEncoder_noop_u64_0, user: user };
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Function {
+    opaque _obj: *u8,
+}
+
+impl Function {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Function { return Function { _obj: ptr }; }
+
+}
+
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
+}
+
+impl Buffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
+
+}
+
+// `MTLSamplerState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct SamplerState {
+    opaque _obj: *u8,
+}
+
+impl SamplerState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SamplerState { return SamplerState { _obj: ptr }; }
+
+}
+
+// `MTLDepthStencilState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct DepthStencilState {
+    opaque _obj: *u8,
+}
+
+impl DepthStencilState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DepthStencilState { return DepthStencilState { _obj: ptr }; }
+
+}
+
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Texture {
+    opaque _obj: *u8,
+}
+
+impl Texture {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+}
+
+// `MTLRenderPipelineState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct RenderPipelineState {
+    opaque _obj: *u8,
+}
+
+impl RenderPipelineState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderPipelineState { return RenderPipelineState { _obj: ptr }; }
+
+}
+
+// `MTLRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct RenderCommandEncoder {
+    opaque _obj: *u8,
 }
 
 impl RenderCommandEncoder {
-    fn set_texture_barrier(ref this, handler: fn(*u8)) {
-        this.texture_barrier = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderCommandEncoder { return RenderCommandEncoder { _obj: ptr }; }
+
+    fn set_render_pipeline_state(this, pipeline_state: RenderPipelineState) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRenderPipelineState:\0")), pipeline_state.raw());
     }
-    fn set_set_color_attachment_map(ref this, handler: fn(*u8, *u8)) {
-        this.set_color_attachment_map = handler;
-        return;
+
+    // SKIPPED `setVertexBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBufferOffset:atIndex:`: method `set_vertex_buffer_offset_at_index` already defined
+    // SKIPPED `setVertexBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBuffer:offset:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBuffers:offsets:attributeStrides:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBufferOffset:attributeStride:atIndex:`: method `set_vertex_buffer_offset_attribute_stride_at_index` already defined
+    // SKIPPED `setVertexBytes:length:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexVisibleFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexVisibleFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexIntersectionFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexIntersectionFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexAccelerationStructure:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setViewport:`: param `MTLViewport` — unmapped type `MTLViewport`
+    // SKIPPED `setViewports:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFrontFacingWinding:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexAmplificationCount:viewMappings:`: (return, arg) shape not yet modelled
+    // SKIPPED `setCullMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthClipMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthBias:slopeScale:clamp:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthTestMinBound:maxBound:`: (return, arg) shape not yet modelled
+    // SKIPPED `setScissorRect:`: param `MTLScissorRect` — unmapped type `MTLScissorRect`
+    // SKIPPED `setScissorRects:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTriangleFillMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentBufferOffset:atIndex:`: method `set_fragment_buffer_offset_at_index` already defined
+    // SKIPPED `setFragmentBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentVisibleFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentVisibleFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentIntersectionFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentIntersectionFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentAccelerationStructure:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBlendColorRed:green:blue:alpha:`: (return, arg) shape not yet modelled
+    fn set_depth_stencil_state(this, depth_stencil_state: DepthStencilState) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthStencilState:\0")), depth_stencil_state.raw());
     }
-    fn set_tile_width(ref this, handler: fn(*u8) -> u64) {
-        this.tile_width = handler;
-        return;
+
+    fn set_stencil_reference_value(this, reference_value: u32) {
+        rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setStencilReferenceValue:\0")), reference_value);
     }
-    fn set_tile_height(ref this, handler: fn(*u8) -> u64) {
-        this.tile_height = handler;
-        return;
+
+    // SKIPPED `setStencilFrontReferenceValue:backReferenceValue:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVisibilityResultMode:offset:`: (return, arg) shape not yet modelled
+    // SKIPPED `setColorStoreAction:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthStoreAction:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStencilStoreAction:`: (return, arg) shape not yet modelled
+    // SKIPPED `setColorStoreActionOptions:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthStoreActionOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStencilStoreActionOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectBufferOffset:atIndex:`: method `set_object_buffer_offset_at_index` already defined
+    // SKIPPED `setObjectBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectThreadgroupMemoryLength:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshBufferOffset:atIndex:`: method `set_mesh_buffer_offset_at_index` already defined
+    // SKIPPED `setMeshBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `drawMeshThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPrimitives:vertexStart:vertexCount:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPrimitives:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPrimitives:indexType:indexBuffer:indexBufferOffset:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    fn texture_barrier(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("textureBarrier\0")));
     }
-}
 
-fn RenderCommandEncoder_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn RenderCommandEncoder_texture_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *RenderCommandEncoder = { synth::get_associated(self_obj, RenderCommandEncoder_key()) as *RenderCommandEncoder };
-    let f: fn(*u8) = { (*c).texture_barrier };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn RenderCommandEncoder_set_color_attachment_map_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *RenderCommandEncoder = { synth::get_associated(self_obj, RenderCommandEncoder_key()) as *RenderCommandEncoder };
-    let f: fn(*u8, *u8) = { (*c).set_color_attachment_map };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn RenderCommandEncoder_tile_width_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *RenderCommandEncoder = { synth::get_associated(self_obj, RenderCommandEncoder_key()) as *RenderCommandEncoder };
-    let f: fn(*u8) -> u64 = { (*c).tile_width };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn RenderCommandEncoder_tile_height_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *RenderCommandEncoder = { synth::get_associated(self_obj, RenderCommandEncoder_key()) as *RenderCommandEncoder };
-    let f: fn(*u8) -> u64 = { (*c).tile_height };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_RenderCommandEncoder(ctx: *RenderCommandEncoder) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_RenderCommandEncoder\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_texture_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("textureBarrier\0")), RenderCommandEncoder_texture_barrier_imp, #str_ptr("v@:\0"));
-        let add_set_color_attachment_map: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setColorAttachmentMap:\0")), RenderCommandEncoder_set_color_attachment_map_imp, #str_ptr("v@:@\0"));
-        let add_tile_width: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("tileWidth\0")), RenderCommandEncoder_tile_width_imp, #str_ptr("Q@:\0"));
-        let add_tile_height: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("tileHeight\0")), RenderCommandEncoder_tile_height_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `updateFence:afterStages:`: (return, arg) shape not yet modelled
+    // SKIPPED `waitForFence:beforeStages:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTessellationFactorBuffer:offset:instanceStride:`: (return, arg) shape not yet modelled
+    fn set_tessellation_factor_scale(this, scale: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setTessellationFactorScale:\0")), scale);
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, RenderCommandEncoder_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPatches:patchIndexBuffer:patchIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPatches:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileBufferOffset:atIndex:`: method `set_tile_buffer_offset_at_index` already defined
+    // SKIPPED `setTileBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileVisibleFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileVisibleFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileIntersectionFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileIntersectionFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTileAccelerationStructure:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `dispatchThreadsPerTile:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `setThreadgroupMemoryLength:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `useResource:usage:`: (return, arg) shape not yet modelled
+    // SKIPPED `useResources:count:usage:`: (return, arg) shape not yet modelled
+    // SKIPPED `useResource:usage:stages:`: (return, arg) shape not yet modelled
+    // SKIPPED `useResources:count:usage:stages:`: (return, arg) shape not yet modelled
+    fn use_heap(this, heap: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("useHeap:\0")), heap);
+    }
+
+    // SKIPPED `useHeaps:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `useHeap:stages:`: (return, arg) shape not yet modelled
+    // SKIPPED `useHeaps:count:stages:`: (return, arg) shape not yet modelled
+    // SKIPPED `executeCommandsInBuffer:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `executeCommandsInBuffer:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `memoryBarrierWithScope:afterStages:beforeStages:`: (return, arg) shape not yet modelled
+    // SKIPPED `memoryBarrierWithResources:count:afterStages:beforeStages:`: (return, arg) shape not yet modelled
+    // SKIPPED `sampleCountersInBuffer:atSampleIndex:withBarrier:`: (return, arg) shape not yet modelled
+    fn set_color_attachment_map(this, mapping: LogicalToPhysicalColorAttachmentMap) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorAttachmentMap:\0")), mapping.raw());
+    }
+
+    fn tile_width(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("tileWidth\0")));
+    }
+
+    fn tile_height(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("tileHeight\0")));
+    }
+
 }
 

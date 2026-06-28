@@ -96,10 +96,24 @@ impl MTL4RenderPassDescriptor {
     }
 
     // SKIPPED `setRenderTargetHeight:`: (return, arg) shape not yet modelled
-    // SKIPPED `rasterizationRateMap`: return `id<MTLRasterizationRateMap> _Nullable` — generic collection
-    // SKIPPED `setRasterizationRateMap:`: param `id<MTLRasterizationRateMap> _Nullable` — generic collection
-    // SKIPPED `visibilityResultBuffer`: return `id<MTLBuffer> _Nullable` — generic collection
-    // SKIPPED `setVisibilityResultBuffer:`: param `id<MTLBuffer> _Nullable` — generic collection
+    fn rasterization_rate_map(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rasterizationRateMap\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_rasterization_rate_map(this, rasterization_rate_map: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRasterizationRateMap:\0")), rasterization_rate_map);
+    }
+
+    fn visibility_result_buffer(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("visibilityResultBuffer\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_visibility_result_buffer(this, visibility_result_buffer: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVisibilityResultBuffer:\0")), visibility_result_buffer);
+    }
+
     fn visibility_result_type(this) -> VisibilityResultType {
         return visibility_result_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("visibilityResultType\0"))));
     }

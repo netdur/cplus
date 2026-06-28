@@ -14,6 +14,8 @@ struct CollectionViewTransitionLayout {
 impl CollectionViewTransitionLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionViewTransitionLayout { return CollectionViewTransitionLayout { _obj: ptr }; }
+
     // SKIPPED `initWithCurrentLayout:nextLayout:`: init arg shape not yet modelled
     // SKIPPED `updateValue:forAnimatedKey:`: (return, arg) shape not yet modelled
     // SKIPPED `valueForAnimatedKey:`: (return, arg) shape not yet modelled

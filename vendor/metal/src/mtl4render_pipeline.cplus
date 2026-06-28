@@ -761,8 +761,8 @@ impl MTL4RenderPipelineColorAttachmentDescriptorArray {
 
     fn from_raw(ptr: *u8) -> MTL4RenderPipelineColorAttachmentDescriptorArray { return MTL4RenderPipelineColorAttachmentDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
+    fn object_at_indexed_subscript(this, attachment_index: u64) -> MTL4RenderPipelineColorAttachmentDescriptor {
+        return MTL4RenderPipelineColorAttachmentDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -824,31 +824,40 @@ impl MTL4RenderPipelineDescriptor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    fn vertex_function_descriptor(this) -> option::Option[*u8] {
+    fn vertex_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_vertex_function_descriptor(this, vertex_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexFunctionDescriptor:\0")), vertex_function_descriptor);
+    fn set_vertex_function_descriptor(this, vertex_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexFunctionDescriptor:\0")), vertex_function_descriptor.raw());
     }
 
-    fn fragment_function_descriptor(this) -> option::Option[*u8] {
+    fn fragment_function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentFunctionDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[MTL4FunctionDescriptor]::None;
+        }
+        return option::some(MTL4FunctionDescriptor::from_raw(obj));
     }
 
-    fn set_fragment_function_descriptor(this, fragment_function_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentFunctionDescriptor:\0")), fragment_function_descriptor);
+    fn set_fragment_function_descriptor(this, fragment_function_descriptor: MTL4FunctionDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentFunctionDescriptor:\0")), fragment_function_descriptor.raw());
     }
 
-    fn vertex_descriptor(this) -> option::Option[*u8] {
+    fn vertex_descriptor(this) -> option::Option[VertexDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[VertexDescriptor]::None;
+        }
+        return option::some(VertexDescriptor::from_raw(obj));
     }
 
-    fn set_vertex_descriptor(this, vertex_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexDescriptor:\0")), vertex_descriptor);
+    fn set_vertex_descriptor(this, vertex_descriptor: VertexDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexDescriptor:\0")), vertex_descriptor.raw());
     }
 
     fn raster_sample_count(this) -> u64 {
@@ -879,8 +888,8 @@ impl MTL4RenderPipelineDescriptor {
     }
 
     // SKIPPED `setMaxVertexAmplificationCount:`: (return, arg) shape not yet modelled
-    fn color_attachments(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorAttachments\0")));
+    fn color_attachments(this) -> MTL4RenderPipelineColorAttachmentDescriptorArray {
+        return MTL4RenderPipelineColorAttachmentDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorAttachments\0"))));
     }
 
     fn input_primitive_topology(this) -> PrimitiveTopologyClass {
@@ -888,20 +897,20 @@ impl MTL4RenderPipelineDescriptor {
     }
 
     // SKIPPED `setInputPrimitiveTopology:`: (return, arg) shape not yet modelled
-    fn vertex_static_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("vertexStaticLinkingDescriptor\0")));
+    fn vertex_static_linking_descriptor(this) -> MTL4StaticLinkingDescriptor {
+        return MTL4StaticLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertexStaticLinkingDescriptor\0"))));
     }
 
-    fn set_vertex_static_linking_descriptor(this, vertex_static_linking_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexStaticLinkingDescriptor:\0")), vertex_static_linking_descriptor);
+    fn set_vertex_static_linking_descriptor(this, vertex_static_linking_descriptor: MTL4StaticLinkingDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexStaticLinkingDescriptor:\0")), vertex_static_linking_descriptor.raw());
     }
 
-    fn fragment_static_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentStaticLinkingDescriptor\0")));
+    fn fragment_static_linking_descriptor(this) -> MTL4StaticLinkingDescriptor {
+        return MTL4StaticLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentStaticLinkingDescriptor\0"))));
     }
 
-    fn set_fragment_static_linking_descriptor(this, fragment_static_linking_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentStaticLinkingDescriptor:\0")), fragment_static_linking_descriptor);
+    fn set_fragment_static_linking_descriptor(this, fragment_static_linking_descriptor: MTL4StaticLinkingDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentStaticLinkingDescriptor:\0")), fragment_static_linking_descriptor.raw());
     }
 
     fn support_vertex_binary_linking(this) -> bool {
@@ -930,5 +939,17 @@ impl MTL4RenderPipelineDescriptor {
     }
 
     // SKIPPED `setSupportIndirectCommandBuffers:`: (return, arg) shape not yet modelled
+}
+
+// `MTL4BinaryFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4BinaryFunction {
+    opaque _obj: *u8,
+}
+
+impl MTL4BinaryFunction {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4BinaryFunction { return MTL4BinaryFunction { _obj: ptr }; }
+
 }
 

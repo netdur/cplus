@@ -65,6 +65,8 @@ struct ComboButton {
 impl ComboButton {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComboButton { return ComboButton { _obj: ptr }; }
+
     // SKIPPED `comboButtonWithTitle:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `comboButtonWithImage:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `comboButtonWithTitle:image:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`

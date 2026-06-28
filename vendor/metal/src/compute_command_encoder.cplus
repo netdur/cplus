@@ -5,84 +5,194 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTLComputeCommandEncoder` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `setComputePipelineState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBytes:length:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBufferOffset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBuffers:offsets:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBuffer:offset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBuffers:offsets:attributeStrides:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBufferOffset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setBytes:length:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVisibleFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVisibleFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setIntersectionFunctionTable:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setIntersectionFunctionTables:withBufferRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setAccelerationStructure:atBufferIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTexture:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTextures:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setSamplerState:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setSamplerStates:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setThreadgroupMemoryLength:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setImageblockWidth:height:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStageInRegion:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStageInRegionWithIndirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `dispatchThreadgroups:threadsPerThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `dispatchThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `dispatchThreads:threadsPerThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `updateFence:`: arg shape (only <=5 object args modelled)
-// SKIPPED `waitForFence:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResource:usage:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResources:count:usage:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeap:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useHeaps:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `executeCommandsInBuffer:withRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `executeCommandsInBuffer:indirectBuffer:indirectBufferOffset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `memoryBarrierWithScope:`: arg shape (only <=5 object args modelled)
-// SKIPPED `memoryBarrierWithResources:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `sampleCountersInBuffer:atSampleIndex:withBarrier:`: arg shape (only <=5 object args modelled)
-fn ComputeCommandEncoder_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+// `MTLResourceUsage` (NS_OPTIONS) — bitfield; combine with `|`.
+const resource_usage_read: u64 = 1 as u64;
+const resource_usage_write: u64 = 2 as u64;
+const resource_usage_sample: u64 = 4 as u64;
 
-struct ComputeCommandEncoder {
-    dispatch_type: fn(*u8) -> u64,
-    opaque user: *u8,
+// `MTLBarrierScope` (NS_OPTIONS) — bitfield; combine with `|`.
+const barrier_scope_buffers: u64 = 1 as u64;
+const barrier_scope_textures: u64 = 2 as u64;
+const barrier_scope_render_targets: u64 = 4 as u64;
+
+// `MTLDispatchType` (NS_ENUM)
+enum DispatchType {
+    Serial,
+    Concurrent,
 }
 
-fn ComputeCommandEncoder_new(user: *u8) -> ComputeCommandEncoder {
-    return ComputeCommandEncoder { dispatch_type: ComputeCommandEncoder_noop_u64_0, user: user };
+fn dispatch_type_raw(v: DispatchType) -> i64 {
+    return match v {
+        DispatchType::Serial => { 0 as i64 },
+        DispatchType::Concurrent => { 1 as i64 },
+    };
+}
+
+fn dispatch_type_from_raw(raw: i64) -> DispatchType {
+    if raw == (1 as i64) { return DispatchType::Concurrent; }
+    return DispatchType::Serial;
+}
+
+// `MTLFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Function {
+    opaque _obj: *u8,
+}
+
+impl Function {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Function { return Function { _obj: ptr }; }
+
+}
+
+// `MTLBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Buffer {
+    opaque _obj: *u8,
+}
+
+impl Buffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Buffer { return Buffer { _obj: ptr }; }
+
+}
+
+// `MTLSamplerState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct SamplerState {
+    opaque _obj: *u8,
+}
+
+impl SamplerState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SamplerState { return SamplerState { _obj: ptr }; }
+
+}
+
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Texture {
+    opaque _obj: *u8,
+}
+
+impl Texture {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+}
+
+// `MTLComputePipelineState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ComputePipelineState {
+    opaque _obj: *u8,
+}
+
+impl ComputePipelineState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputePipelineState { return ComputePipelineState { _obj: ptr }; }
+
+}
+
+// `MTLResource` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Resource {
+    opaque _obj: *u8,
+}
+
+impl Resource {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Resource { return Resource { _obj: ptr }; }
+
+}
+
+// `MTLVisibleFunctionTable` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct VisibleFunctionTable {
+    opaque _obj: *u8,
+}
+
+impl VisibleFunctionTable {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> VisibleFunctionTable { return VisibleFunctionTable { _obj: ptr }; }
+
+}
+
+// `MTLAccelerationStructure` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct AccelerationStructure {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructure {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructure { return AccelerationStructure { _obj: ptr }; }
+
+}
+
+// `MTLComputeCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ComputeCommandEncoder {
+    opaque _obj: *u8,
 }
 
 impl ComputeCommandEncoder {
-    fn set_dispatch_type(ref this, handler: fn(*u8) -> u64) {
-        this.dispatch_type = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputeCommandEncoder { return ComputeCommandEncoder { _obj: ptr }; }
+
+    fn set_compute_pipeline_state(this, state: ComputePipelineState) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setComputePipelineState:\0")), state.raw());
     }
-}
 
-fn ComputeCommandEncoder_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ComputeCommandEncoder_dispatch_type_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *ComputeCommandEncoder = { synth::get_associated(self_obj, ComputeCommandEncoder_key()) as *ComputeCommandEncoder };
-    let f: fn(*u8) -> u64 = { (*c).dispatch_type };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_ComputeCommandEncoder(ctx: *ComputeCommandEncoder) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ComputeCommandEncoder\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_dispatch_type: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("dispatchType\0")), ComputeCommandEncoder_dispatch_type_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `setBytes:length:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBufferOffset:atIndex:`: method `set_buffer_offset_at_index` already defined
+    // SKIPPED `setBuffers:offsets:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBuffer:offset:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBuffers:offsets:attributeStrides:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBufferOffset:attributeStride:atIndex:`: method `set_buffer_offset_attribute_stride_at_index` already defined
+    // SKIPPED `setBytes:length:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVisibleFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVisibleFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setIntersectionFunctionTable:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setIntersectionFunctionTables:withBufferRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setAccelerationStructure:atBufferIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTexture:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTextures:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSamplerState:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSamplerStates:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSamplerState:lodMinClamp:lodMaxClamp:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSamplerStates:lodMinClamps:lodMaxClamps:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setThreadgroupMemoryLength:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setImageblockWidth:height:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStageInRegion:`: param `MTLRegion` — unmapped type `MTLRegion`
+    // SKIPPED `setStageInRegionWithIndirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `dispatchThreadgroups:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `dispatchThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `dispatchThreads:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn update_fence(this, fence: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence);
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ComputeCommandEncoder_key(), { ctx as *u8 });
-    return d;
+
+    fn wait_for_fence(this, fence: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("waitForFence:\0")), fence);
+    }
+
+    // SKIPPED `useResource:usage:`: (return, arg) shape not yet modelled
+    // SKIPPED `useResources:count:usage:`: (return, arg) shape not yet modelled
+    fn use_heap(this, heap: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("useHeap:\0")), heap);
+    }
+
+    // SKIPPED `useHeaps:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `executeCommandsInBuffer:withRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `executeCommandsInBuffer:indirectBuffer:indirectBufferOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `memoryBarrierWithScope:`: (return, arg) shape not yet modelled
+    // SKIPPED `memoryBarrierWithResources:count:`: (return, arg) shape not yet modelled
+    // SKIPPED `sampleCountersInBuffer:atSampleIndex:withBarrier:`: (return, arg) shape not yet modelled
+    fn dispatch_type(this) -> DispatchType {
+        return dispatch_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dispatchType\0"))));
+    }
+
 }
 

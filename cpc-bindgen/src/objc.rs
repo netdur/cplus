@@ -41,6 +41,12 @@ pub struct ObjcEmitter {
     // Emitted struct / type names. A class and a protocol can share a name
     // (NSObject, NSTextAttachmentCell); the later one is renamed, not duplicated.
     seen_types: HashSet<String>,
+    // Every wrapper-type name that WILL be defined in this module, registered up
+    // front (Pass 2a) so a method returning a type whose definition comes later
+    // (Device.newCommandQueue -> CommandQueue) can be typed, not degraded to *u8.
+    // Kept separate from `seen_types` so the class/protocol disambiguator is not
+    // tricked into renaming a type against its own pre-registration.
+    known_types: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -80,8 +86,10 @@ struct EnumInfo {
 
 enum Ret {
     Void,
-    Object,
-    ObjectOption, // nullable object handle -> Option[*u8]
+    // An object handle. `Some(name)` -> a typed wrapper (`-> Name`, wrapped via
+    // `Name::from_raw`); `None` -> the raw `*u8` fallback.
+    Object(Option<String>),
+    ObjectOption(Option<String>), // nullable: Some -> Option[Name], None -> Option[*u8]
     Text { nullable: bool },
     Bool,
     ScalarI64,
@@ -143,6 +151,7 @@ impl ObjcEmitter {
             used_enums: Vec::new(),
             seen_methods: HashSet::new(),
             seen_types: HashSet::new(),
+            known_types: HashSet::new(),
         }
     }
 
@@ -241,15 +250,58 @@ impl ObjcEmitter {
                 None => deduped.push(itf.clone()),
             }
         }
+        // Same as interfaces: clang emits a forward `@protocol X;` (no methods)
+        // alongside the real definition. Keep the richest per name, else the empty
+        // forward decl races the full one and the class/protocol disambiguator
+        // demotes the real API to `<X>Protocol` while a 2-fn stub claims `X`.
+        let mut deduped_protocols: Vec<serde_json::Value> = Vec::new();
+        for proto in &protocols {
+            let name = proto.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let count = proto.get("inner").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            match deduped_protocols.iter().position(|e| e.get("name").and_then(|n| n.as_str()).unwrap_or("") == name) {
+                Some(pos) => {
+                    let ec = deduped_protocols[pos].get("inner").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+                    if count > ec {
+                        deduped_protocols[pos] = proto.clone();
+                    }
+                }
+                None => deduped_protocols.push(proto.clone()),
+            }
+        }
+        // Pass 2a — pre-register every wrapper-type name BEFORE any body emits, so a
+        // method returning a type whose definition comes later (the device factory
+        // returns, emitted before Buffer/Texture/CommandQueue) is typed, not
+        // degraded to *u8 by emission order. Delegate/data-source protocols are
+        // synthesis helpers, not object wrappers with `from_raw`, so they are not
+        // registered as typeable returns.
+        for itf in &deduped {
+            if let Some(n) = itf.get("name").and_then(|n| n.as_str()) {
+                self.known_types.insert(self.cplus_type_name(n));
+            }
+        }
+        for proto in &deduped_protocols {
+            let pname = proto.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if !(pname.ends_with("Delegate") || pname.ends_with("DataSource")) {
+                self.known_types.insert(self.cplus_type_name(pname));
+            }
+        }
         for itf in &deduped {
             let cls = itf.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let cats: &[serde_json::Value] =
                 categories.get(cls).map(|v| v.as_slice()).unwrap_or(&[]);
             self.emit_interface(itf, cats);
         }
-        // Delegate / data-source protocols -> runtime class-synthesis helpers.
-        for proto in &protocols {
-            self.emit_protocol_delegate(proto);
+        // A `…Delegate` / `…DataSource` protocol is a callback sink the user
+        // *implements* -> a runtime class-synthesis helper. Every other protocol
+        // (MTLDevice, MTLBuffer, … — the whole Metal API surface) is an object the
+        // user *calls* -> an opaque-handle wrapper struct, same as a class.
+        for proto in &deduped_protocols {
+            let pname = proto.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if pname.ends_with("Delegate") || pname.ends_with("DataSource") {
+                self.emit_protocol_delegate(proto);
+            } else {
+                self.emit_protocol_api(proto);
+            }
         }
 
         // Assemble: preamble + the enum defs actually used + interface bodies.
@@ -386,6 +438,53 @@ impl ObjcEmitter {
         crate::sanitize_ident(chosen)
     }
 
+    /// The C+ wrapper-type name for an object spelling, or None when it has no
+    /// single typeable wrapper. Some only for: single-protocol `id<X>`, a single
+    /// class pointer `Foo *`. None for bare `id`/`instancetype` (no protocol info),
+    /// multi-protocol `id<A,B>`, `Class`/`SEL`, blocks (`^`), generic collections,
+    /// and pointer-to-pointer out-params (`NSError **`). Pure name computation —
+    /// the existence gate is applied separately by `typed_object`.
+    fn wrapper_name_of(&self, base_ty: &str) -> Option<String> {
+        // Pointer-to-pointer (`NSError * _Nullable *`, `id *`): an out-param, not
+        // an object value — never a wrapper. (203 NSError** in scope; the single
+        // biggest mistyping trap.)
+        if base_ty.matches('*').count() >= 2 {
+            return None;
+        }
+        if let Some(rest) = base_ty.strip_prefix("id<").or_else(|| base_ty.strip_prefix("id <")) {
+            let inner = rest.strip_suffix('>')?.trim();
+            // Multi-protocol (`id<A,B,C>`): no single wrapper; don't guess.
+            if inner.is_empty() || inner.contains(',') {
+                return None;
+            }
+            return Some(self.cplus_type_name(inner));
+        }
+        if base_ty == "id" || base_ty == "instancetype" || base_ty == "Class" || base_ty == "SEL" {
+            return None;
+        }
+        if base_ty.contains('<') || base_ty.contains('^') {
+            return None;
+        }
+        // A single class pointer `Foo *` (one token, one star). A space in the
+        // token means a primitive (`unsigned char *`) or qualifier, not a class.
+        if let Some(token) = base_ty.strip_suffix('*') {
+            let token = token.trim();
+            if token.is_empty() || token.contains(['*', '<', ' ']) {
+                return None;
+            }
+            return Some(self.cplus_type_name(token));
+        }
+        None
+    }
+
+    /// `wrapper_name_of` gated on the wrapper actually being defined in this
+    /// module (`known_types`). This is THE soundness gate: it makes a typed
+    /// return/arg legal (the struct exists) and degrades foreign-framework types
+    /// (NSURL/NSError/CAMetalLayer — never declared here) to `*u8`.
+    fn typed_object(&self, base_ty: &str) -> Option<String> {
+        self.wrapper_name_of(base_ty).filter(|n| self.known_types.contains(n))
+    }
+
     fn emit_interface(&mut self, itf: &serde_json::Value, categories: &[serde_json::Value]) {
         let objc_name = match itf.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
@@ -453,6 +552,60 @@ impl ObjcEmitter {
 
         if owned {
             self.body.push_str("    fn drop(ref this) {\n        rt::release(this._obj);\n    }\n");
+        }
+        self.body.push_str("}\n\n");
+    }
+
+    // A non-delegate protocol (an object the user CALLS — MTLDevice, MTLBuffer,
+    // every Metal encoder/pipeline/resource) -> an opaque-handle wrapper struct,
+    // exactly like a non-owning class: `from_raw`/`raw` + one method per protocol
+    // method, dispatched through the same typed `objc_msgSend` shims. Protocols
+    // have no `init` and Metal objects are +0-borrowed (owned by their creator),
+    // so the handle is `opaque` with no `drop`.
+    fn emit_protocol_api(&mut self, proto: &serde_json::Value) {
+        let objc_name = match proto.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        let mut ty = self.cplus_type_name(&objc_name);
+        // A class and a protocol can carry the same name (NSObject,
+        // NSTextAttachmentCell). The class wrapper already claimed it, so the
+        // protocol's wrapper takes a suffixed name rather than redefine it.
+        if self.seen_types.contains(&ty) {
+            let mut disambig = format!("{ty}Protocol");
+            let mut n = 2;
+            while self.seen_types.contains(&disambig) {
+                disambig = format!("{ty}Protocol{n}");
+                n += 1;
+            }
+            ty = disambig;
+        }
+        self.seen_types.insert(ty.clone());
+        let mut methods: Vec<serde_json::Value> = Vec::new();
+        let mut seen_sel: HashSet<String> = HashSet::new();
+        for m in proto.get("inner").and_then(|v| v.as_array()).into_iter().flatten() {
+            if m.get("kind").and_then(|k| k.as_str()) != Some("ObjCMethodDecl") {
+                continue;
+            }
+            let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if seen_sel.insert(sel) {
+                methods.push(m.clone());
+            }
+        }
+        self.body.push_str(&format!(
+            "// `{objc_name}` (ObjC protocol). Non-owning handle; `opaque`, no drop.\n"
+        ));
+        self.body.push_str(&format!("struct {ty} {{\n    opaque _obj: *u8,\n}}\n\n"));
+        self.body.push_str(&format!("impl {ty} {{\n"));
+        self.body.push_str("    fn raw(this) -> *u8 { return this._obj; }\n\n");
+        self.body.push_str(&format!(
+            "    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _obj: ptr }}; }}\n\n"
+        ));
+        self.seen_methods.clear();
+        self.seen_methods.insert("raw".to_string());
+        self.seen_methods.insert("from_raw".to_string());
+        for m in &methods {
+            self.emit_method(m, &objc_name, &ty, false, false);
         }
         self.body.push_str("}\n\n");
     }
@@ -768,7 +921,7 @@ impl ObjcEmitter {
 
         // Constructors: alloc + send the init selector, wrap in Self.
         if is_init {
-            let send = self.send_expr("alloced", &sel, &Ret::Object, &args);
+            let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
                 Some(s) => s,
                 None => {
@@ -813,10 +966,10 @@ impl ObjcEmitter {
         // we `retain` it to balance `drop`.
         let (ret_base, ret_nullable) = strip_nullability(ret_qt);
         let returns_self = !is_instance
-            && matches!(ret, Ret::Object | Ret::ObjectOption)
+            && matches!(ret, Ret::Object(_) | Ret::ObjectOption(_))
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
-            if let Some(send) = self.send_expr(&recv, &sel, &Ret::Object, &args) {
+            if let Some(send) = self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
                 if ret_nullable {
                     let wrapped = if owned {
                         format!("{ty} {{ _obj: rt::retain(obj) }}")
@@ -866,7 +1019,7 @@ impl ObjcEmitter {
         }
 
         if let Ret::TextArray = ret {
-            let array_call = match self.send_expr(&recv, &sel, &Ret::Object, &args) {
+            let array_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
                 Some(s) => s,
                 None => {
                     self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray<NSString> arg shape not modelled\n"));
@@ -893,7 +1046,7 @@ impl ObjcEmitter {
         }
 
         if let Ret::TextMap(val) = ret {
-            let dict_call = match self.send_expr(&recv, &sel, &Ret::Object, &args) {
+            let dict_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
                 Some(s) => s,
                 None => {
                     self.body.push_str(&format!("    // SKIPPED `{sel}`: NSDictionary arg shape not modelled\n"));
@@ -942,10 +1095,18 @@ impl ObjcEmitter {
         let (ret_spelling, body_line) = match &ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
             Ret::Bool => (" -> bool".into(), format!("        return {send} != (0 as i8);\n")),
-            Ret::Object => (" -> *u8".into(), format!("        return {send};\n")),
-            Ret::ObjectOption => (
+            Ret::Object(None) => (" -> *u8".into(), format!("        return {send};\n")),
+            Ret::Object(Some(n)) => (
+                format!(" -> {n}"),
+                format!("        return {n}::from_raw({send});\n"),
+            ),
+            Ret::ObjectOption(None) => (
                 " -> option::Option[*u8]".into(),
                 format!("        let obj: *u8 = {send};\n        return bridge::obj_option(obj);\n"),
+            ),
+            Ret::ObjectOption(Some(n)) => (
+                format!(" -> option::Option[{n}]"),
+                format!("        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{n}]::None;\n        }}\n        return option::some({n}::from_raw(obj));\n"),
             ),
             Ret::ScalarI64 => (" -> i64".into(), format!("        return {send};\n")),
             Ret::ScalarU64 => (" -> u64".into(), format!("        return {send};\n")),
@@ -1171,7 +1332,7 @@ impl ObjcEmitter {
         let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
         let ret_tag = match ret {
             Ret::Void => "void",
-            Ret::Object | Ret::ObjectOption | Ret::Text { .. } => "id",
+            Ret::Object(_) | Ret::ObjectOption(_) | Ret::Text { .. } => "id",
             Ret::Bool => "i8",
             Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
             Ret::ScalarU64 => "u64",
@@ -1275,18 +1436,22 @@ impl ObjcEmitter {
             return Ret::EnumTy(objc_enum);
         }
         match base_ty {
-            "NSInteger" | "long" => return Ret::ScalarI64,
-            "NSUInteger" | "unsigned long" => return Ret::ScalarU64,
+            "NSInteger" | "long" | "long long" | "int64_t" => return Ret::ScalarI64,
+            // `MTLResourceID` is `{ uint64_t _impl; }` — one integer eightbyte,
+            // ABI-identical to `u64`. `MTLGPUAddress` is a `uint64_t` typedef.
+            "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t"
+            | "MTLGPUAddress" | "MTLResourceID" => return Ret::ScalarU64,
             "BOOL" | "_Bool" | "bool" => return Ret::Bool,
-            "instancetype" => return Ret::Object, // a fresh +1, never nil
+            "instancetype" => return Ret::Object(None), // a fresh +1, never nil; wrapped as Self
             "id" => {
-                return if nullable { Ret::ObjectOption } else { Ret::Object };
+                // Bare `id` carries no type -> untyped handle.
+                return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) };
             }
-            // CGFloat / NSTimeInterval are `double` on 64-bit Apple.
-            "double" | "CGFloat" | "NSTimeInterval" => return Ret::ScalarF64,
+            // CGFloat / NSTimeInterval / CFTimeInterval are `double` on 64-bit Apple.
+            "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => return Ret::ScalarF64,
             // 32-bit scalars ride their own msgSend widths (vendor/objc shims).
-            "int" => return Ret::ScalarI32,
-            "unsigned int" | "unsigned" => return Ret::ScalarU32,
+            "int" | "int32_t" => return Ret::ScalarI32,
+            "unsigned int" | "unsigned" | "uint32_t" => return Ret::ScalarU32,
             "float" => return Ret::ScalarF32,
             _ => {}
         }
@@ -1309,6 +1474,13 @@ impl ObjcEmitter {
                 "NSDictionary value `{v}` not modelled (NSString / NSNumber only)"
             ));
         }
+        // A protocol-qualified id (`id<MTLDevice>`, `id<A,B>`) is an ordinary ObjC
+        // object pointer — ABI-identical to `id`. Must be recognized before the
+        // generic-collection guard (it ends in `>`, not `*`).
+        if base_ty.starts_with("id<") || base_ty.starts_with("id <") {
+            let typed = self.typed_object(base_ty);
+            return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
+        }
         if base_ty.contains('<') {
             return Ret::Unsupported("generic collection".into());
         }
@@ -1316,7 +1488,8 @@ impl ObjcEmitter {
             return Ret::Unsupported("block".into());
         }
         if base_ty.ends_with('*') {
-            return if nullable { Ret::ObjectOption } else { Ret::Object };
+            let typed = self.typed_object(base_ty);
+            return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
         }
         Ret::Unsupported(format!("unmapped type `{base_ty}`"))
     }
@@ -1355,23 +1528,39 @@ impl ObjcEmitter {
             return Arg::ScalarI64(format!("{raw}({pname})"));
         }
         match base_ty {
-            "NSInteger" | "long" => return Arg::ScalarI64(pname.to_string()),
-            "NSUInteger" | "unsigned long" => return Arg::ScalarU64(pname.to_string()),
+            "NSInteger" | "long" | "long long" | "int64_t" => {
+                return Arg::ScalarI64(pname.to_string())
+            }
+            "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t"
+            | "MTLGPUAddress" | "MTLResourceID" => return Arg::ScalarU64(pname.to_string()),
             "BOOL" | "_Bool" | "bool" => return Arg::Bool(pname.to_string()),
             "id" => return Arg::Id(pname.to_string()),
-            "double" | "CGFloat" | "NSTimeInterval" => return Arg::ScalarF64(pname.to_string()),
-            "int" => return Arg::ScalarI32(pname.to_string()),
-            "unsigned int" | "unsigned" => return Arg::ScalarU32(pname.to_string()),
+            "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => {
+                return Arg::ScalarF64(pname.to_string())
+            }
+            "int" | "int32_t" => return Arg::ScalarI32(pname.to_string()),
+            "unsigned int" | "unsigned" | "uint32_t" => return Arg::ScalarU32(pname.to_string()),
             "float" => return Arg::ScalarF32(pname.to_string()),
             _ => {}
         }
         if base_ty.contains('^') {
             return Arg::Unsupported("block".into());
         }
+        // Protocol-qualified id -> ordinary object pointer (before the
+        // generic-collection guard). A typed wrapper param passes `.raw()`.
+        if base_ty.starts_with("id<") || base_ty.starts_with("id <") {
+            if self.typed_object(base_ty).is_some() {
+                return Arg::Id(format!("{pname}.raw()"));
+            }
+            return Arg::Id(pname.to_string());
+        }
         if base_ty.contains('<') {
             return Arg::Unsupported("generic collection".into());
         }
         if base_ty.ends_with('*') {
+            if self.typed_object(base_ty).is_some() {
+                return Arg::Id(format!("{pname}.raw()"));
+            }
             return Arg::Id(pname.to_string());
         }
         Arg::Unsupported(format!("unmapped type `{base_ty}`"))
@@ -1407,13 +1596,20 @@ impl ObjcEmitter {
             }
             return info.cplus_name.clone();
         }
+        // A typed object param shows the wrapper type (`descriptor: TextureDescriptor`).
+        // Same gate as map_arg, so the public signature and the `.raw()` wire expr
+        // never disagree.
+        if let Some(name) = self.typed_object(b) {
+            return name;
+        }
         match b {
-            "NSInteger" | "long" => "i64".to_string(),
-            "NSUInteger" | "unsigned long" => "u64".to_string(),
-            "double" | "CGFloat" | "NSTimeInterval" => "f64".to_string(),
+            "NSInteger" | "long" | "long long" | "int64_t" => "i64".to_string(),
+            "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t"
+            | "MTLGPUAddress" | "MTLResourceID" => "u64".to_string(),
+            "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64".to_string(),
             "BOOL" | "_Bool" | "bool" => "bool".to_string(),
-            "int" => "i32".to_string(),
-            "unsigned int" | "unsigned" => "u32".to_string(),
+            "int" | "int32_t" => "i32".to_string(),
+            "unsigned int" | "unsigned" | "uint32_t" => "u32".to_string(),
             "float" => "f32".to_string(),
             _ => "*u8".to_string(),
         }
@@ -1669,7 +1865,7 @@ mod tests {
         assert!(s.contains("rt::msg_void_f32("), "{s}");
         // id-returning factory with an `unsigned` arg -> rt::msg_id_u32
         let f = e
-            .send_expr("cls", "withCount:", &Ret::Object, &[Arg::ScalarU32("count".into())])
+            .send_expr("cls", "withCount:", &Ret::Object(None), &[Arg::ScalarU32("count".into())])
             .expect("id_u32 factory shape is KNOWN");
         assert!(f.contains("rt::msg_id_u32("), "{f}");
     }
@@ -1718,6 +1914,12 @@ mod tests {
         assert_eq!(crate::sanitize_ident("type"), "type_");
         assert_eq!(crate::sanitize_ident("for"), "for_");
         assert_eq!(crate::sanitize_ident("opaque"), "opaque_");
+        // The full lexer keyword set must be covered, not just a sample:
+        // `convertFont:toHaveTrait:` -> param `trait` is the one that bit AppKit.
+        assert_eq!(crate::sanitize_ident("trait"), "trait_");
+        assert_eq!(crate::sanitize_ident("union"), "union_");
+        assert_eq!(crate::sanitize_ident("interface"), "interface_");
+        assert_eq!(crate::sanitize_ident("assert"), "assert_");
         // A leading digit (an enum constant `...10_0` stripped to `10_0`) is not
         // a valid identifier start; prefix `_`.
         assert_eq!(crate::sanitize_ident("10_0"), "_10_0");
@@ -1753,13 +1955,12 @@ mod tests {
 
     #[test]
     fn delegate_callback_named_type_escapes_to_a_valid_field() {
-        // A protocol method `type` becomes a synthesized struct field + accessor;
-        // it must not land on the `type` keyword. (Metal's MTL4CounterHeap, whose
-        // `type` getter is a 0-arg NSUInteger callback, surfaced this.)
+        // A delegate-protocol callback `type` becomes a synthesized struct field +
+        // accessor; it must not land on the `type` keyword.
         let tu = serde_json::json!({
             "inner": [{
                 "kind": "ObjCProtocolDecl",
-                "name": "MTLThing",
+                "name": "MTLThingDelegate",
                 "loc": { "file": "test.h" },
                 "inner": [{
                     "kind": "ObjCMethodDecl",
@@ -1775,6 +1976,89 @@ mod tests {
         assert!(out.contains("type_: fn"), "field escaped:\n{out}");
         assert!(out.contains("fn set_type_(ref this"), "setter escaped:\n{out}");
         assert!(!out.contains("\n    type: fn"), "no bare keyword field:\n{out}");
+    }
+
+    #[test]
+    fn non_delegate_protocol_becomes_a_callable_wrapper() {
+        // A non-delegate protocol is an object the user CALLS (the whole Metal API
+        // surface), so it emits an opaque-handle wrapper struct with one method per
+        // protocol method — NOT a synthesized delegate. A method named `type`
+        // (Metal's MTL4CounterHeap.type getter) must escape to `fn type_(`.
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl",
+                "name": "MTLBuffer",
+                "loc": { "file": "test.h" },
+                "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "length", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "NSUInteger" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "type", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "NSUInteger" }, "inner": [] }
+                ]
+            }]
+        });
+        // `MTL` prefix is stripped by cplus_type_name -> `Buffer`.
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct Buffer {\n    opaque _obj: *u8,\n}"), "opaque wrapper:\n{out}");
+        assert!(out.contains("fn from_raw(ptr: *u8) -> Buffer"), "from_raw:\n{out}");
+        assert!(out.contains("fn length(this)"), "length method:\n{out}");
+        assert!(out.contains("fn type_(this)"), "keyword-escaped method:\n{out}");
+        // A callable wrapper, never a delegate-synthesis helper.
+        assert!(!out.contains("create_Buffer"), "not a delegate:\n{out}");
+    }
+
+    #[test]
+    fn forward_protocol_decl_does_not_shadow_the_full_api() {
+        // clang emits a forward `@protocol X;` (empty) alongside the real one.
+        // Without dedup, the empty decl claims `X` and the disambiguator demotes
+        // the real 72-fn API to `XProtocol` (the Metal `Device` stub-inversion bug).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "length", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "NSUInteger" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn length(this)"), "full API lost:\n{out}");
+        assert!(!out.contains("ThingProtocol"), "forward decl shadowed the real API:\n{out}");
+        assert_eq!(out.matches("struct Thing {").count(), 1, "duplicate struct:\n{out}");
+    }
+
+    #[test]
+    fn object_returns_and_args_are_typed_when_the_wrapper_is_local() {
+        // A return/arg of a type defined in THIS module is typed to its wrapper;
+        // a foreign type (no local def) and a pointer-to-pointer out-param degrade
+        // to *u8. Buffer is forward-declared (a stub) so its NAME is known.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLBuffer", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "newBuffer", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "id<MTLBuffer> _Nullable" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "useBuffer:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "buffer", "type": { "qualType": "id<MTLBuffer>" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "sourceURL", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSURL * _Nullable" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "loadWithError:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "error", "type": { "qualType": "NSError * _Nullable * _Nullable" } }] },
+                ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        // Local wrapper -> typed return + from_raw wrap.
+        assert!(out.contains("fn new_buffer(this) -> option::Option[Buffer]"), "typed return:\n{out}");
+        assert!(out.contains("Buffer::from_raw(obj)"), "from_raw wrap:\n{out}");
+        // Local wrapper arg -> typed param + .raw() on the wire.
+        assert!(out.contains("fn use_buffer(this, buffer: Buffer)"), "typed arg:\n{out}");
+        assert!(out.contains("buffer.raw()"), "arg unwrapped via .raw():\n{out}");
+        // Foreign type (no local def) stays raw.
+        assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
+        // Pointer-to-pointer out-param stays raw.
+        assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
     }
 
     #[test]

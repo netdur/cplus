@@ -15,6 +15,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSBundle` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -25,6 +27,8 @@ struct Bundle {
 impl Bundle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Bundle { return Bundle { _obj: ptr }; }
+
 }
 
 // `NSColorList` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -34,6 +38,8 @@ struct ColorList {
 
 impl ColorList {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorList { return ColorList { _obj: ptr }; }
 
     fn color_list_named(name: str) -> option::Option[ColorList] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSColorList\0")), rt::sel(#str_ptr("colorListNamed:\0")), bridge::nsstring(name));
@@ -56,9 +62,12 @@ impl ColorList {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeColorWithKey:\0")), bridge::nsstring(key));
     }
 
-    fn color_with_key(this, key: str) -> option::Option[*u8] {
+    fn color_with_key(this, key: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("colorWithKey:\0")), bridge::nsstring(key));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
     // SKIPPED `writeToURL:error:`: (return, arg) shape not yet modelled

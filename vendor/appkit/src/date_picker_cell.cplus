@@ -46,35 +46,13 @@ fn date_picker_mode_from_raw(raw: i64) -> DatePickerMode {
     return DatePickerMode::Single;
 }
 
-// `NSDatePickerElementFlags` (NS_ENUM)
-enum DatePickerElementFlags {
-    NSDatePickerElementFlagHourMinute,
-    NSDatePickerElementFlagHourMinuteSecond,
-    NSDatePickerElementFlagTimeZone,
-    NSDatePickerElementFlagYearMonth,
-    NSDatePickerElementFlagYearMonthDay,
-    NSDatePickerElementFlagEra,
-}
-
-fn date_picker_element_flags_raw(v: DatePickerElementFlags) -> i64 {
-    return match v {
-        DatePickerElementFlags::NSDatePickerElementFlagHourMinute => { 12 as i64 },
-        DatePickerElementFlags::NSDatePickerElementFlagHourMinuteSecond => { 14 as i64 },
-        DatePickerElementFlags::NSDatePickerElementFlagTimeZone => { 16 as i64 },
-        DatePickerElementFlags::NSDatePickerElementFlagYearMonth => { 192 as i64 },
-        DatePickerElementFlags::NSDatePickerElementFlagYearMonthDay => { 224 as i64 },
-        DatePickerElementFlags::NSDatePickerElementFlagEra => { 256 as i64 },
-    };
-}
-
-fn date_picker_element_flags_from_raw(raw: i64) -> DatePickerElementFlags {
-    if raw == (14 as i64) { return DatePickerElementFlags::NSDatePickerElementFlagHourMinuteSecond; }
-    if raw == (16 as i64) { return DatePickerElementFlags::NSDatePickerElementFlagTimeZone; }
-    if raw == (192 as i64) { return DatePickerElementFlags::NSDatePickerElementFlagYearMonth; }
-    if raw == (224 as i64) { return DatePickerElementFlags::NSDatePickerElementFlagYearMonthDay; }
-    if raw == (256 as i64) { return DatePickerElementFlags::NSDatePickerElementFlagEra; }
-    return DatePickerElementFlags::NSDatePickerElementFlagHourMinute;
-}
+// `NSDatePickerElementFlags` (NS_OPTIONS) — bitfield; combine with `|`.
+const date_picker_element_flags_n_s_date_picker_element_flag_hour_minute: u64 = 12 as u64;
+const date_picker_element_flags_n_s_date_picker_element_flag_hour_minute_second: u64 = 14 as u64;
+const date_picker_element_flags_n_s_date_picker_element_flag_time_zone: u64 = 16 as u64;
+const date_picker_element_flags_n_s_date_picker_element_flag_year_month: u64 = 192 as u64;
+const date_picker_element_flags_n_s_date_picker_element_flag_year_month_day: u64 = 224 as u64;
+const date_picker_element_flags_n_s_date_picker_element_flag_era: u64 = 256 as u64;
 
 // `NSCalendar` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Calendar {
@@ -83,6 +61,8 @@ struct Calendar {
 
 impl Calendar {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Calendar { return Calendar { _obj: ptr }; }
 
 }
 
@@ -94,6 +74,8 @@ struct Locale {
 impl Locale {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Locale { return Locale { _obj: ptr }; }
+
 }
 
 // `NSTimeZone` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -104,6 +86,8 @@ struct TimeZone {
 impl TimeZone {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TimeZone { return TimeZone { _obj: ptr }; }
+
 }
 
 // `NSDatePickerCell` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -113,6 +97,8 @@ struct DatePickerCell {
 
 impl DatePickerCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DatePickerCell { return DatePickerCell { _obj: ptr }; }
 
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
@@ -162,36 +148,45 @@ impl DatePickerCell {
     }
 
     // SKIPPED `setDatePickerMode:`: (return, arg) shape not yet modelled
-    fn date_picker_elements(this) -> DatePickerElementFlags {
-        return date_picker_element_flags_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("datePickerElements\0"))));
+    fn date_picker_elements(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("datePickerElements\0")));
     }
 
     // SKIPPED `setDatePickerElements:`: (return, arg) shape not yet modelled
-    fn calendar(this) -> option::Option[*u8] {
+    fn calendar(this) -> option::Option[Calendar] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("calendar\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Calendar]::None;
+        }
+        return option::some(Calendar::from_raw(obj));
     }
 
-    fn set_calendar(this, calendar: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCalendar:\0")), calendar);
+    fn set_calendar(this, calendar: Calendar) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCalendar:\0")), calendar.raw());
     }
 
-    fn locale(this) -> option::Option[*u8] {
+    fn locale(this) -> option::Option[Locale] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("locale\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Locale]::None;
+        }
+        return option::some(Locale::from_raw(obj));
     }
 
-    fn set_locale(this, locale: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLocale:\0")), locale);
+    fn set_locale(this, locale: Locale) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLocale:\0")), locale.raw());
     }
 
-    fn time_zone(this) -> option::Option[*u8] {
+    fn time_zone(this) -> option::Option[TimeZone] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("timeZone\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TimeZone]::None;
+        }
+        return option::some(TimeZone::from_raw(obj));
     }
 
-    fn set_time_zone(this, time_zone: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTimeZone:\0")), time_zone);
+    fn set_time_zone(this, time_zone: TimeZone) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTimeZone:\0")), time_zone.raw());
     }
 
     fn date_value(this) -> *u8 {
@@ -228,52 +223,59 @@ impl DatePickerCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMaxDate:\0")), max_date);
     }
 
-    // SKIPPED `delegate`: return `id<NSDatePickerCellDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSDatePickerCellDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
 }
 
 // `NSDatePickerCellDelegate` delegate protocol -> runtime class-synthesis helper.
-fn DatePickerCellDelegateProtocol_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn DatePickerCellDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
 
-struct DatePickerCellDelegateProtocol {
+struct DatePickerCellDelegate {
     date_picker_cell_validate_proposed_date_value_time_interval: fn(*u8, *u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn DatePickerCellDelegateProtocol_new(user: *u8) -> DatePickerCellDelegateProtocol {
-    return DatePickerCellDelegateProtocol { date_picker_cell_validate_proposed_date_value_time_interval: DatePickerCellDelegateProtocol_noop_v_3, user: user };
+fn DatePickerCellDelegate_new(user: *u8) -> DatePickerCellDelegate {
+    return DatePickerCellDelegate { date_picker_cell_validate_proposed_date_value_time_interval: DatePickerCellDelegate_noop_v_3, user: user };
 }
 
-impl DatePickerCellDelegateProtocol {
+impl DatePickerCellDelegate {
     fn set_date_picker_cell_validate_proposed_date_value_time_interval(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
         this.date_picker_cell_validate_proposed_date_value_time_interval = handler;
         return;
     }
 }
 
-fn DatePickerCellDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn DatePickerCellDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn DatePickerCellDelegateProtocol_date_picker_cell_validate_proposed_date_value_time_interval_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *DatePickerCellDelegateProtocol = { synth::get_associated(self_obj, DatePickerCellDelegateProtocol_key()) as *DatePickerCellDelegateProtocol };
+fn DatePickerCellDelegate_date_picker_cell_validate_proposed_date_value_time_interval_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
+    let c: *DatePickerCellDelegate = { synth::get_associated(self_obj, DatePickerCellDelegate_key()) as *DatePickerCellDelegate };
     let f: fn(*u8, *u8, *u8, *u8) = { (*c).date_picker_cell_validate_proposed_date_value_time_interval };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn create_DatePickerCellDelegateProtocol(ctx: *DatePickerCellDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_DatePickerCellDelegateProtocol\0");
+fn create_DatePickerCellDelegate(ctx: *DatePickerCellDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_DatePickerCellDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_date_picker_cell_validate_proposed_date_value_time_interval: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("datePickerCell:validateProposedDateValue:timeInterval:\0")), DatePickerCellDelegateProtocol_date_picker_cell_validate_proposed_date_value_time_interval_imp, #str_ptr("v@:@@@\0"));
+        let add_date_picker_cell_validate_proposed_date_value_time_interval: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("datePickerCell:validateProposedDateValue:timeInterval:\0")), DatePickerCellDelegate_date_picker_cell_validate_proposed_date_value_time_interval_imp, #str_ptr("v@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, DatePickerCellDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, DatePickerCellDelegate_key(), { ctx as *u8 });
     return d;
 }
 

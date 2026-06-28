@@ -76,3 +76,15 @@ impl IntersectionFunctionDescriptor {
 
 }
 
+// `MTLBinaryArchive` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct BinaryArchive {
+    opaque _obj: *u8,
+}
+
+impl BinaryArchive {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BinaryArchive { return BinaryArchive { _obj: ptr }; }
+
+}
+

@@ -71,6 +71,105 @@ fn image_symbol_color_rendering_mode_from_raw(raw: i64) -> ImageSymbolColorRende
     return ImageSymbolColorRenderingMode::Automatic;
 }
 
+// `NSCompositingOperation` (NS_ENUM)
+enum CompositingOperation {
+    Clear,
+    Copy,
+    SourceOver,
+    SourceIn,
+    SourceOut,
+    SourceAtop,
+    DestinationOver,
+    DestinationIn,
+    DestinationOut,
+    DestinationAtop,
+    XOR,
+    PlusDarker,
+    Highlight,
+    PlusLighter,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+fn compositing_operation_raw(v: CompositingOperation) -> i64 {
+    return match v {
+        CompositingOperation::Clear => { 0 as i64 },
+        CompositingOperation::Copy => { 1 as i64 },
+        CompositingOperation::SourceOver => { 2 as i64 },
+        CompositingOperation::SourceIn => { 3 as i64 },
+        CompositingOperation::SourceOut => { 4 as i64 },
+        CompositingOperation::SourceAtop => { 5 as i64 },
+        CompositingOperation::DestinationOver => { 6 as i64 },
+        CompositingOperation::DestinationIn => { 7 as i64 },
+        CompositingOperation::DestinationOut => { 8 as i64 },
+        CompositingOperation::DestinationAtop => { 9 as i64 },
+        CompositingOperation::XOR => { 10 as i64 },
+        CompositingOperation::PlusDarker => { 11 as i64 },
+        CompositingOperation::Highlight => { 12 as i64 },
+        CompositingOperation::PlusLighter => { 13 as i64 },
+        CompositingOperation::Multiply => { 14 as i64 },
+        CompositingOperation::Screen => { 15 as i64 },
+        CompositingOperation::Overlay => { 16 as i64 },
+        CompositingOperation::Darken => { 17 as i64 },
+        CompositingOperation::Lighten => { 18 as i64 },
+        CompositingOperation::ColorDodge => { 19 as i64 },
+        CompositingOperation::ColorBurn => { 20 as i64 },
+        CompositingOperation::SoftLight => { 21 as i64 },
+        CompositingOperation::HardLight => { 22 as i64 },
+        CompositingOperation::Difference => { 23 as i64 },
+        CompositingOperation::Exclusion => { 24 as i64 },
+        CompositingOperation::Hue => { 25 as i64 },
+        CompositingOperation::Saturation => { 26 as i64 },
+        CompositingOperation::Color => { 27 as i64 },
+        CompositingOperation::Luminosity => { 28 as i64 },
+    };
+}
+
+fn compositing_operation_from_raw(raw: i64) -> CompositingOperation {
+    if raw == (1 as i64) { return CompositingOperation::Copy; }
+    if raw == (2 as i64) { return CompositingOperation::SourceOver; }
+    if raw == (3 as i64) { return CompositingOperation::SourceIn; }
+    if raw == (4 as i64) { return CompositingOperation::SourceOut; }
+    if raw == (5 as i64) { return CompositingOperation::SourceAtop; }
+    if raw == (6 as i64) { return CompositingOperation::DestinationOver; }
+    if raw == (7 as i64) { return CompositingOperation::DestinationIn; }
+    if raw == (8 as i64) { return CompositingOperation::DestinationOut; }
+    if raw == (9 as i64) { return CompositingOperation::DestinationAtop; }
+    if raw == (10 as i64) { return CompositingOperation::XOR; }
+    if raw == (11 as i64) { return CompositingOperation::PlusDarker; }
+    if raw == (12 as i64) { return CompositingOperation::Highlight; }
+    if raw == (13 as i64) { return CompositingOperation::PlusLighter; }
+    if raw == (14 as i64) { return CompositingOperation::Multiply; }
+    if raw == (15 as i64) { return CompositingOperation::Screen; }
+    if raw == (16 as i64) { return CompositingOperation::Overlay; }
+    if raw == (17 as i64) { return CompositingOperation::Darken; }
+    if raw == (18 as i64) { return CompositingOperation::Lighten; }
+    if raw == (19 as i64) { return CompositingOperation::ColorDodge; }
+    if raw == (20 as i64) { return CompositingOperation::ColorBurn; }
+    if raw == (21 as i64) { return CompositingOperation::SoftLight; }
+    if raw == (22 as i64) { return CompositingOperation::HardLight; }
+    if raw == (23 as i64) { return CompositingOperation::Difference; }
+    if raw == (24 as i64) { return CompositingOperation::Exclusion; }
+    if raw == (25 as i64) { return CompositingOperation::Hue; }
+    if raw == (26 as i64) { return CompositingOperation::Saturation; }
+    if raw == (27 as i64) { return CompositingOperation::Color; }
+    if raw == (28 as i64) { return CompositingOperation::Luminosity; }
+    return CompositingOperation::Clear;
+}
+
 // `NSTIFFCompression` (NS_ENUM)
 enum TIFFCompression {
     None,
@@ -157,6 +256,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSImageRep` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -166,6 +267,8 @@ struct ImageRep {
 
 impl ImageRep {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageRep { return ImageRep { _obj: ptr }; }
 
 }
 
@@ -177,6 +280,8 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -187,6 +292,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSImageSymbolConfiguration` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -196,6 +303,8 @@ struct ImageSymbolConfiguration {
 
 impl ImageSymbolConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageSymbolConfiguration { return ImageSymbolConfiguration { _obj: ptr }; }
 
     // SKIPPED `configurationWithPointSize:weight:scale:`: param `NSFontWeight` — unmapped type `NSFontWeight`
     // SKIPPED `configurationWithPointSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
@@ -216,8 +325,8 @@ impl ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationPreferringHierarchical\0"))) };
     }
 
-    fn configuration_with_hierarchical_color(hierarchical_color: *u8) -> ImageSymbolConfiguration {
-        return ImageSymbolConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithHierarchicalColor:\0")), hierarchical_color) };
+    fn configuration_with_hierarchical_color(hierarchical_color: Color) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithHierarchicalColor:\0")), hierarchical_color.raw()) };
     }
 
     // SKIPPED `configurationWithPaletteColors:`: param `NSArray<NSColor *> * _Nonnull` — generic collection
@@ -233,8 +342,8 @@ impl ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_i64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithColorRenderingMode:\0")), image_symbol_color_rendering_mode_raw(mode)) };
     }
 
-    fn configuration_by_applying_configuration(this, configuration: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("configurationByApplyingConfiguration:\0")), configuration);
+    fn configuration_by_applying_configuration(this, configuration: ImageSymbolConfiguration) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("configurationByApplyingConfiguration:\0")), configuration.raw());
     }
 
 }
@@ -246,6 +355,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
     fn image_named(name: str) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageNamed:\0")), bridge::nsstring(name));
@@ -259,7 +370,7 @@ impl Image {
     // SKIPPED `imageWithSystemSymbolName:variableValue:accessibilityDescription:`: (return, arg) shape not yet modelled
     // SKIPPED `imageWithSymbolName:variableValue:`: (return, arg) shape not yet modelled
     // SKIPPED `imageWithSymbolName:bundle:variableValue:`: (return, arg) shape not yet modelled
-    // SKIPPED `initWithSize:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `initWithSize:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithData:`: extra init variant (one `new` per type)
     // SKIPPED `initWithContentsOfFile:`: extra init variant (one `new` per type)
@@ -268,8 +379,8 @@ impl Image {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initByReferencingFile:\0")), bridge::nsstring(file_name));
     }
 
-    fn init_by_referencing_u_r_l(this, url: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initByReferencingURL:\0")), url);
+    fn init_by_referencing_u_r_l(this, url: URL) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initByReferencingURL:\0")), url.raw());
     }
 
     // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
@@ -281,52 +392,64 @@ impl Image {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `drawAtPoint:fromRect:operation:fraction:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `drawInRect:fromRect:operation:fraction:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawRepresentation:inRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawInRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawAtPoint:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
+    // SKIPPED `drawRepresentation:inRect:`: (return, arg) shape not yet modelled
+    fn draw_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
+    }
+
     fn recache(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("recache\0")));
     }
 
     // SKIPPED `TIFFRepresentationUsingCompression:factor:`: (return, arg) shape not yet modelled
     // SKIPPED `addRepresentations:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
-    fn add_representation(this, image_rep: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRepresentation:\0")), image_rep);
+    fn add_representation(this, image_rep: ImageRep) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRepresentation:\0")), image_rep.raw());
     }
 
-    fn remove_representation(this, image_rep: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeRepresentation:\0")), image_rep);
+    fn remove_representation(this, image_rep: ImageRep) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeRepresentation:\0")), image_rep.raw());
     }
 
     // SKIPPED `canInitWithPasteboard:`: (return, arg) shape not yet modelled
     // SKIPPED `initWithCGImage:size:`: extra init variant (one `new` per type)
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
+    // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `recommendedLayerContentsScale:`: (return, arg) shape not yet modelled
     fn layer_contents_for_contents_scale(this, layer_contents_scale: f64) -> *u8 {
         return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("layerContentsForContentsScale:\0")), layer_contents_scale);
     }
 
-    fn image_with_symbol_configuration(this, configuration: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageWithSymbolConfiguration:\0")), configuration);
-        return bridge::obj_option(obj);
+    fn image_with_symbol_configuration(this, configuration: ImageSymbolConfiguration) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageWithSymbolConfiguration:\0")), configuration.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn image_with_locale(this, locale: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageWithLocale:\0")), locale);
+    fn image_with_locale(this, locale: *u8) -> Image {
+        return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageWithLocale:\0")), locale));
     }
 
-    // SKIPPED `size`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setSize:`: param `NSSize` — unmapped type `NSSize`
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_size(this, size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setSize:\0")), size);
+    }
+
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
+    }
+
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn uses_e_p_s_on_resolution_mismatch(this) -> bool {
@@ -371,8 +494,15 @@ impl Image {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isValid\0"))) != (0 as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSImageDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSImageDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     // SKIPPED `imageTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     // SKIPPED `imageUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     fn cache_mode(this) -> ImageCacheMode {
@@ -380,8 +510,14 @@ impl Image {
     }
 
     // SKIPPED `setCacheMode:`: (return, arg) shape not yet modelled
-    // SKIPPED `alignmentRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setAlignmentRect:`: param `NSRect` — unmapped type `NSRect`
+    fn alignment_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("alignmentRect\0")));
+    }
+
+    fn set_alignment_rect(this, alignment_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setAlignmentRect:\0")), alignment_rect);
+    }
+
     fn is_template(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isTemplate\0"))) != (0 as i8);
     }
@@ -470,9 +606,12 @@ impl Image {
     }
 
     // SKIPPED `initWithIconRef:`: extra init variant (one `new` per type)
-    fn best_representation_for_device(this, device_description: *u8) -> option::Option[*u8] {
+    fn best_representation_for_device(this, device_description: *u8) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bestRepresentationForDevice:\0")), device_description);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ImageRep]::None;
+        }
+        return option::some(ImageRep::from_raw(obj));
     }
 
     fn lock_focus(this) {
@@ -527,14 +666,14 @@ impl Image {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("cacheDepthMatchesImageDepth\0"))) != (0 as i8);
     }
 
-    // SKIPPED `dissolveToPoint:fraction:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `dissolveToPoint:fromRect:fraction:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `compositeToPoint:operation:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `compositeToPoint:fromRect:operation:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `compositeToPoint:operation:fraction:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `compositeToPoint:fromRect:operation:fraction:`: param `NSPoint` — unmapped type `NSPoint`
-    fn lock_focus_on_representation(this, image_representation: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockFocusOnRepresentation:\0")), image_representation);
+    // SKIPPED `dissolveToPoint:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `dissolveToPoint:fromRect:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `compositeToPoint:operation:`: (return, arg) shape not yet modelled
+    // SKIPPED `compositeToPoint:fromRect:operation:`: (return, arg) shape not yet modelled
+    // SKIPPED `compositeToPoint:operation:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `compositeToPoint:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
+    fn lock_focus_on_representation(this, image_representation: ImageRep) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockFocusOnRepresentation:\0")), image_representation.raw());
     }
 
     fn cancel_incremental_load(this) {
@@ -550,19 +689,19 @@ impl Image {
 // SKIPPED `imageDidNotDraw:inRect:`: arg shape (only <=5 object args modelled)
 // SKIPPED `image:didLoadPartOfRepresentation:withValidRows:`: arg shape (only <=5 object args modelled)
 // SKIPPED `image:didLoadRepresentation:withStatus:`: arg shape (only <=5 object args modelled)
-fn ImageDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn ImageDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct ImageDelegateProtocol {
+struct ImageDelegate {
     image_will_load_representation: fn(*u8, *u8, *u8),
     image_did_load_representation_header: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn ImageDelegateProtocol_new(user: *u8) -> ImageDelegateProtocol {
-    return ImageDelegateProtocol { image_will_load_representation: ImageDelegateProtocol_noop_v_2, image_did_load_representation_header: ImageDelegateProtocol_noop_v_2, user: user };
+fn ImageDelegate_new(user: *u8) -> ImageDelegate {
+    return ImageDelegate { image_will_load_representation: ImageDelegate_noop_v_2, image_did_load_representation_header: ImageDelegate_noop_v_2, user: user };
 }
 
-impl ImageDelegateProtocol {
+impl ImageDelegate {
     fn set_image_will_load_representation(ref this, handler: fn(*u8, *u8, *u8)) {
         this.image_will_load_representation = handler;
         return;
@@ -573,35 +712,35 @@ impl ImageDelegateProtocol {
     }
 }
 
-fn ImageDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn ImageDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn ImageDelegateProtocol_image_will_load_representation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ImageDelegateProtocol = { synth::get_associated(self_obj, ImageDelegateProtocol_key()) as *ImageDelegateProtocol };
+fn ImageDelegate_image_will_load_representation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).image_will_load_representation };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn ImageDelegateProtocol_image_did_load_representation_header_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ImageDelegateProtocol = { synth::get_associated(self_obj, ImageDelegateProtocol_key()) as *ImageDelegateProtocol };
+fn ImageDelegate_image_did_load_representation_header_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).image_did_load_representation_header };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_ImageDelegateProtocol(ctx: *ImageDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ImageDelegateProtocol\0");
+fn create_ImageDelegate(ctx: *ImageDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_ImageDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_image_will_load_representation: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:willLoadRepresentation:\0")), ImageDelegateProtocol_image_will_load_representation_imp, #str_ptr("v@:@@\0"));
-        let add_image_did_load_representation_header: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:didLoadRepresentationHeader:\0")), ImageDelegateProtocol_image_did_load_representation_header_imp, #str_ptr("v@:@@\0"));
+        let add_image_will_load_representation: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:willLoadRepresentation:\0")), ImageDelegate_image_will_load_representation_imp, #str_ptr("v@:@@\0"));
+        let add_image_did_load_representation_header: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:didLoadRepresentationHeader:\0")), ImageDelegate_image_did_load_representation_header_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ImageDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, ImageDelegate_key(), { ctx as *u8 });
     return d;
 }
 

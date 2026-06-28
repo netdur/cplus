@@ -65,6 +65,8 @@ struct FontDescriptor {
 impl FontDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FontDescriptor { return FontDescriptor { _obj: ptr }; }
+
 }
 
 // `NSAffineTransform` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -74,6 +76,8 @@ struct AffineTransform {
 
 impl AffineTransform {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AffineTransform { return AffineTransform { _obj: ptr }; }
 
 }
 
@@ -85,6 +89,8 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -94,6 +100,8 @@ struct Font {
 
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
     // SKIPPED `fontWithName:size:`: (return, arg) shape not yet modelled
     // SKIPPED `fontWithName:matrix:`: (return, arg) shape not yet modelled
@@ -115,12 +123,12 @@ impl Font {
         return option::some(Font { _obj: obj });
     }
 
-    fn set_user_font(font: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("setUserFont:\0")), font);
+    fn set_user_font(font: Font) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("setUserFont:\0")), font.raw());
     }
 
-    fn set_user_fixed_pitch_font(font: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("setUserFixedPitchFont:\0")), font);
+    fn set_user_fixed_pitch_font(font: Font) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("setUserFixedPitchFont:\0")), font.raw());
     }
 
     fn system_font_of_size(font_size: f64) -> Font {
@@ -167,8 +175,8 @@ impl Font {
     // SKIPPED `monospacedDigitSystemFontOfSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
     // SKIPPED `systemFontOfSize:weight:width:`: param `NSFontWeight` — unmapped type `NSFontWeight`
     // SKIPPED `monospacedSystemFontOfSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    fn font_with_size(this, font_size: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontWithSize:\0")), font_size);
+    fn font_with_size(this, font_size: f64) -> Font {
+        return Font::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontWithSize:\0")), font_size));
     }
 
     // SKIPPED `systemFontSizeForControlSize:`: (return, arg) shape not yet modelled
@@ -180,8 +188,8 @@ impl Font {
         rt::msg_void(this._obj, rt::sel(#str_ptr("set\0")));
     }
 
-    fn set_in_context(this, graphics_context: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInContext:\0")), graphics_context);
+    fn set_in_context(this, graphics_context: GraphicsContext) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInContext:\0")), graphics_context.raw());
     }
 
     fn system_font_size() -> f64 {
@@ -219,12 +227,12 @@ impl Font {
         return bridge::to_text_option(ns);
     }
 
-    fn font_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fontDescriptor\0")));
+    fn font_descriptor(this) -> FontDescriptor {
+        return FontDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fontDescriptor\0"))));
     }
 
-    fn text_transform(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textTransform\0")));
+    fn text_transform(this) -> AffineTransform {
+        return AffineTransform::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textTransform\0"))));
     }
 
     fn number_of_glyphs(this) -> u64 {
@@ -236,8 +244,14 @@ impl Font {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("coveredCharacterSet\0")));
     }
 
-    // SKIPPED `boundingRectForFont`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `maximumAdvancement`: return `NSSize` — unmapped type `NSSize`
+    fn bounding_rect_for_font(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("boundingRectForFont\0")));
+    }
+
+    fn maximum_advancement(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maximumAdvancement\0")));
+    }
+
     fn ascender(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("ascender\0")));
     }
@@ -288,16 +302,16 @@ impl Font {
     // SKIPPED `getBoundingRects:forGlyphs:count:`: param `NSRectArray _Nonnull` — unmapped type `NSRectArray`
     // SKIPPED `getAdvancements:forGlyphs:count:`: param `NSSizeArray _Nonnull` — unmapped type `NSSizeArray`
     // SKIPPED `getAdvancements:forPackedGlyphs:length:`: param `NSSizeArray _Nonnull` — unmapped type `NSSizeArray`
-    fn screen_font_with_rendering_mode(this, rendering_mode: FontRenderingMode) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("screenFontWithRenderingMode:\0")), font_rendering_mode_raw(rendering_mode));
+    fn screen_font_with_rendering_mode(this, rendering_mode: FontRenderingMode) -> Font {
+        return Font::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("screenFontWithRenderingMode:\0")), font_rendering_mode_raw(rendering_mode)));
     }
 
-    fn printer_font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("printerFont\0")));
+    fn printer_font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("printerFont\0"))));
     }
 
-    fn screen_font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("screenFont\0")));
+    fn screen_font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("screenFont\0"))));
     }
 
     fn rendering_mode(this) -> FontRenderingMode {

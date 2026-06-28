@@ -5,7 +5,45 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
+
+// `NSColorPanelMode` (NS_ENUM)
+enum ColorPanelMode {
+    None,
+    Gray,
+    RGB,
+    CMYK,
+    HSB,
+    CustomPalette,
+    ColorList,
+    Wheel,
+    Crayon,
+}
+
+fn color_panel_mode_raw(v: ColorPanelMode) -> i64 {
+    return match v {
+        ColorPanelMode::None => { -1 as i64 },
+        ColorPanelMode::Gray => { 0 as i64 },
+        ColorPanelMode::RGB => { 1 as i64 },
+        ColorPanelMode::CMYK => { 2 as i64 },
+        ColorPanelMode::HSB => { 3 as i64 },
+        ColorPanelMode::CustomPalette => { 4 as i64 },
+        ColorPanelMode::ColorList => { 5 as i64 },
+        ColorPanelMode::Wheel => { 6 as i64 },
+        ColorPanelMode::Crayon => { 7 as i64 },
+    };
+}
+
+fn color_panel_mode_from_raw(raw: i64) -> ColorPanelMode {
+    if raw == (0 as i64) { return ColorPanelMode::Gray; }
+    if raw == (1 as i64) { return ColorPanelMode::RGB; }
+    if raw == (2 as i64) { return ColorPanelMode::CMYK; }
+    if raw == (3 as i64) { return ColorPanelMode::HSB; }
+    if raw == (4 as i64) { return ColorPanelMode::CustomPalette; }
+    if raw == (5 as i64) { return ColorPanelMode::ColorList; }
+    if raw == (6 as i64) { return ColorPanelMode::Wheel; }
+    if raw == (7 as i64) { return ColorPanelMode::Crayon; }
+    return ColorPanelMode::None;
+}
 
 // `NSButtonCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct ButtonCell {
@@ -14,6 +52,8 @@ struct ButtonCell {
 
 impl ButtonCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ButtonCell { return ButtonCell { _obj: ptr }; }
 
 }
 
@@ -25,6 +65,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSColorPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -34,6 +76,8 @@ struct ColorPanel {
 
 impl ColorPanel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorPanel { return ColorPanel { _obj: ptr }; }
 
 }
 
@@ -45,6 +89,8 @@ struct ColorList {
 impl ColorList {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorList { return ColorList { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -54,6 +100,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -65,192 +113,76 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
-// `NSColorPickingDefault` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `initWithPickerMask:colorPanel:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `minContentSize`: return `NSSize` not modelled
-fn ColorPickingDefault_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ColorPickingDefault_noop_v_1(user: *u8, a0: *u8) { return; }
-fn ColorPickingDefault_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-
+// `NSColorPickingDefault` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct ColorPickingDefault {
-    provide_new_button_image: fn(*u8) -> *u8,
-    insert_new_button_image_in: fn(*u8, *u8, *u8),
-    view_size_changed: fn(*u8, *u8),
-    alpha_control_added_or_removed: fn(*u8, *u8),
-    attach_color_list: fn(*u8, *u8),
-    detach_color_list: fn(*u8, *u8),
-    button_tool_tip: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn ColorPickingDefault_new(user: *u8) -> ColorPickingDefault {
-    return ColorPickingDefault { provide_new_button_image: ColorPickingDefault_noop_id_0, insert_new_button_image_in: ColorPickingDefault_noop_v_2, view_size_changed: ColorPickingDefault_noop_v_1, alpha_control_added_or_removed: ColorPickingDefault_noop_v_1, attach_color_list: ColorPickingDefault_noop_v_1, detach_color_list: ColorPickingDefault_noop_v_1, button_tool_tip: ColorPickingDefault_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl ColorPickingDefault {
-    fn set_provide_new_button_image(ref this, handler: fn(*u8) -> *u8) {
-        this.provide_new_button_image = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorPickingDefault { return ColorPickingDefault { _obj: ptr }; }
+
+    // SKIPPED `initWithPickerMask:colorPanel:`: (return, arg) shape not yet modelled
+    fn provide_new_button_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("provideNewButtonImage\0"))));
     }
-    fn set_insert_new_button_image_in(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.insert_new_button_image_in = handler;
-        return;
+
+    // SKIPPED `insertNewButtonImage:in:`: (return, arg) shape not yet modelled
+    fn view_size_changed(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewSizeChanged:\0")), sender);
     }
-    fn set_view_size_changed(ref this, handler: fn(*u8, *u8)) {
-        this.view_size_changed = handler;
-        return;
+
+    fn alpha_control_added_or_removed(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("alphaControlAddedOrRemoved:\0")), sender);
     }
-    fn set_alpha_control_added_or_removed(ref this, handler: fn(*u8, *u8)) {
-        this.alpha_control_added_or_removed = handler;
-        return;
+
+    fn attach_color_list(this, color_list: ColorList) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("attachColorList:\0")), color_list.raw());
     }
-    fn set_attach_color_list(ref this, handler: fn(*u8, *u8)) {
-        this.attach_color_list = handler;
-        return;
+
+    fn detach_color_list(this, color_list: ColorList) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("detachColorList:\0")), color_list.raw());
     }
-    fn set_detach_color_list(ref this, handler: fn(*u8, *u8)) {
-        this.detach_color_list = handler;
-        return;
+
+    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn button_tool_tip(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("buttonToolTip\0")));
+        return bridge::to_text(ns);
     }
-    fn set_button_tool_tip(ref this, handler: fn(*u8) -> *u8) {
-        this.button_tool_tip = handler;
-        return;
+
+    fn min_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minContentSize\0")));
     }
+
 }
 
-fn ColorPickingDefault_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ColorPickingDefault_provide_new_button_image_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8) -> *u8 = { (*c).provide_new_button_image };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn ColorPickingDefault_insert_new_button_image_in_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8, *u8, *u8) = { (*c).insert_new_button_image_in };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
-fn ColorPickingDefault_view_size_changed_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8, *u8) = { (*c).view_size_changed };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn ColorPickingDefault_alpha_control_added_or_removed_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8, *u8) = { (*c).alpha_control_added_or_removed };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn ColorPickingDefault_attach_color_list_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8, *u8) = { (*c).attach_color_list };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn ColorPickingDefault_detach_color_list_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8, *u8) = { (*c).detach_color_list };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn ColorPickingDefault_button_tool_tip_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *ColorPickingDefault = { synth::get_associated(self_obj, ColorPickingDefault_key()) as *ColorPickingDefault };
-    let f: fn(*u8) -> *u8 = { (*c).button_tool_tip };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_ColorPickingDefault(ctx: *ColorPickingDefault) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ColorPickingDefault\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_provide_new_button_image: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("provideNewButtonImage\0")), ColorPickingDefault_provide_new_button_image_imp, #str_ptr("@@:\0"));
-        let add_insert_new_button_image_in: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), ColorPickingDefault_insert_new_button_image_in_imp, #str_ptr("v@:@@\0"));
-        let add_view_size_changed: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("viewSizeChanged:\0")), ColorPickingDefault_view_size_changed_imp, #str_ptr("v@:@\0"));
-        let add_alpha_control_added_or_removed: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("alphaControlAddedOrRemoved:\0")), ColorPickingDefault_alpha_control_added_or_removed_imp, #str_ptr("v@:@\0"));
-        let add_attach_color_list: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("attachColorList:\0")), ColorPickingDefault_attach_color_list_imp, #str_ptr("v@:@\0"));
-        let add_detach_color_list: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("detachColorList:\0")), ColorPickingDefault_detach_color_list_imp, #str_ptr("v@:@\0"));
-        let add_button_tool_tip: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("buttonToolTip\0")), ColorPickingDefault_button_tool_tip_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ColorPickingDefault_key(), { ctx as *u8 });
-    return d;
-}
-
-// `NSColorPickingCustom` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `supportsMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `provideNewView:`: arg shape (only <=5 object args modelled)
-fn ColorPickingCustom_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn ColorPickingCustom_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSColorPickingCustom` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct ColorPickingCustom {
-    current_mode: fn(*u8) -> u64,
-    set_color: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn ColorPickingCustom_new(user: *u8) -> ColorPickingCustom {
-    return ColorPickingCustom { current_mode: ColorPickingCustom_noop_u64_0, set_color: ColorPickingCustom_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl ColorPickingCustom {
-    fn set_current_mode(ref this, handler: fn(*u8) -> u64) {
-        this.current_mode = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorPickingCustom { return ColorPickingCustom { _obj: ptr }; }
+
+    fn supports_mode(this, mode: ColorPanelMode) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("supportsMode:\0")), color_panel_mode_raw(mode)) != (0 as i8);
     }
-    fn set_set_color(ref this, handler: fn(*u8, *u8)) {
-        this.set_color = handler;
-        return;
+
+    fn current_mode(this) -> ColorPanelMode {
+        return color_panel_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("currentMode\0"))));
     }
-}
 
-fn ColorPickingCustom_key() -> *u8 { return { 28673 as *u8 }; }
-
-fn ColorPickingCustom_current_mode_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *ColorPickingCustom = { synth::get_associated(self_obj, ColorPickingCustom_key()) as *ColorPickingCustom };
-    let f: fn(*u8) -> u64 = { (*c).current_mode };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn ColorPickingCustom_set_color_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *ColorPickingCustom = { synth::get_associated(self_obj, ColorPickingCustom_key()) as *ColorPickingCustom };
-    let f: fn(*u8, *u8) = { (*c).set_color };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_ColorPickingCustom(ctx: *ColorPickingCustom) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ColorPickingCustom\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_current_mode: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("currentMode\0")), ColorPickingCustom_current_mode_imp, #str_ptr("Q@:\0"));
-        let add_set_color: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setColor:\0")), ColorPickingCustom_set_color_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `provideNewView:`: (return, arg) shape not yet modelled
+    fn set_color(this, new_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), new_color.raw());
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ColorPickingCustom_key(), { ctx as *u8 });
-    return d;
+
 }
 

@@ -36,6 +36,25 @@ fn log_level_from_raw(raw: i64) -> LogLevel {
     return LogLevel::Undefined;
 }
 
+#[repr(C)]
+struct LogState_add_log_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn LogState_add_log_handler_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) {
+    let bl: *LogState_add_log_handler_block = { block as *LogState_add_log_handler_block };
+    let f: fn(*u8, *u8, *u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2, a3);
+    return;
+}
+
 // `MTLLogStateDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct LogStateDescriptor {
     opaque _obj: *u8,
@@ -56,5 +75,25 @@ impl LogStateDescriptor {
     }
 
     // SKIPPED `setBufferSize:`: (return, arg) shape not yet modelled
+}
+
+// `MTLLogState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct LogState {
+    opaque _obj: *u8,
+}
+
+impl LogState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LogState { return LogState { _obj: ptr }; }
+
+    fn add_log_handler(this, cb: fn(*u8, *u8, *u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: LogState_add_log_handler_block = LogState_add_log_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LogState_add_log_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addLogHandler:\0")), bp);
+        return;
+    }
+
 }
 

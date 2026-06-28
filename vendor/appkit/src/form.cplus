@@ -62,6 +62,8 @@ struct FormCell {
 impl FormCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FormCell { return FormCell { _obj: ptr }; }
+
 }
 
 // `NSForm` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -71,6 +73,8 @@ struct Form {
 
 impl Form {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Form { return Form { _obj: ptr }; }
 
     fn index_of_selected_item(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("indexOfSelectedItem\0")));
@@ -108,15 +112,18 @@ impl Form {
     }
 
     // SKIPPED `drawCellAtIndex:`: (return, arg) shape not yet modelled
-    fn add_entry(this, title: str) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("addEntry:\0")), bridge::nsstring(title));
+    fn add_entry(this, title: str) -> FormCell {
+        return FormCell::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("addEntry:\0")), bridge::nsstring(title)));
     }
 
     // SKIPPED `insertEntry:atIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `removeEntryAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `indexOfCellWithTag:`: (return, arg) shape not yet modelled
     // SKIPPED `selectTextAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setFrameSize:`: param `NSSize` — unmapped type `NSSize`
+    fn set_frame_size(this, new_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setFrameSize:\0")), new_size);
+    }
+
     // SKIPPED `setTitleBaseWritingDirection:`: (return, arg) shape not yet modelled
     // SKIPPED `setTextBaseWritingDirection:`: (return, arg) shape not yet modelled
     fn set_preferred_text_field_width(this, preferred_width: f64) {

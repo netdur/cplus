@@ -162,6 +162,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSStackView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -172,16 +174,18 @@ struct StackView {
 impl StackView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> StackView { return StackView { _obj: ptr }; }
+
     // SKIPPED `stackViewWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `setCustomSpacing:afterView:`: (return, arg) shape not yet modelled
     // SKIPPED `customSpacingAfterView:`: (return, arg) shape not yet modelled
-    fn add_arranged_subview(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
+    fn add_arranged_subview(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view.raw());
     }
 
     // SKIPPED `insertArrangedSubview:atIndex:`: (return, arg) shape not yet modelled
-    fn remove_arranged_subview(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
+    fn remove_arranged_subview(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
 
     // SKIPPED `setVisibilityPriority:forView:`: param `NSStackViewVisibilityPriority` — unmapped type `NSStackViewVisibilityPriority`
@@ -190,8 +194,15 @@ impl StackView {
     // SKIPPED `setClippingResistancePriority:forOrientation:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
     // SKIPPED `huggingPriorityForOrientation:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
     // SKIPPED `setHuggingPriority:forOrientation:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `delegate`: return `id<NSStackViewDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSStackViewDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn orientation(this) -> UserInterfaceLayoutOrientation {
         return user_interface_layout_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
@@ -229,8 +240,8 @@ impl StackView {
     // SKIPPED `detachedViews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
     // SKIPPED `addView:inGravity:`: (return, arg) shape not yet modelled
     // SKIPPED `insertView:atIndex:inGravity:`: (return, arg) shape not yet modelled
-    fn remove_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view);
+    fn remove_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view.raw());
     }
 
     // SKIPPED `viewsInGravity:`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
@@ -247,19 +258,19 @@ impl StackView {
 }
 
 // `NSStackViewDelegate` delegate protocol -> runtime class-synthesis helper.
-fn StackViewDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn StackViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct StackViewDelegateProtocol {
+struct StackViewDelegate {
     stack_view_will_detach_views: fn(*u8, *u8, *u8),
     stack_view_did_reattach_views: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn StackViewDelegateProtocol_new(user: *u8) -> StackViewDelegateProtocol {
-    return StackViewDelegateProtocol { stack_view_will_detach_views: StackViewDelegateProtocol_noop_v_2, stack_view_did_reattach_views: StackViewDelegateProtocol_noop_v_2, user: user };
+fn StackViewDelegate_new(user: *u8) -> StackViewDelegate {
+    return StackViewDelegate { stack_view_will_detach_views: StackViewDelegate_noop_v_2, stack_view_did_reattach_views: StackViewDelegate_noop_v_2, user: user };
 }
 
-impl StackViewDelegateProtocol {
+impl StackViewDelegate {
     fn set_stack_view_will_detach_views(ref this, handler: fn(*u8, *u8, *u8)) {
         this.stack_view_will_detach_views = handler;
         return;
@@ -270,35 +281,35 @@ impl StackViewDelegateProtocol {
     }
 }
 
-fn StackViewDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn StackViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn StackViewDelegateProtocol_stack_view_will_detach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *StackViewDelegateProtocol = { synth::get_associated(self_obj, StackViewDelegateProtocol_key()) as *StackViewDelegateProtocol };
+fn StackViewDelegate_stack_view_will_detach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).stack_view_will_detach_views };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn StackViewDelegateProtocol_stack_view_did_reattach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *StackViewDelegateProtocol = { synth::get_associated(self_obj, StackViewDelegateProtocol_key()) as *StackViewDelegateProtocol };
+fn StackViewDelegate_stack_view_did_reattach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).stack_view_did_reattach_views };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_StackViewDelegateProtocol(ctx: *StackViewDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_StackViewDelegateProtocol\0");
+fn create_StackViewDelegate(ctx: *StackViewDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_StackViewDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_stack_view_will_detach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:willDetachViews:\0")), StackViewDelegateProtocol_stack_view_will_detach_views_imp, #str_ptr("v@:@@\0"));
-        let add_stack_view_did_reattach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:didReattachViews:\0")), StackViewDelegateProtocol_stack_view_did_reattach_views_imp, #str_ptr("v@:@@\0"));
+        let add_stack_view_will_detach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:willDetachViews:\0")), StackViewDelegate_stack_view_will_detach_views_imp, #str_ptr("v@:@@\0"));
+        let add_stack_view_did_reattach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:didReattachViews:\0")), StackViewDelegate_stack_view_did_reattach_views_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, StackViewDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, StackViewDelegate_key(), { ctx as *u8 });
     return d;
 }
 

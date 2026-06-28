@@ -14,6 +14,8 @@ struct PDFImageRep {
 impl PDFImageRep {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PDFImageRep { return PDFImageRep { _obj: ptr }; }
+
     fn image_rep_with_data(pdf_data: *u8) -> option::Option[PDFImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSPDFImageRep\0")), rt::sel(#str_ptr("imageRepWithData:\0")), pdf_data);
         if obj == { 0 as *u8 } {
@@ -32,7 +34,10 @@ impl PDFImageRep {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("PDFRepresentation\0")));
     }
 
-    // SKIPPED `bounds`: return `NSRect` — unmapped type `NSRect`
+    fn bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("bounds\0")));
+    }
+
     fn current_page(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("currentPage\0")));
     }

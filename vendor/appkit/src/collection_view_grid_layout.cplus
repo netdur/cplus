@@ -14,6 +14,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSCollectionViewGridLayout` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct CollectionViewGridLayout {
 
 impl CollectionViewGridLayout {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionViewGridLayout { return CollectionViewGridLayout { _obj: ptr }; }
 
     // SKIPPED `margins`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
     // SKIPPED `setMargins:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
@@ -52,10 +56,22 @@ impl CollectionViewGridLayout {
     }
 
     // SKIPPED `setMaximumNumberOfColumns:`: (return, arg) shape not yet modelled
-    // SKIPPED `minimumItemSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinimumItemSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `maximumItemSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaximumItemSize:`: param `NSSize` — unmapped type `NSSize`
+    fn minimum_item_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minimumItemSize\0")));
+    }
+
+    fn set_minimum_item_size(this, minimum_item_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinimumItemSize:\0")), minimum_item_size);
+    }
+
+    fn maximum_item_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maximumItemSize\0")));
+    }
+
+    fn set_maximum_item_size(this, maximum_item_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaximumItemSize:\0")), maximum_item_size);
+    }
+
     // SKIPPED `backgroundColors`: return `NSArray<NSColor *> * _Nonnull` — generic collection
     // SKIPPED `setBackgroundColors:`: param `NSArray<NSColor *> * _Nullable` — generic collection
 }

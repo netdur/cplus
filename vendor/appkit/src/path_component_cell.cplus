@@ -14,6 +14,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct String {
 
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSPathComponentCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,22 +50,30 @@ struct PathComponentCell {
 impl PathComponentCell {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn image(this) -> option::Option[*u8] {
+    fn from_raw(ptr: *u8) -> PathComponentCell { return PathComponentCell { _obj: ptr }; }
+
+    fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
-    fn u_r_l(this) -> option::Option[*u8] {
+    fn u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
-    fn set_u_r_l(this, u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setURL:\0")), u_r_l);
+    fn set_u_r_l(this, u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setURL:\0")), u_r_l.raw());
     }
 
 }

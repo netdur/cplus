@@ -5,46 +5,20 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTLAllocation` delegate protocol -> runtime class-synthesis helper.
-fn Allocation_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTLAllocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct Allocation {
-    allocated_size: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn Allocation_new(user: *u8) -> Allocation {
-    return Allocation { allocated_size: Allocation_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl Allocation {
-    fn set_allocated_size(ref this, handler: fn(*u8) -> u64) {
-        this.allocated_size = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Allocation { return Allocation { _obj: ptr }; }
+
+    fn allocated_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocatedSize\0")));
     }
-}
 
-fn Allocation_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Allocation_allocated_size_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Allocation = { synth::get_associated(self_obj, Allocation_key()) as *Allocation };
-    let f: fn(*u8) -> u64 = { (*c).allocated_size };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_Allocation(ctx: *Allocation) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Allocation\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_allocated_size: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("allocatedSize\0")), Allocation_allocated_size_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Allocation_key(), { ctx as *u8 });
-    return d;
 }
 

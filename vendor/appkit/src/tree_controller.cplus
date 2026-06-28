@@ -14,6 +14,8 @@ struct SortDescriptor {
 impl SortDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SortDescriptor { return SortDescriptor { _obj: ptr }; }
+
 }
 
 // `NSTreeNode` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct TreeNode {
 impl TreeNode {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TreeNode { return TreeNode { _obj: ptr }; }
+
 }
 
 // `NSTreeController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct TreeController {
 
 impl TreeController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TreeController { return TreeController { _obj: ptr }; }
 
     fn rearrange_objects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("rearrangeObjects\0")));
@@ -71,23 +77,23 @@ impl TreeController {
     // SKIPPED `removeSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `moveNode:toIndexPath:`: (return, arg) shape not yet modelled
     // SKIPPED `moveNodes:toIndexPath:`: param `NSArray<NSTreeNode *> * _Nonnull` — generic collection
-    fn children_key_path_for_node(this, node: *u8) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("childrenKeyPathForNode:\0")), node);
+    fn children_key_path_for_node(this, node: TreeNode) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("childrenKeyPathForNode:\0")), node.raw());
         return bridge::to_text_option(ns);
     }
 
-    fn count_key_path_for_node(this, node: *u8) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("countKeyPathForNode:\0")), node);
+    fn count_key_path_for_node(this, node: TreeNode) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("countKeyPathForNode:\0")), node.raw());
         return bridge::to_text_option(ns);
     }
 
-    fn leaf_key_path_for_node(this, node: *u8) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("leafKeyPathForNode:\0")), node);
+    fn leaf_key_path_for_node(this, node: TreeNode) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("leafKeyPathForNode:\0")), node.raw());
         return bridge::to_text_option(ns);
     }
 
-    fn arranged_objects(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("arrangedObjects\0")));
+    fn arranged_objects(this) -> TreeNode {
+        return TreeNode::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("arrangedObjects\0"))));
     }
 
     fn children_key_path(this) -> option::Option[text::Text] {

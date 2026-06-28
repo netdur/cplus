@@ -14,6 +14,8 @@ struct TintConfiguration {
 impl TintConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TintConfiguration { return TintConfiguration { _obj: ptr }; }
+
     fn tint_configuration_with_preferred_color(color: *u8) -> TintConfiguration {
         return TintConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSTintConfiguration\0")), rt::sel(#str_ptr("tintConfigurationWithPreferredColor:\0")), color) };
     }

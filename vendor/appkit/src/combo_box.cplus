@@ -15,6 +15,8 @@ struct ComboBox {
 impl ComboBox {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ComboBox { return ComboBox { _obj: ptr }; }
+
     fn reload_data(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadData\0")));
     }
@@ -62,8 +64,14 @@ impl ComboBox {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasVerticalScroller:\0")), has_vertical_scroller as i8);
     }
 
-    // SKIPPED `intercellSpacing`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setIntercellSpacing:`: param `NSSize` — unmapped type `NSSize`
+    fn intercell_spacing(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("intercellSpacing\0")));
+    }
+
+    fn set_intercell_spacing(this, intercell_spacing: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setIntercellSpacing:\0")), intercell_spacing);
+    }
+
     fn item_height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("itemHeight\0")));
     }
@@ -109,10 +117,24 @@ impl ComboBox {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCompletes:\0")), completes as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSComboBoxDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSComboBoxDelegate> _Nullable` — generic collection
-    // SKIPPED `dataSource`: return `id<NSComboBoxDataSource> _Nullable` — generic collection
-    // SKIPPED `setDataSource:`: param `id<NSComboBoxDataSource> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    fn data_source(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_data_source(this, data_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
     fn object_value_of_selected_item(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectValueOfSelectedItem\0")));
         return bridge::obj_option(obj);

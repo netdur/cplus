@@ -33,6 +33,8 @@ struct FontDescriptor {
 impl FontDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FontDescriptor { return FontDescriptor { _obj: ptr }; }
+
 }
 
 // `NSFontAssetRequest` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -42,6 +44,8 @@ struct FontAssetRequest {
 
 impl FontAssetRequest {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontAssetRequest { return FontAssetRequest { _obj: ptr }; }
 
     fn new() -> FontAssetRequest {
         let cls: *u8 = rt::get_class(#str_ptr("NSFontAssetRequest\0"));

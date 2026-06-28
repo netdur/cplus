@@ -14,6 +14,8 @@ struct EPSImageRep {
 impl EPSImageRep {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> EPSImageRep { return EPSImageRep { _obj: ptr }; }
+
     fn image_rep_with_data(eps_data: *u8) -> option::Option[EPSImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSEPSImageRep\0")), rt::sel(#str_ptr("imageRepWithData:\0")), eps_data);
         if obj == { 0 as *u8 } {
@@ -32,7 +34,10 @@ impl EPSImageRep {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareGState\0")));
     }
 
-    // SKIPPED `boundingBox`: return `NSRect` — unmapped type `NSRect`
+    fn bounding_box(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("boundingBox\0")));
+    }
+
     fn e_p_s_representation(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("EPSRepresentation\0")));
     }

@@ -14,6 +14,8 @@ struct IndexSet {
 impl IndexSet {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexSet { return IndexSet { _obj: ptr }; }
+
 }
 
 // `NSMutableIndexSet` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct MutableIndexSet {
 
 impl MutableIndexSet {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableIndexSet { return MutableIndexSet { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct SortDescriptor {
 impl SortDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SortDescriptor { return SortDescriptor { _obj: ptr }; }
+
 }
 
 // `NSArrayController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +49,8 @@ struct ArrayController {
 
 impl ArrayController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ArrayController { return ArrayController { _obj: ptr }; }
 
     fn rearrange_objects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("rearrangeObjects\0")));
@@ -94,8 +102,8 @@ impl ArrayController {
     // SKIPPED `insertObject:atArrangedObjectIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `insertObjects:atArrangedObjectIndexes:`: (return, arg) shape not yet modelled
     // SKIPPED `removeObjectAtArrangedObjectIndex:`: (return, arg) shape not yet modelled
-    fn remove_objects_at_arranged_object_indexes(this, indexes: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeObjectsAtArrangedObjectIndexes:\0")), indexes);
+    fn remove_objects_at_arranged_object_indexes(this, indexes: IndexSet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeObjectsAtArrangedObjectIndexes:\0")), indexes.raw());
     }
 
     fn remove_object(this, object: *u8) {
@@ -170,8 +178,8 @@ impl ArrayController {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAlwaysUsesMultipleValuesMarker:\0")), always_uses_multiple_values_marker as i8);
     }
 
-    fn selection_indexes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("selectionIndexes\0")));
+    fn selection_indexes(this) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("selectionIndexes\0"))));
     }
 
     fn selection_index(this) -> u64 {

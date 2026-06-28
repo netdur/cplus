@@ -52,6 +52,8 @@ struct CAMediaTimingFunction {
 impl CAMediaTimingFunction {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CAMediaTimingFunction { return CAMediaTimingFunction { _obj: ptr }; }
+
 }
 
 // `NSAnimationContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -61,6 +63,8 @@ struct AnimationContext {
 
 impl AnimationContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AnimationContext { return AnimationContext { _obj: ptr }; }
 
     // SKIPPED `runAnimationGroup:completionHandler:`: params after the block not modelled
     fn run_animation_group(cb: fn(*u8, *u8), ctx: *u8) {

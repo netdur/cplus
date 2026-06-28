@@ -14,6 +14,8 @@ struct PressGestureRecognizer {
 impl PressGestureRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PressGestureRecognizer { return PressGestureRecognizer { _obj: ptr }; }
+
     fn button_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }

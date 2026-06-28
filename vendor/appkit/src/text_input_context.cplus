@@ -15,6 +15,8 @@ struct Event {
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
+
 }
 
 // `NSTextInputContext` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -25,7 +27,14 @@ struct TextInputContext {
 impl TextInputContext {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithClient:`: param `id<NSTextInputClient> _Nonnull` — generic collection
+    fn from_raw(ptr: *u8) -> TextInputContext { return TextInputContext { _obj: ptr }; }
+
+    fn new(client: *u8) -> TextInputContext {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextInputContext\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextInputContext { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithClient:\0")), client) };
+    }
+
     // SKIPPED `init`: extra init variant (one `new` per type)
     fn activate(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("activate\0")));
@@ -73,7 +82,10 @@ impl TextInputContext {
         return option::some(TextInputContext { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `client`: return `id<NSTextInputClient> _Nonnull` — generic collection
+    fn client(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("client\0")));
+    }
+
     fn accepts_glyph_info(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsGlyphInfo\0"))) != (0 as i8);
     }

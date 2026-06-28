@@ -32,6 +32,8 @@ struct GroupTouchBarItem {
 impl GroupTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GroupTouchBarItem { return GroupTouchBarItem { _obj: ptr }; }
+
     // SKIPPED `groupItemWithIdentifier:items:`: param `NSArray<NSTouchBarItem *> * _Nonnull` — generic collection
     // SKIPPED `groupItemWithIdentifier:items:allowedCompressionOptions:`: param `NSArray<NSTouchBarItem *> * _Nonnull` — generic collection
     fn alert_style_group_item_with_identifier(identifier: str) -> GroupTouchBarItem {

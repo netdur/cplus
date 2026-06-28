@@ -5,11 +5,86 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
+import "stdlib/vec" as vec;
 
 // `MTLCommandBufferErrorOption` (NS_OPTIONS) — bitfield; combine with `|`.
 const command_buffer_error_option_none: u64 = 0 as u64;
 const command_buffer_error_option_encoder_execution_status: u64 = 1 as u64;
+
+// `MTLDispatchType` (NS_ENUM)
+enum DispatchType {
+    Serial,
+    Concurrent,
+}
+
+fn dispatch_type_raw(v: DispatchType) -> i64 {
+    return match v {
+        DispatchType::Serial => { 0 as i64 },
+        DispatchType::Concurrent => { 1 as i64 },
+    };
+}
+
+fn dispatch_type_from_raw(raw: i64) -> DispatchType {
+    if raw == (1 as i64) { return DispatchType::Concurrent; }
+    return DispatchType::Serial;
+}
+
+// `MTLCommandBufferStatus` (NS_ENUM)
+enum CommandBufferStatus {
+    NotEnqueued,
+    Enqueued,
+    Committed,
+    Scheduled,
+    Completed,
+    Error,
+}
+
+fn command_buffer_status_raw(v: CommandBufferStatus) -> i64 {
+    return match v {
+        CommandBufferStatus::NotEnqueued => { 0 as i64 },
+        CommandBufferStatus::Enqueued => { 1 as i64 },
+        CommandBufferStatus::Committed => { 2 as i64 },
+        CommandBufferStatus::Scheduled => { 3 as i64 },
+        CommandBufferStatus::Completed => { 4 as i64 },
+        CommandBufferStatus::Error => { 5 as i64 },
+    };
+}
+
+fn command_buffer_status_from_raw(raw: i64) -> CommandBufferStatus {
+    if raw == (1 as i64) { return CommandBufferStatus::Enqueued; }
+    if raw == (2 as i64) { return CommandBufferStatus::Committed; }
+    if raw == (3 as i64) { return CommandBufferStatus::Scheduled; }
+    if raw == (4 as i64) { return CommandBufferStatus::Completed; }
+    if raw == (5 as i64) { return CommandBufferStatus::Error; }
+    return CommandBufferStatus::NotEnqueued;
+}
+
+// `MTLCommandEncoderErrorState` (NS_ENUM)
+enum CommandEncoderErrorState {
+    Unknown,
+    Completed,
+    Affected,
+    Pending,
+    Faulted,
+}
+
+fn command_encoder_error_state_raw(v: CommandEncoderErrorState) -> i64 {
+    return match v {
+        CommandEncoderErrorState::Unknown => { 0 as i64 },
+        CommandEncoderErrorState::Completed => { 1 as i64 },
+        CommandEncoderErrorState::Affected => { 2 as i64 },
+        CommandEncoderErrorState::Pending => { 3 as i64 },
+        CommandEncoderErrorState::Faulted => { 4 as i64 },
+    };
+}
+
+fn command_encoder_error_state_from_raw(raw: i64) -> CommandEncoderErrorState {
+    if raw == (1 as i64) { return CommandEncoderErrorState::Completed; }
+    if raw == (2 as i64) { return CommandEncoderErrorState::Affected; }
+    if raw == (3 as i64) { return CommandEncoderErrorState::Pending; }
+    if raw == (4 as i64) { return CommandEncoderErrorState::Faulted; }
+    return CommandEncoderErrorState::Unknown;
+}
 
 // `MTLRenderPassDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct RenderPassDescriptor {
@@ -94,284 +169,397 @@ impl CommandBufferDescriptor {
     }
 
     // SKIPPED `setErrorOptions:`: (return, arg) shape not yet modelled
-    // SKIPPED `logState`: return `id<MTLLogState> _Nullable` — generic collection
-    // SKIPPED `setLogState:`: param `id<MTLLogState> _Nullable` — generic collection
+    fn log_state(this) -> option::Option[LogState] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("logState\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[LogState]::None;
+        }
+        return option::some(LogState::from_raw(obj));
+    }
+
+    fn set_log_state(this, log_state: LogState) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLogState:\0")), log_state.raw());
+    }
+
 }
 
-// `MTLCommandBufferEncoderInfo` delegate protocol -> runtime class-synthesis helper.
-fn CommandBufferEncoderInfo_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn CommandBufferEncoderInfo_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
+}
 
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLCommandQueue` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CommandQueue {
+    opaque _obj: *u8,
+}
+
+impl CommandQueue {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandQueue { return CommandQueue { _obj: ptr }; }
+
+}
+
+// `MTLBlitCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct BlitCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl BlitCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BlitCommandEncoder { return BlitCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct RenderCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl RenderCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RenderCommandEncoder { return RenderCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLParallelRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ParallelRenderCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl ParallelRenderCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ParallelRenderCommandEncoder { return ParallelRenderCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLComputeCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ComputeCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl ComputeCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ComputeCommandEncoder { return ComputeCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLDrawable` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Drawable {
+    opaque _obj: *u8,
+}
+
+impl Drawable {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Drawable { return Drawable { _obj: ptr }; }
+
+}
+
+// `MTLCommandBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CommandBuffer {
+    opaque _obj: *u8,
+}
+
+impl CommandBuffer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandBuffer { return CommandBuffer { _obj: ptr }; }
+
+    fn enqueue(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("enqueue\0")));
+    }
+
+    fn commit(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("commit\0")));
+    }
+
+    // SKIPPED `addScheduledHandler:`: param `MTLCommandBufferHandler _Nonnull` — unmapped type `MTLCommandBufferHandler`
+    fn present_drawable(this, drawable: Drawable) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentDrawable:\0")), drawable.raw());
+    }
+
+    // SKIPPED `presentDrawable:atTime:`: (return, arg) shape not yet modelled
+    // SKIPPED `presentDrawable:afterMinimumDuration:`: (return, arg) shape not yet modelled
+    fn wait_until_scheduled(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("waitUntilScheduled\0")));
+    }
+
+    // SKIPPED `addCompletedHandler:`: param `MTLCommandBufferHandler _Nonnull` — unmapped type `MTLCommandBufferHandler`
+    fn wait_until_completed(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("waitUntilCompleted\0")));
+    }
+
+    fn blit_command_encoder(this) -> option::Option[BlitCommandEncoder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("blitCommandEncoder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[BlitCommandEncoder]::None;
+        }
+        return option::some(BlitCommandEncoder::from_raw(obj));
+    }
+
+    fn render_command_encoder_with_descriptor(this, render_pass_descriptor: RenderPassDescriptor) -> option::Option[RenderCommandEncoder] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("renderCommandEncoderWithDescriptor:\0")), render_pass_descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[RenderCommandEncoder]::None;
+        }
+        return option::some(RenderCommandEncoder::from_raw(obj));
+    }
+
+    fn compute_command_encoder_with_descriptor(this, compute_pass_descriptor: ComputePassDescriptor) -> option::Option[ComputeCommandEncoder] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("computeCommandEncoderWithDescriptor:\0")), compute_pass_descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[ComputeCommandEncoder]::None;
+        }
+        return option::some(ComputeCommandEncoder::from_raw(obj));
+    }
+
+    fn blit_command_encoder_with_descriptor(this, blit_pass_descriptor: BlitPassDescriptor) -> option::Option[BlitCommandEncoder] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("blitCommandEncoderWithDescriptor:\0")), blit_pass_descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[BlitCommandEncoder]::None;
+        }
+        return option::some(BlitCommandEncoder::from_raw(obj));
+    }
+
+    fn compute_command_encoder(this) -> option::Option[ComputeCommandEncoder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("computeCommandEncoder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ComputeCommandEncoder]::None;
+        }
+        return option::some(ComputeCommandEncoder::from_raw(obj));
+    }
+
+    fn compute_command_encoder_with_dispatch_type(this, dispatch_type: DispatchType) -> option::Option[ComputeCommandEncoder] {
+        let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("computeCommandEncoderWithDispatchType:\0")), dispatch_type_raw(dispatch_type));
+        if obj == { 0 as *u8 } {
+            return option::Option[ComputeCommandEncoder]::None;
+        }
+        return option::some(ComputeCommandEncoder::from_raw(obj));
+    }
+
+    // SKIPPED `encodeWaitForEvent:value:`: (return, arg) shape not yet modelled
+    // SKIPPED `encodeSignalEvent:value:`: (return, arg) shape not yet modelled
+    fn parallel_render_command_encoder_with_descriptor(this, render_pass_descriptor: RenderPassDescriptor) -> option::Option[ParallelRenderCommandEncoder] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("parallelRenderCommandEncoderWithDescriptor:\0")), render_pass_descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[ParallelRenderCommandEncoder]::None;
+        }
+        return option::some(ParallelRenderCommandEncoder::from_raw(obj));
+    }
+
+    fn resource_state_command_encoder(this) -> option::Option[ResourceStateCommandEncoder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("resourceStateCommandEncoder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ResourceStateCommandEncoder]::None;
+        }
+        return option::some(ResourceStateCommandEncoder::from_raw(obj));
+    }
+
+    fn resource_state_command_encoder_with_descriptor(this, resource_state_pass_descriptor: ResourceStatePassDescriptor) -> option::Option[ResourceStateCommandEncoder] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("resourceStateCommandEncoderWithDescriptor:\0")), resource_state_pass_descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[ResourceStateCommandEncoder]::None;
+        }
+        return option::some(ResourceStateCommandEncoder::from_raw(obj));
+    }
+
+    fn acceleration_structure_command_encoder(this) -> option::Option[AccelerationStructureCommandEncoder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accelerationStructureCommandEncoder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[AccelerationStructureCommandEncoder]::None;
+        }
+        return option::some(AccelerationStructureCommandEncoder::from_raw(obj));
+    }
+
+    fn acceleration_structure_command_encoder_with_descriptor(this, descriptor: AccelerationStructurePassDescriptor) -> AccelerationStructureCommandEncoder {
+        return AccelerationStructureCommandEncoder::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("accelerationStructureCommandEncoderWithDescriptor:\0")), descriptor.raw()));
+    }
+
+    fn push_debug_group(this, string: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pushDebugGroup:\0")), bridge::nsstring(string));
+    }
+
+    fn pop_debug_group(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("popDebugGroup\0")));
+    }
+
+    fn use_residency_set(this, residency_set: ResidencySet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("useResidencySet:\0")), residency_set.raw());
+    }
+
+    // SKIPPED `useResidencySets:count:`: (return, arg) shape not yet modelled
+    fn device(this) -> Device {
+        return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
+    }
+
+    fn command_queue(this) -> CommandQueue {
+        return CommandQueue::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("commandQueue\0"))));
+    }
+
+    fn retained_references(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("retainedReferences\0"))) != (0 as i8);
+    }
+
+    fn error_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("errorOptions\0")));
+    }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
+    fn set_label(this, label: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
+    }
+
+    fn kernel_start_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("kernelStartTime\0")));
+    }
+
+    fn kernel_end_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("kernelEndTime\0")));
+    }
+
+    fn logs(this) -> LogContainer {
+        return LogContainer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("logs\0"))));
+    }
+
+    fn g_p_u_start_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("GPUStartTime\0")));
+    }
+
+    fn g_p_u_end_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("GPUEndTime\0")));
+    }
+
+    fn status(this) -> CommandBufferStatus {
+        return command_buffer_status_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("status\0"))));
+    }
+
+    fn error(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("error\0")));
+        return bridge::obj_option(obj);
+    }
+
+}
+
+// `MTLEvent` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Event {
+    opaque _obj: *u8,
+}
+
+impl Event {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
+
+}
+
+// `MTLLogContainer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct LogContainer {
+    opaque _obj: *u8,
+}
+
+impl LogContainer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LogContainer { return LogContainer { _obj: ptr }; }
+
+}
+
+// `MTLLogState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct LogState {
+    opaque _obj: *u8,
+}
+
+impl LogState {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LogState { return LogState { _obj: ptr }; }
+
+}
+
+// `MTLResourceStateCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ResourceStateCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl ResourceStateCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResourceStateCommandEncoder { return ResourceStateCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLAccelerationStructureCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct AccelerationStructureCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureCommandEncoder { return AccelerationStructureCommandEncoder { _obj: ptr }; }
+
+}
+
+// `MTLResidencySet` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ResidencySet {
+    opaque _obj: *u8,
+}
+
+impl ResidencySet {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResidencySet { return ResidencySet { _obj: ptr }; }
+
+}
+
+// `MTLCommandBufferEncoderInfo` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct CommandBufferEncoderInfo {
-    label: fn(*u8) -> *u8,
-    debug_signposts: fn(*u8) -> *u8,
-    error_state: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn CommandBufferEncoderInfo_new(user: *u8) -> CommandBufferEncoderInfo {
-    return CommandBufferEncoderInfo { label: CommandBufferEncoderInfo_noop_id_0, debug_signposts: CommandBufferEncoderInfo_noop_id_0, error_state: CommandBufferEncoderInfo_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl CommandBufferEncoderInfo {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandBufferEncoderInfo { return CommandBufferEncoderInfo { _obj: ptr }; }
+
+    fn label(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text(ns);
     }
-    fn set_debug_signposts(ref this, handler: fn(*u8) -> *u8) {
-        this.debug_signposts = handler;
-        return;
+
+    fn debug_signposts(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("debugSignposts\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
-    fn set_error_state(ref this, handler: fn(*u8) -> u64) {
-        this.error_state = handler;
-        return;
+
+    fn error_state(this) -> CommandEncoderErrorState {
+        return command_encoder_error_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("errorState\0"))));
     }
-}
 
-fn CommandBufferEncoderInfo_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn CommandBufferEncoderInfo_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBufferEncoderInfo = { synth::get_associated(self_obj, CommandBufferEncoderInfo_key()) as *CommandBufferEncoderInfo };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CommandBufferEncoderInfo_debug_signposts_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBufferEncoderInfo = { synth::get_associated(self_obj, CommandBufferEncoderInfo_key()) as *CommandBufferEncoderInfo };
-    let f: fn(*u8) -> *u8 = { (*c).debug_signposts };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CommandBufferEncoderInfo_error_state_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CommandBufferEncoderInfo = { synth::get_associated(self_obj, CommandBufferEncoderInfo_key()) as *CommandBufferEncoderInfo };
-    let f: fn(*u8) -> u64 = { (*c).error_state };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_CommandBufferEncoderInfo(ctx: *CommandBufferEncoderInfo) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CommandBufferEncoderInfo\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), CommandBufferEncoderInfo_label_imp, #str_ptr("@@:\0"));
-        let add_debug_signposts: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("debugSignposts\0")), CommandBufferEncoderInfo_debug_signposts_imp, #str_ptr("@@:\0"));
-        let add_error_state: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("errorState\0")), CommandBufferEncoderInfo_error_state_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CommandBufferEncoderInfo_key(), { ctx as *u8 });
-    return d;
-}
-
-// `MTLCommandBuffer` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `addScheduledHandler:`: arg shape (only <=5 object args modelled)
-// SKIPPED `presentDrawable:`: arg shape (only <=5 object args modelled)
-// SKIPPED `presentDrawable:atTime:`: arg shape (only <=5 object args modelled)
-// SKIPPED `presentDrawable:afterMinimumDuration:`: arg shape (only <=5 object args modelled)
-// SKIPPED `addCompletedHandler:`: arg shape (only <=5 object args modelled)
-// SKIPPED `blitCommandEncoder`: return `id<MTLBlitCommandEncoder> _Nullable` not modelled
-// SKIPPED `renderCommandEncoderWithDescriptor:`: return `id<MTLRenderCommandEncoder> _Nullable` not modelled
-// SKIPPED `computeCommandEncoderWithDescriptor:`: return `id<MTLComputeCommandEncoder> _Nullable` not modelled
-// SKIPPED `blitCommandEncoderWithDescriptor:`: return `id<MTLBlitCommandEncoder> _Nullable` not modelled
-// SKIPPED `computeCommandEncoder`: return `id<MTLComputeCommandEncoder> _Nullable` not modelled
-// SKIPPED `computeCommandEncoderWithDispatchType:`: arg shape (only <=5 object args modelled)
-// SKIPPED `encodeWaitForEvent:value:`: arg shape (only <=5 object args modelled)
-// SKIPPED `encodeSignalEvent:value:`: arg shape (only <=5 object args modelled)
-// SKIPPED `parallelRenderCommandEncoderWithDescriptor:`: return `id<MTLParallelRenderCommandEncoder> _Nullable` not modelled
-// SKIPPED `resourceStateCommandEncoder`: return `id<MTLResourceStateCommandEncoder> _Nullable` not modelled
-// SKIPPED `resourceStateCommandEncoderWithDescriptor:`: return `id<MTLResourceStateCommandEncoder> _Nullable` not modelled
-// SKIPPED `accelerationStructureCommandEncoder`: return `id<MTLAccelerationStructureCommandEncoder> _Nullable` not modelled
-// SKIPPED `accelerationStructureCommandEncoderWithDescriptor:`: return `id<MTLAccelerationStructureCommandEncoder> _Nonnull` not modelled
-// SKIPPED `useResidencySet:`: arg shape (only <=5 object args modelled)
-// SKIPPED `useResidencySets:count:`: arg shape (only <=5 object args modelled)
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-// SKIPPED `commandQueue`: return `id<MTLCommandQueue> _Nonnull` not modelled
-// SKIPPED `retainedReferences`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `kernelStartTime`: return `CFTimeInterval` not modelled
-// SKIPPED `kernelEndTime`: return `CFTimeInterval` not modelled
-// SKIPPED `logs`: return `id<MTLLogContainer> _Nonnull` not modelled
-// SKIPPED `GPUStartTime`: return `CFTimeInterval` not modelled
-// SKIPPED `GPUEndTime`: return `CFTimeInterval` not modelled
-fn CommandBufferProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn CommandBufferProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-fn CommandBufferProtocol_noop_v_0(user: *u8) { return; }
-fn CommandBufferProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-
-struct CommandBufferProtocol {
-    enqueue: fn(*u8),
-    commit: fn(*u8),
-    wait_until_scheduled: fn(*u8),
-    wait_until_completed: fn(*u8),
-    push_debug_group: fn(*u8, *u8),
-    pop_debug_group: fn(*u8),
-    error_options: fn(*u8) -> u64,
-    label: fn(*u8) -> *u8,
-    set_label: fn(*u8, *u8),
-    status: fn(*u8) -> u64,
-    error: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn CommandBufferProtocol_new(user: *u8) -> CommandBufferProtocol {
-    return CommandBufferProtocol { enqueue: CommandBufferProtocol_noop_v_0, commit: CommandBufferProtocol_noop_v_0, wait_until_scheduled: CommandBufferProtocol_noop_v_0, wait_until_completed: CommandBufferProtocol_noop_v_0, push_debug_group: CommandBufferProtocol_noop_v_1, pop_debug_group: CommandBufferProtocol_noop_v_0, error_options: CommandBufferProtocol_noop_u64_0, label: CommandBufferProtocol_noop_id_0, set_label: CommandBufferProtocol_noop_v_1, status: CommandBufferProtocol_noop_u64_0, error: CommandBufferProtocol_noop_id_0, user: user };
-}
-
-impl CommandBufferProtocol {
-    fn set_enqueue(ref this, handler: fn(*u8)) {
-        this.enqueue = handler;
-        return;
-    }
-    fn set_commit(ref this, handler: fn(*u8)) {
-        this.commit = handler;
-        return;
-    }
-    fn set_wait_until_scheduled(ref this, handler: fn(*u8)) {
-        this.wait_until_scheduled = handler;
-        return;
-    }
-    fn set_wait_until_completed(ref this, handler: fn(*u8)) {
-        this.wait_until_completed = handler;
-        return;
-    }
-    fn set_push_debug_group(ref this, handler: fn(*u8, *u8)) {
-        this.push_debug_group = handler;
-        return;
-    }
-    fn set_pop_debug_group(ref this, handler: fn(*u8)) {
-        this.pop_debug_group = handler;
-        return;
-    }
-    fn set_error_options(ref this, handler: fn(*u8) -> u64) {
-        this.error_options = handler;
-        return;
-    }
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
-    }
-    fn set_set_label(ref this, handler: fn(*u8, *u8)) {
-        this.set_label = handler;
-        return;
-    }
-    fn set_status(ref this, handler: fn(*u8) -> u64) {
-        this.status = handler;
-        return;
-    }
-    fn set_error(ref this, handler: fn(*u8) -> *u8) {
-        this.error = handler;
-        return;
-    }
-}
-
-fn CommandBufferProtocol_key() -> *u8 { return { 28673 as *u8 }; }
-
-fn CommandBufferProtocol_enqueue_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) = { (*c).enqueue };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn CommandBufferProtocol_commit_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) = { (*c).commit };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn CommandBufferProtocol_wait_until_scheduled_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) = { (*c).wait_until_scheduled };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn CommandBufferProtocol_wait_until_completed_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) = { (*c).wait_until_completed };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn CommandBufferProtocol_push_debug_group_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8, *u8) = { (*c).push_debug_group };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn CommandBufferProtocol_pop_debug_group_imp(self_obj: *u8, cmd: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) = { (*c).pop_debug_group };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn CommandBufferProtocol_error_options_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) -> u64 = { (*c).error_options };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CommandBufferProtocol_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CommandBufferProtocol_set_label_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8, *u8) = { (*c).set_label };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn CommandBufferProtocol_status_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) -> u64 = { (*c).status };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CommandBufferProtocol_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CommandBufferProtocol = { synth::get_associated(self_obj, CommandBufferProtocol_key()) as *CommandBufferProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).error };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_CommandBufferProtocol(ctx: *CommandBufferProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CommandBufferProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_enqueue: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("enqueue\0")), CommandBufferProtocol_enqueue_imp, #str_ptr("v@:\0"));
-        let add_commit: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("commit\0")), CommandBufferProtocol_commit_imp, #str_ptr("v@:\0"));
-        let add_wait_until_scheduled: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilScheduled\0")), CommandBufferProtocol_wait_until_scheduled_imp, #str_ptr("v@:\0"));
-        let add_wait_until_completed: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("waitUntilCompleted\0")), CommandBufferProtocol_wait_until_completed_imp, #str_ptr("v@:\0"));
-        let add_push_debug_group: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pushDebugGroup:\0")), CommandBufferProtocol_push_debug_group_imp, #str_ptr("v@:@\0"));
-        let add_pop_debug_group: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("popDebugGroup\0")), CommandBufferProtocol_pop_debug_group_imp, #str_ptr("v@:\0"));
-        let add_error_options: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("errorOptions\0")), CommandBufferProtocol_error_options_imp, #str_ptr("Q@:\0"));
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), CommandBufferProtocol_label_imp, #str_ptr("@@:\0"));
-        let add_set_label: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setLabel:\0")), CommandBufferProtocol_set_label_imp, #str_ptr("v@:@\0"));
-        let add_status: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("status\0")), CommandBufferProtocol_status_imp, #str_ptr("Q@:\0"));
-        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), CommandBufferProtocol_error_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CommandBufferProtocol_key(), { ctx as *u8 });
-    return d;
 }
 

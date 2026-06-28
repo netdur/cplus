@@ -14,6 +14,8 @@ struct TextRange {
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
+
 }
 
 // `NSTextContentManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct TextContentManager {
 
 impl TextContentManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextContentManager { return TextContentManager { _obj: ptr }; }
 
 }
 
@@ -34,28 +38,36 @@ struct TextElement {
 impl TextElement {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn new(text_content_manager: *u8) -> TextElement {
+    fn from_raw(ptr: *u8) -> TextElement { return TextElement { _obj: ptr }; }
+
+    fn new(text_content_manager: TextContentManager) -> TextElement {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextElement\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return TextElement { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTextContentManager:\0")), text_content_manager) };
+        return TextElement { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTextContentManager:\0")), text_content_manager.raw()) };
     }
 
-    fn text_content_manager(this) -> option::Option[*u8] {
+    fn text_content_manager(this) -> option::Option[TextContentManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContentManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContentManager]::None;
+        }
+        return option::some(TextContentManager::from_raw(obj));
     }
 
-    fn set_text_content_manager(this, text_content_manager: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContentManager:\0")), text_content_manager);
+    fn set_text_content_manager(this, text_content_manager: TextContentManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextContentManager:\0")), text_content_manager.raw());
     }
 
-    fn element_range(this) -> option::Option[*u8] {
+    fn element_range(this) -> option::Option[TextRange] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementRange\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextRange]::None;
+        }
+        return option::some(TextRange::from_raw(obj));
     }
 
-    fn set_element_range(this, element_range: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setElementRange:\0")), element_range);
+    fn set_element_range(this, element_range: TextRange) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setElementRange:\0")), element_range.raw());
     }
 
     // SKIPPED `childElements`: return `API_UNAVAILABLE NSArray<__kindof NSTextElement *> *` — generic collection
@@ -80,6 +92,8 @@ struct TextParagraph {
 impl TextParagraph {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextParagraph { return TextParagraph { _obj: ptr }; }
+
     fn new(attributed_string: *u8) -> TextParagraph {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextParagraph\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -90,14 +104,20 @@ impl TextParagraph {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }
 
-    fn paragraph_content_range(this) -> option::Option[*u8] {
+    fn paragraph_content_range(this) -> option::Option[TextRange] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("paragraphContentRange\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextRange]::None;
+        }
+        return option::some(TextRange::from_raw(obj));
     }
 
-    fn paragraph_separator_range(this) -> option::Option[*u8] {
+    fn paragraph_separator_range(this) -> option::Option[TextRange] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("paragraphSeparatorRange\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextRange]::None;
+        }
+        return option::some(TextRange::from_raw(obj));
     }
 
     fn drop(ref this) {

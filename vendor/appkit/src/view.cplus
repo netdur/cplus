@@ -413,9 +413,12 @@ impl View {
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `isDescendantOf:`: (return, arg) shape not yet modelled
-    fn ancestor_shared_with_view(this, view: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("ancestorSharedWithView:\0")), view);
-        return bridge::obj_option(obj);
+    fn ancestor_shared_with_view(this, view: View) -> option::Option[View] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("ancestorSharedWithView:\0")), view.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     // SKIPPED `getRectsBeingDrawn:count:`: (return, arg) shape not yet modelled
@@ -428,34 +431,34 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidUnhide\0")));
     }
 
-    fn add_subview(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSubview:\0")), view);
+    fn add_subview(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSubview:\0")), view.raw());
     }
 
     // SKIPPED `addSubview:positioned:relativeTo:`: (return, arg) shape not yet modelled
     // SKIPPED `sortSubviewsUsingFunction:context:`: param `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)` — unmapped type `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)`
-    fn view_will_move_to_window(this, new_window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewWillMoveToWindow:\0")), new_window);
+    fn view_will_move_to_window(this, new_window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewWillMoveToWindow:\0")), new_window.raw());
     }
 
     fn view_did_move_to_window(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidMoveToWindow\0")));
     }
 
-    fn view_will_move_to_superview(this, new_superview: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewWillMoveToSuperview:\0")), new_superview);
+    fn view_will_move_to_superview(this, new_superview: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewWillMoveToSuperview:\0")), new_superview.raw());
     }
 
     fn view_did_move_to_superview(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidMoveToSuperview\0")));
     }
 
-    fn did_add_subview(this, subview: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("didAddSubview:\0")), subview);
+    fn did_add_subview(this, subview: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("didAddSubview:\0")), subview.raw());
     }
 
-    fn will_remove_subview(this, subview: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("willRemoveSubview:\0")), subview);
+    fn will_remove_subview(this, subview: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("willRemoveSubview:\0")), subview.raw());
     }
 
     fn remove_from_superview(this) {
@@ -511,12 +514,12 @@ impl View {
     // SKIPPED `convertPoint:toView:`: (return, arg) shape not yet modelled
     // SKIPPED `convertSize:fromView:`: (return, arg) shape not yet modelled
     // SKIPPED `convertSize:toView:`: (return, arg) shape not yet modelled
-    fn convert_rect_from_view(this, rect: rt::Rect, view: *u8) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:fromView:\0")), rect, view);
+    fn convert_rect_from_view(this, rect: rt::Rect, view: View) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:fromView:\0")), rect, view.raw());
     }
 
-    fn convert_rect_to_view(this, rect: rt::Rect, view: *u8) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:toView:\0")), rect, view);
+    fn convert_rect_to_view(this, rect: rt::Rect, view: View) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:toView:\0")), rect, view.raw());
     }
 
     fn backing_aligned_rect_options(this, rect: rt::Rect, options: u64) -> rt::Rect {
@@ -613,9 +616,12 @@ impl View {
     }
 
     // SKIPPED `displayRectIgnoringOpacity:inContext:`: (return, arg) shape not yet modelled
-    fn bitmap_image_rep_for_caching_display_in_rect(this, rect: rt::Rect) -> option::Option[*u8] {
+    fn bitmap_image_rep_for_caching_display_in_rect(this, rect: rt::Rect) -> option::Option[BitmapImageRep] {
         let obj: *u8 = rt::msg_id_rect(this._obj, rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), rect);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[BitmapImageRep]::None;
+        }
+        return option::some(BitmapImageRep::from_raw(obj));
     }
 
     // SKIPPED `cacheDisplayInRect:toBitmapImageRep:`: (return, arg) shape not yet modelled
@@ -637,16 +643,19 @@ impl View {
     // SKIPPED `translateRectsNeedingDisplayInRect:by:`: (return, arg) shape not yet modelled
     // SKIPPED `hitTest:`: (return, arg) shape not yet modelled
     // SKIPPED `mouse:inRect:`: (return, arg) shape not yet modelled
-    fn view_with_tag(this, tag: i64) -> option::Option[*u8] {
+    fn view_with_tag(this, tag: i64) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("viewWithTag:\0")), tag);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
     // SKIPPED `acceptsFirstMouse:`: (return, arg) shape not yet modelled
     // SKIPPED `shouldDelayWindowOrderingForEvent:`: (return, arg) shape not yet modelled
-    fn make_backing_layer(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("makeBackingLayer\0")));
+    fn make_backing_layer(this) -> CALayer {
+        return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("makeBackingLayer\0"))));
     }
 
     fn update_layer(this) {
@@ -696,21 +705,30 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidChangeEffectiveAppearance\0")));
     }
 
-    fn window(this) -> option::Option[*u8] {
+    fn window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("window\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
-    fn superview(this) -> option::Option[*u8] {
+    fn superview(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("superview\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     // SKIPPED `subviews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
     // SKIPPED `setSubviews:`: param `NSArray<__kindof NSView *> * _Nonnull` — generic collection
-    fn opaque_ancestor(this) -> option::Option[*u8] {
+    fn opaque_ancestor(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("opaqueAncestor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     fn is_hidden(this) -> bool {
@@ -964,9 +982,12 @@ impl View {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setPostsBoundsChangedNotifications:\0")), posts_bounds_changed_notifications as i8);
     }
 
-    fn enclosing_scroll_view(this) -> option::Option[*u8] {
+    fn enclosing_scroll_view(this) -> option::Option[ScrollView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("enclosingScrollView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrollView]::None;
+        }
+        return option::some(ScrollView::from_raw(obj));
     }
 
     fn default_menu() -> option::Option[*u8] {
@@ -1032,28 +1053,40 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteFocusRingMaskChanged\0")));
     }
 
-    fn next_key_view(this) -> option::Option[*u8] {
+    fn next_key_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextKeyView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_next_key_view(this, next_key_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNextKeyView:\0")), next_key_view);
+    fn set_next_key_view(this, next_key_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNextKeyView:\0")), next_key_view.raw());
     }
 
-    fn previous_key_view(this) -> option::Option[*u8] {
+    fn previous_key_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("previousKeyView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn next_valid_key_view(this) -> option::Option[*u8] {
+    fn next_valid_key_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextValidKeyView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn previous_valid_key_view(this) -> option::Option[*u8] {
+    fn previous_valid_key_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("previousValidKeyView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
     fn can_become_key_view(this) -> bool {
@@ -1121,12 +1154,12 @@ impl View {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("widthAdjustLimit\0")));
     }
 
-    fn page_header(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("pageHeader\0")));
+    fn page_header(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("pageHeader\0"))));
     }
 
-    fn page_footer(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("pageFooter\0")));
+    fn page_footer(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("pageFooter\0"))));
     }
 
     fn print_job_title(this) -> text::Text {
@@ -1169,12 +1202,12 @@ impl View {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingFindIndicator\0"))) != (0 as i8);
     }
 
-    fn add_gesture_recognizer(this, gesture_recognizer: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addGestureRecognizer:\0")), gesture_recognizer);
+    fn add_gesture_recognizer(this, gesture_recognizer: GestureRecognizer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addGestureRecognizer:\0")), gesture_recognizer.raw());
     }
 
-    fn remove_gesture_recognizer(this, gesture_recognizer: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeGestureRecognizer:\0")), gesture_recognizer);
+    fn remove_gesture_recognizer(this, gesture_recognizer: GestureRecognizer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeGestureRecognizer:\0")), gesture_recognizer.raw());
     }
 
     // SKIPPED `gestureRecognizers`: return `API_AVAILABLE NSArray<__kindof NSGestureRecognizer *> *` — generic collection
@@ -1207,12 +1240,12 @@ impl View {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setPrefersCompactControlSizeMetrics:\0")), prefers_compact_control_size_metrics as i8);
     }
 
-    fn add_tracking_area(this, tracking_area: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTrackingArea:\0")), tracking_area);
+    fn add_tracking_area(this, tracking_area: TrackingArea) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTrackingArea:\0")), tracking_area.raw());
     }
 
-    fn remove_tracking_area(this, tracking_area: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTrackingArea:\0")), tracking_area);
+    fn remove_tracking_area(this, tracking_area: TrackingArea) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTrackingArea:\0")), tracking_area.raw());
     }
 
     fn update_tracking_areas(this) {
@@ -1279,17 +1312,61 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("renewGState\0")));
     }
 
-    fn writing_tools_coordinator(this) -> option::Option[*u8] {
+    fn writing_tools_coordinator(this) -> option::Option[WritingToolsCoordinator] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("writingToolsCoordinator\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[WritingToolsCoordinator]::None;
+        }
+        return option::some(WritingToolsCoordinator::from_raw(obj));
     }
 
-    fn set_writing_tools_coordinator(this, writing_tools_coordinator: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWritingToolsCoordinator:\0")), writing_tools_coordinator);
+    fn set_writing_tools_coordinator(this, writing_tools_coordinator: WritingToolsCoordinator) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWritingToolsCoordinator:\0")), writing_tools_coordinator.raw());
     }
 
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSDraggingSource` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct DraggingSource {
+    opaque _obj: *u8,
+}
+
+impl DraggingSource {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
+
+}
+
+// `NSViewToolTipOwner` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ViewToolTipOwner {
+    opaque _obj: *u8,
+}
+
+impl ViewToolTipOwner {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewToolTipOwner { return ViewToolTipOwner { _obj: ptr }; }
+
+    // SKIPPED `view:stringForToolTip:point:userData:`: param `NSToolTipTag` — unmapped type `NSToolTipTag`
+}
+
+// `NSViewContentSelectionInfo` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ViewContentSelectionInfo {
+    opaque _obj: *u8,
+}
+
+impl ViewContentSelectionInfo {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewContentSelectionInfo { return ViewContentSelectionInfo { _obj: ptr }; }
+
+    fn selection_anchor_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("selectionAnchorRect\0")));
+    }
+
 }
 

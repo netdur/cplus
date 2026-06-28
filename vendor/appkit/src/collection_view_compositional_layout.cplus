@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSCollectionLayoutSectionOrthogonalScrollingBehavior` (NS_ENUM)
 enum CollectionLayoutSectionOrthogonalScrollingBehavior {
@@ -76,35 +75,13 @@ fn rect_alignment_from_raw(raw: i64) -> RectAlignment {
     return RectAlignment::None;
 }
 
-// `NSDirectionalRectEdge` (NS_ENUM)
-enum DirectionalRectEdge {
-    None,
-    Top,
-    Leading,
-    Bottom,
-    Trailing,
-    All,
-}
-
-fn directional_rect_edge_raw(v: DirectionalRectEdge) -> i64 {
-    return match v {
-        DirectionalRectEdge::None => { 0 as i64 },
-        DirectionalRectEdge::Top => { 1 as i64 },
-        DirectionalRectEdge::Leading => { 2 as i64 },
-        DirectionalRectEdge::Bottom => { 4 as i64 },
-        DirectionalRectEdge::Trailing => { 8 as i64 },
-        DirectionalRectEdge::All => { 15 as i64 },
-    };
-}
-
-fn directional_rect_edge_from_raw(raw: i64) -> DirectionalRectEdge {
-    if raw == (1 as i64) { return DirectionalRectEdge::Top; }
-    if raw == (2 as i64) { return DirectionalRectEdge::Leading; }
-    if raw == (4 as i64) { return DirectionalRectEdge::Bottom; }
-    if raw == (8 as i64) { return DirectionalRectEdge::Trailing; }
-    if raw == (15 as i64) { return DirectionalRectEdge::All; }
-    return DirectionalRectEdge::None;
-}
+// `NSDirectionalRectEdge` (NS_OPTIONS) — bitfield; combine with `|`.
+const directional_rect_edge_none: u64 = 0 as u64;
+const directional_rect_edge_top: u64 = 1 as u64;
+const directional_rect_edge_leading: u64 = 2 as u64;
+const directional_rect_edge_bottom: u64 = 4 as u64;
+const directional_rect_edge_trailing: u64 = 8 as u64;
+const directional_rect_edge_all: u64 = 15 as u64;
 
 // `NSCollectionViewScrollDirection` (NS_ENUM)
 enum CollectionViewScrollDirection {
@@ -124,6 +101,30 @@ fn collection_view_scroll_direction_from_raw(raw: i64) -> CollectionViewScrollDi
     return CollectionViewScrollDirection::Vertical;
 }
 
+// `NSCollectionElementCategory` (NS_ENUM)
+enum CollectionElementCategory {
+    Item,
+    SupplementaryView,
+    DecorationView,
+    InterItemGap,
+}
+
+fn collection_element_category_raw(v: CollectionElementCategory) -> i64 {
+    return match v {
+        CollectionElementCategory::Item => { 0 as i64 },
+        CollectionElementCategory::SupplementaryView => { 1 as i64 },
+        CollectionElementCategory::DecorationView => { 2 as i64 },
+        CollectionElementCategory::InterItemGap => { 3 as i64 },
+    };
+}
+
+fn collection_element_category_from_raw(raw: i64) -> CollectionElementCategory {
+    if raw == (1 as i64) { return CollectionElementCategory::SupplementaryView; }
+    if raw == (2 as i64) { return CollectionElementCategory::DecorationView; }
+    if raw == (3 as i64) { return CollectionElementCategory::InterItemGap; }
+    return CollectionElementCategory::Item;
+}
+
 // `NSCollectionLayoutSection` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct CollectionLayoutSection {
     _obj: *u8,
@@ -132,8 +133,10 @@ struct CollectionLayoutSection {
 impl CollectionLayoutSection {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn section_with_group(group: *u8) -> CollectionLayoutSection {
-        return CollectionLayoutSection { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSection\0")), rt::sel(#str_ptr("sectionWithGroup:\0")), group)) };
+    fn from_raw(ptr: *u8) -> CollectionLayoutSection { return CollectionLayoutSection { _obj: ptr }; }
+
+    fn section_with_group(group: CollectionLayoutGroup) -> CollectionLayoutSection {
+        return CollectionLayoutSection { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSection\0")), rt::sel(#str_ptr("sectionWithGroup:\0")), group.raw())) };
     }
 
     fn new() -> CollectionLayoutSection {
@@ -185,6 +188,8 @@ struct CollectionLayoutGroup {
 impl CollectionLayoutGroup {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionLayoutGroup { return CollectionLayoutGroup { _obj: ptr }; }
+
     // SKIPPED `horizontalGroupWithLayoutSize:subitem:count:`: (return, arg) shape not yet modelled
     // SKIPPED `horizontalGroupWithLayoutSize:subitems:`: param `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
     // SKIPPED `verticalGroupWithLayoutSize:subitem:count:`: (return, arg) shape not yet modelled
@@ -204,13 +209,16 @@ impl CollectionLayoutGroup {
 
     // SKIPPED `supplementaryItems`: return `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
     // SKIPPED `setSupplementaryItems:`: param `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
-    fn inter_item_spacing(this) -> option::Option[*u8] {
+    fn inter_item_spacing(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("interItemSpacing\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutSpacing]::None;
+        }
+        return option::some(CollectionLayoutSpacing::from_raw(obj));
     }
 
-    fn set_inter_item_spacing(this, inter_item_spacing: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInterItemSpacing:\0")), inter_item_spacing);
+    fn set_inter_item_spacing(this, inter_item_spacing: CollectionLayoutSpacing) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInterItemSpacing:\0")), inter_item_spacing.raw());
     }
 
     // SKIPPED `subitems`: return `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
@@ -227,8 +235,10 @@ struct CollectionLayoutItem {
 impl CollectionLayoutItem {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn item_with_layout_size(layout_size: *u8) -> CollectionLayoutItem {
-        return CollectionLayoutItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutItem\0")), rt::sel(#str_ptr("itemWithLayoutSize:\0")), layout_size)) };
+    fn from_raw(ptr: *u8) -> CollectionLayoutItem { return CollectionLayoutItem { _obj: ptr }; }
+
+    fn item_with_layout_size(layout_size: CollectionLayoutSize) -> CollectionLayoutItem {
+        return CollectionLayoutItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutItem\0")), rt::sel(#str_ptr("itemWithLayoutSize:\0")), layout_size.raw())) };
     }
 
     // SKIPPED `itemWithLayoutSize:supplementaryItems:`: param `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
@@ -241,17 +251,20 @@ impl CollectionLayoutItem {
     // SKIPPED `new`: method `new` already defined
     // SKIPPED `contentInsets`: return `NSDirectionalEdgeInsets` — unmapped type `NSDirectionalEdgeInsets`
     // SKIPPED `setContentInsets:`: param `NSDirectionalEdgeInsets` — unmapped type `NSDirectionalEdgeInsets`
-    fn edge_spacing(this) -> option::Option[*u8] {
+    fn edge_spacing(this) -> option::Option[CollectionLayoutEdgeSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("edgeSpacing\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutEdgeSpacing]::None;
+        }
+        return option::some(CollectionLayoutEdgeSpacing::from_raw(obj));
     }
 
-    fn set_edge_spacing(this, edge_spacing: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEdgeSpacing:\0")), edge_spacing);
+    fn set_edge_spacing(this, edge_spacing: CollectionLayoutEdgeSpacing) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEdgeSpacing:\0")), edge_spacing.raw());
     }
 
-    fn layout_size(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("layoutSize\0")));
+    fn layout_size(this) -> CollectionLayoutSize {
+        return CollectionLayoutSize::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layoutSize\0"))));
     }
 
     // SKIPPED `supplementaryItems`: return `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
@@ -267,6 +280,8 @@ struct CollectionLayoutSupplementaryItem {
 
 impl CollectionLayoutSupplementaryItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionLayoutSupplementaryItem { return CollectionLayoutSupplementaryItem { _obj: ptr }; }
 
     // SKIPPED `supplementaryItemWithLayoutSize:elementKind:containerAnchor:`: (return, arg) shape not yet modelled
     // SKIPPED `supplementaryItemWithLayoutSize:elementKind:containerAnchor:itemAnchor:`: (return, arg) shape not yet modelled
@@ -287,13 +302,16 @@ impl CollectionLayoutSupplementaryItem {
         return bridge::to_text(ns);
     }
 
-    fn container_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("containerAnchor\0")));
+    fn container_anchor(this) -> CollectionLayoutAnchor {
+        return CollectionLayoutAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("containerAnchor\0"))));
     }
 
-    fn item_anchor(this) -> option::Option[*u8] {
+    fn item_anchor(this) -> option::Option[CollectionLayoutAnchor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("itemAnchor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutAnchor]::None;
+        }
+        return option::some(CollectionLayoutAnchor::from_raw(obj));
     }
 
     fn drop(ref this) {
@@ -309,8 +327,10 @@ struct CollectionLayoutBoundarySupplementaryItem {
 impl CollectionLayoutBoundarySupplementaryItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionLayoutBoundarySupplementaryItem { return CollectionLayoutBoundarySupplementaryItem { _obj: ptr }; }
+
     // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:`: (return, arg) shape not yet modelled
     fn new() -> CollectionLayoutBoundarySupplementaryItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -338,7 +358,10 @@ impl CollectionLayoutBoundarySupplementaryItem {
         return rect_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `offset`: return `NSPoint` — unmapped type `NSPoint`
+    fn offset(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("offset\0")));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -351,6 +374,8 @@ struct CollectionLayoutDecorationItem {
 
 impl CollectionLayoutDecorationItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionLayoutDecorationItem { return CollectionLayoutDecorationItem { _obj: ptr }; }
 
     fn background_decoration_item_with_element_kind(element_kind: str) -> CollectionLayoutDecorationItem {
         return CollectionLayoutDecorationItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutDecorationItem\0")), rt::sel(#str_ptr("backgroundDecorationItemWithElementKind:\0")), bridge::nsstring(element_kind))) };
@@ -386,6 +411,8 @@ struct CollectionLayoutSize {
 impl CollectionLayoutSize {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionLayoutSize { return CollectionLayoutSize { _obj: ptr }; }
+
     // SKIPPED `sizeWithWidthDimension:heightDimension:`: (return, arg) shape not yet modelled
     fn new() -> CollectionLayoutSize {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutSize\0"));
@@ -394,12 +421,12 @@ impl CollectionLayoutSize {
     }
 
     // SKIPPED `new`: method `new` already defined
-    fn width_dimension(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("widthDimension\0")));
+    fn width_dimension(this) -> CollectionLayoutDimension {
+        return CollectionLayoutDimension::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("widthDimension\0"))));
     }
 
-    fn height_dimension(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("heightDimension\0")));
+    fn height_dimension(this) -> CollectionLayoutDimension {
+        return CollectionLayoutDimension::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("heightDimension\0"))));
     }
 
     fn drop(ref this) {
@@ -414,6 +441,8 @@ struct CollectionLayoutDimension {
 
 impl CollectionLayoutDimension {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionLayoutDimension { return CollectionLayoutDimension { _obj: ptr }; }
 
     fn fractional_width_dimension(fractional_width: f64) -> CollectionLayoutDimension {
         return CollectionLayoutDimension { _obj: rt::retain(rt::msg_id_f64(rt::get_class(#str_ptr("NSCollectionLayoutDimension\0")), rt::sel(#str_ptr("fractionalWidthDimension:\0")), fractional_width)) };
@@ -471,6 +500,8 @@ struct CollectionLayoutSpacing {
 impl CollectionLayoutSpacing {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionLayoutSpacing { return CollectionLayoutSpacing { _obj: ptr }; }
+
     fn flexible_spacing(flexible_spacing: f64) -> CollectionLayoutSpacing {
         return CollectionLayoutSpacing { _obj: rt::retain(rt::msg_id_f64(rt::get_class(#str_ptr("NSCollectionLayoutSpacing\0")), rt::sel(#str_ptr("flexibleSpacing:\0")), flexible_spacing)) };
     }
@@ -511,6 +542,8 @@ struct CollectionLayoutEdgeSpacing {
 impl CollectionLayoutEdgeSpacing {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionLayoutEdgeSpacing { return CollectionLayoutEdgeSpacing { _obj: ptr }; }
+
     // SKIPPED `spacingForLeading:top:trailing:bottom:`: (return, arg) shape not yet modelled
     fn new() -> CollectionLayoutEdgeSpacing {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutEdgeSpacing\0"));
@@ -519,24 +552,36 @@ impl CollectionLayoutEdgeSpacing {
     }
 
     // SKIPPED `new`: method `new` already defined
-    fn leading(this) -> option::Option[*u8] {
+    fn leading(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("leading\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutSpacing]::None;
+        }
+        return option::some(CollectionLayoutSpacing::from_raw(obj));
     }
 
-    fn top(this) -> option::Option[*u8] {
+    fn top(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("top\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutSpacing]::None;
+        }
+        return option::some(CollectionLayoutSpacing::from_raw(obj));
     }
 
-    fn trailing(this) -> option::Option[*u8] {
+    fn trailing(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("trailing\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutSpacing]::None;
+        }
+        return option::some(CollectionLayoutSpacing::from_raw(obj));
     }
 
-    fn bottom(this) -> option::Option[*u8] {
+    fn bottom(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bottom\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionLayoutSpacing]::None;
+        }
+        return option::some(CollectionLayoutSpacing::from_raw(obj));
     }
 
     fn drop(ref this) {
@@ -552,12 +597,14 @@ struct CollectionLayoutAnchor {
 impl CollectionLayoutAnchor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn layout_anchor_with_edges(edges: DirectionalRectEdge) -> CollectionLayoutAnchor {
-        return CollectionLayoutAnchor { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0")), rt::sel(#str_ptr("layoutAnchorWithEdges:\0")), directional_rect_edge_raw(edges))) };
+    fn from_raw(ptr: *u8) -> CollectionLayoutAnchor { return CollectionLayoutAnchor { _obj: ptr }; }
+
+    fn layout_anchor_with_edges(edges: u64) -> CollectionLayoutAnchor {
+        return CollectionLayoutAnchor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0")), rt::sel(#str_ptr("layoutAnchorWithEdges:\0")), edges)) };
     }
 
-    // SKIPPED `layoutAnchorWithEdges:absoluteOffset:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `layoutAnchorWithEdges:fractionalOffset:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `layoutAnchorWithEdges:absoluteOffset:`: (return, arg) shape not yet modelled
+    // SKIPPED `layoutAnchorWithEdges:fractionalOffset:`: (return, arg) shape not yet modelled
     fn new() -> CollectionLayoutAnchor {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -565,11 +612,14 @@ impl CollectionLayoutAnchor {
     }
 
     // SKIPPED `new`: method `new` already defined
-    fn edges(this) -> DirectionalRectEdge {
-        return directional_rect_edge_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("edges\0"))));
+    fn edges(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("edges\0")));
     }
 
-    // SKIPPED `offset`: return `NSPoint` — unmapped type `NSPoint`
+    fn offset(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("offset\0")));
+    }
+
     fn is_absolute_offset(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isAbsoluteOffset\0"))) != (0 as i8);
     }
@@ -590,6 +640,8 @@ struct CollectionViewCompositionalLayoutConfiguration {
 
 impl CollectionViewCompositionalLayoutConfiguration {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionViewCompositionalLayoutConfiguration { return CollectionViewCompositionalLayoutConfiguration { _obj: ptr }; }
 
     fn scroll_direction(this) -> CollectionViewScrollDirection {
         return collection_view_scroll_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("scrollDirection\0"))));
@@ -616,10 +668,12 @@ struct CollectionViewCompositionalLayout {
 impl CollectionViewCompositionalLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn new(section: *u8) -> CollectionViewCompositionalLayout {
+    fn from_raw(ptr: *u8) -> CollectionViewCompositionalLayout { return CollectionViewCompositionalLayout { _obj: ptr }; }
+
+    fn new(section: CollectionLayoutSection) -> CollectionViewCompositionalLayout {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionViewCompositionalLayout\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return CollectionViewCompositionalLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithSection:\0")), section) };
+        return CollectionViewCompositionalLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithSection:\0")), section.raw()) };
     }
 
     // SKIPPED `initWithSection:configuration:`: extra init variant (one `new` per type)
@@ -627,12 +681,12 @@ impl CollectionViewCompositionalLayout {
     // SKIPPED `initWithSectionProvider:configuration:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
     // SKIPPED `new`: method `new` already defined
-    fn configuration(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("configuration\0")));
+    fn configuration(this) -> CollectionViewCompositionalLayoutConfiguration {
+        return CollectionViewCompositionalLayoutConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("configuration\0"))));
     }
 
-    fn set_configuration(this, configuration: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setConfiguration:\0")), configuration);
+    fn set_configuration(this, configuration: CollectionViewCompositionalLayoutConfiguration) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setConfiguration:\0")), configuration.raw());
     }
 
     fn drop(ref this) {
@@ -648,8 +702,13 @@ struct CollectionLayoutGroupCustomItem {
 impl CollectionLayoutGroupCustomItem {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `customItemWithFrame:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `customItemWithFrame:zIndex:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> CollectionLayoutGroupCustomItem { return CollectionLayoutGroupCustomItem { _obj: ptr }; }
+
+    fn custom_item_with_frame(frame: rt::Rect) -> CollectionLayoutGroupCustomItem {
+        return CollectionLayoutGroupCustomItem { _obj: rt::retain(rt::msg_id_rect(rt::get_class(#str_ptr("NSCollectionLayoutGroupCustomItem\0")), rt::sel(#str_ptr("customItemWithFrame:\0")), frame)) };
+    }
+
+    // SKIPPED `customItemWithFrame:zIndex:`: (return, arg) shape not yet modelled
     fn new() -> CollectionLayoutGroupCustomItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutGroupCustomItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -657,7 +716,10 @@ impl CollectionLayoutGroupCustomItem {
     }
 
     // SKIPPED `new`: method `new` already defined
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
     fn z_index(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("zIndex\0")));
     }
@@ -667,107 +729,108 @@ impl CollectionLayoutGroupCustomItem {
     }
 }
 
-// `NSCollectionLayoutVisibleItem` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `alpha`: return `CGFloat` not modelled
-// SKIPPED `setAlpha:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setZIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `isHidden`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `setHidden:`: arg shape (only <=5 object args modelled)
-// SKIPPED `center`: return `NSPoint` not modelled
-// SKIPPED `setCenter:`: arg shape (only <=5 object args modelled)
-// SKIPPED `frame`: return `NSRect` not modelled
-// SKIPPED `bounds`: return `NSRect` not modelled
-fn CollectionLayoutVisibleItemProtocol_noop_i64_0(user: *u8) -> i64 { return 0 as i64; }
-fn CollectionLayoutVisibleItemProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn CollectionLayoutVisibleItemProtocol_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
-struct CollectionLayoutVisibleItemProtocol {
-    z_index: fn(*u8) -> i64,
-    name: fn(*u8) -> *u8,
-    index_path: fn(*u8) -> *u8,
-    represented_element_category: fn(*u8) -> u64,
-    represented_element_kind: fn(*u8) -> *u8,
-    opaque user: *u8,
+// `NSCollectionLayoutEnvironment` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CollectionLayoutEnvironment {
+    opaque _obj: *u8,
 }
 
-fn CollectionLayoutVisibleItemProtocol_new(user: *u8) -> CollectionLayoutVisibleItemProtocol {
-    return CollectionLayoutVisibleItemProtocol { z_index: CollectionLayoutVisibleItemProtocol_noop_i64_0, name: CollectionLayoutVisibleItemProtocol_noop_id_0, index_path: CollectionLayoutVisibleItemProtocol_noop_id_0, represented_element_category: CollectionLayoutVisibleItemProtocol_noop_u64_0, represented_element_kind: CollectionLayoutVisibleItemProtocol_noop_id_0, user: user };
-}
+impl CollectionLayoutEnvironment {
+    fn raw(this) -> *u8 { return this._obj; }
 
-impl CollectionLayoutVisibleItemProtocol {
-    fn set_z_index(ref this, handler: fn(*u8) -> i64) {
-        this.z_index = handler;
-        return;
+    fn from_raw(ptr: *u8) -> CollectionLayoutEnvironment { return CollectionLayoutEnvironment { _obj: ptr }; }
+
+    fn container(this) -> CollectionLayoutContainer {
+        return CollectionLayoutContainer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("container\0"))));
     }
-    fn set_name(ref this, handler: fn(*u8) -> *u8) {
-        this.name = handler;
-        return;
+
+}
+
+// `NSCollectionLayoutContainer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CollectionLayoutContainer {
+    opaque _obj: *u8,
+}
+
+impl CollectionLayoutContainer {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionLayoutContainer { return CollectionLayoutContainer { _obj: ptr }; }
+
+    fn content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentSize\0")));
     }
-    fn set_index_path(ref this, handler: fn(*u8) -> *u8) {
-        this.index_path = handler;
-        return;
+
+    fn effective_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("effectiveContentSize\0")));
     }
-    fn set_represented_element_category(ref this, handler: fn(*u8) -> u64) {
-        this.represented_element_category = handler;
-        return;
+
+    // SKIPPED `contentInsets`: return `NSDirectionalEdgeInsets` — unmapped type `NSDirectionalEdgeInsets`
+    // SKIPPED `effectiveContentInsets`: return `NSDirectionalEdgeInsets` — unmapped type `NSDirectionalEdgeInsets`
+}
+
+// `NSCollectionLayoutVisibleItem` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CollectionLayoutVisibleItem {
+    opaque _obj: *u8,
+}
+
+impl CollectionLayoutVisibleItem {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionLayoutVisibleItem { return CollectionLayoutVisibleItem { _obj: ptr }; }
+
+    fn alpha(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("alpha\0")));
     }
-    fn set_represented_element_kind(ref this, handler: fn(*u8) -> *u8) {
-        this.represented_element_kind = handler;
-        return;
+
+    fn set_alpha(this, alpha: f64) {
+        rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setAlpha:\0")), alpha);
     }
-}
 
-fn CollectionLayoutVisibleItemProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn CollectionLayoutVisibleItemProtocol_z_index_imp(self_obj: *u8, cmd: *u8) -> i64 {
-    let c: *CollectionLayoutVisibleItemProtocol = { synth::get_associated(self_obj, CollectionLayoutVisibleItemProtocol_key()) as *CollectionLayoutVisibleItemProtocol };
-    let f: fn(*u8) -> i64 = { (*c).z_index };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CollectionLayoutVisibleItemProtocol_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CollectionLayoutVisibleItemProtocol = { synth::get_associated(self_obj, CollectionLayoutVisibleItemProtocol_key()) as *CollectionLayoutVisibleItemProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).name };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CollectionLayoutVisibleItemProtocol_index_path_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CollectionLayoutVisibleItemProtocol = { synth::get_associated(self_obj, CollectionLayoutVisibleItemProtocol_key()) as *CollectionLayoutVisibleItemProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).index_path };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CollectionLayoutVisibleItemProtocol_represented_element_category_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CollectionLayoutVisibleItemProtocol = { synth::get_associated(self_obj, CollectionLayoutVisibleItemProtocol_key()) as *CollectionLayoutVisibleItemProtocol };
-    let f: fn(*u8) -> u64 = { (*c).represented_element_category };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CollectionLayoutVisibleItemProtocol_represented_element_kind_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CollectionLayoutVisibleItemProtocol = { synth::get_associated(self_obj, CollectionLayoutVisibleItemProtocol_key()) as *CollectionLayoutVisibleItemProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).represented_element_kind };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_CollectionLayoutVisibleItemProtocol(ctx: *CollectionLayoutVisibleItemProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CollectionLayoutVisibleItemProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_z_index: i8 = synth::add_method_i64_0id(cls, rt::sel(#str_ptr("zIndex\0")), CollectionLayoutVisibleItemProtocol_z_index_imp, #str_ptr("q@:\0"));
-        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), CollectionLayoutVisibleItemProtocol_name_imp, #str_ptr("@@:\0"));
-        let add_index_path: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("indexPath\0")), CollectionLayoutVisibleItemProtocol_index_path_imp, #str_ptr("@@:\0"));
-        let add_represented_element_category: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("representedElementCategory\0")), CollectionLayoutVisibleItemProtocol_represented_element_category_imp, #str_ptr("Q@:\0"));
-        let add_represented_element_kind: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("representedElementKind\0")), CollectionLayoutVisibleItemProtocol_represented_element_kind_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn z_index(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("zIndex\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CollectionLayoutVisibleItemProtocol_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `setZIndex:`: (return, arg) shape not yet modelled
+    fn is_hidden(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isHidden\0"))) != (0 as i8);
+    }
+
+    fn set_hidden(this, hidden: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHidden:\0")), hidden as i8);
+    }
+
+    fn center(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("center\0")));
+    }
+
+    fn set_center(this, center: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setCenter:\0")), center);
+    }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn index_path(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("indexPath\0")));
+    }
+
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
+    fn bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("bounds\0")));
+    }
+
+    fn represented_element_category(this) -> CollectionElementCategory {
+        return collection_element_category_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("representedElementCategory\0"))));
+    }
+
+    fn represented_element_kind(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("representedElementKind\0")));
+        return bridge::to_text_option(ns);
+    }
+
 }
 

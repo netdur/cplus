@@ -92,6 +92,8 @@ struct Font {
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
+
 }
 
 // `NSBox` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -102,11 +104,16 @@ struct Box {
 impl Box {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Box { return Box { _obj: ptr }; }
+
     fn size_to_fit(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
 
-    // SKIPPED `setFrameFromContentFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn set_frame_from_content_frame(this, content_frame: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setFrameFromContentFrame:\0")), content_frame);
+    }
+
     fn box_type(this) -> BoxType {
         return box_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("boxType\0"))));
     }
@@ -126,22 +133,34 @@ impl Box {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn title_font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("titleFont\0")));
+    fn title_font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("titleFont\0"))));
     }
 
-    fn set_title_font(this, title_font: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleFont:\0")), title_font);
+    fn set_title_font(this, title_font: Font) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleFont:\0")), title_font.raw());
     }
 
-    // SKIPPED `borderRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `titleRect`: return `NSRect` — unmapped type `NSRect`
+    fn border_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("borderRect\0")));
+    }
+
+    fn title_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("titleRect\0")));
+    }
+
     fn title_cell(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("titleCell\0")));
     }
 
-    // SKIPPED `contentViewMargins`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentViewMargins:`: param `NSSize` — unmapped type `NSSize`
+    fn content_view_margins(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentViewMargins\0")));
+    }
+
+    fn set_content_view_margins(this, content_view_margins: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentViewMargins:\0")), content_view_margins);
+    }
+
     fn content_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
         return bridge::obj_option(obj);

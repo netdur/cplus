@@ -14,6 +14,8 @@ struct TableView {
 impl TableView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableView { return TableView { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSCursor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +49,8 @@ struct Cursor {
 
 impl Cursor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Cursor { return Cursor { _obj: ptr }; }
 
 }
 
@@ -54,15 +62,20 @@ struct TableHeaderView {
 impl TableHeaderView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `headerRectOfColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `columnAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    fn table_view(this) -> option::Option[*u8] {
+    fn from_raw(ptr: *u8) -> TableHeaderView { return TableHeaderView { _obj: ptr }; }
+
+    // SKIPPED `headerRectOfColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `columnAtPoint:`: (return, arg) shape not yet modelled
+    fn table_view(this) -> option::Option[TableView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tableView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TableView]::None;
+        }
+        return option::some(TableView::from_raw(obj));
     }
 
-    fn set_table_view(this, table_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTableView:\0")), table_view);
+    fn set_table_view(this, table_view: TableView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTableView:\0")), table_view.raw());
     }
 
     fn dragged_column(this) -> i64 {

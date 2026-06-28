@@ -14,6 +14,8 @@ struct ScrollEdgeEffectStyle {
 impl ScrollEdgeEffectStyle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ScrollEdgeEffectStyle { return ScrollEdgeEffectStyle { _obj: ptr }; }
+
     fn new() -> ScrollEdgeEffectStyle {
         let cls: *u8 = rt::get_class(#str_ptr("NSScrollEdgeEffectStyle\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

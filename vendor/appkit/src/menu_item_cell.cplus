@@ -14,6 +14,8 @@ struct MenuItemCell {
 impl MenuItemCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItemCell { return MenuItemCell { _obj: ptr }; }
+
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
     }
@@ -28,15 +30,24 @@ impl MenuItemCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("calcSize\0")));
     }
 
-    // SKIPPED `stateImageRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `titleRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `keyEquivalentRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawSeparatorItemWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawStateImageWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawImageWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawTitleWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawKeyEquivalentWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawBorderAndBackgroundWithFrame:inView:`: param `NSRect` — unmapped type `NSRect`
+    fn state_image_rect_for_bounds(this, cell_frame: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("stateImageRectForBounds:\0")), cell_frame);
+    }
+
+    fn title_rect_for_bounds(this, cell_frame: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("titleRectForBounds:\0")), cell_frame);
+    }
+
+    fn key_equivalent_rect_for_bounds(this, cell_frame: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("keyEquivalentRectForBounds:\0")), cell_frame);
+    }
+
+    // SKIPPED `drawSeparatorItemWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawStateImageWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawImageWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawTitleWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawKeyEquivalentWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawBorderAndBackgroundWithFrame:inView:`: (return, arg) shape not yet modelled
     fn menu_item(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menuItem\0")));
         return bridge::obj_option(obj);

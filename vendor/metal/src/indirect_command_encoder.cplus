@@ -5,172 +5,208 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTLIndirectRenderCommand` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `setRenderPipelineState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFragmentBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setVertexBuffer:offset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectThreadgroupMemoryLength:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setObjectBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setMeshBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthStencilState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthBias:slopeScale:clamp:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setDepthClipMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setCullMode:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setFrontFacingWinding:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setTriangleFillMode:`: arg shape (only <=5 object args modelled)
-fn IndirectRenderCommand_noop_v_0(user: *u8) { return; }
-
-struct IndirectRenderCommand {
-    set_barrier: fn(*u8),
-    clear_barrier: fn(*u8),
-    reset: fn(*u8),
-    opaque user: *u8,
+// `MTLPrimitiveType` (NS_ENUM)
+enum PrimitiveType {
+    Point,
+    Line,
+    LineStrip,
+    Triangle,
+    TriangleStrip,
 }
 
-fn IndirectRenderCommand_new(user: *u8) -> IndirectRenderCommand {
-    return IndirectRenderCommand { set_barrier: IndirectRenderCommand_noop_v_0, clear_barrier: IndirectRenderCommand_noop_v_0, reset: IndirectRenderCommand_noop_v_0, user: user };
+fn primitive_type_raw(v: PrimitiveType) -> i64 {
+    return match v {
+        PrimitiveType::Point => { 0 as i64 },
+        PrimitiveType::Line => { 1 as i64 },
+        PrimitiveType::LineStrip => { 2 as i64 },
+        PrimitiveType::Triangle => { 3 as i64 },
+        PrimitiveType::TriangleStrip => { 4 as i64 },
+    };
+}
+
+fn primitive_type_from_raw(raw: i64) -> PrimitiveType {
+    if raw == (1 as i64) { return PrimitiveType::Line; }
+    if raw == (2 as i64) { return PrimitiveType::LineStrip; }
+    if raw == (3 as i64) { return PrimitiveType::Triangle; }
+    if raw == (4 as i64) { return PrimitiveType::TriangleStrip; }
+    return PrimitiveType::Point;
+}
+
+// `MTLIndexType` (NS_ENUM)
+enum IndexType {
+    UInt16,
+    UInt32,
+}
+
+fn index_type_raw(v: IndexType) -> i64 {
+    return match v {
+        IndexType::UInt16 => { 0 as i64 },
+        IndexType::UInt32 => { 1 as i64 },
+    };
+}
+
+fn index_type_from_raw(raw: i64) -> IndexType {
+    if raw == (1 as i64) { return IndexType::UInt32; }
+    return IndexType::UInt16;
+}
+
+// `MTLDepthClipMode` (NS_ENUM)
+enum DepthClipMode {
+    Clip,
+    Clamp,
+}
+
+fn depth_clip_mode_raw(v: DepthClipMode) -> i64 {
+    return match v {
+        DepthClipMode::Clip => { 0 as i64 },
+        DepthClipMode::Clamp => { 1 as i64 },
+    };
+}
+
+fn depth_clip_mode_from_raw(raw: i64) -> DepthClipMode {
+    if raw == (1 as i64) { return DepthClipMode::Clamp; }
+    return DepthClipMode::Clip;
+}
+
+// `MTLCullMode` (NS_ENUM)
+enum CullMode {
+    None,
+    Front,
+    Back,
+}
+
+fn cull_mode_raw(v: CullMode) -> i64 {
+    return match v {
+        CullMode::None => { 0 as i64 },
+        CullMode::Front => { 1 as i64 },
+        CullMode::Back => { 2 as i64 },
+    };
+}
+
+fn cull_mode_from_raw(raw: i64) -> CullMode {
+    if raw == (1 as i64) { return CullMode::Front; }
+    if raw == (2 as i64) { return CullMode::Back; }
+    return CullMode::None;
+}
+
+// `MTLWinding` (NS_ENUM)
+enum Winding {
+    Clockwise,
+    CounterClockwise,
+}
+
+fn winding_raw(v: Winding) -> i64 {
+    return match v {
+        Winding::Clockwise => { 0 as i64 },
+        Winding::CounterClockwise => { 1 as i64 },
+    };
+}
+
+fn winding_from_raw(raw: i64) -> Winding {
+    if raw == (1 as i64) { return Winding::CounterClockwise; }
+    return Winding::Clockwise;
+}
+
+// `MTLTriangleFillMode` (NS_ENUM)
+enum TriangleFillMode {
+    Fill,
+    Lines,
+}
+
+fn triangle_fill_mode_raw(v: TriangleFillMode) -> i64 {
+    return match v {
+        TriangleFillMode::Fill => { 0 as i64 },
+        TriangleFillMode::Lines => { 1 as i64 },
+    };
+}
+
+fn triangle_fill_mode_from_raw(raw: i64) -> TriangleFillMode {
+    if raw == (1 as i64) { return TriangleFillMode::Lines; }
+    return TriangleFillMode::Fill;
+}
+
+// `MTLIndirectRenderCommand` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct IndirectRenderCommand {
+    opaque _obj: *u8,
 }
 
 impl IndirectRenderCommand {
-    fn set_set_barrier(ref this, handler: fn(*u8)) {
-        this.set_barrier = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IndirectRenderCommand { return IndirectRenderCommand { _obj: ptr }; }
+
+    fn set_render_pipeline_state(this, pipeline_state: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRenderPipelineState:\0")), pipeline_state);
     }
-    fn set_clear_barrier(ref this, handler: fn(*u8)) {
-        this.clear_barrier = handler;
-        return;
+
+    // SKIPPED `setVertexBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFragmentBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVertexBuffer:offset:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectThreadgroupMemoryLength:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setObjectBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMeshBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn set_barrier(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("setBarrier\0")));
     }
-    fn set_reset(ref this, handler: fn(*u8)) {
-        this.reset = handler;
-        return;
+
+    fn clear_barrier(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("clearBarrier\0")));
     }
-}
 
-fn IndirectRenderCommand_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn IndirectRenderCommand_set_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectRenderCommand = { synth::get_associated(self_obj, IndirectRenderCommand_key()) as *IndirectRenderCommand };
-    let f: fn(*u8) = { (*c).set_barrier };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn IndirectRenderCommand_clear_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectRenderCommand = { synth::get_associated(self_obj, IndirectRenderCommand_key()) as *IndirectRenderCommand };
-    let f: fn(*u8) = { (*c).clear_barrier };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn IndirectRenderCommand_reset_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectRenderCommand = { synth::get_associated(self_obj, IndirectRenderCommand_key()) as *IndirectRenderCommand };
-    let f: fn(*u8) = { (*c).reset };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn create_IndirectRenderCommand(ctx: *IndirectRenderCommand) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_IndirectRenderCommand\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_set_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("setBarrier\0")), IndirectRenderCommand_set_barrier_imp, #str_ptr("v@:\0"));
-        let add_clear_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("clearBarrier\0")), IndirectRenderCommand_clear_barrier_imp, #str_ptr("v@:\0"));
-        let add_reset: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("reset\0")), IndirectRenderCommand_reset_imp, #str_ptr("v@:\0"));
-        synth::register_class_pair(cls);
+    fn set_depth_stencil_state(this, depth_stencil_state: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthStencilState:\0")), depth_stencil_state);
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, IndirectRenderCommand_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `setDepthBias:slopeScale:clamp:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDepthClipMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `setCullMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFrontFacingWinding:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTriangleFillMode:`: (return, arg) shape not yet modelled
+    fn reset(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
+    }
+
 }
 
-// `MTLIndirectComputeCommand` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `setComputePipelineState:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setKernelBuffer:offset:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setKernelBuffer:offset:attributeStride:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `concurrentDispatchThreadgroups:threadsPerThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `concurrentDispatchThreads:threadsPerThreadgroup:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setImageblockWidth:height:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setThreadgroupMemoryLength:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setStageInRegion:`: arg shape (only <=5 object args modelled)
-fn IndirectComputeCommand_noop_v_0(user: *u8) { return; }
-
+// `MTLIndirectComputeCommand` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct IndirectComputeCommand {
-    set_barrier: fn(*u8),
-    clear_barrier: fn(*u8),
-    reset: fn(*u8),
-    opaque user: *u8,
-}
-
-fn IndirectComputeCommand_new(user: *u8) -> IndirectComputeCommand {
-    return IndirectComputeCommand { set_barrier: IndirectComputeCommand_noop_v_0, clear_barrier: IndirectComputeCommand_noop_v_0, reset: IndirectComputeCommand_noop_v_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl IndirectComputeCommand {
-    fn set_set_barrier(ref this, handler: fn(*u8)) {
-        this.set_barrier = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IndirectComputeCommand { return IndirectComputeCommand { _obj: ptr }; }
+
+    fn set_compute_pipeline_state(this, pipeline_state: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setComputePipelineState:\0")), pipeline_state);
     }
-    fn set_clear_barrier(ref this, handler: fn(*u8)) {
-        this.clear_barrier = handler;
-        return;
+
+    // SKIPPED `setKernelBuffer:offset:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setKernelBuffer:offset:attributeStride:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `concurrentDispatchThreadgroups:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `concurrentDispatchThreads:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn set_barrier(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("setBarrier\0")));
     }
-    fn set_reset(ref this, handler: fn(*u8)) {
-        this.reset = handler;
-        return;
+
+    fn clear_barrier(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("clearBarrier\0")));
     }
-}
 
-fn IndirectComputeCommand_key() -> *u8 { return { 28673 as *u8 }; }
-
-fn IndirectComputeCommand_set_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectComputeCommand = { synth::get_associated(self_obj, IndirectComputeCommand_key()) as *IndirectComputeCommand };
-    let f: fn(*u8) = { (*c).set_barrier };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn IndirectComputeCommand_clear_barrier_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectComputeCommand = { synth::get_associated(self_obj, IndirectComputeCommand_key()) as *IndirectComputeCommand };
-    let f: fn(*u8) = { (*c).clear_barrier };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn IndirectComputeCommand_reset_imp(self_obj: *u8, cmd: *u8) {
-    let c: *IndirectComputeCommand = { synth::get_associated(self_obj, IndirectComputeCommand_key()) as *IndirectComputeCommand };
-    let f: fn(*u8) = { (*c).reset };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
-}
-
-fn create_IndirectComputeCommand(ctx: *IndirectComputeCommand) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_IndirectComputeCommand\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_set_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("setBarrier\0")), IndirectComputeCommand_set_barrier_imp, #str_ptr("v@:\0"));
-        let add_clear_barrier: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("clearBarrier\0")), IndirectComputeCommand_clear_barrier_imp, #str_ptr("v@:\0"));
-        let add_reset: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("reset\0")), IndirectComputeCommand_reset_imp, #str_ptr("v@:\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `setImageblockWidth:height:`: (return, arg) shape not yet modelled
+    fn reset(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, IndirectComputeCommand_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `setThreadgroupMemoryLength:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setStageInRegion:`: param `MTLRegion` — unmapped type `MTLRegion`
 }
 

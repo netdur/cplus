@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLResourceViewPoolDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct ResourceViewPoolDescriptor {
@@ -33,61 +32,33 @@ impl ResourceViewPoolDescriptor {
 
 }
 
-// `MTLResourceViewPool` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `copyResourceViewsFromPool:sourceRange:destinationIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `baseResourceID`: return `MTLResourceID` not modelled
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-fn ResourceViewPool_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ResourceViewPool_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTLResourceViewPool` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct ResourceViewPool {
-    resource_view_count: fn(*u8) -> u64,
-    label: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn ResourceViewPool_new(user: *u8) -> ResourceViewPool {
-    return ResourceViewPool { resource_view_count: ResourceViewPool_noop_u64_0, label: ResourceViewPool_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl ResourceViewPool {
-    fn set_resource_view_count(ref this, handler: fn(*u8) -> u64) {
-        this.resource_view_count = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResourceViewPool { return ResourceViewPool { _obj: ptr }; }
+
+    // SKIPPED `copyResourceViewsFromPool:sourceRange:destinationIndex:`: (return, arg) shape not yet modelled
+    fn base_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("baseResourceID\0")));
     }
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+
+    fn resource_view_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("resourceViewCount\0")));
     }
-}
 
-fn ResourceViewPool_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn ResourceViewPool_resource_view_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *ResourceViewPool = { synth::get_associated(self_obj, ResourceViewPool_key()) as *ResourceViewPool };
-    let f: fn(*u8) -> u64 = { (*c).resource_view_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn ResourceViewPool_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *ResourceViewPool = { synth::get_associated(self_obj, ResourceViewPool_key()) as *ResourceViewPool };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_ResourceViewPool(ctx: *ResourceViewPool) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_ResourceViewPool\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_resource_view_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("resourceViewCount\0")), ResourceViewPool_resource_view_count_imp, #str_ptr("Q@:\0"));
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), ResourceViewPool_label_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, ResourceViewPool_key(), { ctx as *u8 });
-    return d;
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
 }
 

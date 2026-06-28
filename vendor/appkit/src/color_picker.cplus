@@ -53,6 +53,8 @@ struct ColorPicker {
 impl ColorPicker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorPicker { return ColorPicker { _obj: ptr }; }
+
     // SKIPPED `initWithPickerMask:colorPanel:`: init arg shape not yet modelled
     // SKIPPED `insertNewButtonImage:in:`: (return, arg) shape not yet modelled
     fn view_size_changed(this, sender: *u8) {
@@ -81,7 +83,10 @@ impl ColorPicker {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `minContentSize`: return `NSSize` — unmapped type `NSSize`
+    fn min_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minContentSize\0")));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

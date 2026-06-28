@@ -14,6 +14,8 @@ struct Event {
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct Image {
 
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct RulerView {
 impl RulerView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
+
 }
 
 // `NSRulerMarker` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -44,14 +50,22 @@ struct RulerMarker {
 impl RulerMarker {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithRulerView:markerLocation:image:imageOrigin:`: param `NSPoint` — unmapped type `NSPoint`
+    fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
+
+    // SKIPPED `initWithRulerView:markerLocation:image:imageOrigin:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `drawRect:`: param `NSRect` — unmapped type `NSRect`
+    fn draw_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawRect:\0")), rect);
+    }
+
     // SKIPPED `trackMouse:adding:`: (return, arg) shape not yet modelled
-    fn ruler(this) -> option::Option[*u8] {
+    fn ruler(this) -> option::Option[RulerView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("ruler\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[RulerView]::None;
+        }
+        return option::some(RulerView::from_raw(obj));
     }
 
     fn marker_location(this) -> f64 {
@@ -62,16 +76,22 @@ impl RulerMarker {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setMarkerLocation:\0")), marker_location);
     }
 
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
-    // SKIPPED `imageOrigin`: return `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `setImageOrigin:`: param `NSPoint` — unmapped type `NSPoint`
+    fn image_origin(this) -> rt::Point {
+        return rt::msg_point(this._obj, rt::sel(#str_ptr("imageOrigin\0")));
+    }
+
+    fn set_image_origin(this, image_origin: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("setImageOrigin:\0")), image_origin);
+    }
+
     fn is_movable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isMovable\0"))) != (0 as i8);
     }
@@ -92,9 +112,19 @@ impl RulerMarker {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDragging\0"))) != (0 as i8);
     }
 
-    // SKIPPED `representedObject`: return `id<NSCopying> _Nullable` — generic collection
-    // SKIPPED `setRepresentedObject:`: param `id<NSCopying> _Nullable` — generic collection
-    // SKIPPED `imageRectInRuler`: return `NSRect` — unmapped type `NSRect`
+    fn represented_object(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("representedObject\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_represented_object(this, represented_object: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRepresentedObject:\0")), represented_object);
+    }
+
+    fn image_rect_in_ruler(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("imageRectInRuler\0")));
+    }
+
     fn thickness_required_in_ruler(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("thicknessRequiredInRuler\0")));
     }

@@ -14,6 +14,8 @@ struct UserDefaults {
 impl UserDefaults {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> UserDefaults { return UserDefaults { _obj: ptr }; }
+
 }
 
 // `NSUserDefaultsController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -23,6 +25,8 @@ struct UserDefaultsController {
 
 impl UserDefaultsController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UserDefaultsController { return UserDefaultsController { _obj: ptr }; }
 
     // SKIPPED `initWithDefaults:initialValues:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
@@ -42,8 +46,8 @@ impl UserDefaultsController {
         return UserDefaultsController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSUserDefaultsController\0")), rt::sel(#str_ptr("sharedUserDefaultsController\0")))) };
     }
 
-    fn defaults(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("defaults\0")));
+    fn defaults(this) -> UserDefaults {
+        return UserDefaults::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("defaults\0"))));
     }
 
     // SKIPPED `initialValues`: return `NSDictionary<NSString *,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)

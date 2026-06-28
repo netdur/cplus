@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLStorageMode` (NS_ENUM)
 enum StorageMode {
@@ -41,8 +40,18 @@ impl CounterSampleBufferDescriptor {
 
     fn from_raw(ptr: *u8) -> CounterSampleBufferDescriptor { return CounterSampleBufferDescriptor { _obj: ptr }; }
 
-    // SKIPPED `counterSet`: return `id<MTLCounterSet> _Nullable` — generic collection
-    // SKIPPED `setCounterSet:`: param `id<MTLCounterSet> _Nullable` — generic collection
+    fn counter_set(this) -> option::Option[CounterSet] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("counterSet\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[CounterSet]::None;
+        }
+        return option::some(CounterSet::from_raw(obj));
+    }
+
+    fn set_counter_set(this, counter_set: CounterSet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCounterSet:\0")), counter_set.raw());
+    }
+
     fn label(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text(ns);
@@ -64,155 +73,80 @@ impl CounterSampleBufferDescriptor {
     // SKIPPED `setSampleCount:`: (return, arg) shape not yet modelled
 }
 
-// `MTLCounter` delegate protocol -> runtime class-synthesis helper.
-fn Counter_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
-struct Counter {
-    name: fn(*u8) -> *u8,
-    opaque user: *u8,
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
 }
 
-fn Counter_new(user: *u8) -> Counter {
-    return Counter { name: Counter_noop_id_0, user: user };
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
+
+}
+
+// `MTLCounter` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Counter {
+    opaque _obj: *u8,
 }
 
 impl Counter {
-    fn set_name(ref this, handler: fn(*u8) -> *u8) {
-        this.name = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Counter { return Counter { _obj: ptr }; }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
     }
+
 }
 
-fn Counter_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Counter_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Counter = { synth::get_associated(self_obj, Counter_key()) as *Counter };
-    let f: fn(*u8) -> *u8 = { (*c).name };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_Counter(ctx: *Counter) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Counter\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), Counter_name_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Counter_key(), { ctx as *u8 });
-    return d;
-}
-
-// `MTLCounterSet` delegate protocol -> runtime class-synthesis helper.
-fn CounterSet_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
+// `MTLCounterSet` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct CounterSet {
-    name: fn(*u8) -> *u8,
-    counters: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn CounterSet_new(user: *u8) -> CounterSet {
-    return CounterSet { name: CounterSet_noop_id_0, counters: CounterSet_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl CounterSet {
-    fn set_name(ref this, handler: fn(*u8) -> *u8) {
-        this.name = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CounterSet { return CounterSet { _obj: ptr }; }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
     }
-    fn set_counters(ref this, handler: fn(*u8) -> *u8) {
-        this.counters = handler;
-        return;
-    }
+
+    // SKIPPED `counters`: return `NSArray<id<MTLCounter>> * _Nonnull` — generic collection
 }
 
-fn CounterSet_key() -> *u8 { return { 28673 as *u8 }; }
-
-fn CounterSet_name_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CounterSet = { synth::get_associated(self_obj, CounterSet_key()) as *CounterSet };
-    let f: fn(*u8) -> *u8 = { (*c).name };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CounterSet_counters_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CounterSet = { synth::get_associated(self_obj, CounterSet_key()) as *CounterSet };
-    let f: fn(*u8) -> *u8 = { (*c).counters };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_CounterSet(ctx: *CounterSet) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CounterSet\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_name: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("name\0")), CounterSet_name_imp, #str_ptr("@@:\0"));
-        let add_counters: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("counters\0")), CounterSet_counters_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CounterSet_key(), { ctx as *u8 });
-    return d;
-}
-
-// `MTLCounterSampleBuffer` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `resolveCounterRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-fn CounterSampleBuffer_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn CounterSampleBuffer_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTLCounterSampleBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct CounterSampleBuffer {
-    label: fn(*u8) -> *u8,
-    sample_count: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn CounterSampleBuffer_new(user: *u8) -> CounterSampleBuffer {
-    return CounterSampleBuffer { label: CounterSampleBuffer_noop_id_0, sample_count: CounterSampleBuffer_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl CounterSampleBuffer {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CounterSampleBuffer { return CounterSampleBuffer { _obj: ptr }; }
+
+    fn resolve_counter_range(this, range: rt::Range) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_range(this._obj, rt::sel(#str_ptr("resolveCounterRange:\0")), range);
+        return bridge::obj_option(obj);
     }
-    fn set_sample_count(ref this, handler: fn(*u8) -> u64) {
-        this.sample_count = handler;
-        return;
+
+    fn device(this) -> Device {
+        return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
     }
-}
 
-fn CounterSampleBuffer_key() -> *u8 { return { 28674 as *u8 }; }
-
-fn CounterSampleBuffer_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *CounterSampleBuffer = { synth::get_associated(self_obj, CounterSampleBuffer_key()) as *CounterSampleBuffer };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn CounterSampleBuffer_sample_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *CounterSampleBuffer = { synth::get_associated(self_obj, CounterSampleBuffer_key()) as *CounterSampleBuffer };
-    let f: fn(*u8) -> u64 = { (*c).sample_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_CounterSampleBuffer(ctx: *CounterSampleBuffer) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_CounterSampleBuffer\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), CounterSampleBuffer_label_imp, #str_ptr("@@:\0"));
-        let add_sample_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sampleCount\0")), CounterSampleBuffer_sample_count_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    fn label(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text(ns);
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, CounterSampleBuffer_key(), { ctx as *u8 });
-    return d;
+
+    fn sample_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("sampleCount\0")));
+    }
+
 }
 

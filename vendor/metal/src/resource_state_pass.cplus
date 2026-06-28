@@ -16,8 +16,15 @@ impl ResourceStatePassSampleBufferAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> ResourceStatePassSampleBufferAttachmentDescriptor { return ResourceStatePassSampleBufferAttachmentDescriptor { _obj: ptr }; }
 
-    // SKIPPED `sampleBuffer`: return `id<MTLCounterSampleBuffer> _Nullable` — generic collection
-    // SKIPPED `setSampleBuffer:`: param `id<MTLCounterSampleBuffer> _Nullable` — generic collection
+    fn sample_buffer(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBuffer\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_sample_buffer(this, sample_buffer: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSampleBuffer:\0")), sample_buffer);
+    }
+
     fn start_of_encoder_sample_index(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("startOfEncoderSampleIndex\0")));
     }
@@ -40,8 +47,8 @@ impl ResourceStatePassSampleBufferAttachmentDescriptorArray {
 
     fn from_raw(ptr: *u8) -> ResourceStatePassSampleBufferAttachmentDescriptorArray { return ResourceStatePassSampleBufferAttachmentDescriptorArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, attachment_index: u64) -> *u8 {
-        return rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index);
+    fn object_at_indexed_subscript(this, attachment_index: u64) -> ResourceStatePassSampleBufferAttachmentDescriptor {
+        return ResourceStatePassSampleBufferAttachmentDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), attachment_index));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -61,9 +68,21 @@ impl ResourceStatePassDescriptor {
         return ResourceStatePassDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLResourceStatePassDescriptor\0")), rt::sel(#str_ptr("resourceStatePassDescriptor\0"))) };
     }
 
-    fn sample_buffer_attachments(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBufferAttachments\0")));
+    fn sample_buffer_attachments(this) -> ResourceStatePassSampleBufferAttachmentDescriptorArray {
+        return ResourceStatePassSampleBufferAttachmentDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("sampleBufferAttachments\0"))));
     }
+
+}
+
+// `MTLDevice` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Device {
+    opaque _obj: *u8,
+}
+
+impl Device {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Device { return Device { _obj: ptr }; }
 
 }
 

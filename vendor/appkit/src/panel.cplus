@@ -14,6 +14,8 @@ struct Panel {
 impl Panel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Panel { return Panel { _obj: ptr }; }
+
     fn is_floating_panel(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFloatingPanel\0"))) != (0 as i8);
     }

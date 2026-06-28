@@ -36,6 +36,8 @@ struct MutableDictionary {
 impl MutableDictionary {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableDictionary { return MutableDictionary { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -46,6 +48,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSPageController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -55,6 +59,8 @@ struct PageController {
 
 impl PageController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PageController { return PageController { _obj: ptr }; }
 
     fn navigate_forward_to_object(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("navigateForwardToObject:\0")), object);
@@ -76,8 +82,15 @@ impl PageController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeSelectedIndexFrom:\0")), sender);
     }
 
-    // SKIPPED `delegate`: return `id<NSPageControllerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSPageControllerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn selected_view_controller(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedViewController\0")));
         return bridge::obj_option(obj);
@@ -107,11 +120,11 @@ impl PageController {
 // SKIPPED `pageController:identifierForObject:`: return `NSPageControllerObjectIdentifier _Nonnull` not modelled
 // SKIPPED `pageController:viewControllerForIdentifier:`: arg shape (only <=5 object args modelled)
 // SKIPPED `pageController:frameForObject:`: return `NSRect` not modelled
-fn PageControllerDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-fn PageControllerDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn PageControllerDelegateProtocol_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn PageControllerDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+fn PageControllerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn PageControllerDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
 
-struct PageControllerDelegateProtocol {
+struct PageControllerDelegate {
     page_controller_prepare_view_controller_with_object: fn(*u8, *u8, *u8, *u8),
     page_controller_did_transition_to_object: fn(*u8, *u8, *u8),
     page_controller_will_start_live_transition: fn(*u8, *u8),
@@ -119,11 +132,11 @@ struct PageControllerDelegateProtocol {
     opaque user: *u8,
 }
 
-fn PageControllerDelegateProtocol_new(user: *u8) -> PageControllerDelegateProtocol {
-    return PageControllerDelegateProtocol { page_controller_prepare_view_controller_with_object: PageControllerDelegateProtocol_noop_v_3, page_controller_did_transition_to_object: PageControllerDelegateProtocol_noop_v_2, page_controller_will_start_live_transition: PageControllerDelegateProtocol_noop_v_1, page_controller_did_end_live_transition: PageControllerDelegateProtocol_noop_v_1, user: user };
+fn PageControllerDelegate_new(user: *u8) -> PageControllerDelegate {
+    return PageControllerDelegate { page_controller_prepare_view_controller_with_object: PageControllerDelegate_noop_v_3, page_controller_did_transition_to_object: PageControllerDelegate_noop_v_2, page_controller_will_start_live_transition: PageControllerDelegate_noop_v_1, page_controller_did_end_live_transition: PageControllerDelegate_noop_v_1, user: user };
 }
 
-impl PageControllerDelegateProtocol {
+impl PageControllerDelegate {
     fn set_page_controller_prepare_view_controller_with_object(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
         this.page_controller_prepare_view_controller_with_object = handler;
         return;
@@ -142,53 +155,53 @@ impl PageControllerDelegateProtocol {
     }
 }
 
-fn PageControllerDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn PageControllerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn PageControllerDelegateProtocol_page_controller_prepare_view_controller_with_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *PageControllerDelegateProtocol = { synth::get_associated(self_obj, PageControllerDelegateProtocol_key()) as *PageControllerDelegateProtocol };
+fn PageControllerDelegate_page_controller_prepare_view_controller_with_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
+    let c: *PageControllerDelegate = { synth::get_associated(self_obj, PageControllerDelegate_key()) as *PageControllerDelegate };
     let f: fn(*u8, *u8, *u8, *u8) = { (*c).page_controller_prepare_view_controller_with_object };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
     return;
 }
 
-fn PageControllerDelegateProtocol_page_controller_did_transition_to_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *PageControllerDelegateProtocol = { synth::get_associated(self_obj, PageControllerDelegateProtocol_key()) as *PageControllerDelegateProtocol };
+fn PageControllerDelegate_page_controller_did_transition_to_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *PageControllerDelegate = { synth::get_associated(self_obj, PageControllerDelegate_key()) as *PageControllerDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).page_controller_did_transition_to_object };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn PageControllerDelegateProtocol_page_controller_will_start_live_transition_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PageControllerDelegateProtocol = { synth::get_associated(self_obj, PageControllerDelegateProtocol_key()) as *PageControllerDelegateProtocol };
+fn PageControllerDelegate_page_controller_will_start_live_transition_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PageControllerDelegate = { synth::get_associated(self_obj, PageControllerDelegate_key()) as *PageControllerDelegate };
     let f: fn(*u8, *u8) = { (*c).page_controller_will_start_live_transition };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn PageControllerDelegateProtocol_page_controller_did_end_live_transition_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PageControllerDelegateProtocol = { synth::get_associated(self_obj, PageControllerDelegateProtocol_key()) as *PageControllerDelegateProtocol };
+fn PageControllerDelegate_page_controller_did_end_live_transition_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PageControllerDelegate = { synth::get_associated(self_obj, PageControllerDelegate_key()) as *PageControllerDelegate };
     let f: fn(*u8, *u8) = { (*c).page_controller_did_end_live_transition };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_PageControllerDelegateProtocol(ctx: *PageControllerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PageControllerDelegateProtocol\0");
+fn create_PageControllerDelegate(ctx: *PageControllerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_PageControllerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_page_controller_prepare_view_controller_with_object: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("pageController:prepareViewController:withObject:\0")), PageControllerDelegateProtocol_page_controller_prepare_view_controller_with_object_imp, #str_ptr("v@:@@@\0"));
-        let add_page_controller_did_transition_to_object: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pageController:didTransitionToObject:\0")), PageControllerDelegateProtocol_page_controller_did_transition_to_object_imp, #str_ptr("v@:@@\0"));
-        let add_page_controller_will_start_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerWillStartLiveTransition:\0")), PageControllerDelegateProtocol_page_controller_will_start_live_transition_imp, #str_ptr("v@:@\0"));
-        let add_page_controller_did_end_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerDidEndLiveTransition:\0")), PageControllerDelegateProtocol_page_controller_did_end_live_transition_imp, #str_ptr("v@:@\0"));
+        let add_page_controller_prepare_view_controller_with_object: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("pageController:prepareViewController:withObject:\0")), PageControllerDelegate_page_controller_prepare_view_controller_with_object_imp, #str_ptr("v@:@@@\0"));
+        let add_page_controller_did_transition_to_object: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pageController:didTransitionToObject:\0")), PageControllerDelegate_page_controller_did_transition_to_object_imp, #str_ptr("v@:@@\0"));
+        let add_page_controller_will_start_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerWillStartLiveTransition:\0")), PageControllerDelegate_page_controller_will_start_live_transition_imp, #str_ptr("v@:@\0"));
+        let add_page_controller_did_end_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerDidEndLiveTransition:\0")), PageControllerDelegate_page_controller_did_end_live_transition_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PageControllerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, PageControllerDelegate_key(), { ctx as *u8 });
     return d;
 }
 

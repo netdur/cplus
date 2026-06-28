@@ -6,22 +6,9 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
-import "objc/synthesis" as synth;
 
-// `NSPasteboardContentsOptions` (NS_ENUM)
-enum PasteboardContentsOptions {
-    NSPasteboardContentsCurrentHostOnly,
-}
-
-fn pasteboard_contents_options_raw(v: PasteboardContentsOptions) -> i64 {
-    return match v {
-        PasteboardContentsOptions::NSPasteboardContentsCurrentHostOnly => { 1 as i64 },
-    };
-}
-
-fn pasteboard_contents_options_from_raw(raw: i64) -> PasteboardContentsOptions {
-    return PasteboardContentsOptions::NSPasteboardContentsCurrentHostOnly;
-}
+// `NSPasteboardContentsOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const pasteboard_contents_options_n_s_pasteboard_contents_current_host_only: u64 = 1 as u64;
 
 // `NSPasteboardAccessBehavior` (NS_ENUM)
 enum PasteboardAccessBehavior {
@@ -47,6 +34,15 @@ fn pasteboard_access_behavior_from_raw(raw: i64) -> PasteboardAccessBehavior {
     return PasteboardAccessBehavior::Default;
 }
 
+// `NSPasteboardWritingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const pasteboard_writing_options_n_s_pasteboard_writing_promised: u64 = 512 as u64;
+
+// `NSPasteboardReadingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const pasteboard_reading_options_n_s_pasteboard_reading_as_data: u64 = 0 as u64;
+const pasteboard_reading_options_n_s_pasteboard_reading_as_string: u64 = 1 as u64;
+const pasteboard_reading_options_n_s_pasteboard_reading_as_property_list: u64 = 2 as u64;
+const pasteboard_reading_options_n_s_pasteboard_reading_as_keyed_archive: u64 = 4 as u64;
+
 // `NSData` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Data {
     opaque _obj: *u8,
@@ -54,6 +50,8 @@ struct Data {
 
 impl Data {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Data { return Data { _obj: ptr }; }
 
 }
 
@@ -65,6 +63,8 @@ struct FileWrapper {
 impl FileWrapper {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> FileWrapper { return FileWrapper { _obj: ptr }; }
+
 }
 
 // `NSMutableDictionary` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -75,6 +75,8 @@ struct MutableDictionary {
 impl MutableDictionary {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableDictionary { return MutableDictionary { _obj: ptr }; }
+
 }
 
 // `NSPasteboard` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -84,6 +86,8 @@ struct Pasteboard {
 
 impl Pasteboard {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Pasteboard { return Pasteboard { _obj: ptr }; }
 
     fn pasteboard_with_name(name: str) -> Pasteboard {
         return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardWithName:\0")), bridge::nsstring(name)) };
@@ -117,9 +121,12 @@ impl Pasteboard {
     // SKIPPED `setData:forType:`: (return, arg) shape not yet modelled
     // SKIPPED `setPropertyList:forType:`: (return, arg) shape not yet modelled
     // SKIPPED `setString:forType:`: (return, arg) shape not yet modelled
-    fn data_for_type(this, data_type: str) -> option::Option[*u8] {
+    fn data_for_type(this, data_type: str) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("dataForType:\0")), bridge::nsstring(data_type));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
     }
 
     fn property_list_for_type(this, data_type: str) -> option::Option[*u8] {
@@ -186,16 +193,19 @@ impl Pasteboard {
     }
 
     // SKIPPED `pasteboardByFilteringData:ofType:`: (return, arg) shape not yet modelled
-    fn pasteboard_by_filtering_types_in_pasteboard(pboard: *u8) -> Pasteboard {
-        return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringTypesInPasteboard:\0")), pboard) };
+    fn pasteboard_by_filtering_types_in_pasteboard(pboard: Pasteboard) -> Pasteboard {
+        return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringTypesInPasteboard:\0")), pboard.raw()) };
     }
 
     // SKIPPED `writeFileContents:`: (return, arg) shape not yet modelled
     // SKIPPED `readFileContentsType:toFile:`: (return, arg) shape not yet modelled
     // SKIPPED `writeFileWrapper:`: (return, arg) shape not yet modelled
-    fn read_file_wrapper(this) -> option::Option[*u8] {
+    fn read_file_wrapper(this) -> option::Option[FileWrapper] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("readFileWrapper\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[FileWrapper]::None;
+        }
+        return option::some(FileWrapper::from_raw(obj));
     }
 
 }
@@ -208,91 +218,84 @@ struct PasteboardItem {
 impl PasteboardItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PasteboardItem { return PasteboardItem { _obj: ptr }; }
+
 }
 
-// `NSPasteboardTypeOwner` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `pasteboard:provideDataForType:`: arg shape (only <=5 object args modelled)
-fn PasteboardTypeOwner_noop_v_1(user: *u8, a0: *u8) { return; }
+// `NSPasteboardWriting` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct PasteboardWriting {
+    opaque _obj: *u8,
+}
 
+impl PasteboardWriting {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PasteboardWriting { return PasteboardWriting { _obj: ptr }; }
+
+    fn writable_types_for_pasteboard(this, pasteboard: Pasteboard) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("writableTypesForPasteboard:\0")), pasteboard.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    // SKIPPED `writingOptionsForType:pasteboard:`: (return, arg) shape not yet modelled
+    fn pasteboard_property_list_for_type(this, type_: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("pasteboardPropertyListForType:\0")), bridge::nsstring(type_));
+        return bridge::obj_option(obj);
+    }
+
+}
+
+// `NSPasteboardTypeOwner` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct PasteboardTypeOwner {
-    pasteboard_changed_owner: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn PasteboardTypeOwner_new(user: *u8) -> PasteboardTypeOwner {
-    return PasteboardTypeOwner { pasteboard_changed_owner: PasteboardTypeOwner_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl PasteboardTypeOwner {
-    fn set_pasteboard_changed_owner(ref this, handler: fn(*u8, *u8)) {
-        this.pasteboard_changed_owner = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PasteboardTypeOwner { return PasteboardTypeOwner { _obj: ptr }; }
+
+    // SKIPPED `pasteboard:provideDataForType:`: (return, arg) shape not yet modelled
+    fn pasteboard_changed_owner(this, sender: Pasteboard) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pasteboardChangedOwner:\0")), sender.raw());
     }
+
 }
 
-fn PasteboardTypeOwner_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn PasteboardTypeOwner_pasteboard_changed_owner_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PasteboardTypeOwner = { synth::get_associated(self_obj, PasteboardTypeOwner_key()) as *PasteboardTypeOwner };
-    let f: fn(*u8, *u8) = { (*c).pasteboard_changed_owner };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
+// `NSPasteboardReading` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct PasteboardReading {
+    opaque _obj: *u8,
 }
 
-fn create_PasteboardTypeOwner(ctx: *PasteboardTypeOwner) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PasteboardTypeOwner\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_pasteboard_changed_owner: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pasteboardChangedOwner:\0")), PasteboardTypeOwner_pasteboard_changed_owner_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
+impl PasteboardReading {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PasteboardReading { return PasteboardReading { _obj: ptr }; }
+
+    fn readable_types_for_pasteboard(pasteboard: Pasteboard) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboardReading\0")), rt::sel(#str_ptr("readableTypesForPasteboard:\0")), pasteboard.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PasteboardTypeOwner_key(), { ctx as *u8 });
-    return d;
-}
 
-// `NSPasteboardWriting` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `writingOptionsForType:pasteboard:`: arg shape (only <=5 object args modelled)
-// SKIPPED `pasteboardPropertyListForType:`: arg shape (only <=5 object args modelled)
-fn PasteboardWritingProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-
-struct PasteboardWritingProtocol {
-    writable_types_for_pasteboard: fn(*u8, *u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn PasteboardWritingProtocol_new(user: *u8) -> PasteboardWritingProtocol {
-    return PasteboardWritingProtocol { writable_types_for_pasteboard: PasteboardWritingProtocol_noop_id_1, user: user };
-}
-
-impl PasteboardWritingProtocol {
-    fn set_writable_types_for_pasteboard(ref this, handler: fn(*u8, *u8) -> *u8) {
-        this.writable_types_for_pasteboard = handler;
-        return;
-    }
-}
-
-fn PasteboardWritingProtocol_key() -> *u8 { return { 28673 as *u8 }; }
-
-fn PasteboardWritingProtocol_writable_types_for_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *PasteboardWritingProtocol = { synth::get_associated(self_obj, PasteboardWritingProtocol_key()) as *PasteboardWritingProtocol };
-    let f: fn(*u8, *u8) -> *u8 = { (*c).writable_types_for_pasteboard };
-    let u: *u8 = { (*c).user };
-    return f(u, a0);
-}
-
-fn create_PasteboardWritingProtocol(ctx: *PasteboardWritingProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PasteboardWritingProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_writable_types_for_pasteboard: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("writableTypesForPasteboard:\0")), PasteboardWritingProtocol_writable_types_for_pasteboard_imp, #str_ptr("@@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PasteboardWritingProtocol_key(), { ctx as *u8 });
-    return d;
+    // SKIPPED `readingOptionsForType:pasteboard:`: (return, arg) shape not yet modelled
+    // SKIPPED `initWithPasteboardPropertyList:ofType:`: (return, arg) shape not yet modelled
 }
 

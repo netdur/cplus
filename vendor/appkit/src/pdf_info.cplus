@@ -33,6 +33,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSPDFInfo` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,13 +45,18 @@ struct PDFInfo {
 impl PDFInfo {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn u_r_l(this) -> option::Option[*u8] {
+    fn from_raw(ptr: *u8) -> PDFInfo { return PDFInfo { _obj: ptr }; }
+
+    fn u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
-    fn set_u_r_l(this, u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setURL:\0")), u_r_l);
+    fn set_u_r_l(this, u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setURL:\0")), u_r_l.raw());
     }
 
     fn is_file_extension_hidden(this) -> bool {
@@ -83,8 +90,14 @@ impl PDFInfo {
     }
 
     // SKIPPED `setOrientation:`: (return, arg) shape not yet modelled
-    // SKIPPED `paperSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setPaperSize:`: param `NSSize` — unmapped type `NSSize`
+    fn paper_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("paperSize\0")));
+    }
+
+    fn set_paper_size(this, paper_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setPaperSize:\0")), paper_size);
+    }
+
     // SKIPPED `attributes`: return `NSMutableDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
 }
 

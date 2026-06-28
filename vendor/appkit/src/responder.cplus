@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSEventGestureAxis` (NS_ENUM)
 enum EventGestureAxis {
@@ -36,6 +35,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSEvent` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -45,6 +46,8 @@ struct Event {
 
 impl Event {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Event { return Event { _obj: ptr }; }
 
 }
 
@@ -56,6 +59,8 @@ struct Menu {
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
+
 }
 
 // `NSUndoManager` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -65,6 +70,8 @@ struct UndoManager {
 
 impl UndoManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> UndoManager { return UndoManager { _obj: ptr }; }
 
 }
 
@@ -76,6 +83,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSResponder` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -85,6 +94,8 @@ struct Responder {
 
 impl Responder {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Responder { return Responder { _obj: ptr }; }
 
     fn new() -> Responder {
         let cls: *u8 = rt::get_class(#str_ptr("NSResponder\0"));
@@ -96,140 +107,140 @@ impl Responder {
     // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
     // SKIPPED `validRequestorForSendType:returnType:`: (return, arg) shape not yet modelled
-    fn mouse_down(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event);
+    fn mouse_down(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event.raw());
     }
 
-    fn right_mouse_down(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseDown:\0")), event);
+    fn right_mouse_down(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseDown:\0")), event.raw());
     }
 
-    fn other_mouse_down(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseDown:\0")), event);
+    fn other_mouse_down(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseDown:\0")), event.raw());
     }
 
-    fn mouse_up(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseUp:\0")), event);
+    fn mouse_up(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseUp:\0")), event.raw());
     }
 
-    fn right_mouse_up(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseUp:\0")), event);
+    fn right_mouse_up(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseUp:\0")), event.raw());
     }
 
-    fn other_mouse_up(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseUp:\0")), event);
+    fn other_mouse_up(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseUp:\0")), event.raw());
     }
 
-    fn mouse_moved(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseMoved:\0")), event);
+    fn mouse_moved(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseMoved:\0")), event.raw());
     }
 
-    fn mouse_dragged(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDragged:\0")), event);
+    fn mouse_dragged(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDragged:\0")), event.raw());
     }
 
-    fn mouse_cancelled(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseCancelled:\0")), event);
+    fn mouse_cancelled(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseCancelled:\0")), event.raw());
     }
 
-    fn scroll_wheel(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollWheel:\0")), event);
+    fn scroll_wheel(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollWheel:\0")), event.raw());
     }
 
-    fn right_mouse_dragged(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseDragged:\0")), event);
+    fn right_mouse_dragged(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rightMouseDragged:\0")), event.raw());
     }
 
-    fn other_mouse_dragged(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseDragged:\0")), event);
+    fn other_mouse_dragged(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("otherMouseDragged:\0")), event.raw());
     }
 
-    fn mouse_entered(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseEntered:\0")), event);
+    fn mouse_entered(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseEntered:\0")), event.raw());
     }
 
-    fn mouse_exited(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event);
+    fn mouse_exited(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event.raw());
     }
 
-    fn key_down(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("keyDown:\0")), event);
+    fn key_down(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("keyDown:\0")), event.raw());
     }
 
-    fn key_up(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("keyUp:\0")), event);
+    fn key_up(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("keyUp:\0")), event.raw());
     }
 
-    fn flags_changed(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("flagsChanged:\0")), event);
+    fn flags_changed(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("flagsChanged:\0")), event.raw());
     }
 
-    fn tablet_point(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("tabletPoint:\0")), event);
+    fn tablet_point(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("tabletPoint:\0")), event.raw());
     }
 
-    fn tablet_proximity(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("tabletProximity:\0")), event);
+    fn tablet_proximity(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("tabletProximity:\0")), event.raw());
     }
 
-    fn cursor_update(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("cursorUpdate:\0")), event);
+    fn cursor_update(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("cursorUpdate:\0")), event.raw());
     }
 
-    fn magnify_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("magnifyWithEvent:\0")), event);
+    fn magnify_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("magnifyWithEvent:\0")), event.raw());
     }
 
-    fn rotate_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rotateWithEvent:\0")), event);
+    fn rotate_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("rotateWithEvent:\0")), event.raw());
     }
 
-    fn swipe_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("swipeWithEvent:\0")), event);
+    fn swipe_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("swipeWithEvent:\0")), event.raw());
     }
 
-    fn begin_gesture_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("beginGestureWithEvent:\0")), event);
+    fn begin_gesture_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("beginGestureWithEvent:\0")), event.raw());
     }
 
-    fn end_gesture_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("endGestureWithEvent:\0")), event);
+    fn end_gesture_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("endGestureWithEvent:\0")), event.raw());
     }
 
-    fn smart_magnify_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("smartMagnifyWithEvent:\0")), event);
+    fn smart_magnify_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("smartMagnifyWithEvent:\0")), event.raw());
     }
 
-    fn change_mode_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeModeWithEvent:\0")), event);
+    fn change_mode_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeModeWithEvent:\0")), event.raw());
     }
 
-    fn touches_began_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesBeganWithEvent:\0")), event);
+    fn touches_began_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesBeganWithEvent:\0")), event.raw());
     }
 
-    fn touches_moved_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesMovedWithEvent:\0")), event);
+    fn touches_moved_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesMovedWithEvent:\0")), event.raw());
     }
 
-    fn touches_ended_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesEndedWithEvent:\0")), event);
+    fn touches_ended_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesEndedWithEvent:\0")), event.raw());
     }
 
-    fn touches_cancelled_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesCancelledWithEvent:\0")), event);
+    fn touches_cancelled_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("touchesCancelledWithEvent:\0")), event.raw());
     }
 
-    fn quick_look_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("quickLookWithEvent:\0")), event);
+    fn quick_look_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("quickLookWithEvent:\0")), event.raw());
     }
 
-    fn pressure_change_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pressureChangeWithEvent:\0")), event);
+    fn pressure_change_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pressureChangeWithEvent:\0")), event.raw());
     }
 
-    fn context_menu_key_down(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("contextMenuKeyDown:\0")), event);
+    fn context_menu_key_down(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("contextMenuKeyDown:\0")), event.raw());
     }
 
     // SKIPPED `noResponderFor:`: param `SEL _Nonnull` — unmapped type `SEL`
@@ -250,46 +261,61 @@ impl Responder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("showContextHelp:\0")), sender);
     }
 
-    fn help_requested(this, event_ptr: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("helpRequested:\0")), event_ptr);
+    fn help_requested(this, event_ptr: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("helpRequested:\0")), event_ptr.raw());
     }
 
     // SKIPPED `shouldBeTreatedAsInkEvent:`: (return, arg) shape not yet modelled
-    // SKIPPED `wantsScrollEventsForSwipeTrackingOnAxis:`: (return, arg) shape not yet modelled
-    // SKIPPED `wantsForwardedScrollEventsForAxis:`: (return, arg) shape not yet modelled
-    // SKIPPED `supplementalTargetForAction:sender:`: param `SEL _Nonnull` — unmapped type `SEL`
-    fn next_responder(this) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextResponder\0")));
-        return bridge::obj_option(obj);
+    fn wants_scroll_events_for_swipe_tracking_on_axis(this, axis: EventGestureAxis) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("wantsScrollEventsForSwipeTrackingOnAxis:\0")), event_gesture_axis_raw(axis)) != (0 as i8);
     }
 
-    fn set_next_responder(this, next_responder: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNextResponder:\0")), next_responder);
+    fn wants_forwarded_scroll_events_for_axis(this, axis: EventGestureAxis) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("wantsForwardedScrollEventsForAxis:\0")), event_gesture_axis_raw(axis)) != (0 as i8);
+    }
+
+    // SKIPPED `supplementalTargetForAction:sender:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn next_responder(this) -> option::Option[Responder] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextResponder\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Responder]::None;
+        }
+        return option::some(Responder::from_raw(obj));
+    }
+
+    fn set_next_responder(this, next_responder: Responder) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNextResponder:\0")), next_responder.raw());
     }
 
     fn accepts_first_responder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsFirstResponder\0"))) != (0 as i8);
     }
 
-    fn menu(this) -> option::Option[*u8] {
+    fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
 
-    fn set_menu(this, menu: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu);
+    fn set_menu(this, menu: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
     }
 
-    fn undo_manager(this) -> option::Option[*u8] {
+    fn undo_manager(this) -> option::Option[UndoManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("undoManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[UndoManager]::None;
+        }
+        return option::some(UndoManager::from_raw(obj));
     }
 
     // SKIPPED `validateProposedFirstResponder:forEvent:`: (return, arg) shape not yet modelled
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `presentError:`: (return, arg) shape not yet modelled
-    fn will_present_error(this, error: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error);
+    fn will_present_error(this, error: Error) -> Error {
+        return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
 
     fn perform_text_finder_action(this, sender: *u8) {
@@ -310,1362 +336,396 @@ impl Responder {
     }
 }
 
-// `NSStandardKeyBindingResponding` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `doCommandBySelector:`: arg shape (only <=5 object args modelled)
-fn StandardKeyBindingResponding_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSStandardKeyBindingResponding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct StandardKeyBindingResponding {
-    insert_text: fn(*u8, *u8),
-    move_forward: fn(*u8, *u8),
-    move_right: fn(*u8, *u8),
-    move_backward: fn(*u8, *u8),
-    move_left: fn(*u8, *u8),
-    move_up: fn(*u8, *u8),
-    move_down: fn(*u8, *u8),
-    move_word_forward: fn(*u8, *u8),
-    move_word_backward: fn(*u8, *u8),
-    move_to_beginning_of_line: fn(*u8, *u8),
-    move_to_end_of_line: fn(*u8, *u8),
-    move_to_beginning_of_paragraph: fn(*u8, *u8),
-    move_to_end_of_paragraph: fn(*u8, *u8),
-    move_to_end_of_document: fn(*u8, *u8),
-    move_to_beginning_of_document: fn(*u8, *u8),
-    page_down: fn(*u8, *u8),
-    page_up: fn(*u8, *u8),
-    center_selection_in_visible_area: fn(*u8, *u8),
-    move_backward_and_modify_selection: fn(*u8, *u8),
-    move_forward_and_modify_selection: fn(*u8, *u8),
-    move_word_forward_and_modify_selection: fn(*u8, *u8),
-    move_word_backward_and_modify_selection: fn(*u8, *u8),
-    move_up_and_modify_selection: fn(*u8, *u8),
-    move_down_and_modify_selection: fn(*u8, *u8),
-    move_to_beginning_of_line_and_modify_selection: fn(*u8, *u8),
-    move_to_end_of_line_and_modify_selection: fn(*u8, *u8),
-    move_to_beginning_of_paragraph_and_modify_selection: fn(*u8, *u8),
-    move_to_end_of_paragraph_and_modify_selection: fn(*u8, *u8),
-    move_to_end_of_document_and_modify_selection: fn(*u8, *u8),
-    move_to_beginning_of_document_and_modify_selection: fn(*u8, *u8),
-    page_down_and_modify_selection: fn(*u8, *u8),
-    page_up_and_modify_selection: fn(*u8, *u8),
-    move_paragraph_forward_and_modify_selection: fn(*u8, *u8),
-    move_paragraph_backward_and_modify_selection: fn(*u8, *u8),
-    move_word_right: fn(*u8, *u8),
-    move_word_left: fn(*u8, *u8),
-    move_right_and_modify_selection: fn(*u8, *u8),
-    move_left_and_modify_selection: fn(*u8, *u8),
-    move_word_right_and_modify_selection: fn(*u8, *u8),
-    move_word_left_and_modify_selection: fn(*u8, *u8),
-    move_to_left_end_of_line: fn(*u8, *u8),
-    move_to_right_end_of_line: fn(*u8, *u8),
-    move_to_left_end_of_line_and_modify_selection: fn(*u8, *u8),
-    move_to_right_end_of_line_and_modify_selection: fn(*u8, *u8),
-    scroll_page_up: fn(*u8, *u8),
-    scroll_page_down: fn(*u8, *u8),
-    scroll_line_up: fn(*u8, *u8),
-    scroll_line_down: fn(*u8, *u8),
-    scroll_to_beginning_of_document: fn(*u8, *u8),
-    scroll_to_end_of_document: fn(*u8, *u8),
-    transpose: fn(*u8, *u8),
-    transpose_words: fn(*u8, *u8),
-    select_all: fn(*u8, *u8),
-    select_paragraph: fn(*u8, *u8),
-    select_line: fn(*u8, *u8),
-    select_word: fn(*u8, *u8),
-    indent: fn(*u8, *u8),
-    insert_tab: fn(*u8, *u8),
-    insert_backtab: fn(*u8, *u8),
-    insert_newline: fn(*u8, *u8),
-    insert_paragraph_separator: fn(*u8, *u8),
-    insert_newline_ignoring_field_editor: fn(*u8, *u8),
-    insert_tab_ignoring_field_editor: fn(*u8, *u8),
-    insert_line_break: fn(*u8, *u8),
-    insert_container_break: fn(*u8, *u8),
-    insert_single_quote_ignoring_substitution: fn(*u8, *u8),
-    insert_double_quote_ignoring_substitution: fn(*u8, *u8),
-    change_case_of_letter: fn(*u8, *u8),
-    uppercase_word: fn(*u8, *u8),
-    lowercase_word: fn(*u8, *u8),
-    capitalize_word: fn(*u8, *u8),
-    delete_forward: fn(*u8, *u8),
-    delete_backward: fn(*u8, *u8),
-    delete_backward_by_decomposing_previous_character: fn(*u8, *u8),
-    delete_word_forward: fn(*u8, *u8),
-    delete_word_backward: fn(*u8, *u8),
-    delete_to_beginning_of_line: fn(*u8, *u8),
-    delete_to_end_of_line: fn(*u8, *u8),
-    delete_to_beginning_of_paragraph: fn(*u8, *u8),
-    delete_to_end_of_paragraph: fn(*u8, *u8),
-    yank: fn(*u8, *u8),
-    complete: fn(*u8, *u8),
-    set_mark: fn(*u8, *u8),
-    delete_to_mark: fn(*u8, *u8),
-    select_to_mark: fn(*u8, *u8),
-    swap_with_mark: fn(*u8, *u8),
-    cancel_operation: fn(*u8, *u8),
-    make_base_writing_direction_natural: fn(*u8, *u8),
-    make_base_writing_direction_left_to_right: fn(*u8, *u8),
-    make_base_writing_direction_right_to_left: fn(*u8, *u8),
-    make_text_writing_direction_natural: fn(*u8, *u8),
-    make_text_writing_direction_left_to_right: fn(*u8, *u8),
-    make_text_writing_direction_right_to_left: fn(*u8, *u8),
-    quick_look_preview_items: fn(*u8, *u8),
-    show_context_menu_for_selection: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn StandardKeyBindingResponding_new(user: *u8) -> StandardKeyBindingResponding {
-    return StandardKeyBindingResponding { insert_text: StandardKeyBindingResponding_noop_v_1, move_forward: StandardKeyBindingResponding_noop_v_1, move_right: StandardKeyBindingResponding_noop_v_1, move_backward: StandardKeyBindingResponding_noop_v_1, move_left: StandardKeyBindingResponding_noop_v_1, move_up: StandardKeyBindingResponding_noop_v_1, move_down: StandardKeyBindingResponding_noop_v_1, move_word_forward: StandardKeyBindingResponding_noop_v_1, move_word_backward: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_line: StandardKeyBindingResponding_noop_v_1, move_to_end_of_line: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_paragraph: StandardKeyBindingResponding_noop_v_1, move_to_end_of_paragraph: StandardKeyBindingResponding_noop_v_1, move_to_end_of_document: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_document: StandardKeyBindingResponding_noop_v_1, page_down: StandardKeyBindingResponding_noop_v_1, page_up: StandardKeyBindingResponding_noop_v_1, center_selection_in_visible_area: StandardKeyBindingResponding_noop_v_1, move_backward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_forward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_word_forward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_word_backward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_up_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_down_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_line_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_end_of_line_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_paragraph_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_end_of_paragraph_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_end_of_document_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_beginning_of_document_and_modify_selection: StandardKeyBindingResponding_noop_v_1, page_down_and_modify_selection: StandardKeyBindingResponding_noop_v_1, page_up_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_paragraph_forward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_paragraph_backward_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_word_right: StandardKeyBindingResponding_noop_v_1, move_word_left: StandardKeyBindingResponding_noop_v_1, move_right_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_left_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_word_right_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_word_left_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_left_end_of_line: StandardKeyBindingResponding_noop_v_1, move_to_right_end_of_line: StandardKeyBindingResponding_noop_v_1, move_to_left_end_of_line_and_modify_selection: StandardKeyBindingResponding_noop_v_1, move_to_right_end_of_line_and_modify_selection: StandardKeyBindingResponding_noop_v_1, scroll_page_up: StandardKeyBindingResponding_noop_v_1, scroll_page_down: StandardKeyBindingResponding_noop_v_1, scroll_line_up: StandardKeyBindingResponding_noop_v_1, scroll_line_down: StandardKeyBindingResponding_noop_v_1, scroll_to_beginning_of_document: StandardKeyBindingResponding_noop_v_1, scroll_to_end_of_document: StandardKeyBindingResponding_noop_v_1, transpose: StandardKeyBindingResponding_noop_v_1, transpose_words: StandardKeyBindingResponding_noop_v_1, select_all: StandardKeyBindingResponding_noop_v_1, select_paragraph: StandardKeyBindingResponding_noop_v_1, select_line: StandardKeyBindingResponding_noop_v_1, select_word: StandardKeyBindingResponding_noop_v_1, indent: StandardKeyBindingResponding_noop_v_1, insert_tab: StandardKeyBindingResponding_noop_v_1, insert_backtab: StandardKeyBindingResponding_noop_v_1, insert_newline: StandardKeyBindingResponding_noop_v_1, insert_paragraph_separator: StandardKeyBindingResponding_noop_v_1, insert_newline_ignoring_field_editor: StandardKeyBindingResponding_noop_v_1, insert_tab_ignoring_field_editor: StandardKeyBindingResponding_noop_v_1, insert_line_break: StandardKeyBindingResponding_noop_v_1, insert_container_break: StandardKeyBindingResponding_noop_v_1, insert_single_quote_ignoring_substitution: StandardKeyBindingResponding_noop_v_1, insert_double_quote_ignoring_substitution: StandardKeyBindingResponding_noop_v_1, change_case_of_letter: StandardKeyBindingResponding_noop_v_1, uppercase_word: StandardKeyBindingResponding_noop_v_1, lowercase_word: StandardKeyBindingResponding_noop_v_1, capitalize_word: StandardKeyBindingResponding_noop_v_1, delete_forward: StandardKeyBindingResponding_noop_v_1, delete_backward: StandardKeyBindingResponding_noop_v_1, delete_backward_by_decomposing_previous_character: StandardKeyBindingResponding_noop_v_1, delete_word_forward: StandardKeyBindingResponding_noop_v_1, delete_word_backward: StandardKeyBindingResponding_noop_v_1, delete_to_beginning_of_line: StandardKeyBindingResponding_noop_v_1, delete_to_end_of_line: StandardKeyBindingResponding_noop_v_1, delete_to_beginning_of_paragraph: StandardKeyBindingResponding_noop_v_1, delete_to_end_of_paragraph: StandardKeyBindingResponding_noop_v_1, yank: StandardKeyBindingResponding_noop_v_1, complete: StandardKeyBindingResponding_noop_v_1, set_mark: StandardKeyBindingResponding_noop_v_1, delete_to_mark: StandardKeyBindingResponding_noop_v_1, select_to_mark: StandardKeyBindingResponding_noop_v_1, swap_with_mark: StandardKeyBindingResponding_noop_v_1, cancel_operation: StandardKeyBindingResponding_noop_v_1, make_base_writing_direction_natural: StandardKeyBindingResponding_noop_v_1, make_base_writing_direction_left_to_right: StandardKeyBindingResponding_noop_v_1, make_base_writing_direction_right_to_left: StandardKeyBindingResponding_noop_v_1, make_text_writing_direction_natural: StandardKeyBindingResponding_noop_v_1, make_text_writing_direction_left_to_right: StandardKeyBindingResponding_noop_v_1, make_text_writing_direction_right_to_left: StandardKeyBindingResponding_noop_v_1, quick_look_preview_items: StandardKeyBindingResponding_noop_v_1, show_context_menu_for_selection: StandardKeyBindingResponding_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl StandardKeyBindingResponding {
-    fn set_insert_text(ref this, handler: fn(*u8, *u8)) {
-        this.insert_text = handler;
-        return;
-    }
-    fn set_move_forward(ref this, handler: fn(*u8, *u8)) {
-        this.move_forward = handler;
-        return;
-    }
-    fn set_move_right(ref this, handler: fn(*u8, *u8)) {
-        this.move_right = handler;
-        return;
-    }
-    fn set_move_backward(ref this, handler: fn(*u8, *u8)) {
-        this.move_backward = handler;
-        return;
-    }
-    fn set_move_left(ref this, handler: fn(*u8, *u8)) {
-        this.move_left = handler;
-        return;
-    }
-    fn set_move_up(ref this, handler: fn(*u8, *u8)) {
-        this.move_up = handler;
-        return;
-    }
-    fn set_move_down(ref this, handler: fn(*u8, *u8)) {
-        this.move_down = handler;
-        return;
-    }
-    fn set_move_word_forward(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_forward = handler;
-        return;
-    }
-    fn set_move_word_backward(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_backward = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_line = handler;
-        return;
-    }
-    fn set_move_to_end_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_line = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_paragraph(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_paragraph = handler;
-        return;
-    }
-    fn set_move_to_end_of_paragraph(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_paragraph = handler;
-        return;
-    }
-    fn set_move_to_end_of_document(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_document = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_document(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_document = handler;
-        return;
-    }
-    fn set_page_down(ref this, handler: fn(*u8, *u8)) {
-        this.page_down = handler;
-        return;
-    }
-    fn set_page_up(ref this, handler: fn(*u8, *u8)) {
-        this.page_up = handler;
-        return;
-    }
-    fn set_center_selection_in_visible_area(ref this, handler: fn(*u8, *u8)) {
-        this.center_selection_in_visible_area = handler;
-        return;
-    }
-    fn set_move_backward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_backward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_forward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_forward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_word_forward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_forward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_word_backward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_backward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_up_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_up_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_down_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_down_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_line_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_line_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_end_of_line_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_line_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_paragraph_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_paragraph_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_end_of_paragraph_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_paragraph_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_end_of_document_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_end_of_document_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_beginning_of_document_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_beginning_of_document_and_modify_selection = handler;
-        return;
-    }
-    fn set_page_down_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.page_down_and_modify_selection = handler;
-        return;
-    }
-    fn set_page_up_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.page_up_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_paragraph_forward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_paragraph_forward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_paragraph_backward_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_paragraph_backward_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_word_right(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_right = handler;
-        return;
-    }
-    fn set_move_word_left(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_left = handler;
-        return;
-    }
-    fn set_move_right_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_right_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_left_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_left_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_word_right_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_right_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_word_left_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_word_left_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_left_end_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_left_end_of_line = handler;
-        return;
-    }
-    fn set_move_to_right_end_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_right_end_of_line = handler;
-        return;
-    }
-    fn set_move_to_left_end_of_line_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_left_end_of_line_and_modify_selection = handler;
-        return;
-    }
-    fn set_move_to_right_end_of_line_and_modify_selection(ref this, handler: fn(*u8, *u8)) {
-        this.move_to_right_end_of_line_and_modify_selection = handler;
-        return;
-    }
-    fn set_scroll_page_up(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_page_up = handler;
-        return;
-    }
-    fn set_scroll_page_down(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_page_down = handler;
-        return;
-    }
-    fn set_scroll_line_up(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_line_up = handler;
-        return;
-    }
-    fn set_scroll_line_down(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_line_down = handler;
-        return;
-    }
-    fn set_scroll_to_beginning_of_document(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_to_beginning_of_document = handler;
-        return;
-    }
-    fn set_scroll_to_end_of_document(ref this, handler: fn(*u8, *u8)) {
-        this.scroll_to_end_of_document = handler;
-        return;
-    }
-    fn set_transpose(ref this, handler: fn(*u8, *u8)) {
-        this.transpose = handler;
-        return;
-    }
-    fn set_transpose_words(ref this, handler: fn(*u8, *u8)) {
-        this.transpose_words = handler;
-        return;
-    }
-    fn set_select_all(ref this, handler: fn(*u8, *u8)) {
-        this.select_all = handler;
-        return;
-    }
-    fn set_select_paragraph(ref this, handler: fn(*u8, *u8)) {
-        this.select_paragraph = handler;
-        return;
-    }
-    fn set_select_line(ref this, handler: fn(*u8, *u8)) {
-        this.select_line = handler;
-        return;
-    }
-    fn set_select_word(ref this, handler: fn(*u8, *u8)) {
-        this.select_word = handler;
-        return;
-    }
-    fn set_indent(ref this, handler: fn(*u8, *u8)) {
-        this.indent = handler;
-        return;
-    }
-    fn set_insert_tab(ref this, handler: fn(*u8, *u8)) {
-        this.insert_tab = handler;
-        return;
-    }
-    fn set_insert_backtab(ref this, handler: fn(*u8, *u8)) {
-        this.insert_backtab = handler;
-        return;
-    }
-    fn set_insert_newline(ref this, handler: fn(*u8, *u8)) {
-        this.insert_newline = handler;
-        return;
-    }
-    fn set_insert_paragraph_separator(ref this, handler: fn(*u8, *u8)) {
-        this.insert_paragraph_separator = handler;
-        return;
-    }
-    fn set_insert_newline_ignoring_field_editor(ref this, handler: fn(*u8, *u8)) {
-        this.insert_newline_ignoring_field_editor = handler;
-        return;
-    }
-    fn set_insert_tab_ignoring_field_editor(ref this, handler: fn(*u8, *u8)) {
-        this.insert_tab_ignoring_field_editor = handler;
-        return;
-    }
-    fn set_insert_line_break(ref this, handler: fn(*u8, *u8)) {
-        this.insert_line_break = handler;
-        return;
-    }
-    fn set_insert_container_break(ref this, handler: fn(*u8, *u8)) {
-        this.insert_container_break = handler;
-        return;
-    }
-    fn set_insert_single_quote_ignoring_substitution(ref this, handler: fn(*u8, *u8)) {
-        this.insert_single_quote_ignoring_substitution = handler;
-        return;
-    }
-    fn set_insert_double_quote_ignoring_substitution(ref this, handler: fn(*u8, *u8)) {
-        this.insert_double_quote_ignoring_substitution = handler;
-        return;
-    }
-    fn set_change_case_of_letter(ref this, handler: fn(*u8, *u8)) {
-        this.change_case_of_letter = handler;
-        return;
-    }
-    fn set_uppercase_word(ref this, handler: fn(*u8, *u8)) {
-        this.uppercase_word = handler;
-        return;
-    }
-    fn set_lowercase_word(ref this, handler: fn(*u8, *u8)) {
-        this.lowercase_word = handler;
-        return;
-    }
-    fn set_capitalize_word(ref this, handler: fn(*u8, *u8)) {
-        this.capitalize_word = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StandardKeyBindingResponding { return StandardKeyBindingResponding { _obj: ptr }; }
+
+    fn insert_text(this, insert_string: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertText:\0")), insert_string);
+    }
+
+    // SKIPPED `doCommandBySelector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn move_forward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveForward:\0")), sender);
+    }
+
+    fn move_right(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveRight:\0")), sender);
+    }
+
+    fn move_backward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveBackward:\0")), sender);
+    }
+
+    fn move_left(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveLeft:\0")), sender);
+    }
+
+    fn move_up(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveUp:\0")), sender);
+    }
+
+    fn move_down(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveDown:\0")), sender);
+    }
+
+    fn move_word_forward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordForward:\0")), sender);
+    }
+
+    fn move_word_backward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordBackward:\0")), sender);
+    }
+
+    fn move_to_beginning_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfLine:\0")), sender);
+    }
+
+    fn move_to_end_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfLine:\0")), sender);
+    }
+
+    fn move_to_beginning_of_paragraph(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfParagraph:\0")), sender);
+    }
+
+    fn move_to_end_of_paragraph(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfParagraph:\0")), sender);
+    }
+
+    fn move_to_end_of_document(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfDocument:\0")), sender);
+    }
+
+    fn move_to_beginning_of_document(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfDocument:\0")), sender);
+    }
+
+    fn page_down(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pageDown:\0")), sender);
+    }
+
+    fn page_up(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pageUp:\0")), sender);
+    }
+
+    fn center_selection_in_visible_area(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("centerSelectionInVisibleArea:\0")), sender);
+    }
+
+    fn move_backward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveBackwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_forward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveForwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_word_forward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordForwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_word_backward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordBackwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_up_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveUpAndModifySelection:\0")), sender);
+    }
+
+    fn move_down_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveDownAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_beginning_of_line_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfLineAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_end_of_line_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfLineAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_beginning_of_paragraph_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfParagraphAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_end_of_paragraph_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfParagraphAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_end_of_document_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToEndOfDocumentAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_beginning_of_document_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToBeginningOfDocumentAndModifySelection:\0")), sender);
+    }
+
+    fn page_down_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pageDownAndModifySelection:\0")), sender);
+    }
+
+    fn page_up_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pageUpAndModifySelection:\0")), sender);
+    }
+
+    fn move_paragraph_forward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveParagraphForwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_paragraph_backward_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveParagraphBackwardAndModifySelection:\0")), sender);
+    }
+
+    fn move_word_right(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordRight:\0")), sender);
+    }
+
+    fn move_word_left(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordLeft:\0")), sender);
+    }
+
+    fn move_right_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveRightAndModifySelection:\0")), sender);
+    }
+
+    fn move_left_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveLeftAndModifySelection:\0")), sender);
+    }
+
+    fn move_word_right_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordRightAndModifySelection:\0")), sender);
+    }
+
+    fn move_word_left_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveWordLeftAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_left_end_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToLeftEndOfLine:\0")), sender);
+    }
+
+    fn move_to_right_end_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToRightEndOfLine:\0")), sender);
+    }
+
+    fn move_to_left_end_of_line_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToLeftEndOfLineAndModifySelection:\0")), sender);
+    }
+
+    fn move_to_right_end_of_line_and_modify_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveToRightEndOfLineAndModifySelection:\0")), sender);
+    }
+
+    fn scroll_page_up(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollPageUp:\0")), sender);
+    }
+
+    fn scroll_page_down(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollPageDown:\0")), sender);
+    }
+
+    fn scroll_line_up(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollLineUp:\0")), sender);
+    }
+
+    fn scroll_line_down(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollLineDown:\0")), sender);
+    }
+
+    fn scroll_to_beginning_of_document(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollToBeginningOfDocument:\0")), sender);
+    }
+
+    fn scroll_to_end_of_document(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("scrollToEndOfDocument:\0")), sender);
+    }
+
+    fn transpose(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("transpose:\0")), sender);
+    }
+
+    fn transpose_words(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("transposeWords:\0")), sender);
+    }
+
+    fn select_all(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
+    }
+
+    fn select_paragraph(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectParagraph:\0")), sender);
+    }
+
+    fn select_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectLine:\0")), sender);
+    }
+
+    fn select_word(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectWord:\0")), sender);
+    }
+
+    fn indent(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("indent:\0")), sender);
+    }
+
+    fn insert_tab(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertTab:\0")), sender);
+    }
+
+    fn insert_backtab(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertBacktab:\0")), sender);
+    }
+
+    fn insert_newline(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertNewline:\0")), sender);
+    }
+
+    fn insert_paragraph_separator(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertParagraphSeparator:\0")), sender);
+    }
+
+    fn insert_newline_ignoring_field_editor(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertNewlineIgnoringFieldEditor:\0")), sender);
+    }
+
+    fn insert_tab_ignoring_field_editor(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertTabIgnoringFieldEditor:\0")), sender);
+    }
+
+    fn insert_line_break(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertLineBreak:\0")), sender);
+    }
+
+    fn insert_container_break(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertContainerBreak:\0")), sender);
+    }
+
+    fn insert_single_quote_ignoring_substitution(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertSingleQuoteIgnoringSubstitution:\0")), sender);
+    }
+
+    fn insert_double_quote_ignoring_substitution(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertDoubleQuoteIgnoringSubstitution:\0")), sender);
+    }
+
+    fn change_case_of_letter(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeCaseOfLetter:\0")), sender);
+    }
+
+    fn uppercase_word(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("uppercaseWord:\0")), sender);
+    }
+
+    fn lowercase_word(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("lowercaseWord:\0")), sender);
+    }
+
+    fn capitalize_word(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("capitalizeWord:\0")), sender);
     }
-    fn set_delete_forward(ref this, handler: fn(*u8, *u8)) {
-        this.delete_forward = handler;
-        return;
+
+    fn delete_forward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteForward:\0")), sender);
+    }
+
+    fn delete_backward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteBackward:\0")), sender);
+    }
+
+    fn delete_backward_by_decomposing_previous_character(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteBackwardByDecomposingPreviousCharacter:\0")), sender);
+    }
+
+    fn delete_word_forward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteWordForward:\0")), sender);
+    }
+
+    fn delete_word_backward(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteWordBackward:\0")), sender);
+    }
+
+    fn delete_to_beginning_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteToBeginningOfLine:\0")), sender);
+    }
+
+    fn delete_to_end_of_line(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteToEndOfLine:\0")), sender);
+    }
+
+    fn delete_to_beginning_of_paragraph(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteToBeginningOfParagraph:\0")), sender);
+    }
+
+    fn delete_to_end_of_paragraph(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteToEndOfParagraph:\0")), sender);
+    }
+
+    fn yank(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("yank:\0")), sender);
+    }
+
+    fn complete(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("complete:\0")), sender);
+    }
+
+    fn set_mark(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMark:\0")), sender);
+    }
+
+    fn delete_to_mark(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteToMark:\0")), sender);
+    }
+
+    fn select_to_mark(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectToMark:\0")), sender);
+    }
+
+    fn swap_with_mark(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("swapWithMark:\0")), sender);
+    }
+
+    fn cancel_operation(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancelOperation:\0")), sender);
+    }
+
+    fn make_base_writing_direction_natural(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeBaseWritingDirectionNatural:\0")), sender);
+    }
+
+    fn make_base_writing_direction_left_to_right(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeBaseWritingDirectionLeftToRight:\0")), sender);
+    }
+
+    fn make_base_writing_direction_right_to_left(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeBaseWritingDirectionRightToLeft:\0")), sender);
+    }
+
+    fn make_text_writing_direction_natural(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeTextWritingDirectionNatural:\0")), sender);
+    }
+
+    fn make_text_writing_direction_left_to_right(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeTextWritingDirectionLeftToRight:\0")), sender);
+    }
+
+    fn make_text_writing_direction_right_to_left(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("makeTextWritingDirectionRightToLeft:\0")), sender);
+    }
+
+    fn quick_look_preview_items(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("quickLookPreviewItems:\0")), sender);
     }
-    fn set_delete_backward(ref this, handler: fn(*u8, *u8)) {
-        this.delete_backward = handler;
-        return;
-    }
-    fn set_delete_backward_by_decomposing_previous_character(ref this, handler: fn(*u8, *u8)) {
-        this.delete_backward_by_decomposing_previous_character = handler;
-        return;
-    }
-    fn set_delete_word_forward(ref this, handler: fn(*u8, *u8)) {
-        this.delete_word_forward = handler;
-        return;
-    }
-    fn set_delete_word_backward(ref this, handler: fn(*u8, *u8)) {
-        this.delete_word_backward = handler;
-        return;
-    }
-    fn set_delete_to_beginning_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.delete_to_beginning_of_line = handler;
-        return;
-    }
-    fn set_delete_to_end_of_line(ref this, handler: fn(*u8, *u8)) {
-        this.delete_to_end_of_line = handler;
-        return;
-    }
-    fn set_delete_to_beginning_of_paragraph(ref this, handler: fn(*u8, *u8)) {
-        this.delete_to_beginning_of_paragraph = handler;
-        return;
-    }
-    fn set_delete_to_end_of_paragraph(ref this, handler: fn(*u8, *u8)) {
-        this.delete_to_end_of_paragraph = handler;
-        return;
-    }
-    fn set_yank(ref this, handler: fn(*u8, *u8)) {
-        this.yank = handler;
-        return;
-    }
-    fn set_complete(ref this, handler: fn(*u8, *u8)) {
-        this.complete = handler;
-        return;
-    }
-    fn set_set_mark(ref this, handler: fn(*u8, *u8)) {
-        this.set_mark = handler;
-        return;
-    }
-    fn set_delete_to_mark(ref this, handler: fn(*u8, *u8)) {
-        this.delete_to_mark = handler;
-        return;
-    }
-    fn set_select_to_mark(ref this, handler: fn(*u8, *u8)) {
-        this.select_to_mark = handler;
-        return;
-    }
-    fn set_swap_with_mark(ref this, handler: fn(*u8, *u8)) {
-        this.swap_with_mark = handler;
-        return;
-    }
-    fn set_cancel_operation(ref this, handler: fn(*u8, *u8)) {
-        this.cancel_operation = handler;
-        return;
-    }
-    fn set_make_base_writing_direction_natural(ref this, handler: fn(*u8, *u8)) {
-        this.make_base_writing_direction_natural = handler;
-        return;
-    }
-    fn set_make_base_writing_direction_left_to_right(ref this, handler: fn(*u8, *u8)) {
-        this.make_base_writing_direction_left_to_right = handler;
-        return;
-    }
-    fn set_make_base_writing_direction_right_to_left(ref this, handler: fn(*u8, *u8)) {
-        this.make_base_writing_direction_right_to_left = handler;
-        return;
-    }
-    fn set_make_text_writing_direction_natural(ref this, handler: fn(*u8, *u8)) {
-        this.make_text_writing_direction_natural = handler;
-        return;
-    }
-    fn set_make_text_writing_direction_left_to_right(ref this, handler: fn(*u8, *u8)) {
-        this.make_text_writing_direction_left_to_right = handler;
-        return;
-    }
-    fn set_make_text_writing_direction_right_to_left(ref this, handler: fn(*u8, *u8)) {
-        this.make_text_writing_direction_right_to_left = handler;
-        return;
-    }
-    fn set_quick_look_preview_items(ref this, handler: fn(*u8, *u8)) {
-        this.quick_look_preview_items = handler;
-        return;
-    }
-    fn set_show_context_menu_for_selection(ref this, handler: fn(*u8, *u8)) {
-        this.show_context_menu_for_selection = handler;
-        return;
-    }
-}
-
-fn StandardKeyBindingResponding_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn StandardKeyBindingResponding_insert_text_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_text };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_forward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_forward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_right_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_right };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_backward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_backward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_left_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_left };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_up_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_up };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_down_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_down };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_forward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_forward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_backward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_backward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_paragraph_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_paragraph };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_paragraph_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_paragraph };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_document };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_document };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_page_down_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).page_down };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_page_up_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).page_up };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_center_selection_in_visible_area_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).center_selection_in_visible_area };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_backward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_backward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_forward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_forward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_forward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_forward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_backward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_backward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_up_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_up_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_down_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_down_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_line_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_line_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_line_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_line_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_paragraph_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_paragraph_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_paragraph_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_paragraph_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_end_of_document_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_end_of_document_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_beginning_of_document_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_beginning_of_document_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_page_down_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).page_down_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_page_up_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).page_up_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_paragraph_forward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_paragraph_forward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_paragraph_backward_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_paragraph_backward_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_right_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_right };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_left_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_left };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_right_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_right_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_left_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_left_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_right_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_right_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_word_left_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_word_left_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_left_end_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_left_end_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_right_end_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_right_end_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_left_end_of_line_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_left_end_of_line_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_move_to_right_end_of_line_and_modify_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).move_to_right_end_of_line_and_modify_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_page_up_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_page_up };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_page_down_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_page_down };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_line_up_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_line_up };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_line_down_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_line_down };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_to_beginning_of_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_to_beginning_of_document };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_scroll_to_end_of_document_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).scroll_to_end_of_document };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_transpose_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).transpose };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_transpose_words_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).transpose_words };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_select_all_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).select_all };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_select_paragraph_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).select_paragraph };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_select_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).select_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_select_word_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).select_word };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_indent_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).indent };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_tab_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_tab };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_backtab_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_backtab };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_newline_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_newline };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_paragraph_separator_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_paragraph_separator };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_newline_ignoring_field_editor_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_newline_ignoring_field_editor };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_tab_ignoring_field_editor_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_tab_ignoring_field_editor };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_line_break_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_line_break };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_container_break_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_container_break };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_single_quote_ignoring_substitution_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_single_quote_ignoring_substitution };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_insert_double_quote_ignoring_substitution_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).insert_double_quote_ignoring_substitution };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_change_case_of_letter_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).change_case_of_letter };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_uppercase_word_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).uppercase_word };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_lowercase_word_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).lowercase_word };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_capitalize_word_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).capitalize_word };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_forward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_forward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_backward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_backward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_backward_by_decomposing_previous_character_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_backward_by_decomposing_previous_character };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_word_forward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_word_forward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_word_backward_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_word_backward };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_to_beginning_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_to_beginning_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_to_end_of_line_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_to_end_of_line };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_to_beginning_of_paragraph_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_to_beginning_of_paragraph };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_to_end_of_paragraph_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_to_end_of_paragraph };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_yank_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).yank };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_complete_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).complete };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_set_mark_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).set_mark };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_delete_to_mark_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).delete_to_mark };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_select_to_mark_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).select_to_mark };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_swap_with_mark_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).swap_with_mark };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_cancel_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).cancel_operation };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_base_writing_direction_natural_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_base_writing_direction_natural };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_base_writing_direction_left_to_right_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_base_writing_direction_left_to_right };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_base_writing_direction_right_to_left_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_base_writing_direction_right_to_left };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_text_writing_direction_natural_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_text_writing_direction_natural };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_text_writing_direction_left_to_right_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_text_writing_direction_left_to_right };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_make_text_writing_direction_right_to_left_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).make_text_writing_direction_right_to_left };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_quick_look_preview_items_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).quick_look_preview_items };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn StandardKeyBindingResponding_show_context_menu_for_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *StandardKeyBindingResponding = { synth::get_associated(self_obj, StandardKeyBindingResponding_key()) as *StandardKeyBindingResponding };
-    let f: fn(*u8, *u8) = { (*c).show_context_menu_for_selection };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_StandardKeyBindingResponding(ctx: *StandardKeyBindingResponding) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_StandardKeyBindingResponding\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_insert_text: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertText:\0")), StandardKeyBindingResponding_insert_text_imp, #str_ptr("v@:@\0"));
-        let add_move_forward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveForward:\0")), StandardKeyBindingResponding_move_forward_imp, #str_ptr("v@:@\0"));
-        let add_move_right: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveRight:\0")), StandardKeyBindingResponding_move_right_imp, #str_ptr("v@:@\0"));
-        let add_move_backward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveBackward:\0")), StandardKeyBindingResponding_move_backward_imp, #str_ptr("v@:@\0"));
-        let add_move_left: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveLeft:\0")), StandardKeyBindingResponding_move_left_imp, #str_ptr("v@:@\0"));
-        let add_move_up: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveUp:\0")), StandardKeyBindingResponding_move_up_imp, #str_ptr("v@:@\0"));
-        let add_move_down: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveDown:\0")), StandardKeyBindingResponding_move_down_imp, #str_ptr("v@:@\0"));
-        let add_move_word_forward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordForward:\0")), StandardKeyBindingResponding_move_word_forward_imp, #str_ptr("v@:@\0"));
-        let add_move_word_backward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordBackward:\0")), StandardKeyBindingResponding_move_word_backward_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfLine:\0")), StandardKeyBindingResponding_move_to_beginning_of_line_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfLine:\0")), StandardKeyBindingResponding_move_to_end_of_line_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_paragraph: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfParagraph:\0")), StandardKeyBindingResponding_move_to_beginning_of_paragraph_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_paragraph: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfParagraph:\0")), StandardKeyBindingResponding_move_to_end_of_paragraph_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfDocument:\0")), StandardKeyBindingResponding_move_to_end_of_document_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfDocument:\0")), StandardKeyBindingResponding_move_to_beginning_of_document_imp, #str_ptr("v@:@\0"));
-        let add_page_down: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageDown:\0")), StandardKeyBindingResponding_page_down_imp, #str_ptr("v@:@\0"));
-        let add_page_up: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageUp:\0")), StandardKeyBindingResponding_page_up_imp, #str_ptr("v@:@\0"));
-        let add_center_selection_in_visible_area: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("centerSelectionInVisibleArea:\0")), StandardKeyBindingResponding_center_selection_in_visible_area_imp, #str_ptr("v@:@\0"));
-        let add_move_backward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveBackwardAndModifySelection:\0")), StandardKeyBindingResponding_move_backward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_forward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveForwardAndModifySelection:\0")), StandardKeyBindingResponding_move_forward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_word_forward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordForwardAndModifySelection:\0")), StandardKeyBindingResponding_move_word_forward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_word_backward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordBackwardAndModifySelection:\0")), StandardKeyBindingResponding_move_word_backward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_up_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveUpAndModifySelection:\0")), StandardKeyBindingResponding_move_up_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_down_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveDownAndModifySelection:\0")), StandardKeyBindingResponding_move_down_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_line_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfLineAndModifySelection:\0")), StandardKeyBindingResponding_move_to_beginning_of_line_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_line_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfLineAndModifySelection:\0")), StandardKeyBindingResponding_move_to_end_of_line_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_paragraph_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfParagraphAndModifySelection:\0")), StandardKeyBindingResponding_move_to_beginning_of_paragraph_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_paragraph_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfParagraphAndModifySelection:\0")), StandardKeyBindingResponding_move_to_end_of_paragraph_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_end_of_document_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToEndOfDocumentAndModifySelection:\0")), StandardKeyBindingResponding_move_to_end_of_document_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_beginning_of_document_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToBeginningOfDocumentAndModifySelection:\0")), StandardKeyBindingResponding_move_to_beginning_of_document_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_page_down_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageDownAndModifySelection:\0")), StandardKeyBindingResponding_page_down_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_page_up_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageUpAndModifySelection:\0")), StandardKeyBindingResponding_page_up_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_paragraph_forward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveParagraphForwardAndModifySelection:\0")), StandardKeyBindingResponding_move_paragraph_forward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_paragraph_backward_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveParagraphBackwardAndModifySelection:\0")), StandardKeyBindingResponding_move_paragraph_backward_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_word_right: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordRight:\0")), StandardKeyBindingResponding_move_word_right_imp, #str_ptr("v@:@\0"));
-        let add_move_word_left: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordLeft:\0")), StandardKeyBindingResponding_move_word_left_imp, #str_ptr("v@:@\0"));
-        let add_move_right_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveRightAndModifySelection:\0")), StandardKeyBindingResponding_move_right_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_left_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveLeftAndModifySelection:\0")), StandardKeyBindingResponding_move_left_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_word_right_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordRightAndModifySelection:\0")), StandardKeyBindingResponding_move_word_right_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_word_left_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveWordLeftAndModifySelection:\0")), StandardKeyBindingResponding_move_word_left_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_left_end_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToLeftEndOfLine:\0")), StandardKeyBindingResponding_move_to_left_end_of_line_imp, #str_ptr("v@:@\0"));
-        let add_move_to_right_end_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToRightEndOfLine:\0")), StandardKeyBindingResponding_move_to_right_end_of_line_imp, #str_ptr("v@:@\0"));
-        let add_move_to_left_end_of_line_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToLeftEndOfLineAndModifySelection:\0")), StandardKeyBindingResponding_move_to_left_end_of_line_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_move_to_right_end_of_line_and_modify_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("moveToRightEndOfLineAndModifySelection:\0")), StandardKeyBindingResponding_move_to_right_end_of_line_and_modify_selection_imp, #str_ptr("v@:@\0"));
-        let add_scroll_page_up: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollPageUp:\0")), StandardKeyBindingResponding_scroll_page_up_imp, #str_ptr("v@:@\0"));
-        let add_scroll_page_down: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollPageDown:\0")), StandardKeyBindingResponding_scroll_page_down_imp, #str_ptr("v@:@\0"));
-        let add_scroll_line_up: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollLineUp:\0")), StandardKeyBindingResponding_scroll_line_up_imp, #str_ptr("v@:@\0"));
-        let add_scroll_line_down: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollLineDown:\0")), StandardKeyBindingResponding_scroll_line_down_imp, #str_ptr("v@:@\0"));
-        let add_scroll_to_beginning_of_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollToBeginningOfDocument:\0")), StandardKeyBindingResponding_scroll_to_beginning_of_document_imp, #str_ptr("v@:@\0"));
-        let add_scroll_to_end_of_document: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollToEndOfDocument:\0")), StandardKeyBindingResponding_scroll_to_end_of_document_imp, #str_ptr("v@:@\0"));
-        let add_transpose: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("transpose:\0")), StandardKeyBindingResponding_transpose_imp, #str_ptr("v@:@\0"));
-        let add_transpose_words: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("transposeWords:\0")), StandardKeyBindingResponding_transpose_words_imp, #str_ptr("v@:@\0"));
-        let add_select_all: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("selectAll:\0")), StandardKeyBindingResponding_select_all_imp, #str_ptr("v@:@\0"));
-        let add_select_paragraph: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("selectParagraph:\0")), StandardKeyBindingResponding_select_paragraph_imp, #str_ptr("v@:@\0"));
-        let add_select_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("selectLine:\0")), StandardKeyBindingResponding_select_line_imp, #str_ptr("v@:@\0"));
-        let add_select_word: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("selectWord:\0")), StandardKeyBindingResponding_select_word_imp, #str_ptr("v@:@\0"));
-        let add_indent: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("indent:\0")), StandardKeyBindingResponding_indent_imp, #str_ptr("v@:@\0"));
-        let add_insert_tab: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertTab:\0")), StandardKeyBindingResponding_insert_tab_imp, #str_ptr("v@:@\0"));
-        let add_insert_backtab: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertBacktab:\0")), StandardKeyBindingResponding_insert_backtab_imp, #str_ptr("v@:@\0"));
-        let add_insert_newline: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertNewline:\0")), StandardKeyBindingResponding_insert_newline_imp, #str_ptr("v@:@\0"));
-        let add_insert_paragraph_separator: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertParagraphSeparator:\0")), StandardKeyBindingResponding_insert_paragraph_separator_imp, #str_ptr("v@:@\0"));
-        let add_insert_newline_ignoring_field_editor: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertNewlineIgnoringFieldEditor:\0")), StandardKeyBindingResponding_insert_newline_ignoring_field_editor_imp, #str_ptr("v@:@\0"));
-        let add_insert_tab_ignoring_field_editor: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertTabIgnoringFieldEditor:\0")), StandardKeyBindingResponding_insert_tab_ignoring_field_editor_imp, #str_ptr("v@:@\0"));
-        let add_insert_line_break: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertLineBreak:\0")), StandardKeyBindingResponding_insert_line_break_imp, #str_ptr("v@:@\0"));
-        let add_insert_container_break: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertContainerBreak:\0")), StandardKeyBindingResponding_insert_container_break_imp, #str_ptr("v@:@\0"));
-        let add_insert_single_quote_ignoring_substitution: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertSingleQuoteIgnoringSubstitution:\0")), StandardKeyBindingResponding_insert_single_quote_ignoring_substitution_imp, #str_ptr("v@:@\0"));
-        let add_insert_double_quote_ignoring_substitution: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("insertDoubleQuoteIgnoringSubstitution:\0")), StandardKeyBindingResponding_insert_double_quote_ignoring_substitution_imp, #str_ptr("v@:@\0"));
-        let add_change_case_of_letter: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("changeCaseOfLetter:\0")), StandardKeyBindingResponding_change_case_of_letter_imp, #str_ptr("v@:@\0"));
-        let add_uppercase_word: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("uppercaseWord:\0")), StandardKeyBindingResponding_uppercase_word_imp, #str_ptr("v@:@\0"));
-        let add_lowercase_word: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("lowercaseWord:\0")), StandardKeyBindingResponding_lowercase_word_imp, #str_ptr("v@:@\0"));
-        let add_capitalize_word: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("capitalizeWord:\0")), StandardKeyBindingResponding_capitalize_word_imp, #str_ptr("v@:@\0"));
-        let add_delete_forward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteForward:\0")), StandardKeyBindingResponding_delete_forward_imp, #str_ptr("v@:@\0"));
-        let add_delete_backward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteBackward:\0")), StandardKeyBindingResponding_delete_backward_imp, #str_ptr("v@:@\0"));
-        let add_delete_backward_by_decomposing_previous_character: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteBackwardByDecomposingPreviousCharacter:\0")), StandardKeyBindingResponding_delete_backward_by_decomposing_previous_character_imp, #str_ptr("v@:@\0"));
-        let add_delete_word_forward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteWordForward:\0")), StandardKeyBindingResponding_delete_word_forward_imp, #str_ptr("v@:@\0"));
-        let add_delete_word_backward: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteWordBackward:\0")), StandardKeyBindingResponding_delete_word_backward_imp, #str_ptr("v@:@\0"));
-        let add_delete_to_beginning_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteToBeginningOfLine:\0")), StandardKeyBindingResponding_delete_to_beginning_of_line_imp, #str_ptr("v@:@\0"));
-        let add_delete_to_end_of_line: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteToEndOfLine:\0")), StandardKeyBindingResponding_delete_to_end_of_line_imp, #str_ptr("v@:@\0"));
-        let add_delete_to_beginning_of_paragraph: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteToBeginningOfParagraph:\0")), StandardKeyBindingResponding_delete_to_beginning_of_paragraph_imp, #str_ptr("v@:@\0"));
-        let add_delete_to_end_of_paragraph: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteToEndOfParagraph:\0")), StandardKeyBindingResponding_delete_to_end_of_paragraph_imp, #str_ptr("v@:@\0"));
-        let add_yank: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("yank:\0")), StandardKeyBindingResponding_yank_imp, #str_ptr("v@:@\0"));
-        let add_complete: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("complete:\0")), StandardKeyBindingResponding_complete_imp, #str_ptr("v@:@\0"));
-        let add_set_mark: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setMark:\0")), StandardKeyBindingResponding_set_mark_imp, #str_ptr("v@:@\0"));
-        let add_delete_to_mark: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("deleteToMark:\0")), StandardKeyBindingResponding_delete_to_mark_imp, #str_ptr("v@:@\0"));
-        let add_select_to_mark: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("selectToMark:\0")), StandardKeyBindingResponding_select_to_mark_imp, #str_ptr("v@:@\0"));
-        let add_swap_with_mark: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("swapWithMark:\0")), StandardKeyBindingResponding_swap_with_mark_imp, #str_ptr("v@:@\0"));
-        let add_cancel_operation: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cancelOperation:\0")), StandardKeyBindingResponding_cancel_operation_imp, #str_ptr("v@:@\0"));
-        let add_make_base_writing_direction_natural: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeBaseWritingDirectionNatural:\0")), StandardKeyBindingResponding_make_base_writing_direction_natural_imp, #str_ptr("v@:@\0"));
-        let add_make_base_writing_direction_left_to_right: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeBaseWritingDirectionLeftToRight:\0")), StandardKeyBindingResponding_make_base_writing_direction_left_to_right_imp, #str_ptr("v@:@\0"));
-        let add_make_base_writing_direction_right_to_left: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeBaseWritingDirectionRightToLeft:\0")), StandardKeyBindingResponding_make_base_writing_direction_right_to_left_imp, #str_ptr("v@:@\0"));
-        let add_make_text_writing_direction_natural: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeTextWritingDirectionNatural:\0")), StandardKeyBindingResponding_make_text_writing_direction_natural_imp, #str_ptr("v@:@\0"));
-        let add_make_text_writing_direction_left_to_right: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeTextWritingDirectionLeftToRight:\0")), StandardKeyBindingResponding_make_text_writing_direction_left_to_right_imp, #str_ptr("v@:@\0"));
-        let add_make_text_writing_direction_right_to_left: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("makeTextWritingDirectionRightToLeft:\0")), StandardKeyBindingResponding_make_text_writing_direction_right_to_left_imp, #str_ptr("v@:@\0"));
-        let add_quick_look_preview_items: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("quickLookPreviewItems:\0")), StandardKeyBindingResponding_quick_look_preview_items_imp, #str_ptr("v@:@\0"));
-        let add_show_context_menu_for_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("showContextMenuForSelection:\0")), StandardKeyBindingResponding_show_context_menu_for_selection_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, StandardKeyBindingResponding_key(), { ctx as *u8 });
-    return d;
+
+    fn show_context_menu_for_selection(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("showContextMenuForSelection:\0")), sender);
+    }
+
 }
 

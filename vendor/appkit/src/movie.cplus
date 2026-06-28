@@ -14,6 +14,8 @@ struct QTMovie {
 impl QTMovie {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> QTMovie { return QTMovie { _obj: ptr }; }
+
 }
 
 // `NSMovie` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -24,6 +26,8 @@ struct Movie {
 impl Movie {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Movie { return Movie { _obj: ptr }; }
+
     fn new(coder: *u8) -> Movie {
         let cls: *u8 = rt::get_class(#str_ptr("NSMovie\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -32,9 +36,12 @@ impl Movie {
 
     // SKIPPED `init`: extra init variant (one `new` per type)
     // SKIPPED `initWithMovie:`: extra init variant (one `new` per type)
-    fn q_t_movie(this) -> option::Option[*u8] {
+    fn q_t_movie(this) -> option::Option[QTMovie] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("QTMovie\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[QTMovie]::None;
+        }
+        return option::some(QTMovie::from_raw(obj));
     }
 
     fn drop(ref this) {

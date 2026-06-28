@@ -25,7 +25,29 @@ impl MTL4LibraryFunctionDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `library`: return `id<MTLLibrary> _Nullable` — generic collection
-    // SKIPPED `setLibrary:`: param `id<MTLLibrary> _Nullable` — generic collection
+    fn library(this) -> option::Option[Library] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("library\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Library]::None;
+        }
+        return option::some(Library::from_raw(obj));
+    }
+
+    fn set_library(this, library: Library) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLibrary:\0")), library.raw());
+    }
+
+}
+
+// `MTLLibrary` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Library {
+    opaque _obj: *u8,
+}
+
+impl Library {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Library { return Library { _obj: ptr }; }
+
 }
 

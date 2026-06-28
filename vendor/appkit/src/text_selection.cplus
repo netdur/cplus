@@ -59,6 +59,8 @@ struct TextRange {
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
+
 }
 
 // `NSTextSelection` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -68,6 +70,8 @@ struct TextSelection {
 
 impl TextSelection {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextSelection { return TextSelection { _obj: ptr }; }
 
     // SKIPPED `initWithRanges:affinity:granularity:`: param `NSArray<NSTextRange *> * _Nonnull` — generic collection
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
@@ -104,12 +108,34 @@ impl TextSelection {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setLogical:\0")), logical as i8);
     }
 
-    // SKIPPED `secondarySelectionLocation`: return `id<NSTextLocation> _Nullable` — generic collection
-    // SKIPPED `setSecondarySelectionLocation:`: param `id<NSTextLocation> _Nullable` — generic collection
+    fn secondary_selection_location(this) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("secondarySelectionLocation\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLocation]::None;
+        }
+        return option::some(TextLocation::from_raw(obj));
+    }
+
+    fn set_secondary_selection_location(this, secondary_selection_location: TextLocation) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSecondarySelectionLocation:\0")), secondary_selection_location.raw());
+    }
+
     // SKIPPED `typingAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `setTypingAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSTextLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLocation {
+    opaque _obj: *u8,
+}
+
+impl TextLocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
+
 }
 

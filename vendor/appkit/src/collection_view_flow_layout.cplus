@@ -32,6 +32,8 @@ struct CollectionViewFlowLayoutInvalidationContext {
 impl CollectionViewFlowLayoutInvalidationContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionViewFlowLayoutInvalidationContext { return CollectionViewFlowLayoutInvalidationContext { _obj: ptr }; }
+
     fn invalidate_flow_layout_delegate_metrics(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("invalidateFlowLayoutDelegateMetrics\0"))) != (0 as i8);
     }
@@ -58,6 +60,8 @@ struct CollectionViewFlowLayout {
 impl CollectionViewFlowLayout {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CollectionViewFlowLayout { return CollectionViewFlowLayout { _obj: ptr }; }
+
     // SKIPPED `sectionAtIndexIsCollapsed:`: (return, arg) shape not yet modelled
     // SKIPPED `collapseSectionAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `expandSectionAtIndex:`: (return, arg) shape not yet modelled
@@ -77,19 +81,43 @@ impl CollectionViewFlowLayout {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setMinimumInteritemSpacing:\0")), minimum_interitem_spacing);
     }
 
-    // SKIPPED `itemSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setItemSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `estimatedItemSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setEstimatedItemSize:`: param `NSSize` — unmapped type `NSSize`
+    fn item_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("itemSize\0")));
+    }
+
+    fn set_item_size(this, item_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setItemSize:\0")), item_size);
+    }
+
+    fn estimated_item_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("estimatedItemSize\0")));
+    }
+
+    fn set_estimated_item_size(this, estimated_item_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setEstimatedItemSize:\0")), estimated_item_size);
+    }
+
     fn scroll_direction(this) -> CollectionViewScrollDirection {
         return collection_view_scroll_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("scrollDirection\0"))));
     }
 
     // SKIPPED `setScrollDirection:`: (return, arg) shape not yet modelled
-    // SKIPPED `headerReferenceSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setHeaderReferenceSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `footerReferenceSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setFooterReferenceSize:`: param `NSSize` — unmapped type `NSSize`
+    fn header_reference_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("headerReferenceSize\0")));
+    }
+
+    fn set_header_reference_size(this, header_reference_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setHeaderReferenceSize:\0")), header_reference_size);
+    }
+
+    fn footer_reference_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("footerReferenceSize\0")));
+    }
+
+    fn set_footer_reference_size(this, footer_reference_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setFooterReferenceSize:\0")), footer_reference_size);
+    }
+
     // SKIPPED `sectionInset`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
     // SKIPPED `setSectionInset:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
     fn section_headers_pin_to_visible_bounds(this) -> bool {
@@ -108,5 +136,23 @@ impl CollectionViewFlowLayout {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSectionFootersPinToVisibleBounds:\0")), section_footers_pin_to_visible_bounds as i8);
     }
 
+}
+
+// `NSCollectionViewDelegateFlowLayout` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CollectionViewDelegateFlowLayout {
+    opaque _obj: *u8,
+}
+
+impl CollectionViewDelegateFlowLayout {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CollectionViewDelegateFlowLayout { return CollectionViewDelegateFlowLayout { _obj: ptr }; }
+
+    // SKIPPED `collectionView:layout:sizeForItemAtIndexPath:`: (return, arg) shape not yet modelled
+    // SKIPPED `collectionView:layout:insetForSectionAtIndex:`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    // SKIPPED `collectionView:layout:minimumLineSpacingForSectionAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `collectionView:layout:minimumInteritemSpacingForSectionAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `collectionView:layout:referenceSizeForHeaderInSection:`: (return, arg) shape not yet modelled
+    // SKIPPED `collectionView:layout:referenceSizeForFooterInSection:`: (return, arg) shape not yet modelled
 }
 

@@ -35,6 +35,8 @@ struct ViewLayoutRegion {
 impl ViewLayoutRegion {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ViewLayoutRegion { return ViewLayoutRegion { _obj: ptr }; }
+
     fn safe_area_layout_region_with_corner_adaptation(adaptivity_axis: ViewLayoutRegionAdaptivityAxis) -> ViewLayoutRegion {
         return ViewLayoutRegion { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSViewLayoutRegion\0")), rt::sel(#str_ptr("safeAreaLayoutRegionWithCornerAdaptation:\0")), view_layout_region_adaptivity_axis_raw(adaptivity_axis))) };
     }

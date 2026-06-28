@@ -6,23 +6,9 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSApplicationActivationOptions` (NS_ENUM)
-enum ApplicationActivationOptions {
-    NSApplicationActivateAllWindows,
-    NSApplicationActivateIgnoringOtherApps,
-}
-
-fn application_activation_options_raw(v: ApplicationActivationOptions) -> i64 {
-    return match v {
-        ApplicationActivationOptions::NSApplicationActivateAllWindows => { 1 as i64 },
-        ApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps => { 2 as i64 },
-    };
-}
-
-fn application_activation_options_from_raw(raw: i64) -> ApplicationActivationOptions {
-    if raw == (2 as i64) { return ApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps; }
-    return ApplicationActivationOptions::NSApplicationActivateAllWindows;
-}
+// `NSApplicationActivationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const application_activation_options_n_s_application_activate_all_windows: u64 = 1 as u64;
+const application_activation_options_n_s_application_activate_ignoring_other_apps: u64 = 2 as u64;
 
 // `NSApplicationActivationPolicy` (NS_ENUM)
 enum ApplicationActivationPolicy {
@@ -53,6 +39,8 @@ struct Lock {
 impl Lock {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Lock { return Lock { _obj: ptr }; }
+
 }
 
 // `NSDate` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -62,6 +50,8 @@ struct Date {
 
 impl Date {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Date { return Date { _obj: ptr }; }
 
 }
 
@@ -73,6 +63,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -83,6 +75,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSRunningApplication` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -92,6 +86,8 @@ struct RunningApplication {
 
 impl RunningApplication {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RunningApplication { return RunningApplication { _obj: ptr }; }
 
     fn hide(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hide\0"))) != (0 as i8);
@@ -151,33 +147,45 @@ impl RunningApplication {
         return bridge::to_text_option(ns);
     }
 
-    fn bundle_u_r_l(this) -> option::Option[*u8] {
+    fn bundle_u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bundleURL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
-    fn executable_u_r_l(this) -> option::Option[*u8] {
+    fn executable_u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("executableURL\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
     }
 
     // SKIPPED `processIdentifier`: return `pid_t` — unmapped type `pid_t`
-    fn launch_date(this) -> option::Option[*u8] {
+    fn launch_date(this) -> option::Option[Date] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("launchDate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Date]::None;
+        }
+        return option::some(Date::from_raw(obj));
     }
 
-    fn icon(this) -> option::Option[*u8] {
+    fn icon(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("icon\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
     fn executable_architecture(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("executableArchitecture\0")));
     }
 
-    fn current_application() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("currentApplication\0")));
+    fn current_application() -> RunningApplication {
+        return RunningApplication { _obj: rt::msg_id(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("currentApplication\0"))) };
     }
 
 }

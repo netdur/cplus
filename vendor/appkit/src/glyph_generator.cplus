@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSGlyphGenerator` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct GlyphGenerator {
@@ -15,67 +14,34 @@ struct GlyphGenerator {
 impl GlyphGenerator {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `generateGlyphsForGlyphStorage:desiredNumberOfCharacters:glyphIndex:characterIndex:`: param `id<NSGlyphStorage> _Nonnull` — generic collection
+    fn from_raw(ptr: *u8) -> GlyphGenerator { return GlyphGenerator { _obj: ptr }; }
+
+    // SKIPPED `generateGlyphsForGlyphStorage:desiredNumberOfCharacters:glyphIndex:characterIndex:`: (return, arg) shape not yet modelled
     fn shared_glyph_generator() -> GlyphGenerator {
         return GlyphGenerator { _obj: rt::msg_id(rt::get_class(#str_ptr("NSGlyphGenerator\0")), rt::sel(#str_ptr("sharedGlyphGenerator\0"))) };
     }
 
 }
 
-// `NSGlyphStorage` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: arg shape (only <=5 object args modelled)
-fn GlyphStorage_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn GlyphStorage_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `NSGlyphStorage` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct GlyphStorage {
-    attributed_string: fn(*u8) -> *u8,
-    layout_options: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn GlyphStorage_new(user: *u8) -> GlyphStorage {
-    return GlyphStorage { attributed_string: GlyphStorage_noop_id_0, layout_options: GlyphStorage_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl GlyphStorage {
-    fn set_attributed_string(ref this, handler: fn(*u8) -> *u8) {
-        this.attributed_string = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GlyphStorage { return GlyphStorage { _obj: ptr }; }
+
+    // SKIPPED `insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: (return, arg) shape not yet modelled
+    fn attributed_string(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }
-    fn set_layout_options(ref this, handler: fn(*u8) -> u64) {
-        this.layout_options = handler;
-        return;
+
+    fn layout_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("layoutOptions\0")));
     }
-}
 
-fn GlyphStorage_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn GlyphStorage_attributed_string_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *GlyphStorage = { synth::get_associated(self_obj, GlyphStorage_key()) as *GlyphStorage };
-    let f: fn(*u8) -> *u8 = { (*c).attributed_string };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn GlyphStorage_layout_options_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *GlyphStorage = { synth::get_associated(self_obj, GlyphStorage_key()) as *GlyphStorage };
-    let f: fn(*u8) -> u64 = { (*c).layout_options };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_GlyphStorage(ctx: *GlyphStorage) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_GlyphStorage\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_attributed_string: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("attributedString\0")), GlyphStorage_attributed_string_imp, #str_ptr("@@:\0"));
-        let add_layout_options: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("layoutOptions\0")), GlyphStorage_layout_options_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, GlyphStorage_key(), { ctx as *u8 });
-    return d;
 }
 

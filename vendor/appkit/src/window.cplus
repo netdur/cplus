@@ -794,8 +794,8 @@ impl Window {
 
     // SKIPPED `initWithContentRect:styleMask:backing:defer:screen:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    fn add_titlebar_accessory_view_controller(this, child_view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller);
+    fn add_titlebar_accessory_view_controller(this, child_view_controller: TitlebarAccessoryViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller.raw());
     }
 
     // SKIPPED `insertTitlebarAccessoryViewController:atIndex:`: (return, arg) shape not yet modelled
@@ -809,8 +809,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditingFor:\0")), object);
     }
 
-    fn constrain_frame_rect_to_screen(this, frame_rect: rt::Rect, screen: *u8) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("constrainFrameRect:toScreen:\0")), frame_rect, screen);
+    fn constrain_frame_rect_to_screen(this, frame_rect: rt::Rect, screen: Screen) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("constrainFrameRect:toScreen:\0")), frame_rect, screen.raw());
     }
 
     fn set_frame_display(this, frame_rect: rt::Rect, flag: bool) {
@@ -875,7 +875,10 @@ impl Window {
     // SKIPPED `setContentBorderThickness:forEdge:`: (return, arg) shape not yet modelled
     // SKIPPED `contentBorderThicknessForEdge:`: (return, arg) shape not yet modelled
     // SKIPPED `setAutorecalculatesContentBorderThickness:forEdge:`: (return, arg) shape not yet modelled
-    // SKIPPED `autorecalculatesContentBorderThicknessForEdge:`: (return, arg) shape not yet modelled
+    fn autorecalculates_content_border_thickness_for_edge(this, edge: RectEdge) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("autorecalculatesContentBorderThicknessForEdge:\0")), rect_edge_raw(edge)) != (0 as i8);
+    }
+
     fn center(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("center\0")));
     }
@@ -1014,31 +1017,37 @@ impl Window {
 
     // SKIPPED `beginSheet:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `beginCriticalSheet:completionHandler:`: block-method msgSend shape not modelled
-    fn end_sheet(this, sheet_window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet_window);
+    fn end_sheet(this, sheet_window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet_window.raw());
     }
 
     // SKIPPED `endSheet:returnCode:`: param `NSModalResponse` — unmapped type `NSModalResponse`
     // SKIPPED `standardWindowButton:forStyleMask:`: (return, arg) shape not yet modelled
-    fn standard_window_button(this, b: WindowButton) -> option::Option[*u8] {
+    fn standard_window_button(this, b: WindowButton) -> option::Option[Button] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("standardWindowButton:\0")), window_button_raw(b));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Button]::None;
+        }
+        return option::some(Button::from_raw(obj));
     }
 
     // SKIPPED `addChildWindow:ordered:`: (return, arg) shape not yet modelled
-    fn remove_child_window(this, child_win: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeChildWindow:\0")), child_win);
+    fn remove_child_window(this, child_win: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeChildWindow:\0")), child_win.raw());
     }
 
-    // SKIPPED `canRepresentDisplayGamut:`: (return, arg) shape not yet modelled
+    fn can_represent_display_gamut(this, display_gamut: DisplayGamut) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("canRepresentDisplayGamut:\0")), display_gamut_raw(display_gamut)) != (0 as i8);
+    }
+
     // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
     // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: (return, arg) shape not yet modelled
-    fn window_with_content_view_controller(content_view_controller: *u8) -> Window {
-        return Window { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowWithContentViewController:\0")), content_view_controller)) };
+    fn window_with_content_view_controller(content_view_controller: ViewController) -> Window {
+        return Window { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowWithContentViewController:\0")), content_view_controller.raw())) };
     }
 
-    fn perform_window_drag_with_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("performWindowDragWithEvent:\0")), event);
+    fn perform_window_drag_with_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("performWindowDragWithEvent:\0")), event.raw());
     }
 
     fn select_next_key_view(this, sender: *u8) {
@@ -1049,12 +1058,12 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectPreviousKeyView:\0")), sender);
     }
 
-    fn select_key_view_following_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectKeyViewFollowingView:\0")), view);
+    fn select_key_view_following_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectKeyViewFollowingView:\0")), view.raw());
     }
 
-    fn select_key_view_preceding_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectKeyViewPrecedingView:\0")), view);
+    fn select_key_view_preceding_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectKeyViewPrecedingView:\0")), view.raw());
     }
 
     fn disable_key_equivalent_for_default_button_cell(this) {
@@ -1176,17 +1185,27 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setExcludedFromWindowsMenu:\0")), excluded_from_windows_menu as i8);
     }
 
-    fn content_view(this) -> option::Option[*u8] {
+    fn content_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
+    }
+
+    fn set_content_view(this, content_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view.raw());
+    }
+
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
     }
 
-    fn set_content_view(this, content_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view);
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    // SKIPPED `delegate`: return `id<NSWindowDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSWindowDelegate> _Nullable` — generic collection
     fn window_number(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowNumber\0")));
     }
@@ -1281,12 +1300,12 @@ impl Window {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isMiniaturized\0"))) != (0 as i8);
     }
 
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn is_movable(this) -> bool {
@@ -1321,13 +1340,16 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCanHide:\0")), can_hide as i8);
     }
 
-    fn miniwindow_image(this) -> option::Option[*u8] {
+    fn miniwindow_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("miniwindowImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_miniwindow_image(this, miniwindow_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMiniwindowImage:\0")), miniwindow_image);
+    fn set_miniwindow_image(this, miniwindow_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMiniwindowImage:\0")), miniwindow_image.raw());
     }
 
     fn miniwindow_title(this) -> text::Text {
@@ -1411,14 +1433,20 @@ impl Window {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasDynamicDepthLimit\0"))) != (0 as i8);
     }
 
-    fn screen(this) -> option::Option[*u8] {
+    fn screen(this) -> option::Option[Screen] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("screen\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Screen]::None;
+        }
+        return option::some(Screen::from_raw(obj));
     }
 
-    fn deepest_screen(this) -> option::Option[*u8] {
+    fn deepest_screen(this) -> option::Option[Screen] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("deepestScreen\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Screen]::None;
+        }
+        return option::some(Screen::from_raw(obj));
     }
 
     fn has_shadow(this) -> bool {
@@ -1547,19 +1575,25 @@ impl Window {
     }
 
     // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    fn window_controller(this) -> option::Option[*u8] {
+    fn window_controller(this) -> option::Option[WindowController] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windowController\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[WindowController]::None;
+        }
+        return option::some(WindowController::from_raw(obj));
     }
 
-    fn set_window_controller(this, window_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindowController:\0")), window_controller);
+    fn set_window_controller(this, window_controller: WindowController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindowController:\0")), window_controller.raw());
     }
 
     // SKIPPED `sheets`: return `API_AVAILABLE NSArray<__kindof NSWindow *> *` — generic collection
-    fn attached_sheet(this) -> option::Option[*u8] {
+    fn attached_sheet(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attachedSheet\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
     fn is_sheet(this) -> bool {
@@ -1571,13 +1605,16 @@ impl Window {
     }
 
     // SKIPPED `childWindows`: return `NSArray<__kindof NSWindow *> * _Nullable` — generic collection
-    fn parent_window(this) -> option::Option[*u8] {
+    fn parent_window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentWindow\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
-    fn set_parent_window(this, parent_window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParentWindow:\0")), parent_window);
+    fn set_parent_window(this, parent_window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParentWindow:\0")), parent_window.raw());
     }
 
     // SKIPPED `appearanceSource`: return `NSObject<NSAppearanceCustomization> * _Nonnull` — generic collection
@@ -1607,26 +1644,32 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller);
     }
 
-    fn initial_first_responder(this) -> option::Option[*u8] {
+    fn initial_first_responder(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("initialFirstResponder\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_initial_first_responder(this, initial_first_responder: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialFirstResponder:\0")), initial_first_responder);
+    fn set_initial_first_responder(this, initial_first_responder: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialFirstResponder:\0")), initial_first_responder.raw());
     }
 
     fn key_view_selection_direction(this) -> SelectionDirection {
         return selection_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("keyViewSelectionDirection\0"))));
     }
 
-    fn default_button_cell(this) -> option::Option[*u8] {
+    fn default_button_cell(this) -> option::Option[ButtonCell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("defaultButtonCell\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ButtonCell]::None;
+        }
+        return option::some(ButtonCell::from_raw(obj));
     }
 
-    fn set_default_button_cell(this, default_button_cell: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultButtonCell:\0")), default_button_cell);
+    fn set_default_button_cell(this, default_button_cell: ButtonCell) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultButtonCell:\0")), default_button_cell.raw());
     }
 
     fn autorecalculates_key_view_loop(this) -> bool {
@@ -1637,13 +1680,16 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutorecalculatesKeyViewLoop:\0")), autorecalculates_key_view_loop as i8);
     }
 
-    fn toolbar(this) -> option::Option[*u8] {
+    fn toolbar(this) -> option::Option[Toolbar] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("toolbar\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Toolbar]::None;
+        }
+        return option::some(Toolbar::from_raw(obj));
     }
 
-    fn set_toolbar(this, toolbar: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar);
+    fn set_toolbar(this, toolbar: Toolbar) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar.raw());
     }
 
     fn shows_toolbar_button(this) -> bool {
@@ -1691,21 +1737,27 @@ impl Window {
     }
 
     // SKIPPED `trackEventsMatchingMask:timeout:mode:handler:`: block-method msgSend shape not modelled
-    fn next_event_matching_mask(this, mask: u64) -> option::Option[*u8] {
+    fn next_event_matching_mask(this, mask: u64) -> option::Option[Event] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:\0")), mask);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event::from_raw(obj));
     }
 
     // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: (return, arg) shape not yet modelled
     // SKIPPED `discardEventsMatchingMask:beforeEvent:`: (return, arg) shape not yet modelled
     // SKIPPED `postEvent:atStart:`: (return, arg) shape not yet modelled
-    fn send_event(this, event: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event);
+    fn send_event(this, event: Event) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event.raw());
     }
 
-    fn current_event(this) -> option::Option[*u8] {
+    fn current_event(this) -> option::Option[Event] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("currentEvent\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event::from_raw(obj));
     }
 
     fn accepts_mouse_moved_events(this) -> bool {
@@ -1740,8 +1792,8 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("discardCursorRects\0")));
     }
 
-    fn invalidate_cursor_rects_for_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateCursorRectsForView:\0")), view);
+    fn invalidate_cursor_rects_for_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateCursorRectsForView:\0")), view.raw());
     }
 
     fn reset_cursor_rects(this) {
@@ -1886,14 +1938,14 @@ impl Window {
 // SKIPPED `window:startCustomAnimationToExitFullScreenWithDuration:`: arg shape (only <=5 object args modelled)
 // SKIPPED `window:startCustomAnimationToEnterFullScreenOnScreen:withDuration:`: arg shape (only <=5 object args modelled)
 // SKIPPED `window:willResizeForVersionBrowserWithMaxPreferredSize:maxAllowedSize:`: arg shape (only <=5 object args modelled)
-fn WindowDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn WindowDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn WindowDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn WindowDelegateProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn WindowDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-fn WindowDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn WindowDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn WindowDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn WindowDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn WindowDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn WindowDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+fn WindowDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct WindowDelegateProtocol {
+struct WindowDelegate {
     window_should_close: fn(*u8, *u8) -> i8,
     window_will_return_field_editor_to_object: fn(*u8, *u8, *u8) -> *u8,
     window_will_return_undo_manager: fn(*u8, *u8) -> *u8,
@@ -1939,11 +1991,11 @@ struct WindowDelegateProtocol {
     opaque user: *u8,
 }
 
-fn WindowDelegateProtocol_new(user: *u8) -> WindowDelegateProtocol {
-    return WindowDelegateProtocol { window_should_close: WindowDelegateProtocol_noop_i8_1, window_will_return_field_editor_to_object: WindowDelegateProtocol_noop_id_2, window_will_return_undo_manager: WindowDelegateProtocol_noop_id_1, window_should_pop_up_document_path_menu: WindowDelegateProtocol_noop_i8_2, custom_windows_to_enter_full_screen_for_window: WindowDelegateProtocol_noop_id_1, window_did_fail_to_enter_full_screen: WindowDelegateProtocol_noop_v_1, custom_windows_to_exit_full_screen_for_window: WindowDelegateProtocol_noop_id_1, custom_windows_to_enter_full_screen_for_window_on_screen: WindowDelegateProtocol_noop_id_2, window_did_fail_to_exit_full_screen: WindowDelegateProtocol_noop_v_1, window_will_encode_restorable_state: WindowDelegateProtocol_noop_v_2, window_did_decode_restorable_state: WindowDelegateProtocol_noop_v_2, preview_representable_activity_items_for_window: WindowDelegateProtocol_noop_id_1, window_for_sharing_request_from_window: WindowDelegateProtocol_noop_id_1, window_did_resize: WindowDelegateProtocol_noop_v_1, window_did_expose: WindowDelegateProtocol_noop_v_1, window_will_move: WindowDelegateProtocol_noop_v_1, window_did_move: WindowDelegateProtocol_noop_v_1, window_did_become_key: WindowDelegateProtocol_noop_v_1, window_did_resign_key: WindowDelegateProtocol_noop_v_1, window_did_become_main: WindowDelegateProtocol_noop_v_1, window_did_resign_main: WindowDelegateProtocol_noop_v_1, window_will_close: WindowDelegateProtocol_noop_v_1, window_will_miniaturize: WindowDelegateProtocol_noop_v_1, window_did_miniaturize: WindowDelegateProtocol_noop_v_1, window_did_deminiaturize: WindowDelegateProtocol_noop_v_1, window_did_update: WindowDelegateProtocol_noop_v_1, window_did_change_screen: WindowDelegateProtocol_noop_v_1, window_did_change_screen_profile: WindowDelegateProtocol_noop_v_1, window_did_change_backing_properties: WindowDelegateProtocol_noop_v_1, window_will_begin_sheet: WindowDelegateProtocol_noop_v_1, window_did_end_sheet: WindowDelegateProtocol_noop_v_1, window_will_start_live_resize: WindowDelegateProtocol_noop_v_1, window_did_end_live_resize: WindowDelegateProtocol_noop_v_1, window_will_enter_full_screen: WindowDelegateProtocol_noop_v_1, window_did_enter_full_screen: WindowDelegateProtocol_noop_v_1, window_will_exit_full_screen: WindowDelegateProtocol_noop_v_1, window_did_exit_full_screen: WindowDelegateProtocol_noop_v_1, window_will_enter_version_browser: WindowDelegateProtocol_noop_v_1, window_did_enter_version_browser: WindowDelegateProtocol_noop_v_1, window_will_exit_version_browser: WindowDelegateProtocol_noop_v_1, window_did_exit_version_browser: WindowDelegateProtocol_noop_v_1, window_did_change_occlusion_state: WindowDelegateProtocol_noop_v_1, user: user };
+fn WindowDelegate_new(user: *u8) -> WindowDelegate {
+    return WindowDelegate { window_should_close: WindowDelegate_noop_i8_1, window_will_return_field_editor_to_object: WindowDelegate_noop_id_2, window_will_return_undo_manager: WindowDelegate_noop_id_1, window_should_pop_up_document_path_menu: WindowDelegate_noop_i8_2, custom_windows_to_enter_full_screen_for_window: WindowDelegate_noop_id_1, window_did_fail_to_enter_full_screen: WindowDelegate_noop_v_1, custom_windows_to_exit_full_screen_for_window: WindowDelegate_noop_id_1, custom_windows_to_enter_full_screen_for_window_on_screen: WindowDelegate_noop_id_2, window_did_fail_to_exit_full_screen: WindowDelegate_noop_v_1, window_will_encode_restorable_state: WindowDelegate_noop_v_2, window_did_decode_restorable_state: WindowDelegate_noop_v_2, preview_representable_activity_items_for_window: WindowDelegate_noop_id_1, window_for_sharing_request_from_window: WindowDelegate_noop_id_1, window_did_resize: WindowDelegate_noop_v_1, window_did_expose: WindowDelegate_noop_v_1, window_will_move: WindowDelegate_noop_v_1, window_did_move: WindowDelegate_noop_v_1, window_did_become_key: WindowDelegate_noop_v_1, window_did_resign_key: WindowDelegate_noop_v_1, window_did_become_main: WindowDelegate_noop_v_1, window_did_resign_main: WindowDelegate_noop_v_1, window_will_close: WindowDelegate_noop_v_1, window_will_miniaturize: WindowDelegate_noop_v_1, window_did_miniaturize: WindowDelegate_noop_v_1, window_did_deminiaturize: WindowDelegate_noop_v_1, window_did_update: WindowDelegate_noop_v_1, window_did_change_screen: WindowDelegate_noop_v_1, window_did_change_screen_profile: WindowDelegate_noop_v_1, window_did_change_backing_properties: WindowDelegate_noop_v_1, window_will_begin_sheet: WindowDelegate_noop_v_1, window_did_end_sheet: WindowDelegate_noop_v_1, window_will_start_live_resize: WindowDelegate_noop_v_1, window_did_end_live_resize: WindowDelegate_noop_v_1, window_will_enter_full_screen: WindowDelegate_noop_v_1, window_did_enter_full_screen: WindowDelegate_noop_v_1, window_will_exit_full_screen: WindowDelegate_noop_v_1, window_did_exit_full_screen: WindowDelegate_noop_v_1, window_will_enter_version_browser: WindowDelegate_noop_v_1, window_did_enter_version_browser: WindowDelegate_noop_v_1, window_will_exit_version_browser: WindowDelegate_noop_v_1, window_did_exit_version_browser: WindowDelegate_noop_v_1, window_did_change_occlusion_state: WindowDelegate_noop_v_1, user: user };
 }
 
-impl WindowDelegateProtocol {
+impl WindowDelegate {
     fn set_window_should_close(ref this, handler: fn(*u8, *u8) -> i8) {
         this.window_should_close = handler;
         return;
@@ -2114,386 +2166,386 @@ impl WindowDelegateProtocol {
     }
 }
 
-fn WindowDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn WindowDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn WindowDelegateProtocol_window_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).window_should_close };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_window_will_return_field_editor_to_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_return_field_editor_to_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).window_will_return_field_editor_to_object };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn WindowDelegateProtocol_window_will_return_undo_manager_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_return_undo_manager_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).window_will_return_undo_manager };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_window_should_pop_up_document_path_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_should_pop_up_document_path_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).window_should_pop_up_document_path_menu };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn WindowDelegateProtocol_custom_windows_to_enter_full_screen_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_custom_windows_to_enter_full_screen_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).custom_windows_to_enter_full_screen_for_window };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_window_did_fail_to_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_fail_to_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_fail_to_enter_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_custom_windows_to_exit_full_screen_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_custom_windows_to_exit_full_screen_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).custom_windows_to_exit_full_screen_for_window };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_custom_windows_to_enter_full_screen_for_window_on_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_custom_windows_to_enter_full_screen_for_window_on_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).custom_windows_to_enter_full_screen_for_window_on_screen };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn WindowDelegateProtocol_window_did_fail_to_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_fail_to_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_fail_to_exit_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_encode_restorable_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_encode_restorable_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).window_will_encode_restorable_state };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_decode_restorable_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_decode_restorable_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).window_did_decode_restorable_state };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn WindowDelegateProtocol_preview_representable_activity_items_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_preview_representable_activity_items_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).preview_representable_activity_items_for_window };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_window_for_sharing_request_from_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_for_sharing_request_from_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).window_for_sharing_request_from_window };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn WindowDelegateProtocol_window_did_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_resize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_expose_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_expose_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_expose };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_move };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_move };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_become_key_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_become_key_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_become_key };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_resign_key_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_resign_key_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_resign_key };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_become_main_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_become_main_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_become_main };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_resign_main_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_resign_main_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_resign_main };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_close };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_miniaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_miniaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_miniaturize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_miniaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_miniaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_miniaturize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_deminiaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_deminiaturize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_deminiaturize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_update_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_update_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_update };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_change_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_change_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_change_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_change_screen_profile_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_change_screen_profile_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_change_screen_profile };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_change_backing_properties_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_change_backing_properties_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_change_backing_properties };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_begin_sheet_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_begin_sheet_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_begin_sheet };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_end_sheet_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_end_sheet_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_end_sheet };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_start_live_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_start_live_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_start_live_resize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_end_live_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_end_live_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_end_live_resize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_enter_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_enter_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_exit_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_exit_full_screen };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_enter_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_enter_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_enter_version_browser };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_enter_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_enter_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_enter_version_browser };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_will_exit_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_will_exit_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_will_exit_version_browser };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_exit_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_exit_version_browser_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_exit_version_browser };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn WindowDelegateProtocol_window_did_change_occlusion_state_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *WindowDelegateProtocol = { synth::get_associated(self_obj, WindowDelegateProtocol_key()) as *WindowDelegateProtocol };
+fn WindowDelegate_window_did_change_occlusion_state_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) = { (*c).window_did_change_occlusion_state };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_WindowDelegateProtocol(ctx: *WindowDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_WindowDelegateProtocol\0");
+fn create_WindowDelegate(ctx: *WindowDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_WindowDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_window_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("windowShouldClose:\0")), WindowDelegateProtocol_window_should_close_imp, #str_ptr("c@:@\0"));
-        let add_window_will_return_field_editor_to_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("windowWillReturnFieldEditor:toObject:\0")), WindowDelegateProtocol_window_will_return_field_editor_to_object_imp, #str_ptr("@@:@@\0"));
-        let add_window_will_return_undo_manager: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowWillReturnUndoManager:\0")), WindowDelegateProtocol_window_will_return_undo_manager_imp, #str_ptr("@@:@\0"));
-        let add_window_should_pop_up_document_path_menu: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("window:shouldPopUpDocumentPathMenu:\0")), WindowDelegateProtocol_window_should_pop_up_document_path_menu_imp, #str_ptr("c@:@@\0"));
-        let add_custom_windows_to_enter_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:\0")), WindowDelegateProtocol_custom_windows_to_enter_full_screen_for_window_imp, #str_ptr("@@:@\0"));
-        let add_window_did_fail_to_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToEnterFullScreen:\0")), WindowDelegateProtocol_window_did_fail_to_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_custom_windows_to_exit_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToExitFullScreenForWindow:\0")), WindowDelegateProtocol_custom_windows_to_exit_full_screen_for_window_imp, #str_ptr("@@:@\0"));
-        let add_custom_windows_to_enter_full_screen_for_window_on_screen: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:onScreen:\0")), WindowDelegateProtocol_custom_windows_to_enter_full_screen_for_window_on_screen_imp, #str_ptr("@@:@@\0"));
-        let add_window_did_fail_to_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToExitFullScreen:\0")), WindowDelegateProtocol_window_did_fail_to_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_encode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:willEncodeRestorableState:\0")), WindowDelegateProtocol_window_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_window_did_decode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:didDecodeRestorableState:\0")), WindowDelegateProtocol_window_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_preview_representable_activity_items_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("previewRepresentableActivityItemsForWindow:\0")), WindowDelegateProtocol_preview_representable_activity_items_for_window_imp, #str_ptr("@@:@\0"));
-        let add_window_for_sharing_request_from_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowForSharingRequestFromWindow:\0")), WindowDelegateProtocol_window_for_sharing_request_from_window_imp, #str_ptr("@@:@\0"));
-        let add_window_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResize:\0")), WindowDelegateProtocol_window_did_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_expose: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExpose:\0")), WindowDelegateProtocol_window_did_expose_imp, #str_ptr("v@:@\0"));
-        let add_window_will_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMove:\0")), WindowDelegateProtocol_window_will_move_imp, #str_ptr("v@:@\0"));
-        let add_window_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMove:\0")), WindowDelegateProtocol_window_did_move_imp, #str_ptr("v@:@\0"));
-        let add_window_did_become_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeKey:\0")), WindowDelegateProtocol_window_did_become_key_imp, #str_ptr("v@:@\0"));
-        let add_window_did_resign_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignKey:\0")), WindowDelegateProtocol_window_did_resign_key_imp, #str_ptr("v@:@\0"));
-        let add_window_did_become_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeMain:\0")), WindowDelegateProtocol_window_did_become_main_imp, #str_ptr("v@:@\0"));
-        let add_window_did_resign_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignMain:\0")), WindowDelegateProtocol_window_did_resign_main_imp, #str_ptr("v@:@\0"));
-        let add_window_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillClose:\0")), WindowDelegateProtocol_window_will_close_imp, #str_ptr("v@:@\0"));
-        let add_window_will_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMiniaturize:\0")), WindowDelegateProtocol_window_will_miniaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMiniaturize:\0")), WindowDelegateProtocol_window_did_miniaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_deminiaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidDeminiaturize:\0")), WindowDelegateProtocol_window_did_deminiaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidUpdate:\0")), WindowDelegateProtocol_window_did_update_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreen:\0")), WindowDelegateProtocol_window_did_change_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_screen_profile: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreenProfile:\0")), WindowDelegateProtocol_window_did_change_screen_profile_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_backing_properties: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeBackingProperties:\0")), WindowDelegateProtocol_window_did_change_backing_properties_imp, #str_ptr("v@:@\0"));
-        let add_window_will_begin_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillBeginSheet:\0")), WindowDelegateProtocol_window_will_begin_sheet_imp, #str_ptr("v@:@\0"));
-        let add_window_did_end_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndSheet:\0")), WindowDelegateProtocol_window_did_end_sheet_imp, #str_ptr("v@:@\0"));
-        let add_window_will_start_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillStartLiveResize:\0")), WindowDelegateProtocol_window_will_start_live_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_end_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndLiveResize:\0")), WindowDelegateProtocol_window_did_end_live_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_will_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterFullScreen:\0")), WindowDelegateProtocol_window_will_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterFullScreen:\0")), WindowDelegateProtocol_window_did_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitFullScreen:\0")), WindowDelegateProtocol_window_will_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitFullScreen:\0")), WindowDelegateProtocol_window_did_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterVersionBrowser:\0")), WindowDelegateProtocol_window_will_enter_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterVersionBrowser:\0")), WindowDelegateProtocol_window_did_enter_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_will_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitVersionBrowser:\0")), WindowDelegateProtocol_window_will_exit_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitVersionBrowser:\0")), WindowDelegateProtocol_window_did_exit_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_occlusion_state: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeOcclusionState:\0")), WindowDelegateProtocol_window_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
+        let add_window_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("windowShouldClose:\0")), WindowDelegate_window_should_close_imp, #str_ptr("c@:@\0"));
+        let add_window_will_return_field_editor_to_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("windowWillReturnFieldEditor:toObject:\0")), WindowDelegate_window_will_return_field_editor_to_object_imp, #str_ptr("@@:@@\0"));
+        let add_window_will_return_undo_manager: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowWillReturnUndoManager:\0")), WindowDelegate_window_will_return_undo_manager_imp, #str_ptr("@@:@\0"));
+        let add_window_should_pop_up_document_path_menu: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("window:shouldPopUpDocumentPathMenu:\0")), WindowDelegate_window_should_pop_up_document_path_menu_imp, #str_ptr("c@:@@\0"));
+        let add_custom_windows_to_enter_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_imp, #str_ptr("@@:@\0"));
+        let add_window_did_fail_to_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToEnterFullScreen:\0")), WindowDelegate_window_did_fail_to_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_custom_windows_to_exit_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToExitFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_exit_full_screen_for_window_imp, #str_ptr("@@:@\0"));
+        let add_custom_windows_to_enter_full_screen_for_window_on_screen: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:onScreen:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_on_screen_imp, #str_ptr("@@:@@\0"));
+        let add_window_did_fail_to_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToExitFullScreen:\0")), WindowDelegate_window_did_fail_to_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_encode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:willEncodeRestorableState:\0")), WindowDelegate_window_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_window_did_decode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:didDecodeRestorableState:\0")), WindowDelegate_window_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_preview_representable_activity_items_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("previewRepresentableActivityItemsForWindow:\0")), WindowDelegate_preview_representable_activity_items_for_window_imp, #str_ptr("@@:@\0"));
+        let add_window_for_sharing_request_from_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowForSharingRequestFromWindow:\0")), WindowDelegate_window_for_sharing_request_from_window_imp, #str_ptr("@@:@\0"));
+        let add_window_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResize:\0")), WindowDelegate_window_did_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_expose: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExpose:\0")), WindowDelegate_window_did_expose_imp, #str_ptr("v@:@\0"));
+        let add_window_will_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMove:\0")), WindowDelegate_window_will_move_imp, #str_ptr("v@:@\0"));
+        let add_window_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMove:\0")), WindowDelegate_window_did_move_imp, #str_ptr("v@:@\0"));
+        let add_window_did_become_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeKey:\0")), WindowDelegate_window_did_become_key_imp, #str_ptr("v@:@\0"));
+        let add_window_did_resign_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignKey:\0")), WindowDelegate_window_did_resign_key_imp, #str_ptr("v@:@\0"));
+        let add_window_did_become_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeMain:\0")), WindowDelegate_window_did_become_main_imp, #str_ptr("v@:@\0"));
+        let add_window_did_resign_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignMain:\0")), WindowDelegate_window_did_resign_main_imp, #str_ptr("v@:@\0"));
+        let add_window_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillClose:\0")), WindowDelegate_window_will_close_imp, #str_ptr("v@:@\0"));
+        let add_window_will_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMiniaturize:\0")), WindowDelegate_window_will_miniaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMiniaturize:\0")), WindowDelegate_window_did_miniaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_deminiaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidDeminiaturize:\0")), WindowDelegate_window_did_deminiaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidUpdate:\0")), WindowDelegate_window_did_update_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreen:\0")), WindowDelegate_window_did_change_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_screen_profile: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreenProfile:\0")), WindowDelegate_window_did_change_screen_profile_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_backing_properties: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeBackingProperties:\0")), WindowDelegate_window_did_change_backing_properties_imp, #str_ptr("v@:@\0"));
+        let add_window_will_begin_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillBeginSheet:\0")), WindowDelegate_window_will_begin_sheet_imp, #str_ptr("v@:@\0"));
+        let add_window_did_end_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndSheet:\0")), WindowDelegate_window_did_end_sheet_imp, #str_ptr("v@:@\0"));
+        let add_window_will_start_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillStartLiveResize:\0")), WindowDelegate_window_will_start_live_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_end_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndLiveResize:\0")), WindowDelegate_window_did_end_live_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_will_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterFullScreen:\0")), WindowDelegate_window_will_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterFullScreen:\0")), WindowDelegate_window_did_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitFullScreen:\0")), WindowDelegate_window_will_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitFullScreen:\0")), WindowDelegate_window_did_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterVersionBrowser:\0")), WindowDelegate_window_will_enter_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterVersionBrowser:\0")), WindowDelegate_window_did_enter_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_will_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitVersionBrowser:\0")), WindowDelegate_window_will_exit_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitVersionBrowser:\0")), WindowDelegate_window_did_exit_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_occlusion_state: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeOcclusionState:\0")), WindowDelegate_window_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, WindowDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, WindowDelegate_key(), { ctx as *u8 });
     return d;
 }
 

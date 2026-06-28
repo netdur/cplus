@@ -37,6 +37,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -46,6 +48,8 @@ struct URL {
 
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
 
 }
 
@@ -57,6 +61,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSSpeechSynthesizer` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -66,6 +72,8 @@ struct SpeechSynthesizer {
 
 impl SpeechSynthesizer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SpeechSynthesizer { return SpeechSynthesizer { _obj: ptr }; }
 
     fn new(voice: str) -> SpeechSynthesizer {
         let cls: *u8 = rt::get_class(#str_ptr("NSSpeechSynthesizer\0"));
@@ -104,8 +112,15 @@ impl SpeechSynthesizer {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSpeaking\0"))) != (0 as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSSpeechSynthesizerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSSpeechSynthesizerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn rate(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("rate\0")));
     }
@@ -163,44 +178,44 @@ impl SpeechSynthesizer {
 // SKIPPED `speechSynthesizer:willSpeakWord:ofString:`: arg shape (only <=5 object args modelled)
 // SKIPPED `speechSynthesizer:willSpeakPhoneme:`: arg shape (only <=5 object args modelled)
 // SKIPPED `speechSynthesizer:didEncounterErrorAtIndex:ofString:message:`: arg shape (only <=5 object args modelled)
-fn SpeechSynthesizerDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn SpeechSynthesizerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct SpeechSynthesizerDelegateProtocol {
+struct SpeechSynthesizerDelegate {
     speech_synthesizer_did_encounter_sync_message: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
-fn SpeechSynthesizerDelegateProtocol_new(user: *u8) -> SpeechSynthesizerDelegateProtocol {
-    return SpeechSynthesizerDelegateProtocol { speech_synthesizer_did_encounter_sync_message: SpeechSynthesizerDelegateProtocol_noop_v_2, user: user };
+fn SpeechSynthesizerDelegate_new(user: *u8) -> SpeechSynthesizerDelegate {
+    return SpeechSynthesizerDelegate { speech_synthesizer_did_encounter_sync_message: SpeechSynthesizerDelegate_noop_v_2, user: user };
 }
 
-impl SpeechSynthesizerDelegateProtocol {
+impl SpeechSynthesizerDelegate {
     fn set_speech_synthesizer_did_encounter_sync_message(ref this, handler: fn(*u8, *u8, *u8)) {
         this.speech_synthesizer_did_encounter_sync_message = handler;
         return;
     }
 }
 
-fn SpeechSynthesizerDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn SpeechSynthesizerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn SpeechSynthesizerDelegateProtocol_speech_synthesizer_did_encounter_sync_message_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *SpeechSynthesizerDelegateProtocol = { synth::get_associated(self_obj, SpeechSynthesizerDelegateProtocol_key()) as *SpeechSynthesizerDelegateProtocol };
+fn SpeechSynthesizerDelegate_speech_synthesizer_did_encounter_sync_message_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *SpeechSynthesizerDelegate = { synth::get_associated(self_obj, SpeechSynthesizerDelegate_key()) as *SpeechSynthesizerDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).speech_synthesizer_did_encounter_sync_message };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_SpeechSynthesizerDelegateProtocol(ctx: *SpeechSynthesizerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_SpeechSynthesizerDelegateProtocol\0");
+fn create_SpeechSynthesizerDelegate(ctx: *SpeechSynthesizerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_SpeechSynthesizerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_speech_synthesizer_did_encounter_sync_message: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("speechSynthesizer:didEncounterSyncMessage:\0")), SpeechSynthesizerDelegateProtocol_speech_synthesizer_did_encounter_sync_message_imp, #str_ptr("v@:@@\0"));
+        let add_speech_synthesizer_did_encounter_sync_message: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("speechSynthesizer:didEncounterSyncMessage:\0")), SpeechSynthesizerDelegate_speech_synthesizer_did_encounter_sync_message_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, SpeechSynthesizerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, SpeechSynthesizerDelegate_key(), { ctx as *u8 });
     return d;
 }
 

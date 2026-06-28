@@ -42,6 +42,8 @@ struct TextContainer {
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
+
 }
 
 // `NSTokenFieldCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -51,6 +53,8 @@ struct TokenFieldCell {
 
 impl TokenFieldCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TokenFieldCell { return TokenFieldCell { _obj: ptr }; }
 
     fn token_style(this) -> TokenStyle {
         return token_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tokenStyle\0"))));
@@ -81,19 +85,26 @@ impl TokenFieldCell {
         return rt::msg_id(rt::get_class(#str_ptr("NSTokenFieldCell\0")), rt::sel(#str_ptr("defaultTokenizingCharacterSet\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSTokenFieldCellDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTokenFieldCellDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
 }
 
 // `NSTokenFieldCellDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `tokenFieldCell:completionsForSubstring:indexOfToken:indexOfSelectedItem:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tokenFieldCell:shouldAddObjects:atIndex:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tokenFieldCell:styleForRepresentedObject:`: no `u64`-return / 2-arg IMP shape
-fn TokenFieldCellDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TokenFieldCellDelegateProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TokenFieldCellDelegateProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TokenFieldCellDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TokenFieldCellDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TokenFieldCellDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 
-struct TokenFieldCellDelegateProtocol {
+struct TokenFieldCellDelegate {
     token_field_cell_display_string_for_represented_object: fn(*u8, *u8, *u8) -> *u8,
     token_field_cell_editing_string_for_represented_object: fn(*u8, *u8, *u8) -> *u8,
     token_field_cell_represented_object_for_editing_string: fn(*u8, *u8, *u8) -> *u8,
@@ -104,11 +115,11 @@ struct TokenFieldCellDelegateProtocol {
     opaque user: *u8,
 }
 
-fn TokenFieldCellDelegateProtocol_new(user: *u8) -> TokenFieldCellDelegateProtocol {
-    return TokenFieldCellDelegateProtocol { token_field_cell_display_string_for_represented_object: TokenFieldCellDelegateProtocol_noop_id_2, token_field_cell_editing_string_for_represented_object: TokenFieldCellDelegateProtocol_noop_id_2, token_field_cell_represented_object_for_editing_string: TokenFieldCellDelegateProtocol_noop_id_2, token_field_cell_write_represented_objects_to_pasteboard: TokenFieldCellDelegateProtocol_noop_i8_3, token_field_cell_read_from_pasteboard: TokenFieldCellDelegateProtocol_noop_id_2, token_field_cell_menu_for_represented_object: TokenFieldCellDelegateProtocol_noop_id_2, token_field_cell_has_menu_for_represented_object: TokenFieldCellDelegateProtocol_noop_i8_2, user: user };
+fn TokenFieldCellDelegate_new(user: *u8) -> TokenFieldCellDelegate {
+    return TokenFieldCellDelegate { token_field_cell_display_string_for_represented_object: TokenFieldCellDelegate_noop_id_2, token_field_cell_editing_string_for_represented_object: TokenFieldCellDelegate_noop_id_2, token_field_cell_represented_object_for_editing_string: TokenFieldCellDelegate_noop_id_2, token_field_cell_write_represented_objects_to_pasteboard: TokenFieldCellDelegate_noop_i8_3, token_field_cell_read_from_pasteboard: TokenFieldCellDelegate_noop_id_2, token_field_cell_menu_for_represented_object: TokenFieldCellDelegate_noop_id_2, token_field_cell_has_menu_for_represented_object: TokenFieldCellDelegate_noop_i8_2, user: user };
 }
 
-impl TokenFieldCellDelegateProtocol {
+impl TokenFieldCellDelegate {
     fn set_token_field_cell_display_string_for_represented_object(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.token_field_cell_display_string_for_represented_object = handler;
         return;
@@ -139,73 +150,73 @@ impl TokenFieldCellDelegateProtocol {
     }
 }
 
-fn TokenFieldCellDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TokenFieldCellDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_display_string_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_display_string_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).token_field_cell_display_string_for_represented_object };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_editing_string_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_editing_string_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).token_field_cell_editing_string_for_represented_object };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_represented_object_for_editing_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_represented_object_for_editing_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).token_field_cell_represented_object_for_editing_string };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_write_represented_objects_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_write_represented_objects_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).token_field_cell_write_represented_objects_to_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_read_from_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_read_from_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).token_field_cell_read_from_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_menu_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_menu_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).token_field_cell_menu_for_represented_object };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TokenFieldCellDelegateProtocol_token_field_cell_has_menu_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *TokenFieldCellDelegateProtocol = { synth::get_associated(self_obj, TokenFieldCellDelegateProtocol_key()) as *TokenFieldCellDelegateProtocol };
+fn TokenFieldCellDelegate_token_field_cell_has_menu_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).token_field_cell_has_menu_for_represented_object };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn create_TokenFieldCellDelegateProtocol(ctx: *TokenFieldCellDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TokenFieldCellDelegateProtocol\0");
+fn create_TokenFieldCellDelegate(ctx: *TokenFieldCellDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TokenFieldCellDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_token_field_cell_display_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:displayStringForRepresentedObject:\0")), TokenFieldCellDelegateProtocol_token_field_cell_display_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_cell_editing_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:editingStringForRepresentedObject:\0")), TokenFieldCellDelegateProtocol_token_field_cell_editing_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_cell_represented_object_for_editing_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:representedObjectForEditingString:\0")), TokenFieldCellDelegateProtocol_token_field_cell_represented_object_for_editing_string_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_cell_write_represented_objects_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tokenFieldCell:writeRepresentedObjects:toPasteboard:\0")), TokenFieldCellDelegateProtocol_token_field_cell_write_represented_objects_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_token_field_cell_read_from_pasteboard: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:readFromPasteboard:\0")), TokenFieldCellDelegateProtocol_token_field_cell_read_from_pasteboard_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_cell_menu_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:menuForRepresentedObject:\0")), TokenFieldCellDelegateProtocol_token_field_cell_menu_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_cell_has_menu_for_represented_object: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tokenFieldCell:hasMenuForRepresentedObject:\0")), TokenFieldCellDelegateProtocol_token_field_cell_has_menu_for_represented_object_imp, #str_ptr("c@:@@\0"));
+        let add_token_field_cell_display_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:displayStringForRepresentedObject:\0")), TokenFieldCellDelegate_token_field_cell_display_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_cell_editing_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:editingStringForRepresentedObject:\0")), TokenFieldCellDelegate_token_field_cell_editing_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_cell_represented_object_for_editing_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:representedObjectForEditingString:\0")), TokenFieldCellDelegate_token_field_cell_represented_object_for_editing_string_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_cell_write_represented_objects_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tokenFieldCell:writeRepresentedObjects:toPasteboard:\0")), TokenFieldCellDelegate_token_field_cell_write_represented_objects_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_token_field_cell_read_from_pasteboard: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:readFromPasteboard:\0")), TokenFieldCellDelegate_token_field_cell_read_from_pasteboard_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_cell_menu_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenFieldCell:menuForRepresentedObject:\0")), TokenFieldCellDelegate_token_field_cell_menu_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_cell_has_menu_for_represented_object: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tokenFieldCell:hasMenuForRepresentedObject:\0")), TokenFieldCellDelegate_token_field_cell_has_menu_for_represented_object_imp, #str_ptr("c@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TokenFieldCellDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TokenFieldCellDelegate_key(), { ctx as *u8 });
     return d;
 }
 

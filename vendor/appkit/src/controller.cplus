@@ -14,6 +14,8 @@ struct MutableArray {
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
+
 }
 
 // `NSMutableDictionary` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct MutableDictionary {
 
 impl MutableDictionary {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableDictionary { return MutableDictionary { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct MutableSet {
 impl MutableSet {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableSet { return MutableSet { _obj: ptr }; }
+
 }
 
 // `NSController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -44,6 +50,8 @@ struct Controller {
 impl Controller {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Controller { return Controller { _obj: ptr }; }
+
     fn new() -> Controller {
         let cls: *u8 = rt::get_class(#str_ptr("NSController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -51,8 +59,14 @@ impl Controller {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `objectDidBeginEditing:`: param `id<NSEditor> _Nonnull` — generic collection
-    // SKIPPED `objectDidEndEditing:`: param `id<NSEditor> _Nonnull` — generic collection
+    fn object_did_begin_editing(this, editor: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("objectDidBeginEditing:\0")), editor);
+    }
+
+    fn object_did_end_editing(this, editor: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("objectDidEndEditing:\0")), editor);
+    }
+
     fn discard_editing(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("discardEditing\0")));
     }

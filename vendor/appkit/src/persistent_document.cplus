@@ -47,6 +47,8 @@ struct ManagedObjectModel {
 impl ManagedObjectModel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ManagedObjectModel { return ManagedObjectModel { _obj: ptr }; }
+
 }
 
 // `NSManagedObjectContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -56,6 +58,8 @@ struct ManagedObjectContext {
 
 impl ManagedObjectContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ManagedObjectContext { return ManagedObjectContext { _obj: ptr }; }
 
 }
 
@@ -67,6 +71,8 @@ struct PersistentDocument {
 impl PersistentDocument {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PersistentDocument { return PersistentDocument { _obj: ptr }; }
+
     // SKIPPED `configurePersistentStoreCoordinatorForURL:ofType:modelConfiguration:storeOptions:error:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
     fn persistent_store_type_for_file_type(this, file_type: str) -> text::Text {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("persistentStoreTypeForFileType:\0")), bridge::nsstring(file_type));
@@ -76,18 +82,24 @@ impl PersistentDocument {
     // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: (return, arg) shape not yet modelled
     // SKIPPED `readFromURL:ofType:error:`: (return, arg) shape not yet modelled
     // SKIPPED `revertToContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
-    fn managed_object_context(this) -> option::Option[*u8] {
+    fn managed_object_context(this) -> option::Option[ManagedObjectContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("managedObjectContext\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ManagedObjectContext]::None;
+        }
+        return option::some(ManagedObjectContext::from_raw(obj));
     }
 
-    fn set_managed_object_context(this, managed_object_context: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setManagedObjectContext:\0")), managed_object_context);
+    fn set_managed_object_context(this, managed_object_context: ManagedObjectContext) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setManagedObjectContext:\0")), managed_object_context.raw());
     }
 
-    fn managed_object_model(this) -> option::Option[*u8] {
+    fn managed_object_model(this) -> option::Option[ManagedObjectModel] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("managedObjectModel\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ManagedObjectModel]::None;
+        }
+        return option::some(ManagedObjectModel::from_raw(obj));
     }
 
     // SKIPPED `configurePersistentStoreCoordinatorForURL:ofType:error:`: (return, arg) shape not yet modelled

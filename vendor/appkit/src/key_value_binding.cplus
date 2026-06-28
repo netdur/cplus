@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct String {
@@ -14,6 +13,8 @@ struct String {
 
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
 }
 
@@ -25,6 +26,8 @@ struct Error {
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
+
 }
 
 // `NSAttributeDescription` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -35,6 +38,8 @@ struct AttributeDescription {
 impl AttributeDescription {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> AttributeDescription { return AttributeDescription { _obj: ptr }; }
+
 }
 
 // `NSBindingSelectionMarker` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -44,6 +49,8 @@ struct BindingSelectionMarker {
 
 impl BindingSelectionMarker {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BindingSelectionMarker { return BindingSelectionMarker { _obj: ptr }; }
 
     fn new() -> BindingSelectionMarker {
         let cls: *u8 = rt::get_class(#str_ptr("NSBindingSelectionMarker\0"));
@@ -70,61 +77,45 @@ impl BindingSelectionMarker {
     }
 }
 
-// `NSEditor` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `commitEditing`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: arg shape (only <=5 object args modelled)
-fn Editor_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn Editor_noop_v_0(user: *u8) { return; }
-
+// `NSEditor` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct Editor {
-    discard_editing: fn(*u8),
-    commit_editing_and_return_error: fn(*u8, *u8) -> i8,
-    opaque user: *u8,
-}
-
-fn Editor_new(user: *u8) -> Editor {
-    return Editor { discard_editing: Editor_noop_v_0, commit_editing_and_return_error: Editor_noop_i8_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl Editor {
-    fn set_discard_editing(ref this, handler: fn(*u8)) {
-        this.discard_editing = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Editor { return Editor { _obj: ptr }; }
+
+    fn discard_editing(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("discardEditing\0")));
     }
-    fn set_commit_editing_and_return_error(ref this, handler: fn(*u8, *u8) -> i8) {
-        this.commit_editing_and_return_error = handler;
-        return;
+
+    fn commit_editing(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("commitEditing\0"))) != (0 as i8);
     }
+
+    // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `commitEditingAndReturnError:`: (return, arg) shape not yet modelled
 }
 
-fn Editor_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Editor_discard_editing_imp(self_obj: *u8, cmd: *u8) {
-    let c: *Editor = { synth::get_associated(self_obj, Editor_key()) as *Editor };
-    let f: fn(*u8) = { (*c).discard_editing };
-    let u: *u8 = { (*c).user };
-    f(u);
-    return;
+// `NSEditorRegistration` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct EditorRegistration {
+    opaque _obj: *u8,
 }
 
-fn Editor_commit_editing_and_return_error_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *Editor = { synth::get_associated(self_obj, Editor_key()) as *Editor };
-    let f: fn(*u8, *u8) -> i8 = { (*c).commit_editing_and_return_error };
-    let u: *u8 = { (*c).user };
-    return f(u, a0);
-}
+impl EditorRegistration {
+    fn raw(this) -> *u8 { return this._obj; }
 
-fn create_Editor(ctx: *Editor) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Editor\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_discard_editing: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("discardEditing\0")), Editor_discard_editing_imp, #str_ptr("v@:\0"));
-        let add_commit_editing_and_return_error: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("commitEditingAndReturnError:\0")), Editor_commit_editing_and_return_error_imp, #str_ptr("c@:@\0"));
-        synth::register_class_pair(cls);
+    fn from_raw(ptr: *u8) -> EditorRegistration { return EditorRegistration { _obj: ptr }; }
+
+    fn object_did_begin_editing(this, editor: Editor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("objectDidBeginEditing:\0")), editor.raw());
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Editor_key(), { ctx as *u8 });
-    return d;
+
+    fn object_did_end_editing(this, editor: Editor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("objectDidEndEditing:\0")), editor.raw());
+    }
+
 }
 

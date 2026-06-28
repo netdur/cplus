@@ -96,6 +96,8 @@ struct Predicate {
 impl Predicate {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Predicate { return Predicate { _obj: ptr }; }
+
 }
 
 // `NSEntityDescription` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -105,6 +107,8 @@ struct EntityDescription {
 
 impl EntityDescription {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> EntityDescription { return EntityDescription { _obj: ptr }; }
 
 }
 
@@ -116,6 +120,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSPredicateEditorRowTemplate` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -126,9 +132,11 @@ struct PredicateEditorRowTemplate {
 impl PredicateEditorRowTemplate {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PredicateEditorRowTemplate { return PredicateEditorRowTemplate { _obj: ptr }; }
+
     // SKIPPED `matchForPredicate:`: (return, arg) shape not yet modelled
-    fn set_predicate(this, predicate: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPredicate:\0")), predicate);
+    fn set_predicate(this, predicate: Predicate) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPredicate:\0")), predicate.raw());
     }
 
     // SKIPPED `predicateWithSubpredicates:`: param `NSArray<NSPredicate *> * _Nullable` — generic collection

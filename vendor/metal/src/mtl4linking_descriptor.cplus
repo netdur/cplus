@@ -79,24 +79,24 @@ impl MTL4RenderPipelineDynamicLinkingDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4RenderPipelineDynamicLinkingDescriptor { return MTL4RenderPipelineDynamicLinkingDescriptor { _obj: ptr }; }
 
-    fn vertex_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("vertexLinkingDescriptor\0")));
+    fn vertex_linking_descriptor(this) -> MTL4PipelineStageDynamicLinkingDescriptor {
+        return MTL4PipelineStageDynamicLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertexLinkingDescriptor\0"))));
     }
 
-    fn fragment_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentLinkingDescriptor\0")));
+    fn fragment_linking_descriptor(this) -> MTL4PipelineStageDynamicLinkingDescriptor {
+        return MTL4PipelineStageDynamicLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentLinkingDescriptor\0"))));
     }
 
-    fn tile_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("tileLinkingDescriptor\0")));
+    fn tile_linking_descriptor(this) -> MTL4PipelineStageDynamicLinkingDescriptor {
+        return MTL4PipelineStageDynamicLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("tileLinkingDescriptor\0"))));
     }
 
-    fn object_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("objectLinkingDescriptor\0")));
+    fn object_linking_descriptor(this) -> MTL4PipelineStageDynamicLinkingDescriptor {
+        return MTL4PipelineStageDynamicLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("objectLinkingDescriptor\0"))));
     }
 
-    fn mesh_linking_descriptor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("meshLinkingDescriptor\0")));
+    fn mesh_linking_descriptor(this) -> MTL4PipelineStageDynamicLinkingDescriptor {
+        return MTL4PipelineStageDynamicLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("meshLinkingDescriptor\0"))));
     }
 
 }

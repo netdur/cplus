@@ -14,6 +14,8 @@ struct Slider {
 impl Slider {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Slider { return Slider { _obj: ptr }; }
+
 }
 
 // `NSSliderAccessoryBehavior` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,10 +26,12 @@ struct SliderAccessoryBehavior {
 impl SliderAccessoryBehavior {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SliderAccessoryBehavior { return SliderAccessoryBehavior { _obj: ptr }; }
+
     // SKIPPED `behaviorWithTarget:action:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `behaviorWithHandler:`: block method with non-void return
-    fn handle_action(this, sender: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("handleAction:\0")), sender);
+    fn handle_action(this, sender: SliderAccessory) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("handleAction:\0")), sender.raw());
     }
 
     fn automatic_behavior() -> SliderAccessoryBehavior {
@@ -52,6 +56,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSSliderAccessory` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -62,16 +68,18 @@ struct SliderAccessory {
 impl SliderAccessory {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn accessory_with_image(image: *u8) -> SliderAccessory {
-        return SliderAccessory { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSSliderAccessory\0")), rt::sel(#str_ptr("accessoryWithImage:\0")), image) };
+    fn from_raw(ptr: *u8) -> SliderAccessory { return SliderAccessory { _obj: ptr }; }
+
+    fn accessory_with_image(image: Image) -> SliderAccessory {
+        return SliderAccessory { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSSliderAccessory\0")), rt::sel(#str_ptr("accessoryWithImage:\0")), image.raw()) };
     }
 
-    fn behavior(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("behavior\0")));
+    fn behavior(this) -> SliderAccessoryBehavior {
+        return SliderAccessoryBehavior::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("behavior\0"))));
     }
 
-    fn set_behavior(this, behavior: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBehavior:\0")), behavior);
+    fn set_behavior(this, behavior: SliderAccessoryBehavior) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBehavior:\0")), behavior.raw());
     }
 
     fn is_enabled(this) -> bool {

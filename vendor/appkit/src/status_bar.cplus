@@ -14,6 +14,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct Font {
 
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct MutableArray {
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
+
 }
 
 // `NSStatusItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +49,8 @@ struct StatusItem {
 
 impl StatusItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StatusItem { return StatusItem { _obj: ptr }; }
 
 }
 
@@ -54,12 +62,14 @@ struct StatusBar {
 impl StatusBar {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn status_item_with_length(this, length: f64) -> *u8 {
-        return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("statusItemWithLength:\0")), length);
+    fn from_raw(ptr: *u8) -> StatusBar { return StatusBar { _obj: ptr }; }
+
+    fn status_item_with_length(this, length: f64) -> StatusItem {
+        return StatusItem::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("statusItemWithLength:\0")), length));
     }
 
-    fn remove_status_item(this, item: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeStatusItem:\0")), item);
+    fn remove_status_item(this, item: StatusItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeStatusItem:\0")), item.raw());
     }
 
     fn system_status_bar() -> StatusBar {

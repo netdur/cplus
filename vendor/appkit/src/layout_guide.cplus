@@ -32,6 +32,8 @@ struct LayoutXAxisAnchor {
 impl LayoutXAxisAnchor {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutXAxisAnchor { return LayoutXAxisAnchor { _obj: ptr }; }
+
 }
 
 // `NSLayoutYAxisAnchor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -41,6 +43,8 @@ struct LayoutYAxisAnchor {
 
 impl LayoutYAxisAnchor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LayoutYAxisAnchor { return LayoutYAxisAnchor { _obj: ptr }; }
 
 }
 
@@ -52,6 +56,8 @@ struct LayoutDimension {
 impl LayoutDimension {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutDimension { return LayoutDimension { _obj: ptr }; }
+
 }
 
 // `NSLayoutConstraint` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -61,6 +67,8 @@ struct LayoutConstraint {
 
 impl LayoutConstraint {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
 
 }
 
@@ -72,8 +80,13 @@ struct LayoutGuide {
 impl LayoutGuide {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutGuide { return LayoutGuide { _obj: ptr }; }
+
     // SKIPPED `constraintsAffectingLayoutForOrientation:`: return `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
-    // SKIPPED `frame`: return `NSRect` — unmapped type `NSRect`
+    fn frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
+    }
+
     fn owning_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("owningView\0")));
         return bridge::obj_option(obj);
@@ -92,44 +105,44 @@ impl LayoutGuide {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identifier));
     }
 
-    fn leading_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("leadingAnchor\0")));
+    fn leading_anchor(this) -> LayoutXAxisAnchor {
+        return LayoutXAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("leadingAnchor\0"))));
     }
 
-    fn trailing_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("trailingAnchor\0")));
+    fn trailing_anchor(this) -> LayoutXAxisAnchor {
+        return LayoutXAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("trailingAnchor\0"))));
     }
 
-    fn left_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("leftAnchor\0")));
+    fn left_anchor(this) -> LayoutXAxisAnchor {
+        return LayoutXAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("leftAnchor\0"))));
     }
 
-    fn right_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("rightAnchor\0")));
+    fn right_anchor(this) -> LayoutXAxisAnchor {
+        return LayoutXAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("rightAnchor\0"))));
     }
 
-    fn top_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("topAnchor\0")));
+    fn top_anchor(this) -> LayoutYAxisAnchor {
+        return LayoutYAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("topAnchor\0"))));
     }
 
-    fn bottom_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("bottomAnchor\0")));
+    fn bottom_anchor(this) -> LayoutYAxisAnchor {
+        return LayoutYAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("bottomAnchor\0"))));
     }
 
-    fn width_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("widthAnchor\0")));
+    fn width_anchor(this) -> LayoutDimension {
+        return LayoutDimension::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("widthAnchor\0"))));
     }
 
-    fn height_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("heightAnchor\0")));
+    fn height_anchor(this) -> LayoutDimension {
+        return LayoutDimension::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("heightAnchor\0"))));
     }
 
-    fn center_x_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("centerXAnchor\0")));
+    fn center_x_anchor(this) -> LayoutXAxisAnchor {
+        return LayoutXAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("centerXAnchor\0"))));
     }
 
-    fn center_y_anchor(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("centerYAnchor\0")));
+    fn center_y_anchor(this) -> LayoutYAxisAnchor {
+        return LayoutYAxisAnchor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("centerYAnchor\0"))));
     }
 
     fn has_ambiguous_layout(this) -> bool {

@@ -63,6 +63,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -72,6 +74,8 @@ struct Font {
 
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
 }
 
@@ -83,6 +87,8 @@ struct Notification {
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
+
 }
 
 // `NSText` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -93,7 +99,14 @@ struct Text {
 impl Text {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> Text { return Text { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> Text {
+        let cls: *u8 = rt::get_class(#str_ptr("NSText\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Text { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn replace_characters_in_range_with_string(this, range: rt::Range, string: str) {
         rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withString:\0")), range, bridge::nsstring(string));
@@ -215,8 +228,15 @@ impl Text {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setString:\0")), bridge::nsstring(string));
     }
 
-    // SKIPPED `delegate`: return `id<NSTextDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTextDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn is_editable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8);
     }
@@ -273,13 +293,16 @@ impl Text {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setDrawsBackground:\0")), draws_background as i8);
     }
 
-    fn background_color(this) -> option::Option[*u8] {
+    fn background_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn is_ruler_visible(this) -> bool {
@@ -291,22 +314,28 @@ impl Text {
     }
 
     // SKIPPED `setSelectedRange:`: (return, arg) shape not yet modelled
-    fn font(this) -> option::Option[*u8] {
+    fn font(this) -> option::Option[Font] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("font\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Font]::None;
+        }
+        return option::some(Font::from_raw(obj));
     }
 
-    fn set_font(this, font: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font);
+    fn set_font(this, font: Font) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font.raw());
     }
 
-    fn text_color(this) -> option::Option[*u8] {
+    fn text_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textColor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn set_text_color(this, text_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextColor:\0")), text_color);
+    fn set_text_color(this, text_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextColor:\0")), text_color.raw());
     }
 
     fn alignment(this) -> TextAlignment {
@@ -319,10 +348,22 @@ impl Text {
     }
 
     // SKIPPED `setBaseWritingDirection:`: (return, arg) shape not yet modelled
-    // SKIPPED `maxSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaxSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `minSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinSize:`: param `NSSize` — unmapped type `NSSize`
+    fn max_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maxSize\0")));
+    }
+
+    fn set_max_size(this, max_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxSize:\0")), max_size);
+    }
+
+    fn min_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minSize\0")));
+    }
+
+    fn set_min_size(this, min_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinSize:\0")), min_size);
+    }
+
     fn is_horizontally_resizable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isHorizontallyResizable\0"))) != (0 as i8);
     }
@@ -345,10 +386,10 @@ impl Text {
 }
 
 // `NSTextDelegate` delegate protocol -> runtime class-synthesis helper.
-fn TextDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn TextDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn TextDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn TextDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct TextDelegateProtocol {
+struct TextDelegate {
     text_should_begin_editing: fn(*u8, *u8) -> i8,
     text_should_end_editing: fn(*u8, *u8) -> i8,
     text_did_begin_editing: fn(*u8, *u8),
@@ -357,11 +398,11 @@ struct TextDelegateProtocol {
     opaque user: *u8,
 }
 
-fn TextDelegateProtocol_new(user: *u8) -> TextDelegateProtocol {
-    return TextDelegateProtocol { text_should_begin_editing: TextDelegateProtocol_noop_i8_1, text_should_end_editing: TextDelegateProtocol_noop_i8_1, text_did_begin_editing: TextDelegateProtocol_noop_v_1, text_did_end_editing: TextDelegateProtocol_noop_v_1, text_did_change: TextDelegateProtocol_noop_v_1, user: user };
+fn TextDelegate_new(user: *u8) -> TextDelegate {
+    return TextDelegate { text_should_begin_editing: TextDelegate_noop_i8_1, text_should_end_editing: TextDelegate_noop_i8_1, text_did_begin_editing: TextDelegate_noop_v_1, text_did_end_editing: TextDelegate_noop_v_1, text_did_change: TextDelegate_noop_v_1, user: user };
 }
 
-impl TextDelegateProtocol {
+impl TextDelegate {
     fn set_text_should_begin_editing(ref this, handler: fn(*u8, *u8) -> i8) {
         this.text_should_begin_editing = handler;
         return;
@@ -384,60 +425,60 @@ impl TextDelegateProtocol {
     }
 }
 
-fn TextDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TextDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TextDelegateProtocol_text_should_begin_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *TextDelegateProtocol = { synth::get_associated(self_obj, TextDelegateProtocol_key()) as *TextDelegateProtocol };
+fn TextDelegate_text_should_begin_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *TextDelegate = { synth::get_associated(self_obj, TextDelegate_key()) as *TextDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).text_should_begin_editing };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn TextDelegateProtocol_text_should_end_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *TextDelegateProtocol = { synth::get_associated(self_obj, TextDelegateProtocol_key()) as *TextDelegateProtocol };
+fn TextDelegate_text_should_end_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *TextDelegate = { synth::get_associated(self_obj, TextDelegate_key()) as *TextDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).text_should_end_editing };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn TextDelegateProtocol_text_did_begin_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextDelegateProtocol = { synth::get_associated(self_obj, TextDelegateProtocol_key()) as *TextDelegateProtocol };
+fn TextDelegate_text_did_begin_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextDelegate = { synth::get_associated(self_obj, TextDelegate_key()) as *TextDelegate };
     let f: fn(*u8, *u8) = { (*c).text_did_begin_editing };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextDelegateProtocol_text_did_end_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextDelegateProtocol = { synth::get_associated(self_obj, TextDelegateProtocol_key()) as *TextDelegateProtocol };
+fn TextDelegate_text_did_end_editing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextDelegate = { synth::get_associated(self_obj, TextDelegate_key()) as *TextDelegate };
     let f: fn(*u8, *u8) = { (*c).text_did_end_editing };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TextDelegateProtocol_text_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextDelegateProtocol = { synth::get_associated(self_obj, TextDelegateProtocol_key()) as *TextDelegateProtocol };
+fn TextDelegate_text_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TextDelegate = { synth::get_associated(self_obj, TextDelegate_key()) as *TextDelegate };
     let f: fn(*u8, *u8) = { (*c).text_did_change };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_TextDelegateProtocol(ctx: *TextDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextDelegateProtocol\0");
+fn create_TextDelegate(ctx: *TextDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_should_begin_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldBeginEditing:\0")), TextDelegateProtocol_text_should_begin_editing_imp, #str_ptr("c@:@\0"));
-        let add_text_should_end_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldEndEditing:\0")), TextDelegateProtocol_text_should_end_editing_imp, #str_ptr("c@:@\0"));
-        let add_text_did_begin_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidBeginEditing:\0")), TextDelegateProtocol_text_did_begin_editing_imp, #str_ptr("v@:@\0"));
-        let add_text_did_end_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")), TextDelegateProtocol_text_did_end_editing_imp, #str_ptr("v@:@\0"));
-        let add_text_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidChange:\0")), TextDelegateProtocol_text_did_change_imp, #str_ptr("v@:@\0"));
+        let add_text_should_begin_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldBeginEditing:\0")), TextDelegate_text_should_begin_editing_imp, #str_ptr("c@:@\0"));
+        let add_text_should_end_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldEndEditing:\0")), TextDelegate_text_should_end_editing_imp, #str_ptr("c@:@\0"));
+        let add_text_did_begin_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidBeginEditing:\0")), TextDelegate_text_did_begin_editing_imp, #str_ptr("v@:@\0"));
+        let add_text_did_end_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")), TextDelegate_text_did_end_editing_imp, #str_ptr("v@:@\0"));
+        let add_text_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidChange:\0")), TextDelegate_text_did_change_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TextDelegate_key(), { ctx as *u8 });
     return d;
 }
 

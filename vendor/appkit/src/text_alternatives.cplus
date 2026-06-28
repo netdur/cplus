@@ -15,6 +15,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSTextAlternatives` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -24,6 +26,8 @@ struct TextAlternatives {
 
 impl TextAlternatives {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextAlternatives { return TextAlternatives { _obj: ptr }; }
 
     // SKIPPED `initWithPrimaryString:alternativeStrings:`: init arg shape not yet modelled
     fn note_selected_alternative_string(this, alternative_string: str) {

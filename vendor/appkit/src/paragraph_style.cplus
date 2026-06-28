@@ -108,29 +108,11 @@ fn line_break_mode_from_raw(raw: i64) -> LineBreakMode {
     return LineBreakMode::NSLineBreakByWordWrapping;
 }
 
-// `NSLineBreakStrategy` (NS_ENUM)
-enum LineBreakStrategy {
-    None,
-    PushOut,
-    HangulWordPriority,
-    Standard,
-}
-
-fn line_break_strategy_raw(v: LineBreakStrategy) -> i64 {
-    return match v {
-        LineBreakStrategy::None => { 0 as i64 },
-        LineBreakStrategy::PushOut => { 1 as i64 },
-        LineBreakStrategy::HangulWordPriority => { 2 as i64 },
-        LineBreakStrategy::Standard => { 65535 as i64 },
-    };
-}
-
-fn line_break_strategy_from_raw(raw: i64) -> LineBreakStrategy {
-    if raw == (1 as i64) { return LineBreakStrategy::PushOut; }
-    if raw == (2 as i64) { return LineBreakStrategy::HangulWordPriority; }
-    if raw == (65535 as i64) { return LineBreakStrategy::Standard; }
-    return LineBreakStrategy::None;
-}
+// `NSLineBreakStrategy` (NS_OPTIONS) — bitfield; combine with `|`.
+const line_break_strategy_none: u64 = 0 as u64;
+const line_break_strategy_push_out: u64 = 1 as u64;
+const line_break_strategy_hangul_word_priority: u64 = 2 as u64;
+const line_break_strategy_standard: u64 = 65535 as u64;
 
 // `NSTextList` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextList {
@@ -139,6 +121,8 @@ struct TextList {
 
 impl TextList {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
 
 }
 
@@ -149,6 +133,8 @@ struct TextTab {
 
 impl TextTab {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextTab { return TextTab { _obj: ptr }; }
 
     fn column_terminators_for_locale(a_locale: *u8) -> *u8 {
         return rt::msg_id_id(rt::get_class(#str_ptr("NSTextTab\0")), rt::sel(#str_ptr("columnTerminatorsForLocale:\0")), a_locale);
@@ -181,6 +167,8 @@ struct ParagraphStyle {
 
 impl ParagraphStyle {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ParagraphStyle { return ParagraphStyle { _obj: ptr }; }
 
     // SKIPPED `defaultWritingDirectionForLanguage:`: (return, arg) shape not yet modelled
     fn default_paragraph_style() -> ParagraphStyle {
@@ -249,8 +237,8 @@ impl ParagraphStyle {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsDefaultTighteningForTruncation\0"))) != (0 as i8);
     }
 
-    fn line_break_strategy(this) -> LineBreakStrategy {
-        return line_break_strategy_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0"))));
+    fn line_break_strategy(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0")));
     }
 
     fn alignment(this) -> TextAlignment {
@@ -276,16 +264,18 @@ struct MutableParagraphStyle {
 impl MutableParagraphStyle {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn add_tab_stop(this, an_object: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabStop:\0")), an_object);
+    fn from_raw(ptr: *u8) -> MutableParagraphStyle { return MutableParagraphStyle { _obj: ptr }; }
+
+    fn add_tab_stop(this, an_object: TextTab) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabStop:\0")), an_object.raw());
     }
 
-    fn remove_tab_stop(this, an_object: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabStop:\0")), an_object);
+    fn remove_tab_stop(this, an_object: TextTab) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabStop:\0")), an_object.raw());
     }
 
-    fn set_paragraph_style(this, obj: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParagraphStyle:\0")), obj);
+    fn set_paragraph_style(this, obj: ParagraphStyle) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParagraphStyle:\0")), obj.raw());
     }
 
     fn line_spacing(this) -> f64 {
@@ -404,8 +394,8 @@ impl MutableParagraphStyle {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsDefaultTighteningForTruncation:\0")), allows_default_tightening_for_truncation as i8);
     }
 
-    fn line_break_strategy(this) -> LineBreakStrategy {
-        return line_break_strategy_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0"))));
+    fn line_break_strategy(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0")));
     }
 
     // SKIPPED `setLineBreakStrategy:`: (return, arg) shape not yet modelled
@@ -440,6 +430,8 @@ struct TextBlock {
 
 impl TextBlock {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextBlock { return TextBlock { _obj: ptr }; }
 
 }
 

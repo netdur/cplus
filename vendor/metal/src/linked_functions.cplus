@@ -30,3 +30,15 @@ impl LinkedFunctions {
     // SKIPPED `setPrivateFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
 }
 
+// `MTLFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Function {
+    opaque _obj: *u8,
+}
+
+impl Function {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Function { return Function { _obj: ptr }; }
+
+}
+

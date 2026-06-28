@@ -28,13 +28,16 @@ impl MTL4StitchedFunctionDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4StitchedFunctionDescriptor { return MTL4StitchedFunctionDescriptor { _obj: ptr }; }
 
-    fn function_graph(this) -> option::Option[*u8] {
+    fn function_graph(this) -> option::Option[FunctionStitchingGraph] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionGraph\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[FunctionStitchingGraph]::None;
+        }
+        return option::some(FunctionStitchingGraph::from_raw(obj));
     }
 
-    fn set_function_graph(this, function_graph: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionGraph:\0")), function_graph);
+    fn set_function_graph(this, function_graph: FunctionStitchingGraph) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionGraph:\0")), function_graph.raw());
     }
 
     // SKIPPED `functionDescriptors`: return `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection

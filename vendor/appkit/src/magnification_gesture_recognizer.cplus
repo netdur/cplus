@@ -14,6 +14,8 @@ struct MagnificationGestureRecognizer {
 impl MagnificationGestureRecognizer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MagnificationGestureRecognizer { return MagnificationGestureRecognizer { _obj: ptr }; }
+
     fn magnification(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("magnification\0")));
     }

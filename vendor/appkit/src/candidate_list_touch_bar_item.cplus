@@ -33,6 +33,8 @@ struct CandidateListTouchBarItem {
 impl CandidateListTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> CandidateListTouchBarItem { return CandidateListTouchBarItem { _obj: ptr }; }
+
     fn update_with_insertion_point_visibility(this, is_visible: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("updateWithInsertionPointVisibility:\0")), is_visible as i8);
     }
@@ -88,6 +90,18 @@ impl CandidateListTouchBarItem {
     fn set_customization_label(this, customization_label: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCustomizationLabel:\0")), bridge::nsstring(customization_label));
     }
+
+}
+
+// `NSTextInputClient` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextInputClient {
+    opaque _obj: *u8,
+}
+
+impl TextInputClient {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextInputClient { return TextInputClient { _obj: ptr }; }
 
 }
 

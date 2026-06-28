@@ -146,6 +146,8 @@ struct VisualEffectView {
 impl VisualEffectView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> VisualEffectView { return VisualEffectView { _obj: ptr }; }
+
     fn view_did_move_to_window(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidMoveToWindow\0")));
     }

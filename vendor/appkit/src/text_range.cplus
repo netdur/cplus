@@ -6,6 +6,27 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSComparisonResult` (NS_ENUM)
+enum ComparisonResult {
+    NSOrderedAscending,
+    NSOrderedSame,
+    NSOrderedDescending,
+}
+
+fn comparison_result_raw(v: ComparisonResult) -> i64 {
+    return match v {
+        ComparisonResult::NSOrderedAscending => { -1 as i64 },
+        ComparisonResult::NSOrderedSame => { 0 as i64 },
+        ComparisonResult::NSOrderedDescending => { 1 as i64 },
+    };
+}
+
+fn comparison_result_from_raw(raw: i64) -> ComparisonResult {
+    if raw == (0 as i64) { return ComparisonResult::NSOrderedSame; }
+    if raw == (1 as i64) { return ComparisonResult::NSOrderedDescending; }
+    return ComparisonResult::NSOrderedAscending;
+}
+
 // `NSTextRange` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TextRange {
     _obj: *u8,
@@ -14,7 +35,9 @@ struct TextRange {
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithLocation:endLocation:`: param `id<NSTextLocation> _Nonnull` — generic collection
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
+
+    // SKIPPED `initWithLocation:endLocation:`: init arg shape not yet modelled
     // SKIPPED `initWithLocation:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
     fn new() -> TextRange {
@@ -22,25 +45,44 @@ impl TextRange {
     }
 
     // SKIPPED `isEqualToTextRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `containsLocation:`: param `id<NSTextLocation> _Nonnull` — generic collection
+    // SKIPPED `containsLocation:`: (return, arg) shape not yet modelled
     // SKIPPED `containsRange:`: (return, arg) shape not yet modelled
     // SKIPPED `intersectsWithTextRange:`: (return, arg) shape not yet modelled
-    fn text_range_by_intersecting_with_text_range(this, text_range: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("textRangeByIntersectingWithTextRange:\0")), text_range);
+    fn text_range_by_intersecting_with_text_range(this, text_range: TextRange) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("textRangeByIntersectingWithTextRange:\0")), text_range.raw());
     }
 
-    fn text_range_by_forming_union_with_text_range(this, text_range: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("textRangeByFormingUnionWithTextRange:\0")), text_range);
+    fn text_range_by_forming_union_with_text_range(this, text_range: TextRange) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("textRangeByFormingUnionWithTextRange:\0")), text_range.raw());
     }
 
     fn is_empty(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEmpty\0"))) != (0 as i8);
     }
 
-    // SKIPPED `location`: return `id<NSTextLocation> _Nonnull` — generic collection
-    // SKIPPED `endLocation`: return `id<NSTextLocation> _Nonnull` — generic collection
+    fn location(this) -> TextLocation {
+        return TextLocation::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("location\0"))));
+    }
+
+    fn end_location(this) -> TextLocation {
+        return TextLocation::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("endLocation\0"))));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSTextLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLocation {
+    opaque _obj: *u8,
+}
+
+impl TextLocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
+
+    // SKIPPED `compare:`: (return, arg) shape not yet modelled
 }
 

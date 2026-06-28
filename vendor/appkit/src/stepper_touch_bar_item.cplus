@@ -14,6 +14,8 @@ struct StepperTouchBarItem {
 impl StepperTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> StepperTouchBarItem { return StepperTouchBarItem { _obj: ptr }; }
+
     // SKIPPED `stepperTouchBarItemWithIdentifier:formatter:`: (return, arg) shape not yet modelled
     // SKIPPED `stepperTouchBarItemWithIdentifier:drawingHandler:`: block method with non-void return
     fn max_value(this) -> f64 {

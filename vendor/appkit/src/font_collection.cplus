@@ -7,26 +7,10 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 
-// `NSFontCollectionVisibility` (NS_ENUM)
-enum FontCollectionVisibility {
-    Process,
-    User,
-    Computer,
-}
-
-fn font_collection_visibility_raw(v: FontCollectionVisibility) -> i64 {
-    return match v {
-        FontCollectionVisibility::Process => { 1 as i64 },
-        FontCollectionVisibility::User => { 2 as i64 },
-        FontCollectionVisibility::Computer => { 4 as i64 },
-    };
-}
-
-fn font_collection_visibility_from_raw(raw: i64) -> FontCollectionVisibility {
-    if raw == (2 as i64) { return FontCollectionVisibility::User; }
-    if raw == (4 as i64) { return FontCollectionVisibility::Computer; }
-    return FontCollectionVisibility::Process;
-}
+// `NSFontCollectionVisibility` (NS_OPTIONS) — bitfield; combine with `|`.
+const font_collection_visibility_process: u64 = 1 as u64;
+const font_collection_visibility_user: u64 = 2 as u64;
+const font_collection_visibility_computer: u64 = 4 as u64;
 
 // `NSFontDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FontDescriptor {
@@ -35,6 +19,8 @@ struct FontDescriptor {
 
 impl FontDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontDescriptor { return FontDescriptor { _obj: ptr }; }
 
 }
 
@@ -45,6 +31,8 @@ struct FontCollection {
 
 impl FontCollection {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FontCollection { return FontCollection { _obj: ptr }; }
 
     // SKIPPED `fontCollectionWithDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
     fn font_collection_with_locale(locale: *u8) -> option::Option[FontCollection] {
@@ -66,7 +54,14 @@ impl FontCollection {
         return option::some(FontCollection { _obj: obj });
     }
 
-    // SKIPPED `fontCollectionWithName:visibility:`: (return, arg) shape not yet modelled
+    fn font_collection_with_name_visibility(name: str, visibility: u64) -> option::Option[FontCollection] {
+        let obj: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithName:visibility:\0")), bridge::nsstring(name), visibility);
+        if obj == { 0 as *u8 } {
+            return option::Option[FontCollection]::None;
+        }
+        return option::some(FontCollection { _obj: obj });
+    }
+
     // SKIPPED `matchingDescriptorsWithOptions:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
     // SKIPPED `matchingDescriptorsForFamily:`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
     // SKIPPED `matchingDescriptorsForFamily:options:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
@@ -101,6 +96,8 @@ struct MutableFontCollection {
 impl MutableFontCollection {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableFontCollection { return MutableFontCollection { _obj: ptr }; }
+
     // SKIPPED `fontCollectionWithDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
     fn font_collection_with_locale(locale: *u8) -> MutableFontCollection {
         return MutableFontCollection { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSMutableFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithLocale:\0")), locale) };
@@ -114,7 +111,14 @@ impl MutableFontCollection {
         return option::some(MutableFontCollection { _obj: obj });
     }
 
-    // SKIPPED `fontCollectionWithName:visibility:`: (return, arg) shape not yet modelled
+    fn font_collection_with_name_visibility(name: str, visibility: u64) -> option::Option[MutableFontCollection] {
+        let obj: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NSMutableFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithName:visibility:\0")), bridge::nsstring(name), visibility);
+        if obj == { 0 as *u8 } {
+            return option::Option[MutableFontCollection]::None;
+        }
+        return option::some(MutableFontCollection { _obj: obj });
+    }
+
     // SKIPPED `addQueryForDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
     // SKIPPED `removeQueryForDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
     fn font_collection_with_all_available_descriptors() -> MutableFontCollection {

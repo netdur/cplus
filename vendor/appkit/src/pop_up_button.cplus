@@ -51,6 +51,8 @@ struct Menu {
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
+
 }
 
 // `NSPopUpButton` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -61,11 +63,13 @@ struct PopUpButton {
 impl PopUpButton {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PopUpButton { return PopUpButton { _obj: ptr }; }
+
     // SKIPPED `popUpButtonWithMenu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `pullDownButtonWithTitle:menu:`: (return, arg) shape not yet modelled
     // SKIPPED `pullDownButtonWithImage:menu:`: (return, arg) shape not yet modelled
     // SKIPPED `pullDownButtonWithTitle:image:menu:`: (return, arg) shape not yet modelled
-    // SKIPPED `initWithFrame:pullsDown:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `initWithFrame:pullsDown:`: init arg shape not yet modelled
     fn add_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:\0")), bridge::nsstring(title));
     }
@@ -108,7 +112,10 @@ impl PopUpButton {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectItemWithTitle:\0")), bridge::nsstring(title));
     }
 
-    // SKIPPED `selectItemWithTag:`: (return, arg) shape not yet modelled
+    fn select_item_with_tag(this, tag: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectItemWithTag:\0")), tag) != (0 as i8);
+    }
+
     fn set_title(this, string: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(string));
     }
@@ -122,13 +129,16 @@ impl PopUpButton {
         return bridge::to_text(ns);
     }
 
-    fn menu(this) -> option::Option[*u8] {
+    fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
 
-    fn set_menu(this, menu: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu);
+    fn set_menu(this, menu: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
     }
 
     fn pulls_down(this) -> bool {

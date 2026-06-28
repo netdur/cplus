@@ -14,6 +14,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSButtonTouchBarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct ButtonTouchBarItem {
 
 impl ButtonTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ButtonTouchBarItem { return ButtonTouchBarItem { _obj: ptr }; }
 
     // SKIPPED `buttonTouchBarItemWithIdentifier:title:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `buttonTouchBarItemWithIdentifier:image:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
@@ -46,22 +52,28 @@ impl ButtonTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn image(this) -> option::Option[*u8] {
+    fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
-    fn bezel_color(this) -> option::Option[*u8] {
+    fn bezel_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bezelColor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn set_bezel_color(this, bezel_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBezelColor:\0")), bezel_color);
+    fn set_bezel_color(this, bezel_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBezelColor:\0")), bezel_color.raw());
     }
 
     fn target(this) -> option::Option[*u8] {

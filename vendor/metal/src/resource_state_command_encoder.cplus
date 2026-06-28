@@ -6,3 +6,27 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `MTLResourceStateCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ResourceStateCommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl ResourceStateCommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ResourceStateCommandEncoder { return ResourceStateCommandEncoder { _obj: ptr }; }
+
+    // SKIPPED `updateTextureMappings:mode:regions:mipLevels:slices:numRegions:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
+    // SKIPPED `updateTextureMapping:mode:region:mipLevel:slice:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
+    // SKIPPED `updateTextureMapping:mode:indirectBuffer:indirectBufferOffset:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
+    fn update_fence(this, fence: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence);
+    }
+
+    fn wait_for_fence(this, fence: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("waitForFence:\0")), fence);
+    }
+
+    // SKIPPED `moveTextureMappingsFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLOrigin` — unmapped type `MTLOrigin`
+}
+

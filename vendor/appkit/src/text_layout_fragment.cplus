@@ -38,6 +38,8 @@ struct TextLayoutManager {
 impl TextLayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLayoutManager { return TextLayoutManager { _obj: ptr }; }
+
 }
 
 // `NSTextElement` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -47,6 +49,8 @@ struct TextElement {
 
 impl TextElement {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextElement { return TextElement { _obj: ptr }; }
 
 }
 
@@ -58,6 +62,8 @@ struct TextRange {
 impl TextRange {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
+
 }
 
 // `NSTextParagraph` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -67,6 +73,8 @@ struct TextParagraph {
 
 impl TextParagraph {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextParagraph { return TextParagraph { _obj: ptr }; }
 
 }
 
@@ -78,6 +86,8 @@ struct TextLineFragment {
 impl TextLineFragment {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLineFragment { return TextLineFragment { _obj: ptr }; }
+
 }
 
 // `NSOperationQueue` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -87,6 +97,8 @@ struct OperationQueue {
 
 impl OperationQueue {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> OperationQueue { return OperationQueue { _obj: ptr }; }
 
 }
 
@@ -98,6 +110,8 @@ struct TextAttachmentViewProvider {
 impl TextAttachmentViewProvider {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextAttachmentViewProvider { return TextAttachmentViewProvider { _obj: ptr }; }
+
 }
 
 // `NSTextLayoutFragment` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -108,47 +122,64 @@ struct TextLayoutFragment {
 impl TextLayoutFragment {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextLayoutFragment { return TextLayoutFragment { _obj: ptr }; }
+
     // SKIPPED `initWithTextElement:range:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
     // SKIPPED `textLineFragmentForVerticalOffset:requiresExactMatch:`: (return, arg) shape not yet modelled
-    // SKIPPED `textLineFragmentForTextLocation:isUpstreamAffinity:`: param `id<NSTextLocation> _Nonnull` — generic collection
+    // SKIPPED `textLineFragmentForTextLocation:isUpstreamAffinity:`: (return, arg) shape not yet modelled
     fn invalidate_layout(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }
 
-    // SKIPPED `drawAtPoint:inContext:`: param `CGPoint` — unmapped type `CGPoint`
-    // SKIPPED `frameForTextAttachmentAtLocation:`: param `id<NSTextLocation> _Nonnull` — generic collection
-    fn text_layout_manager(this) -> option::Option[*u8] {
+    // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
+    // SKIPPED `frameForTextAttachmentAtLocation:`: (return, arg) shape not yet modelled
+    fn text_layout_manager(this) -> option::Option[TextLayoutManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLayoutManager]::None;
+        }
+        return option::some(TextLayoutManager::from_raw(obj));
     }
 
-    fn text_element(this) -> option::Option[*u8] {
+    fn text_element(this) -> option::Option[TextElement] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textElement\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextElement]::None;
+        }
+        return option::some(TextElement::from_raw(obj));
     }
 
-    fn range_in_element(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("rangeInElement\0")));
+    fn range_in_element(this) -> TextRange {
+        return TextRange::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("rangeInElement\0"))));
     }
 
     // SKIPPED `textLineFragments`: return `NSArray<NSTextLineFragment *> * _Nonnull` — generic collection
-    fn layout_queue(this) -> option::Option[*u8] {
+    fn layout_queue(this) -> option::Option[OperationQueue] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("layoutQueue\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[OperationQueue]::None;
+        }
+        return option::some(OperationQueue::from_raw(obj));
     }
 
-    fn set_layout_queue(this, layout_queue: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayoutQueue:\0")), layout_queue);
+    fn set_layout_queue(this, layout_queue: OperationQueue) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayoutQueue:\0")), layout_queue.raw());
     }
 
     fn state(this) -> TextLayoutFragmentState {
         return text_layout_fragment_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0"))));
     }
 
-    // SKIPPED `layoutFragmentFrame`: return `CGRect` — unmapped type `CGRect`
-    // SKIPPED `renderingSurfaceBounds`: return `CGRect` — unmapped type `CGRect`
+    fn layout_fragment_frame(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("layoutFragmentFrame\0")));
+    }
+
+    fn rendering_surface_bounds(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("renderingSurfaceBounds\0")));
+    }
+
     fn leading_padding(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("leadingPadding\0")));
     }
@@ -169,5 +200,17 @@ impl TextLayoutFragment {
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSTextLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLocation {
+    opaque _obj: *u8,
+}
+
+impl TextLocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
+
 }
 

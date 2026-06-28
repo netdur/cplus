@@ -14,6 +14,8 @@ struct Storyboard {
 impl Storyboard {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Storyboard { return Storyboard { _obj: ptr }; }
+
     // SKIPPED `storyboardWithName:bundle:`: (return, arg) shape not yet modelled
     fn instantiate_initial_controller(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instantiateInitialController\0")));

@@ -51,6 +51,8 @@ struct Lock {
 impl Lock {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Lock { return Lock { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -61,6 +63,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -70,6 +74,8 @@ struct Window {
 
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
 
     // SKIPPED `drawers`: return `API_DEPRECATED NSArray<NSDrawer *> *` — generic collection
 }
@@ -82,6 +88,8 @@ struct Notification {
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
+
 }
 
 // `NSDrawer` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -92,7 +100,9 @@ struct Drawer {
 impl Drawer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithContentSize:preferredEdge:`: param `NSSize` — unmapped type `NSSize`
+    fn from_raw(ptr: *u8) -> Drawer { return Drawer { _obj: ptr }; }
+
+    // SKIPPED `initWithContentSize:preferredEdge:`: init arg shape not yet modelled
     fn open(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("open\0")));
     }
@@ -108,22 +118,28 @@ impl Drawer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggle:\0")), sender);
     }
 
-    fn parent_window(this) -> option::Option[*u8] {
+    fn parent_window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentWindow\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
     }
 
-    fn set_parent_window(this, parent_window: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParentWindow:\0")), parent_window);
+    fn set_parent_window(this, parent_window: Window) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParentWindow:\0")), parent_window.raw());
     }
 
-    fn content_view(this) -> option::Option[*u8] {
+    fn content_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_content_view(this, content_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view);
+    fn set_content_view(this, content_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view.raw());
     }
 
     fn preferred_edge(this) -> RectEdge {
@@ -131,8 +147,15 @@ impl Drawer {
     }
 
     // SKIPPED `setPreferredEdge:`: (return, arg) shape not yet modelled
-    // SKIPPED `delegate`: return `id<NSDrawerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSDrawerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn state(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0")));
     }
@@ -141,12 +164,30 @@ impl Drawer {
         return rect_edge_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("edge\0"))));
     }
 
-    // SKIPPED `contentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `minContentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMinContentSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `maxContentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setMaxContentSize:`: param `NSSize` — unmapped type `NSSize`
+    fn content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentSize\0")));
+    }
+
+    fn set_content_size(this, content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentSize:\0")), content_size);
+    }
+
+    fn min_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minContentSize\0")));
+    }
+
+    fn set_min_content_size(this, min_content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMinContentSize:\0")), min_content_size);
+    }
+
+    fn max_content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("maxContentSize\0")));
+    }
+
+    fn set_max_content_size(this, max_content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxContentSize:\0")), max_content_size);
+    }
+
     fn leading_offset(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("leadingOffset\0")));
     }
@@ -170,10 +211,10 @@ impl Drawer {
 
 // `NSDrawerDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `drawerWillResizeContents:toSize:`: arg shape (only <=5 object args modelled)
-fn DrawerDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn DrawerDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn DrawerDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn DrawerDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct DrawerDelegateProtocol {
+struct DrawerDelegate {
     drawer_should_open: fn(*u8, *u8) -> i8,
     drawer_should_close: fn(*u8, *u8) -> i8,
     drawer_will_open: fn(*u8, *u8),
@@ -183,11 +224,11 @@ struct DrawerDelegateProtocol {
     opaque user: *u8,
 }
 
-fn DrawerDelegateProtocol_new(user: *u8) -> DrawerDelegateProtocol {
-    return DrawerDelegateProtocol { drawer_should_open: DrawerDelegateProtocol_noop_i8_1, drawer_should_close: DrawerDelegateProtocol_noop_i8_1, drawer_will_open: DrawerDelegateProtocol_noop_v_1, drawer_did_open: DrawerDelegateProtocol_noop_v_1, drawer_will_close: DrawerDelegateProtocol_noop_v_1, drawer_did_close: DrawerDelegateProtocol_noop_v_1, user: user };
+fn DrawerDelegate_new(user: *u8) -> DrawerDelegate {
+    return DrawerDelegate { drawer_should_open: DrawerDelegate_noop_i8_1, drawer_should_close: DrawerDelegate_noop_i8_1, drawer_will_open: DrawerDelegate_noop_v_1, drawer_did_open: DrawerDelegate_noop_v_1, drawer_will_close: DrawerDelegate_noop_v_1, drawer_did_close: DrawerDelegate_noop_v_1, user: user };
 }
 
-impl DrawerDelegateProtocol {
+impl DrawerDelegate {
     fn set_drawer_should_open(ref this, handler: fn(*u8, *u8) -> i8) {
         this.drawer_should_open = handler;
         return;
@@ -214,69 +255,69 @@ impl DrawerDelegateProtocol {
     }
 }
 
-fn DrawerDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn DrawerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn DrawerDelegateProtocol_drawer_should_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_should_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).drawer_should_open };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn DrawerDelegateProtocol_drawer_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).drawer_should_close };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn DrawerDelegateProtocol_drawer_will_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_will_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) = { (*c).drawer_will_open };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn DrawerDelegateProtocol_drawer_did_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_did_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) = { (*c).drawer_did_open };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn DrawerDelegateProtocol_drawer_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) = { (*c).drawer_will_close };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn DrawerDelegateProtocol_drawer_did_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *DrawerDelegateProtocol = { synth::get_associated(self_obj, DrawerDelegateProtocol_key()) as *DrawerDelegateProtocol };
+fn DrawerDelegate_drawer_did_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
     let f: fn(*u8, *u8) = { (*c).drawer_did_close };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_DrawerDelegateProtocol(ctx: *DrawerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_DrawerDelegateProtocol\0");
+fn create_DrawerDelegate(ctx: *DrawerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_DrawerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_drawer_should_open: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("drawerShouldOpen:\0")), DrawerDelegateProtocol_drawer_should_open_imp, #str_ptr("c@:@\0"));
-        let add_drawer_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("drawerShouldClose:\0")), DrawerDelegateProtocol_drawer_should_close_imp, #str_ptr("c@:@\0"));
-        let add_drawer_will_open: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerWillOpen:\0")), DrawerDelegateProtocol_drawer_will_open_imp, #str_ptr("v@:@\0"));
-        let add_drawer_did_open: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerDidOpen:\0")), DrawerDelegateProtocol_drawer_did_open_imp, #str_ptr("v@:@\0"));
-        let add_drawer_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerWillClose:\0")), DrawerDelegateProtocol_drawer_will_close_imp, #str_ptr("v@:@\0"));
-        let add_drawer_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerDidClose:\0")), DrawerDelegateProtocol_drawer_did_close_imp, #str_ptr("v@:@\0"));
+        let add_drawer_should_open: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("drawerShouldOpen:\0")), DrawerDelegate_drawer_should_open_imp, #str_ptr("c@:@\0"));
+        let add_drawer_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("drawerShouldClose:\0")), DrawerDelegate_drawer_should_close_imp, #str_ptr("c@:@\0"));
+        let add_drawer_will_open: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerWillOpen:\0")), DrawerDelegate_drawer_will_open_imp, #str_ptr("v@:@\0"));
+        let add_drawer_did_open: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerDidOpen:\0")), DrawerDelegate_drawer_did_open_imp, #str_ptr("v@:@\0"));
+        let add_drawer_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerWillClose:\0")), DrawerDelegate_drawer_will_close_imp, #str_ptr("v@:@\0"));
+        let add_drawer_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("drawerDidClose:\0")), DrawerDelegate_drawer_did_close_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, DrawerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, DrawerDelegate_key(), { ctx as *u8 });
     return d;
 }
 

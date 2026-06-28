@@ -100,13 +100,16 @@ impl FunctionStitchingGraph {
 
     // SKIPPED `nodes`: return `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     // SKIPPED `setNodes:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
-    fn output_node(this) -> option::Option[*u8] {
+    fn output_node(this) -> option::Option[FunctionStitchingFunctionNode] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("outputNode\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[FunctionStitchingFunctionNode]::None;
+        }
+        return option::some(FunctionStitchingFunctionNode::from_raw(obj));
     }
 
-    fn set_output_node(this, output_node: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOutputNode:\0")), output_node);
+    fn set_output_node(this, output_node: FunctionStitchingFunctionNode) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOutputNode:\0")), output_node.raw());
     }
 
     // SKIPPED `attributes`: return `NSArray<id<MTLFunctionStitchingAttribute>> * _Nonnull` — generic collection
@@ -137,5 +140,41 @@ impl StitchedLibraryDescriptor {
     }
 
     // SKIPPED `setOptions:`: (return, arg) shape not yet modelled
+}
+
+// `MTLFunction` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Function {
+    opaque _obj: *u8,
+}
+
+impl Function {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Function { return Function { _obj: ptr }; }
+
+}
+
+// `MTLFunctionStitchingAttribute` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct FunctionStitchingAttribute {
+    opaque _obj: *u8,
+}
+
+impl FunctionStitchingAttribute {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingAttribute { return FunctionStitchingAttribute { _obj: ptr }; }
+
+}
+
+// `MTLFunctionStitchingNode` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct FunctionStitchingNode {
+    opaque _obj: *u8,
+}
+
+impl FunctionStitchingNode {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionStitchingNode { return FunctionStitchingNode { _obj: ptr }; }
+
 }
 

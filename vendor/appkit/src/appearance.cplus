@@ -6,7 +6,6 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
-import "objc/synthesis" as synth;
 
 #[repr(C)]
 struct Appearance_perform_as_current_drawing_appearance_block {
@@ -35,6 +34,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSBundle` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -45,6 +46,8 @@ struct Bundle {
 impl Bundle {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Bundle { return Bundle { _obj: ptr }; }
+
 }
 
 // `NSAppearance` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -54,6 +57,8 @@ struct Appearance {
 
 impl Appearance {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Appearance { return Appearance { _obj: ptr }; }
 
     fn perform_as_current_drawing_appearance(this, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
@@ -83,8 +88,8 @@ impl Appearance {
         return Appearance { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("currentAppearance\0")))) };
     }
 
-    fn set_current_appearance(current_appearance: *u8) {
-        rt::msg_void_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("setCurrentAppearance:\0")), current_appearance);
+    fn set_current_appearance(current_appearance: Appearance) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("setCurrentAppearance:\0")), current_appearance.raw());
     }
 
     fn current_drawing_appearance() -> *u8 {
@@ -100,72 +105,27 @@ impl Appearance {
     }
 }
 
-// `NSAppearanceCustomization` delegate protocol -> runtime class-synthesis helper.
-fn AppearanceCustomization_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn AppearanceCustomization_noop_v_1(user: *u8, a0: *u8) { return; }
-
+// `NSAppearanceCustomization` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct AppearanceCustomization {
-    appearance: fn(*u8) -> *u8,
-    set_appearance: fn(*u8, *u8),
-    effective_appearance: fn(*u8) -> *u8,
-    opaque user: *u8,
-}
-
-fn AppearanceCustomization_new(user: *u8) -> AppearanceCustomization {
-    return AppearanceCustomization { appearance: AppearanceCustomization_noop_id_0, set_appearance: AppearanceCustomization_noop_v_1, effective_appearance: AppearanceCustomization_noop_id_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl AppearanceCustomization {
-    fn set_appearance(ref this, handler: fn(*u8) -> *u8) {
-        this.appearance = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AppearanceCustomization { return AppearanceCustomization { _obj: ptr }; }
+
+    fn appearance(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("appearance\0")));
     }
-    fn set_set_appearance(ref this, handler: fn(*u8, *u8)) {
-        this.set_appearance = handler;
-        return;
+
+    fn set_appearance(this, appearance: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppearance:\0")), appearance);
     }
-    fn set_effective_appearance(ref this, handler: fn(*u8) -> *u8) {
-        this.effective_appearance = handler;
-        return;
+
+    fn effective_appearance(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("effectiveAppearance\0")));
     }
-}
 
-fn AppearanceCustomization_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn AppearanceCustomization_appearance_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *AppearanceCustomization = { synth::get_associated(self_obj, AppearanceCustomization_key()) as *AppearanceCustomization };
-    let f: fn(*u8) -> *u8 = { (*c).appearance };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn AppearanceCustomization_set_appearance_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *AppearanceCustomization = { synth::get_associated(self_obj, AppearanceCustomization_key()) as *AppearanceCustomization };
-    let f: fn(*u8, *u8) = { (*c).set_appearance };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn AppearanceCustomization_effective_appearance_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *AppearanceCustomization = { synth::get_associated(self_obj, AppearanceCustomization_key()) as *AppearanceCustomization };
-    let f: fn(*u8) -> *u8 = { (*c).effective_appearance };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_AppearanceCustomization(ctx: *AppearanceCustomization) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_AppearanceCustomization\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_appearance: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("appearance\0")), AppearanceCustomization_appearance_imp, #str_ptr("@@:\0"));
-        let add_set_appearance: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setAppearance:\0")), AppearanceCustomization_set_appearance_imp, #str_ptr("v@:@\0"));
-        let add_effective_appearance: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("effectiveAppearance\0")), AppearanceCustomization_effective_appearance_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, AppearanceCustomization_key(), { ctx as *u8 });
-    return d;
 }
 

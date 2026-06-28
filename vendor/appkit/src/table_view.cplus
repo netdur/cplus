@@ -7,47 +7,17 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `NSDragOperation` (NS_ENUM)
-enum DragOperation {
-    None,
-    Copy,
-    Link,
-    Generic,
-    Private,
-    Move,
-    Delete,
-    Every,
-    All_Obsolete,
-    All,
-}
-
-fn drag_operation_raw(v: DragOperation) -> i64 {
-    return match v {
-        DragOperation::None => { 0 as i64 },
-        DragOperation::Copy => { 1 as i64 },
-        DragOperation::Link => { 2 as i64 },
-        DragOperation::Generic => { 4 as i64 },
-        DragOperation::Private => { 8 as i64 },
-        DragOperation::Move => { 16 as i64 },
-        DragOperation::Delete => { 32 as i64 },
-        DragOperation::Every => { 9223372036854775807 as i64 },
-        DragOperation::All_Obsolete => { 15 as i64 },
-        DragOperation::All => { 15 as i64 },
-    };
-}
-
-fn drag_operation_from_raw(raw: i64) -> DragOperation {
-    if raw == (1 as i64) { return DragOperation::Copy; }
-    if raw == (2 as i64) { return DragOperation::Link; }
-    if raw == (4 as i64) { return DragOperation::Generic; }
-    if raw == (8 as i64) { return DragOperation::Private; }
-    if raw == (16 as i64) { return DragOperation::Move; }
-    if raw == (32 as i64) { return DragOperation::Delete; }
-    if raw == (9223372036854775807 as i64) { return DragOperation::Every; }
-    if raw == (15 as i64) { return DragOperation::All_Obsolete; }
-    if raw == (15 as i64) { return DragOperation::All; }
-    return DragOperation::None;
-}
+// `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
+const drag_operation_none: u64 = 0 as u64;
+const drag_operation_copy: u64 = 1 as u64;
+const drag_operation_link: u64 = 2 as u64;
+const drag_operation_generic: u64 = 4 as u64;
+const drag_operation_private: u64 = 8 as u64;
+const drag_operation_move: u64 = 16 as u64;
+const drag_operation_delete: u64 = 32 as u64;
+const drag_operation_every: u64 = 9223372036854775807 as u64;
+const drag_operation_all__obsolete: u64 = 15 as u64;
+const drag_operation_all: u64 = 15 as u64;
 
 // `NSTableViewDropOperation` (NS_ENUM)
 enum TableViewDropOperation {
@@ -67,38 +37,14 @@ fn table_view_drop_operation_from_raw(raw: i64) -> TableViewDropOperation {
     return TableViewDropOperation::NSTableViewDropOn;
 }
 
-// `NSTableViewAnimationOptions` (NS_ENUM)
-enum TableViewAnimationOptions {
-    NSTableViewAnimationEffectNone,
-    NSTableViewAnimationEffectFade,
-    NSTableViewAnimationEffectGap,
-    NSTableViewAnimationSlideUp,
-    NSTableViewAnimationSlideDown,
-    NSTableViewAnimationSlideLeft,
-    NSTableViewAnimationSlideRight,
-}
-
-fn table_view_animation_options_raw(v: TableViewAnimationOptions) -> i64 {
-    return match v {
-        TableViewAnimationOptions::NSTableViewAnimationEffectNone => { 0 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationEffectFade => { 1 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationEffectGap => { 2 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideUp => { 16 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideDown => { 32 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideLeft => { 48 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideRight => { 64 as i64 },
-    };
-}
-
-fn table_view_animation_options_from_raw(raw: i64) -> TableViewAnimationOptions {
-    if raw == (1 as i64) { return TableViewAnimationOptions::NSTableViewAnimationEffectFade; }
-    if raw == (2 as i64) { return TableViewAnimationOptions::NSTableViewAnimationEffectGap; }
-    if raw == (16 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideUp; }
-    if raw == (32 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideDown; }
-    if raw == (48 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideLeft; }
-    if raw == (64 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideRight; }
-    return TableViewAnimationOptions::NSTableViewAnimationEffectNone;
-}
+// `NSTableViewAnimationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const table_view_animation_options_n_s_table_view_animation_effect_none: u64 = 0 as u64;
+const table_view_animation_options_n_s_table_view_animation_effect_fade: u64 = 1 as u64;
+const table_view_animation_options_n_s_table_view_animation_effect_gap: u64 = 2 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_up: u64 = 16 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_down: u64 = 32 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_left: u64 = 48 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_right: u64 = 64 as u64;
 
 // `NSTableViewColumnAutoresizingStyle` (NS_ENUM)
 enum TableViewColumnAutoresizingStyle {
@@ -130,29 +76,11 @@ fn table_view_column_autoresizing_style_from_raw(raw: i64) -> TableViewColumnAut
     return TableViewColumnAutoresizingStyle::NSTableViewNoColumnAutoresizing;
 }
 
-// `NSTableViewGridLineStyle` (NS_ENUM)
-enum TableViewGridLineStyle {
-    NSTableViewGridNone,
-    NSTableViewSolidVerticalGridLineMask,
-    NSTableViewSolidHorizontalGridLineMask,
-    NSTableViewDashedHorizontalGridLineMask,
-}
-
-fn table_view_grid_line_style_raw(v: TableViewGridLineStyle) -> i64 {
-    return match v {
-        TableViewGridLineStyle::NSTableViewGridNone => { 0 as i64 },
-        TableViewGridLineStyle::NSTableViewSolidVerticalGridLineMask => { 1 as i64 },
-        TableViewGridLineStyle::NSTableViewSolidHorizontalGridLineMask => { 2 as i64 },
-        TableViewGridLineStyle::NSTableViewDashedHorizontalGridLineMask => { 8 as i64 },
-    };
-}
-
-fn table_view_grid_line_style_from_raw(raw: i64) -> TableViewGridLineStyle {
-    if raw == (1 as i64) { return TableViewGridLineStyle::NSTableViewSolidVerticalGridLineMask; }
-    if raw == (2 as i64) { return TableViewGridLineStyle::NSTableViewSolidHorizontalGridLineMask; }
-    if raw == (8 as i64) { return TableViewGridLineStyle::NSTableViewDashedHorizontalGridLineMask; }
-    return TableViewGridLineStyle::NSTableViewGridNone;
-}
+// `NSTableViewGridLineStyle` (NS_OPTIONS) — bitfield; combine with `|`.
+const table_view_grid_line_style_n_s_table_view_grid_none: u64 = 0 as u64;
+const table_view_grid_line_style_n_s_table_view_solid_vertical_grid_line_mask: u64 = 1 as u64;
+const table_view_grid_line_style_n_s_table_view_solid_horizontal_grid_line_mask: u64 = 2 as u64;
+const table_view_grid_line_style_n_s_table_view_dashed_horizontal_grid_line_mask: u64 = 8 as u64;
 
 // `NSTableViewRowSizeStyle` (NS_ENUM)
 enum TableViewRowSizeStyle {
@@ -298,6 +226,8 @@ struct TableHeaderView {
 impl TableHeaderView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableHeaderView { return TableHeaderView { _obj: ptr }; }
+
 }
 
 // `NSTableColumn` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -307,6 +237,8 @@ struct TableColumn {
 
 impl TableColumn {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableColumn { return TableColumn { _obj: ptr }; }
 
 }
 
@@ -318,6 +250,8 @@ struct IndexSet {
 impl IndexSet {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> IndexSet { return IndexSet { _obj: ptr }; }
+
 }
 
 // `NSMutableIndexSet` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -327,6 +261,8 @@ struct MutableIndexSet {
 
 impl MutableIndexSet {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableIndexSet { return MutableIndexSet { _obj: ptr }; }
 
 }
 
@@ -338,6 +274,8 @@ struct TableRowView {
 impl TableRowView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableRowView { return TableRowView { _obj: ptr }; }
+
 }
 
 // `NSNib` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -347,6 +285,8 @@ struct Nib {
 
 impl Nib {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Nib { return Nib { _obj: ptr }; }
 
 }
 
@@ -358,6 +298,8 @@ struct TableViewRowAction {
 impl TableViewRowAction {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableViewRowAction { return TableViewRowAction { _obj: ptr }; }
+
 }
 
 // `NSSortDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -367,6 +309,8 @@ struct SortDescriptor {
 
 impl SortDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SortDescriptor { return SortDescriptor { _obj: ptr }; }
 
 }
 
@@ -378,25 +322,35 @@ struct TableView {
 impl TableView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> TableView { return TableView { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> TableView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTableView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TableView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    fn note_height_of_rows_with_indexes_changed(this, index_set: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), index_set);
+    fn note_height_of_rows_with_indexes_changed(this, index_set: IndexSet) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), index_set.raw());
     }
 
-    fn add_table_column(this, table_column: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTableColumn:\0")), table_column);
+    fn add_table_column(this, table_column: TableColumn) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTableColumn:\0")), table_column.raw());
     }
 
-    fn remove_table_column(this, table_column: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTableColumn:\0")), table_column);
+    fn remove_table_column(this, table_column: TableColumn) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTableColumn:\0")), table_column.raw());
     }
 
     // SKIPPED `moveColumn:toColumn:`: (return, arg) shape not yet modelled
     // SKIPPED `columnWithIdentifier:`: (return, arg) shape not yet modelled
-    fn table_column_with_identifier(this, identifier: str) -> option::Option[*u8] {
+    fn table_column_with_identifier(this, identifier: str) -> option::Option[TableColumn] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("tableColumnWithIdentifier:\0")), bridge::nsstring(identifier));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TableColumn]::None;
+        }
+        return option::some(TableColumn::from_raw(obj));
     }
 
     fn tile(this) {
@@ -423,12 +377,12 @@ impl TableView {
 
     // SKIPPED `reloadDataForRowIndexes:columnIndexes:`: (return, arg) shape not yet modelled
     // SKIPPED `setIndicatorImage:inTableColumn:`: (return, arg) shape not yet modelled
-    fn indicator_image_in_table_column(this, table_column: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indicatorImageInTableColumn:\0")), table_column);
+    fn indicator_image_in_table_column(this, table_column: TableColumn) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indicatorImageInTableColumn:\0")), table_column.raw());
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `canDragRowsWithIndexes:atPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `canDragRowsWithIndexes:atPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `dragImageForRowsWithIndexes:tableColumns:event:offset:`: param `NSArray<NSTableColumn *> * _Nonnull` — generic collection
     // SKIPPED `setDraggingSourceOperationMask:forLocal:`: (return, arg) shape not yet modelled
     // SKIPPED `setDropRow:dropOperation:`: (return, arg) shape not yet modelled
@@ -444,20 +398,38 @@ impl TableView {
     // SKIPPED `selectRowIndexes:byExtendingSelection:`: (return, arg) shape not yet modelled
     // SKIPPED `deselectColumn:`: (return, arg) shape not yet modelled
     // SKIPPED `deselectRow:`: (return, arg) shape not yet modelled
-    // SKIPPED `isColumnSelected:`: (return, arg) shape not yet modelled
-    // SKIPPED `isRowSelected:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfColumn:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `rectOfRow:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `columnIndexesInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `rowsInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `columnAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `rowAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `frameOfCellAtColumn:row:`: return `NSRect` — unmapped type `NSRect`
+    fn is_column_selected(this, column: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isColumnSelected:\0")), column) != (0 as i8);
+    }
+
+    fn is_row_selected(this, row: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isRowSelected:\0")), row) != (0 as i8);
+    }
+
+    // SKIPPED `rectOfColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectOfRow:`: (return, arg) shape not yet modelled
+    fn column_indexes_in_rect(this, rect: rt::Rect) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("columnIndexesInRect:\0")), rect));
+    }
+
+    // SKIPPED `rowsInRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `columnAtPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `rowAtPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameOfCellAtColumn:row:`: (return, arg) shape not yet modelled
     // SKIPPED `editColumn:row:withEvent:select:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawRow:clipRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `highlightSelectionInClipRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawGridInClipRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawBackgroundInClipRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawRow:clipRect:`: (return, arg) shape not yet modelled
+    fn highlight_selection_in_clip_rect(this, clip_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("highlightSelectionInClipRect:\0")), clip_rect);
+    }
+
+    fn draw_grid_in_clip_rect(this, clip_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawGridInClipRect:\0")), clip_rect);
+    }
+
+    fn draw_background_in_clip_rect(this, clip_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawBackgroundInClipRect:\0")), clip_rect);
+    }
+
     // SKIPPED `viewAtColumn:row:makeIfNecessary:`: (return, arg) shape not yet modelled
     // SKIPPED `rowViewAtRow:makeIfNecessary:`: (return, arg) shape not yet modelled
     // SKIPPED `rowForView:`: (return, arg) shape not yet modelled
@@ -487,17 +459,34 @@ impl TableView {
     // SKIPPED `registerNib:forIdentifier:`: (return, arg) shape not yet modelled
     // SKIPPED `didAddRowView:forRow:`: (return, arg) shape not yet modelled
     // SKIPPED `didRemoveRowView:forRow:`: (return, arg) shape not yet modelled
-    // SKIPPED `dataSource`: return `id<NSTableViewDataSource> _Nullable` — generic collection
-    // SKIPPED `setDataSource:`: param `id<NSTableViewDataSource> _Nullable` — generic collection
-    // SKIPPED `delegate`: return `id<NSTableViewDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTableViewDelegate> _Nullable` — generic collection
-    fn header_view(this) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("headerView\0")));
+    fn data_source(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
         return bridge::obj_option(obj);
     }
 
-    fn set_header_view(this, header_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderView:\0")), header_view);
+    fn set_data_source(this, data_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    fn header_view(this) -> option::Option[TableHeaderView] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("headerView\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TableHeaderView]::None;
+        }
+        return option::some(TableHeaderView::from_raw(obj));
+    }
+
+    fn set_header_view(this, header_view: TableHeaderView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderView:\0")), header_view.raw());
     }
 
     fn corner_view(this) -> option::Option[*u8] {
@@ -530,13 +519,19 @@ impl TableView {
     }
 
     // SKIPPED `setColumnAutoresizingStyle:`: (return, arg) shape not yet modelled
-    fn grid_style_mask(this) -> TableViewGridLineStyle {
-        return table_view_grid_line_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("gridStyleMask\0"))));
+    fn grid_style_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gridStyleMask\0")));
     }
 
     // SKIPPED `setGridStyleMask:`: (return, arg) shape not yet modelled
-    // SKIPPED `intercellSpacing`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setIntercellSpacing:`: param `NSSize` — unmapped type `NSSize`
+    fn intercell_spacing(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("intercellSpacing\0")));
+    }
+
+    fn set_intercell_spacing(this, intercell_spacing: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setIntercellSpacing:\0")), intercell_spacing);
+    }
+
     fn uses_alternating_row_background_colors(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesAlternatingRowBackgroundColors\0"))) != (0 as i8);
     }
@@ -607,13 +602,16 @@ impl TableView {
     // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `sortDescriptors`: return `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
     // SKIPPED `setSortDescriptors:`: param `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
-    fn highlighted_table_column(this) -> option::Option[*u8] {
+    fn highlighted_table_column(this) -> option::Option[TableColumn] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("highlightedTableColumn\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TableColumn]::None;
+        }
+        return option::some(TableColumn::from_raw(obj));
     }
 
-    fn set_highlighted_table_column(this, highlighted_table_column: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHighlightedTableColumn:\0")), highlighted_table_column);
+    fn set_highlighted_table_column(this, highlighted_table_column: TableColumn) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHighlightedTableColumn:\0")), highlighted_table_column.raw());
     }
 
     fn vertical_motion_can_begin_drag(this) -> bool {
@@ -648,12 +646,12 @@ impl TableView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsColumnSelection:\0")), allows_column_selection as i8);
     }
 
-    fn selected_column_indexes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedColumnIndexes\0")));
+    fn selected_column_indexes(this) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("selectedColumnIndexes\0"))));
     }
 
-    fn selected_row_indexes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowIndexes\0")));
+    fn selected_row_indexes(this) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowIndexes\0"))));
     }
 
     fn selected_column(this) -> i64 {
@@ -785,7 +783,7 @@ impl TableView {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autoresizesAllColumnsToFit\0"))) != (0 as i8);
     }
 
-    // SKIPPED `columnsInRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `columnsInRect:`: (return, arg) shape not yet modelled
     // SKIPPED `preparedCellAtColumn:row:`: (return, arg) shape not yet modelled
     // SKIPPED `textShouldBeginEditing:`: (return, arg) shape not yet modelled
     // SKIPPED `textShouldEndEditing:`: (return, arg) shape not yet modelled
@@ -832,14 +830,14 @@ impl TableView {
 // SKIPPED `tableView:sizeToFitWidthOfColumn:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tableView:shouldReorderColumn:toColumn:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tableView:rowActionsForRow:edge:`: arg shape (only <=5 object args modelled)
-fn TableViewDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegateProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegateProtocol_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TableViewDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-fn TableViewDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TableViewDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+fn TableViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct TableViewDelegateProtocol {
+struct TableViewDelegate {
     selection_should_change_in_table_view: fn(*u8, *u8) -> i8,
     table_view_selection_indexes_for_proposed_selection: fn(*u8, *u8, *u8) -> *u8,
     table_view_should_select_table_column: fn(*u8, *u8, *u8) -> i8,
@@ -856,11 +854,11 @@ struct TableViewDelegateProtocol {
     opaque user: *u8,
 }
 
-fn TableViewDelegateProtocol_new(user: *u8) -> TableViewDelegateProtocol {
-    return TableViewDelegateProtocol { selection_should_change_in_table_view: TableViewDelegateProtocol_noop_i8_1, table_view_selection_indexes_for_proposed_selection: TableViewDelegateProtocol_noop_id_2, table_view_should_select_table_column: TableViewDelegateProtocol_noop_i8_2, table_view_mouse_down_in_header_of_table_column: TableViewDelegateProtocol_noop_v_2, table_view_did_click_table_column: TableViewDelegateProtocol_noop_v_2, table_view_did_drag_table_column: TableViewDelegateProtocol_noop_v_2, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegateProtocol_noop_i8_3, table_view_user_can_change_visibility_of_table_column: TableViewDelegateProtocol_noop_i8_2, table_view_user_did_change_visibility_of_table_columns: TableViewDelegateProtocol_noop_v_2, table_view_selection_did_change: TableViewDelegateProtocol_noop_v_1, table_view_column_did_move: TableViewDelegateProtocol_noop_v_1, table_view_column_did_resize: TableViewDelegateProtocol_noop_v_1, table_view_selection_is_changing: TableViewDelegateProtocol_noop_v_1, user: user };
+fn TableViewDelegate_new(user: *u8) -> TableViewDelegate {
+    return TableViewDelegate { selection_should_change_in_table_view: TableViewDelegate_noop_i8_1, table_view_selection_indexes_for_proposed_selection: TableViewDelegate_noop_id_2, table_view_should_select_table_column: TableViewDelegate_noop_i8_2, table_view_mouse_down_in_header_of_table_column: TableViewDelegate_noop_v_2, table_view_did_click_table_column: TableViewDelegate_noop_v_2, table_view_did_drag_table_column: TableViewDelegate_noop_v_2, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegate_noop_i8_3, table_view_user_can_change_visibility_of_table_column: TableViewDelegate_noop_i8_2, table_view_user_did_change_visibility_of_table_columns: TableViewDelegate_noop_v_2, table_view_selection_did_change: TableViewDelegate_noop_v_1, table_view_column_did_move: TableViewDelegate_noop_v_1, table_view_column_did_resize: TableViewDelegate_noop_v_1, table_view_selection_is_changing: TableViewDelegate_noop_v_1, user: user };
 }
 
-impl TableViewDelegateProtocol {
+impl TableViewDelegate {
     fn set_selection_should_change_in_table_view(ref this, handler: fn(*u8, *u8) -> i8) {
         this.selection_should_change_in_table_view = handler;
         return;
@@ -915,129 +913,129 @@ impl TableViewDelegateProtocol {
     }
 }
 
-fn TableViewDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TableViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TableViewDelegateProtocol_selection_should_change_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_selection_should_change_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).selection_should_change_in_table_view };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn TableViewDelegateProtocol_table_view_selection_indexes_for_proposed_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_selection_indexes_for_proposed_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).table_view_selection_indexes_for_proposed_selection };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TableViewDelegateProtocol_table_view_should_select_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_should_select_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).table_view_should_select_table_column };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TableViewDelegateProtocol_table_view_mouse_down_in_header_of_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_mouse_down_in_header_of_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).table_view_mouse_down_in_header_of_table_column };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_did_click_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_did_click_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).table_view_did_click_table_column };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_did_drag_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_did_drag_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).table_view_did_drag_table_column };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_should_type_select_for_event_with_current_search_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_should_type_select_for_event_with_current_search_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).table_view_should_type_select_for_event_with_current_search_string };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TableViewDelegateProtocol_table_view_user_can_change_visibility_of_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).table_view_user_can_change_visibility_of_table_column };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TableViewDelegateProtocol_table_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).table_view_user_did_change_visibility_of_table_columns };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) = { (*c).table_view_selection_did_change };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_column_did_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_column_did_move_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) = { (*c).table_view_column_did_move };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_column_did_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_column_did_resize_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) = { (*c).table_view_column_did_resize };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn TableViewDelegateProtocol_table_view_selection_is_changing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TableViewDelegateProtocol = { synth::get_associated(self_obj, TableViewDelegateProtocol_key()) as *TableViewDelegateProtocol };
+fn TableViewDelegate_table_view_selection_is_changing_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) = { (*c).table_view_selection_is_changing };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_TableViewDelegateProtocol(ctx: *TableViewDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TableViewDelegateProtocol\0");
+fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TableViewDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_selection_should_change_in_table_view: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("selectionShouldChangeInTableView:\0")), TableViewDelegateProtocol_selection_should_change_in_table_view_imp, #str_ptr("c@:@\0"));
-        let add_table_view_selection_indexes_for_proposed_selection: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tableView:selectionIndexesForProposedSelection:\0")), TableViewDelegateProtocol_table_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
-        let add_table_view_should_select_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:shouldSelectTableColumn:\0")), TableViewDelegateProtocol_table_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_table_view_mouse_down_in_header_of_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:mouseDownInHeaderOfTableColumn:\0")), TableViewDelegateProtocol_table_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_did_click_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didClickTableColumn:\0")), TableViewDelegateProtocol_table_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_did_drag_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didDragTableColumn:\0")), TableViewDelegateProtocol_table_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), TableViewDelegateProtocol_table_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
-        let add_table_view_user_can_change_visibility_of_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:userCanChangeVisibilityOfTableColumn:\0")), TableViewDelegateProtocol_table_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_table_view_user_did_change_visibility_of_table_columns: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:userDidChangeVisibilityOfTableColumns:\0")), TableViewDelegateProtocol_table_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_selection_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), TableViewDelegateProtocol_table_view_selection_did_change_imp, #str_ptr("v@:@\0"));
-        let add_table_view_column_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidMove:\0")), TableViewDelegateProtocol_table_view_column_did_move_imp, #str_ptr("v@:@\0"));
-        let add_table_view_column_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidResize:\0")), TableViewDelegateProtocol_table_view_column_did_resize_imp, #str_ptr("v@:@\0"));
-        let add_table_view_selection_is_changing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionIsChanging:\0")), TableViewDelegateProtocol_table_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
+        let add_selection_should_change_in_table_view: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("selectionShouldChangeInTableView:\0")), TableViewDelegate_selection_should_change_in_table_view_imp, #str_ptr("c@:@\0"));
+        let add_table_view_selection_indexes_for_proposed_selection: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tableView:selectionIndexesForProposedSelection:\0")), TableViewDelegate_table_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
+        let add_table_view_should_select_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:shouldSelectTableColumn:\0")), TableViewDelegate_table_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_table_view_mouse_down_in_header_of_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:mouseDownInHeaderOfTableColumn:\0")), TableViewDelegate_table_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_did_click_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didClickTableColumn:\0")), TableViewDelegate_table_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_did_drag_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didDragTableColumn:\0")), TableViewDelegate_table_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), TableViewDelegate_table_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
+        let add_table_view_user_can_change_visibility_of_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:userCanChangeVisibilityOfTableColumn:\0")), TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_table_view_user_did_change_visibility_of_table_columns: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:userDidChangeVisibilityOfTableColumns:\0")), TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_selection_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), TableViewDelegate_table_view_selection_did_change_imp, #str_ptr("v@:@\0"));
+        let add_table_view_column_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidMove:\0")), TableViewDelegate_table_view_column_did_move_imp, #str_ptr("v@:@\0"));
+        let add_table_view_column_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidResize:\0")), TableViewDelegate_table_view_column_did_resize_imp, #str_ptr("v@:@\0"));
+        let add_table_view_selection_is_changing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionIsChanging:\0")), TableViewDelegate_table_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TableViewDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TableViewDelegate_key(), { ctx as *u8 });
     return d;
 }
 
@@ -1050,12 +1048,12 @@ fn create_TableViewDelegateProtocol(ctx: *TableViewDelegateProtocol) -> *u8 {
 // SKIPPED `tableView:updateDraggingItemsForDrag:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tableView:validateDrop:proposedRow:proposedDropOperation:`: arg shape (only <=5 object args modelled)
 // SKIPPED `tableView:acceptDrop:row:dropOperation:`: arg shape (only <=5 object args modelled)
-fn TableViewDataSourceProtocol_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
-fn TableViewDataSourceProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TableViewDataSourceProtocol_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TableViewDataSourceProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TableViewDataSource_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn TableViewDataSource_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TableViewDataSource_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDataSource_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct TableViewDataSourceProtocol {
+struct TableViewDataSource {
     number_of_rows_in_table_view: fn(*u8, *u8) -> i64,
     table_view_sort_descriptors_did_change: fn(*u8, *u8, *u8),
     table_view_write_rows_with_indexes_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
@@ -1063,11 +1061,11 @@ struct TableViewDataSourceProtocol {
     opaque user: *u8,
 }
 
-fn TableViewDataSourceProtocol_new(user: *u8) -> TableViewDataSourceProtocol {
-    return TableViewDataSourceProtocol { number_of_rows_in_table_view: TableViewDataSourceProtocol_noop_i64_1, table_view_sort_descriptors_did_change: TableViewDataSourceProtocol_noop_v_2, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSourceProtocol_noop_i8_3, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSourceProtocol_noop_id_3, user: user };
+fn TableViewDataSource_new(user: *u8) -> TableViewDataSource {
+    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_1, table_view_sort_descriptors_did_change: TableViewDataSource_noop_v_2, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_3, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_3, user: user };
 }
 
-impl TableViewDataSourceProtocol {
+impl TableViewDataSource {
     fn set_number_of_rows_in_table_view(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_rows_in_table_view = handler;
         return;
@@ -1086,50 +1084,50 @@ impl TableViewDataSourceProtocol {
     }
 }
 
-fn TableViewDataSourceProtocol_key() -> *u8 { return { 28673 as *u8 }; }
+fn TableViewDataSource_key() -> *u8 { return { 28673 as *u8 }; }
 
-fn TableViewDataSourceProtocol_number_of_rows_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
-    let c: *TableViewDataSourceProtocol = { synth::get_associated(self_obj, TableViewDataSourceProtocol_key()) as *TableViewDataSourceProtocol };
+fn TableViewDataSource_number_of_rows_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
     let f: fn(*u8, *u8) -> i64 = { (*c).number_of_rows_in_table_view };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn TableViewDataSourceProtocol_table_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDataSourceProtocol = { synth::get_associated(self_obj, TableViewDataSourceProtocol_key()) as *TableViewDataSourceProtocol };
+fn TableViewDataSource_table_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
     let f: fn(*u8, *u8, *u8) = { (*c).table_view_sort_descriptors_did_change };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TableViewDataSourceProtocol_table_view_write_rows_with_indexes_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *TableViewDataSourceProtocol = { synth::get_associated(self_obj, TableViewDataSourceProtocol_key()) as *TableViewDataSourceProtocol };
+fn TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).table_view_write_rows_with_indexes_to_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TableViewDataSourceProtocol_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *TableViewDataSourceProtocol = { synth::get_associated(self_obj, TableViewDataSourceProtocol_key()) as *TableViewDataSourceProtocol };
+fn TableViewDataSource_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn create_TableViewDataSourceProtocol(ctx: *TableViewDataSourceProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TableViewDataSourceProtocol\0");
+fn create_TableViewDataSource(ctx: *TableViewDataSource) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TableViewDataSource\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_number_of_rows_in_table_view: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSourceProtocol_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
-        let add_table_view_sort_descriptors_did_change: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:sortDescriptorsDidChange:\0")), TableViewDataSourceProtocol_table_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_write_rows_with_indexes_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:writeRowsWithIndexes:toPasteboard:\0")), TableViewDataSourceProtocol_table_view_write_rows_with_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("tableView:namesOfPromisedFilesDroppedAtDestination:forDraggedRowsWithIndexes:\0")), TableViewDataSourceProtocol_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp, #str_ptr("@@:@@@\0"));
+        let add_number_of_rows_in_table_view: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSource_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
+        let add_table_view_sort_descriptors_did_change: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:sortDescriptorsDidChange:\0")), TableViewDataSource_table_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_write_rows_with_indexes_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:writeRowsWithIndexes:toPasteboard:\0")), TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("tableView:namesOfPromisedFilesDroppedAtDestination:forDraggedRowsWithIndexes:\0")), TableViewDataSource_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TableViewDataSourceProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TableViewDataSource_key(), { ctx as *u8 });
     return d;
 }
 

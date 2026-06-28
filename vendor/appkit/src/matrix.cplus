@@ -38,6 +38,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSMatrix` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -48,7 +50,14 @@ struct Matrix {
 impl Matrix {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> Matrix { return Matrix { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> Matrix {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMatrix\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Matrix { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
     // SKIPPED `makeCellAtRow:column:`: (return, arg) shape not yet modelled
@@ -69,7 +78,10 @@ impl Matrix {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
     }
 
-    // SKIPPED `selectCellWithTag:`: (return, arg) shape not yet modelled
+    fn select_cell_with_tag(this, tag: i64) -> bool {
+        return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectCellWithTag:\0")), tag) != (0 as i8);
+    }
+
     fn set_scrollable(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setScrollable:\0")), flag as i8);
     }
@@ -77,9 +89,9 @@ impl Matrix {
     // SKIPPED `setState:atRow:column:`: (return, arg) shape not yet modelled
     // SKIPPED `getNumberOfRows:columns:`: (return, arg) shape not yet modelled
     // SKIPPED `cellAtRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `cellFrameAtRow:column:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `cellFrameAtRow:column:`: (return, arg) shape not yet modelled
     // SKIPPED `getRow:column:ofCell:`: (return, arg) shape not yet modelled
-    // SKIPPED `getRow:column:forPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `getRow:column:forPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `renewRows:columns:`: (return, arg) shape not yet modelled
     // SKIPPED `putCell:atRow:column:`: (return, arg) shape not yet modelled
     fn add_row(this) {
@@ -204,25 +216,40 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSelectionByRect:\0")), selection_by_rect as i8);
     }
 
-    // SKIPPED `cellSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setCellSize:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `intercellSpacing`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setIntercellSpacing:`: param `NSSize` — unmapped type `NSSize`
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn cell_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("cellSize\0")));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_cell_size(this, cell_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setCellSize:\0")), cell_size);
     }
 
-    fn cell_background_color(this) -> option::Option[*u8] {
+    fn intercell_spacing(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("intercellSpacing\0")));
+    }
+
+    fn set_intercell_spacing(this, intercell_spacing: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setIntercellSpacing:\0")), intercell_spacing);
+    }
+
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
+    }
+
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
+    }
+
+    fn cell_background_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("cellBackgroundColor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
     }
 
-    fn set_cell_background_color(this, cell_background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCellBackgroundColor:\0")), cell_background_color);
+    fn set_cell_background_color(this, cell_background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCellBackgroundColor:\0")), cell_background_color.raw());
     }
 
     fn draws_cell_background(this) -> bool {
@@ -271,8 +298,15 @@ impl Matrix {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("mouseDownFlags\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSMatrixDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSMatrixDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn autorecalculates_cell_size(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autorecalculatesCellSize\0"))) != (0 as i8);
     }

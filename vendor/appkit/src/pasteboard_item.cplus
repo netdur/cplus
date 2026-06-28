@@ -6,7 +6,6 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
-import "objc/synthesis" as synth;
 
 // `NSPasteboard` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Pasteboard {
@@ -15,6 +14,8 @@ struct Pasteboard {
 
 impl Pasteboard {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Pasteboard { return Pasteboard { _obj: ptr }; }
 
 }
 
@@ -26,12 +27,14 @@ struct PasteboardItem {
 impl PasteboardItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PasteboardItem { return PasteboardItem { _obj: ptr }; }
+
     fn available_type_from_array(this, types: vec::Vec[text::Text]) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("availableTypeFromArray:\0")), bridge::nsarray_of_text(types));
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setDataProvider:forTypes:`: param `id<NSPasteboardItemDataProvider> _Nonnull` — generic collection
+    // SKIPPED `setDataProvider:forTypes:`: (return, arg) shape not yet modelled
     // SKIPPED `setData:forType:`: (return, arg) shape not yet modelled
     // SKIPPED `setString:forType:`: (return, arg) shape not yet modelled
     // SKIPPED `setPropertyList:forType:`: (return, arg) shape not yet modelled
@@ -69,46 +72,20 @@ impl PasteboardItem {
 
 }
 
-// `NSPasteboardItemDataProvider` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `pasteboard:item:provideDataForType:`: arg shape (only <=5 object args modelled)
-fn PasteboardItemDataProviderProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-
-struct PasteboardItemDataProviderProtocol {
-    pasteboard_finished_with_data_provider: fn(*u8, *u8),
-    opaque user: *u8,
+// `NSPasteboardItemDataProvider` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct PasteboardItemDataProvider {
+    opaque _obj: *u8,
 }
 
-fn PasteboardItemDataProviderProtocol_new(user: *u8) -> PasteboardItemDataProviderProtocol {
-    return PasteboardItemDataProviderProtocol { pasteboard_finished_with_data_provider: PasteboardItemDataProviderProtocol_noop_v_1, user: user };
-}
+impl PasteboardItemDataProvider {
+    fn raw(this) -> *u8 { return this._obj; }
 
-impl PasteboardItemDataProviderProtocol {
-    fn set_pasteboard_finished_with_data_provider(ref this, handler: fn(*u8, *u8)) {
-        this.pasteboard_finished_with_data_provider = handler;
-        return;
+    fn from_raw(ptr: *u8) -> PasteboardItemDataProvider { return PasteboardItemDataProvider { _obj: ptr }; }
+
+    // SKIPPED `pasteboard:item:provideDataForType:`: (return, arg) shape not yet modelled
+    fn pasteboard_finished_with_data_provider(this, pasteboard: Pasteboard) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pasteboardFinishedWithDataProvider:\0")), pasteboard.raw());
     }
-}
 
-fn PasteboardItemDataProviderProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn PasteboardItemDataProviderProtocol_pasteboard_finished_with_data_provider_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PasteboardItemDataProviderProtocol = { synth::get_associated(self_obj, PasteboardItemDataProviderProtocol_key()) as *PasteboardItemDataProviderProtocol };
-    let f: fn(*u8, *u8) = { (*c).pasteboard_finished_with_data_provider };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_PasteboardItemDataProviderProtocol(ctx: *PasteboardItemDataProviderProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PasteboardItemDataProviderProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_pasteboard_finished_with_data_provider: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pasteboardFinishedWithDataProvider:\0")), PasteboardItemDataProviderProtocol_pasteboard_finished_with_data_provider_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PasteboardItemDataProviderProtocol_key(), { ctx as *u8 });
-    return d;
 }
 

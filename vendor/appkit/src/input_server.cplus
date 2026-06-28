@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSInputServer` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct InputServer {
@@ -15,144 +14,86 @@ struct InputServer {
 impl InputServer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> InputServer { return InputServer { _obj: ptr }; }
+
     // SKIPPED `initWithDelegate:name:`: init arg shape not yet modelled
     fn drop(ref this) {
         rt::release(this._obj);
     }
 }
 
-// `NSInputServiceProvider` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `doCommandBySelector:client:`: arg shape (only <=5 object args modelled)
-// SKIPPED `markedTextSelectionChanged:client:`: arg shape (only <=5 object args modelled)
-// SKIPPED `canBeDisabled`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `wantsToInterpretAllKeystrokes`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `wantsToHandleMouseEvents`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `wantsToDelayTextChangeNotifications`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `activeConversationWillChange:fromOldConversation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `activeConversationChanged:toNewConversation:`: arg shape (only <=5 object args modelled)
-fn InputServiceProvider_noop_v_1(user: *u8, a0: *u8) { return; }
-fn InputServiceProvider_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-
+// `NSInputServiceProvider` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct InputServiceProvider {
-    insert_text_client: fn(*u8, *u8, *u8),
-    marked_text_abandoned: fn(*u8, *u8),
-    terminate: fn(*u8, *u8),
-    input_client_become_active: fn(*u8, *u8),
-    input_client_resign_active: fn(*u8, *u8),
-    input_client_enabled: fn(*u8, *u8),
-    input_client_disabled: fn(*u8, *u8),
-    opaque user: *u8,
-}
-
-fn InputServiceProvider_new(user: *u8) -> InputServiceProvider {
-    return InputServiceProvider { insert_text_client: InputServiceProvider_noop_v_2, marked_text_abandoned: InputServiceProvider_noop_v_1, terminate: InputServiceProvider_noop_v_1, input_client_become_active: InputServiceProvider_noop_v_1, input_client_resign_active: InputServiceProvider_noop_v_1, input_client_enabled: InputServiceProvider_noop_v_1, input_client_disabled: InputServiceProvider_noop_v_1, user: user };
+    opaque _obj: *u8,
 }
 
 impl InputServiceProvider {
-    fn set_insert_text_client(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.insert_text_client = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> InputServiceProvider { return InputServiceProvider { _obj: ptr }; }
+
+    // SKIPPED `insertText:client:`: (return, arg) shape not yet modelled
+    // SKIPPED `doCommandBySelector:client:`: param `SEL _Null_unspecified` — unmapped type `SEL`
+    fn marked_text_abandoned(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("markedTextAbandoned:\0")), sender);
     }
-    fn set_marked_text_abandoned(ref this, handler: fn(*u8, *u8)) {
-        this.marked_text_abandoned = handler;
-        return;
+
+    fn marked_text_selection_changed_client(this, new_sel: rt::Range, sender: *u8) {
+        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("markedTextSelectionChanged:client:\0")), new_sel, sender);
     }
-    fn set_terminate(ref this, handler: fn(*u8, *u8)) {
-        this.terminate = handler;
-        return;
+
+    fn terminate(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
-    fn set_input_client_become_active(ref this, handler: fn(*u8, *u8)) {
-        this.input_client_become_active = handler;
-        return;
+
+    fn can_be_disabled(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("canBeDisabled\0"))) != (0 as i8);
     }
-    fn set_input_client_resign_active(ref this, handler: fn(*u8, *u8)) {
-        this.input_client_resign_active = handler;
-        return;
+
+    fn wants_to_interpret_all_keystrokes(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToInterpretAllKeystrokes\0"))) != (0 as i8);
     }
-    fn set_input_client_enabled(ref this, handler: fn(*u8, *u8)) {
-        this.input_client_enabled = handler;
-        return;
+
+    fn wants_to_handle_mouse_events(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToHandleMouseEvents\0"))) != (0 as i8);
     }
-    fn set_input_client_disabled(ref this, handler: fn(*u8, *u8)) {
-        this.input_client_disabled = handler;
-        return;
+
+    fn wants_to_delay_text_change_notifications(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToDelayTextChangeNotifications\0"))) != (0 as i8);
     }
+
+    fn input_client_become_active(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientBecomeActive:\0")), sender);
+    }
+
+    fn input_client_resign_active(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientResignActive:\0")), sender);
+    }
+
+    fn input_client_enabled(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientEnabled:\0")), sender);
+    }
+
+    fn input_client_disabled(this, sender: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientDisabled:\0")), sender);
+    }
+
+    // SKIPPED `activeConversationWillChange:fromOldConversation:`: (return, arg) shape not yet modelled
+    // SKIPPED `activeConversationChanged:toNewConversation:`: (return, arg) shape not yet modelled
 }
 
-fn InputServiceProvider_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn InputServiceProvider_insert_text_client_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8, *u8) = { (*c).insert_text_client };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
+// `NSInputServerMouseTracker` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct InputServerMouseTracker {
+    opaque _obj: *u8,
 }
 
-fn InputServiceProvider_marked_text_abandoned_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).marked_text_abandoned };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
+impl InputServerMouseTracker {
+    fn raw(this) -> *u8 { return this._obj; }
 
-fn InputServiceProvider_terminate_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).terminate };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
+    fn from_raw(ptr: *u8) -> InputServerMouseTracker { return InputServerMouseTracker { _obj: ptr }; }
 
-fn InputServiceProvider_input_client_become_active_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).input_client_become_active };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn InputServiceProvider_input_client_resign_active_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).input_client_resign_active };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn InputServiceProvider_input_client_enabled_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).input_client_enabled };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn InputServiceProvider_input_client_disabled_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *InputServiceProvider = { synth::get_associated(self_obj, InputServiceProvider_key()) as *InputServiceProvider };
-    let f: fn(*u8, *u8) = { (*c).input_client_disabled };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_InputServiceProvider(ctx: *InputServiceProvider) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_InputServiceProvider\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_insert_text_client: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("insertText:client:\0")), InputServiceProvider_insert_text_client_imp, #str_ptr("v@:@@\0"));
-        let add_marked_text_abandoned: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("markedTextAbandoned:\0")), InputServiceProvider_marked_text_abandoned_imp, #str_ptr("v@:@\0"));
-        let add_terminate: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("terminate:\0")), InputServiceProvider_terminate_imp, #str_ptr("v@:@\0"));
-        let add_input_client_become_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("inputClientBecomeActive:\0")), InputServiceProvider_input_client_become_active_imp, #str_ptr("v@:@\0"));
-        let add_input_client_resign_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("inputClientResignActive:\0")), InputServiceProvider_input_client_resign_active_imp, #str_ptr("v@:@\0"));
-        let add_input_client_enabled: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("inputClientEnabled:\0")), InputServiceProvider_input_client_enabled_imp, #str_ptr("v@:@\0"));
-        let add_input_client_disabled: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("inputClientDisabled:\0")), InputServiceProvider_input_client_disabled_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, InputServiceProvider_key(), { ctx as *u8 });
-    return d;
+    // SKIPPED `mouseDownOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
+    // SKIPPED `mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
+    // SKIPPED `mouseUpOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
 }
 

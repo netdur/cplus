@@ -7,6 +7,105 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 
+// `NSCompositingOperation` (NS_ENUM)
+enum CompositingOperation {
+    Clear,
+    Copy,
+    SourceOver,
+    SourceIn,
+    SourceOut,
+    SourceAtop,
+    DestinationOver,
+    DestinationIn,
+    DestinationOut,
+    DestinationAtop,
+    XOR,
+    PlusDarker,
+    Highlight,
+    PlusLighter,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+fn compositing_operation_raw(v: CompositingOperation) -> i64 {
+    return match v {
+        CompositingOperation::Clear => { 0 as i64 },
+        CompositingOperation::Copy => { 1 as i64 },
+        CompositingOperation::SourceOver => { 2 as i64 },
+        CompositingOperation::SourceIn => { 3 as i64 },
+        CompositingOperation::SourceOut => { 4 as i64 },
+        CompositingOperation::SourceAtop => { 5 as i64 },
+        CompositingOperation::DestinationOver => { 6 as i64 },
+        CompositingOperation::DestinationIn => { 7 as i64 },
+        CompositingOperation::DestinationOut => { 8 as i64 },
+        CompositingOperation::DestinationAtop => { 9 as i64 },
+        CompositingOperation::XOR => { 10 as i64 },
+        CompositingOperation::PlusDarker => { 11 as i64 },
+        CompositingOperation::Highlight => { 12 as i64 },
+        CompositingOperation::PlusLighter => { 13 as i64 },
+        CompositingOperation::Multiply => { 14 as i64 },
+        CompositingOperation::Screen => { 15 as i64 },
+        CompositingOperation::Overlay => { 16 as i64 },
+        CompositingOperation::Darken => { 17 as i64 },
+        CompositingOperation::Lighten => { 18 as i64 },
+        CompositingOperation::ColorDodge => { 19 as i64 },
+        CompositingOperation::ColorBurn => { 20 as i64 },
+        CompositingOperation::SoftLight => { 21 as i64 },
+        CompositingOperation::HardLight => { 22 as i64 },
+        CompositingOperation::Difference => { 23 as i64 },
+        CompositingOperation::Exclusion => { 24 as i64 },
+        CompositingOperation::Hue => { 25 as i64 },
+        CompositingOperation::Saturation => { 26 as i64 },
+        CompositingOperation::Color => { 27 as i64 },
+        CompositingOperation::Luminosity => { 28 as i64 },
+    };
+}
+
+fn compositing_operation_from_raw(raw: i64) -> CompositingOperation {
+    if raw == (1 as i64) { return CompositingOperation::Copy; }
+    if raw == (2 as i64) { return CompositingOperation::SourceOver; }
+    if raw == (3 as i64) { return CompositingOperation::SourceIn; }
+    if raw == (4 as i64) { return CompositingOperation::SourceOut; }
+    if raw == (5 as i64) { return CompositingOperation::SourceAtop; }
+    if raw == (6 as i64) { return CompositingOperation::DestinationOver; }
+    if raw == (7 as i64) { return CompositingOperation::DestinationIn; }
+    if raw == (8 as i64) { return CompositingOperation::DestinationOut; }
+    if raw == (9 as i64) { return CompositingOperation::DestinationAtop; }
+    if raw == (10 as i64) { return CompositingOperation::XOR; }
+    if raw == (11 as i64) { return CompositingOperation::PlusDarker; }
+    if raw == (12 as i64) { return CompositingOperation::Highlight; }
+    if raw == (13 as i64) { return CompositingOperation::PlusLighter; }
+    if raw == (14 as i64) { return CompositingOperation::Multiply; }
+    if raw == (15 as i64) { return CompositingOperation::Screen; }
+    if raw == (16 as i64) { return CompositingOperation::Overlay; }
+    if raw == (17 as i64) { return CompositingOperation::Darken; }
+    if raw == (18 as i64) { return CompositingOperation::Lighten; }
+    if raw == (19 as i64) { return CompositingOperation::ColorDodge; }
+    if raw == (20 as i64) { return CompositingOperation::ColorBurn; }
+    if raw == (21 as i64) { return CompositingOperation::SoftLight; }
+    if raw == (22 as i64) { return CompositingOperation::HardLight; }
+    if raw == (23 as i64) { return CompositingOperation::Difference; }
+    if raw == (24 as i64) { return CompositingOperation::Exclusion; }
+    if raw == (25 as i64) { return CompositingOperation::Hue; }
+    if raw == (26 as i64) { return CompositingOperation::Saturation; }
+    if raw == (27 as i64) { return CompositingOperation::Color; }
+    if raw == (28 as i64) { return CompositingOperation::Luminosity; }
+    return CompositingOperation::Clear;
+}
+
 // `NSImageLayoutDirection` (NS_ENUM)
 enum ImageLayoutDirection {
     Unspecified,
@@ -36,6 +135,8 @@ struct Pasteboard {
 impl Pasteboard {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Pasteboard { return Pasteboard { _obj: ptr }; }
+
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -45,6 +146,8 @@ struct GraphicsContext {
 
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
 
 }
 
@@ -56,6 +159,8 @@ struct URL {
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
+
 }
 
 // `NSImageRep` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -65,6 +170,8 @@ struct ImageRep {
 
 impl ImageRep {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageRep { return ImageRep { _obj: ptr }; }
 
     fn new() -> ImageRep {
         let cls: *u8 = rt::get_class(#str_ptr("NSImageRep\0"));
@@ -77,9 +184,9 @@ impl ImageRep {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("draw\0"))) != (0 as i8);
     }
 
-    // SKIPPED `drawAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `drawInRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawAtPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `registerImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `unregisterImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `imageRepClassForFileType:`: return `Class _Nullable` — unmapped type `Class`
@@ -154,8 +261,8 @@ impl ImageRep {
     }
 
     // SKIPPED `imageRepsWithContentsOfURL:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
-    fn image_rep_with_contents_of_u_r_l(url: *u8) -> option::Option[ImageRep] {
-        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfURL:\0")), url);
+    fn image_rep_with_contents_of_u_r_l(url: URL) -> option::Option[ImageRep] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfURL:\0")), url.raw());
         if obj == { 0 as *u8 } {
             return option::Option[ImageRep]::None;
         }
@@ -163,8 +270,8 @@ impl ImageRep {
     }
 
     // SKIPPED `imageRepsWithPasteboard:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
-    fn image_rep_with_pasteboard(pasteboard: *u8) -> option::Option[ImageRep] {
-        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithPasteboard:\0")), pasteboard);
+    fn image_rep_with_pasteboard(pasteboard: Pasteboard) -> option::Option[ImageRep] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithPasteboard:\0")), pasteboard.raw());
         if obj == { 0 as *u8 } {
             return option::Option[ImageRep]::None;
         }
@@ -172,8 +279,14 @@ impl ImageRep {
     }
 
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `size`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setSize:`: param `NSSize` — unmapped type `NSSize`
+    fn size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
+    }
+
+    fn set_size(this, size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setSize:\0")), size);
+    }
+
     fn has_alpha(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasAlpha\0"))) != (0 as i8);
     }

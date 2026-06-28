@@ -14,6 +14,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSBrowserCell` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -24,12 +26,14 @@ struct BrowserCell {
 impl BrowserCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> BrowserCell { return BrowserCell { _obj: ptr }; }
+
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
     }
 
-    fn init_image_cell(this, image: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
+    fn init_image_cell(this, image: Image) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image.raw());
     }
 
     fn new(coder: *u8) -> BrowserCell {
@@ -51,14 +55,20 @@ impl BrowserCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("set\0")));
     }
 
-    fn branch_image() -> option::Option[*u8] {
+    fn branch_image() -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSBrowserCell\0")), rt::sel(#str_ptr("branchImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn highlighted_branch_image() -> option::Option[*u8] {
+    fn highlighted_branch_image() -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSBrowserCell\0")), rt::sel(#str_ptr("highlightedBranchImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
     fn is_leaf(this) -> bool {
@@ -77,22 +87,28 @@ impl BrowserCell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setLoaded:\0")), loaded as i8);
     }
 
-    fn image(this) -> option::Option[*u8] {
+    fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
-    fn alternate_image(this) -> option::Option[*u8] {
+    fn alternate_image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("alternateImage\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
     }
 
-    fn set_alternate_image(this, alternate_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image);
+    fn set_alternate_image(this, alternate_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image.raw());
     }
 
     fn drop(ref this) {

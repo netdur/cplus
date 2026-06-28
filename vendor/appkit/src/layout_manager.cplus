@@ -7,89 +7,27 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `NSTextStorageEditActions` (NS_ENUM)
-enum TextStorageEditActions {
-    NSTextStorageEditedAttributes,
-    NSTextStorageEditedCharacters,
-}
+// `NSTextStorageEditActions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u64;
+const text_storage_edit_actions_n_s_text_storage_edited_characters: u64 = 2 as u64;
 
-fn text_storage_edit_actions_raw(v: TextStorageEditActions) -> i64 {
-    return match v {
-        TextStorageEditActions::NSTextStorageEditedAttributes => { 1 as i64 },
-        TextStorageEditActions::NSTextStorageEditedCharacters => { 2 as i64 },
-    };
-}
+// `NSGlyphProperty` (NS_OPTIONS) — bitfield; combine with `|`.
+const glyph_property_null: u64 = 1 as u64;
+const glyph_property_control_character: u64 = 2 as u64;
+const glyph_property_elastic: u64 = 4 as u64;
+const glyph_property_non_base_character: u64 = 8 as u64;
 
-fn text_storage_edit_actions_from_raw(raw: i64) -> TextStorageEditActions {
-    if raw == (2 as i64) { return TextStorageEditActions::NSTextStorageEditedCharacters; }
-    return TextStorageEditActions::NSTextStorageEditedAttributes;
-}
-
-// `NSGlyphProperty` (NS_ENUM)
-enum GlyphProperty {
-    Null,
-    ControlCharacter,
-    Elastic,
-    NonBaseCharacter,
-}
-
-fn glyph_property_raw(v: GlyphProperty) -> i64 {
-    return match v {
-        GlyphProperty::Null => { 1 as i64 },
-        GlyphProperty::ControlCharacter => { 2 as i64 },
-        GlyphProperty::Elastic => { 4 as i64 },
-        GlyphProperty::NonBaseCharacter => { 8 as i64 },
-    };
-}
-
-fn glyph_property_from_raw(raw: i64) -> GlyphProperty {
-    if raw == (2 as i64) { return GlyphProperty::ControlCharacter; }
-    if raw == (4 as i64) { return GlyphProperty::Elastic; }
-    if raw == (8 as i64) { return GlyphProperty::NonBaseCharacter; }
-    return GlyphProperty::Null;
-}
-
-// `NSUnderlineStyle` (NS_ENUM)
-enum UnderlineStyle {
-    None,
-    Single,
-    Thick,
-    Double,
-    PatternSolid,
-    PatternDot,
-    PatternDash,
-    PatternDashDot,
-    PatternDashDotDot,
-    ByWord,
-}
-
-fn underline_style_raw(v: UnderlineStyle) -> i64 {
-    return match v {
-        UnderlineStyle::None => { 0 as i64 },
-        UnderlineStyle::Single => { 1 as i64 },
-        UnderlineStyle::Thick => { 2 as i64 },
-        UnderlineStyle::Double => { 9 as i64 },
-        UnderlineStyle::PatternSolid => { 0 as i64 },
-        UnderlineStyle::PatternDot => { 256 as i64 },
-        UnderlineStyle::PatternDash => { 512 as i64 },
-        UnderlineStyle::PatternDashDot => { 768 as i64 },
-        UnderlineStyle::PatternDashDotDot => { 1024 as i64 },
-        UnderlineStyle::ByWord => { 32768 as i64 },
-    };
-}
-
-fn underline_style_from_raw(raw: i64) -> UnderlineStyle {
-    if raw == (1 as i64) { return UnderlineStyle::Single; }
-    if raw == (2 as i64) { return UnderlineStyle::Thick; }
-    if raw == (9 as i64) { return UnderlineStyle::Double; }
-    if raw == (0 as i64) { return UnderlineStyle::PatternSolid; }
-    if raw == (256 as i64) { return UnderlineStyle::PatternDot; }
-    if raw == (512 as i64) { return UnderlineStyle::PatternDash; }
-    if raw == (768 as i64) { return UnderlineStyle::PatternDashDot; }
-    if raw == (1024 as i64) { return UnderlineStyle::PatternDashDotDot; }
-    if raw == (32768 as i64) { return UnderlineStyle::ByWord; }
-    return UnderlineStyle::None;
-}
+// `NSUnderlineStyle` (NS_OPTIONS) — bitfield; combine with `|`.
+const underline_style_none: u64 = 0 as u64;
+const underline_style_single: u64 = 1 as u64;
+const underline_style_thick: u64 = 2 as u64;
+const underline_style_double: u64 = 9 as u64;
+const underline_style_pattern_solid: u64 = 0 as u64;
+const underline_style_pattern_dot: u64 = 256 as u64;
+const underline_style_pattern_dash: u64 = 512 as u64;
+const underline_style_pattern_dash_dot: u64 = 768 as u64;
+const underline_style_pattern_dash_dot_dot: u64 = 1024 as u64;
+const underline_style_by_word: u64 = 32768 as u64;
 
 // `NSImageScaling` (NS_ENUM)
 enum ImageScaling {
@@ -154,6 +92,24 @@ fn typesetter_behavior_from_raw(raw: i64) -> TypesetterBehavior {
     return TypesetterBehavior::NSTypesetterLatestBehavior;
 }
 
+// `NSTextLayoutOrientation` (NS_ENUM)
+enum TextLayoutOrientation {
+    Horizontal,
+    Vertical,
+}
+
+fn text_layout_orientation_raw(v: TextLayoutOrientation) -> i64 {
+    return match v {
+        TextLayoutOrientation::Horizontal => { 0 as i64 },
+        TextLayoutOrientation::Vertical => { 1 as i64 },
+    };
+}
+
+fn text_layout_orientation_from_raw(raw: i64) -> TextLayoutOrientation {
+    if raw == (1 as i64) { return TextLayoutOrientation::Vertical; }
+    return TextLayoutOrientation::Horizontal;
+}
+
 #[repr(C)]
 struct LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_block {
     opaque isa: *u8,
@@ -181,6 +137,8 @@ struct TextContainer {
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -190,6 +148,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -201,6 +161,8 @@ struct Typesetter {
 impl Typesetter {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Typesetter { return Typesetter { _obj: ptr }; }
+
 }
 
 // `NSTextView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -210,6 +172,8 @@ struct TextView {
 
 impl TextView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextView { return TextView { _obj: ptr }; }
 
 }
 
@@ -221,6 +185,8 @@ struct GraphicsContext {
 impl GraphicsContext {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
+
 }
 
 // `NSAffineTransform` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -230,6 +196,8 @@ struct AffineTransform {
 
 impl AffineTransform {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AffineTransform { return AffineTransform { _obj: ptr }; }
 
 }
 
@@ -241,6 +209,8 @@ struct Box {
 impl Box {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Box { return Box { _obj: ptr }; }
+
 }
 
 // `NSRulerView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -250,6 +220,8 @@ struct RulerView {
 
 impl RulerView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
 
 }
 
@@ -261,6 +233,8 @@ struct RulerMarker {
 impl RulerMarker {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
+
 }
 
 // `NSLayoutManager` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -270,6 +244,8 @@ struct LayoutManager {
 
 impl LayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> LayoutManager { return LayoutManager { _obj: ptr }; }
 
     fn new() -> LayoutManager {
         let cls: *u8 = rt::get_class(#str_ptr("NSLayoutManager\0"));
@@ -282,18 +258,18 @@ impl LayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextStorage:\0")), new_text_storage);
     }
 
-    fn add_text_container(this, container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTextContainer:\0")), container);
+    fn add_text_container(this, container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTextContainer:\0")), container.raw());
     }
 
     // SKIPPED `insertTextContainer:atIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `removeTextContainerAtIndex:`: (return, arg) shape not yet modelled
-    fn text_container_changed_geometry(this, container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedGeometry:\0")), container);
+    fn text_container_changed_geometry(this, container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedGeometry:\0")), container.raw());
     }
 
-    fn text_container_changed_text_view(this, container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedTextView:\0")), container);
+    fn text_container_changed_text_view(this, container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedTextView:\0")), container.raw());
     }
 
     // SKIPPED `invalidateGlyphsForCharacterRange:changeInLength:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
@@ -305,11 +281,11 @@ impl LayoutManager {
     // SKIPPED `ensureGlyphsForGlyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `ensureLayoutForCharacterRange:`: (return, arg) shape not yet modelled
     // SKIPPED `ensureLayoutForGlyphRange:`: (return, arg) shape not yet modelled
-    fn ensure_layout_for_text_container(this, container: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForTextContainer:\0")), container);
+    fn ensure_layout_for_text_container(this, container: TextContainer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForTextContainer:\0")), container.raw());
     }
 
-    // SKIPPED `ensureLayoutForBoundingRect:inTextContainer:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `ensureLayoutForBoundingRect:inTextContainer:`: (return, arg) shape not yet modelled
     // SKIPPED `setGlyphs:properties:characterIndexes:font:forGlyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `CGGlyphAtIndex:isValidIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `CGGlyphAtIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
@@ -319,12 +295,12 @@ impl LayoutManager {
     // SKIPPED `glyphIndexForCharacterAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:`: (return, arg) shape not yet modelled
     // SKIPPED `setTextContainer:forGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setExtraLineFragmentRect:usedRect:textContainer:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setLocation:forStartOfGlyphRange:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `setExtraLineFragmentRect:usedRect:textContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `setLocation:forStartOfGlyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `setNotShownAttribute:forGlyphAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `setDrawsOutsideLineFragment:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setAttachmentSize:forGlyphRange:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `setAttachmentSize:forGlyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `getFirstUnlaidCharacterIndex:glyphIndex:`: (return, arg) shape not yet modelled
     fn first_unlaid_character_index(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("firstUnlaidCharacterIndex\0")));
@@ -336,15 +312,15 @@ impl LayoutManager {
 
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `usedRectForTextContainer:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `usedRectForTextContainer:`: (return, arg) shape not yet modelled
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `locationForGlyphAtIndex:`: return `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `locationForGlyphAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `notShownAttributeForGlyphAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `drawsOutsideLineFragmentForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `attachmentSizeForGlyphAtIndex:`: return `NSSize` — unmapped type `NSSize`
+    // SKIPPED `attachmentSizeForGlyphAtIndex:`: (return, arg) shape not yet modelled
     fn truncated_glyph_range_in_line_fragment_for_glyph_at_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("truncatedGlyphRangeInLineFragmentForGlyphAtIndex:\0")), glyph_index);
     }
@@ -356,13 +332,13 @@ impl LayoutManager {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("rangeOfNominallySpacedGlyphsContainingIndex:\0")), glyph_index);
     }
 
-    // SKIPPED `boundingRectForGlyphRange:inTextContainer:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `glyphRangeForBoundingRect:inTextContainer:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `glyphIndexForPoint:inTextContainer:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:inTextContainer:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `boundingRectForGlyphRange:inTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphRangeForBoundingRect:inTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphIndexForPoint:inTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:inTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:`: (return, arg) shape not yet modelled
     // SKIPPED `getLineFragmentInsertionPointsForCharacterAtIndex:alternatePositions:inDisplayOrder:positions:characterIndexes:`: (return, arg) shape not yet modelled
     fn enumerate_line_fragments_for_glyph_range_using_block(this, glyph_range: rt::Range, cb: fn(*u8, i64, i64, *u8, rt::Range, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
@@ -373,19 +349,19 @@ impl LayoutManager {
     }
 
     // SKIPPED `enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `drawBackgroundForGlyphRange:atPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `drawGlyphsForGlyphRange:atPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `drawBackgroundForGlyphRange:atPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawGlyphsForGlyphRange:atPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:`: param `CGAffineTransform` — unmapped type `CGAffineTransform`
     // SKIPPED `fillBackgroundRectArray:count:forCharacterRange:color:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `showAttachmentCell:inRect:characterIndex:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setLayoutRect:forTextBlock:glyphRange:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setBoundsRect:forTextBlock:glyphRange:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `layoutRectForTextBlock:glyphRange:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `boundsRectForTextBlock:glyphRange:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
+    // SKIPPED `underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
+    // SKIPPED `strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
+    // SKIPPED `showAttachmentCell:inRect:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setLayoutRect:forTextBlock:glyphRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setBoundsRect:forTextBlock:glyphRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `layoutRectForTextBlock:glyphRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundsRectForTextBlock:glyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutRectForTextBlock:atIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `boundsRectForTextBlock:atIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `temporaryAttributesAtCharacterIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
@@ -408,8 +384,15 @@ impl LayoutManager {
     }
 
     // SKIPPED `textContainers`: return `NSArray<NSTextContainer *> * _Nonnull` — generic collection
-    // SKIPPED `delegate`: return `id<NSLayoutManagerDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSLayoutManagerDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn shows_invisible_characters(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("showsInvisibleCharacters\0"))) != (0 as i8);
     }
@@ -475,12 +458,12 @@ impl LayoutManager {
     }
 
     // SKIPPED `setDefaultAttachmentScaling:`: (return, arg) shape not yet modelled
-    fn typesetter(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("typesetter\0")));
+    fn typesetter(this) -> Typesetter {
+        return Typesetter::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("typesetter\0"))));
     }
 
-    fn set_typesetter(this, typesetter: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTypesetter:\0")), typesetter);
+    fn set_typesetter(this, typesetter: Typesetter) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTypesetter:\0")), typesetter.raw());
     }
 
     fn typesetter_behavior(this) -> TypesetterBehavior {
@@ -492,24 +475,39 @@ impl LayoutManager {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("numberOfGlyphs\0")));
     }
 
-    // SKIPPED `extraLineFragmentRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `extraLineFragmentUsedRect`: return `NSRect` — unmapped type `NSRect`
-    fn extra_line_fragment_text_container(this) -> option::Option[*u8] {
+    fn extra_line_fragment_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("extraLineFragmentRect\0")));
+    }
+
+    fn extra_line_fragment_used_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("extraLineFragmentUsedRect\0")));
+    }
+
+    fn extra_line_fragment_text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("extraLineFragmentTextContainer\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContainer]::None;
+        }
+        return option::some(TextContainer::from_raw(obj));
     }
 
     // SKIPPED `rulerMarkersForTextView:paragraphStyle:ruler:`: return `NSArray<NSRulerMarker *> * _Nonnull` — generic collection
     // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutManagerOwnsFirstResponderInWindow:`: (return, arg) shape not yet modelled
-    fn first_text_view(this) -> option::Option[*u8] {
+    fn first_text_view(this) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("firstTextView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextView]::None;
+        }
+        return option::some(TextView::from_raw(obj));
     }
 
-    fn text_view_for_beginning_of_selection(this) -> option::Option[*u8] {
+    fn text_view_for_beginning_of_selection(this) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textViewForBeginningOfSelection\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextView]::None;
+        }
+        return option::some(TextView::from_raw(obj));
     }
 
     // SKIPPED `glyphAtIndex:isValidIndex:`: return `NSGlyph` — unmapped type `NSGlyph`
@@ -534,7 +532,7 @@ impl LayoutManager {
     // SKIPPED `invalidateLayoutForCharacterRange:isSoft:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `textStorage:edited:range:changeInLength:invalidatedRange:`: param `NSTextStorageEditedOptions` — unmapped type `NSTextStorageEditedOptions`
     // SKIPPED `setLocations:startingGlyphIndexes:count:forGlyphRange:`: param `NSPointArray _Nonnull` — unmapped type `NSPointArray`
-    // SKIPPED `showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:`: (return, arg) shape not yet modelled
     // SKIPPED `showCGGlyphs:positions:count:font:matrix:attributes:inContext:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn uses_screen_fonts(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesScreenFonts\0"))) != (0 as i8);
@@ -565,47 +563,6 @@ impl LayoutManager {
     }
 }
 
-// `NSTextLayoutOrientationProvider` delegate protocol -> runtime class-synthesis helper.
-fn TextLayoutOrientationProvider_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
-struct TextLayoutOrientationProvider {
-    layout_orientation: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn TextLayoutOrientationProvider_new(user: *u8) -> TextLayoutOrientationProvider {
-    return TextLayoutOrientationProvider { layout_orientation: TextLayoutOrientationProvider_noop_u64_0, user: user };
-}
-
-impl TextLayoutOrientationProvider {
-    fn set_layout_orientation(ref this, handler: fn(*u8) -> u64) {
-        this.layout_orientation = handler;
-        return;
-    }
-}
-
-fn TextLayoutOrientationProvider_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn TextLayoutOrientationProvider_layout_orientation_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *TextLayoutOrientationProvider = { synth::get_associated(self_obj, TextLayoutOrientationProvider_key()) as *TextLayoutOrientationProvider };
-    let f: fn(*u8) -> u64 = { (*c).layout_orientation };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_TextLayoutOrientationProvider(ctx: *TextLayoutOrientationProvider) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextLayoutOrientationProvider\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_layout_orientation: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("layoutOrientation\0")), TextLayoutOrientationProvider_layout_orientation_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextLayoutOrientationProvider_key(), { ctx as *u8 });
-    return d;
-}
-
 // `NSLayoutManagerDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `layoutManager:shouldGenerateGlyphs:properties:characterIndexes:font:forGlyphRange:`: arg shape (only <=5 object args modelled)
 // SKIPPED `layoutManager:lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: arg shape (only <=5 object args modelled)
@@ -619,44 +576,60 @@ fn create_TextLayoutOrientationProvider(ctx: *TextLayoutOrientationProvider) -> 
 // SKIPPED `layoutManager:didCompleteLayoutForTextContainer:atEnd:`: arg shape (only <=5 object args modelled)
 // SKIPPED `layoutManager:textContainer:didChangeGeometryFromSize:`: arg shape (only <=5 object args modelled)
 // SKIPPED `layoutManager:shouldUseTemporaryAttributes:forDrawingToScreen:atCharacterIndex:effectiveRange:`: arg shape (only <=5 object args modelled)
-fn LayoutManagerDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn LayoutManagerDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct LayoutManagerDelegateProtocol {
+struct LayoutManagerDelegate {
     layout_manager_did_invalidate_layout: fn(*u8, *u8),
     opaque user: *u8,
 }
 
-fn LayoutManagerDelegateProtocol_new(user: *u8) -> LayoutManagerDelegateProtocol {
-    return LayoutManagerDelegateProtocol { layout_manager_did_invalidate_layout: LayoutManagerDelegateProtocol_noop_v_1, user: user };
+fn LayoutManagerDelegate_new(user: *u8) -> LayoutManagerDelegate {
+    return LayoutManagerDelegate { layout_manager_did_invalidate_layout: LayoutManagerDelegate_noop_v_1, user: user };
 }
 
-impl LayoutManagerDelegateProtocol {
+impl LayoutManagerDelegate {
     fn set_layout_manager_did_invalidate_layout(ref this, handler: fn(*u8, *u8)) {
         this.layout_manager_did_invalidate_layout = handler;
         return;
     }
 }
 
-fn LayoutManagerDelegateProtocol_key() -> *u8 { return { 28673 as *u8 }; }
+fn LayoutManagerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn LayoutManagerDelegateProtocol_layout_manager_did_invalidate_layout_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *LayoutManagerDelegateProtocol = { synth::get_associated(self_obj, LayoutManagerDelegateProtocol_key()) as *LayoutManagerDelegateProtocol };
+fn LayoutManagerDelegate_layout_manager_did_invalidate_layout_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *LayoutManagerDelegate = { synth::get_associated(self_obj, LayoutManagerDelegate_key()) as *LayoutManagerDelegate };
     let f: fn(*u8, *u8) = { (*c).layout_manager_did_invalidate_layout };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_LayoutManagerDelegateProtocol(ctx: *LayoutManagerDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_LayoutManagerDelegateProtocol\0");
+fn create_LayoutManagerDelegate(ctx: *LayoutManagerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_LayoutManagerDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_layout_manager_did_invalidate_layout: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("layoutManagerDidInvalidateLayout:\0")), LayoutManagerDelegateProtocol_layout_manager_did_invalidate_layout_imp, #str_ptr("v@:@\0"));
+        let add_layout_manager_did_invalidate_layout: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("layoutManagerDidInvalidateLayout:\0")), LayoutManagerDelegate_layout_manager_did_invalidate_layout_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, LayoutManagerDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, LayoutManagerDelegate_key(), { ctx as *u8 });
     return d;
+}
+
+// `NSTextLayoutOrientationProvider` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextLayoutOrientationProvider {
+    opaque _obj: *u8,
+}
+
+impl TextLayoutOrientationProvider {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextLayoutOrientationProvider { return TextLayoutOrientationProvider { _obj: ptr }; }
+
+    fn layout_orientation(this) -> TextLayoutOrientation {
+        return text_layout_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("layoutOrientation\0"))));
+    }
+
 }
 

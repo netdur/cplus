@@ -27,23 +27,9 @@ fn text_insertion_indicator_display_mode_from_raw(raw: i64) -> TextInsertionIndi
     return TextInsertionIndicatorDisplayMode::Automatic;
 }
 
-// `NSTextInsertionIndicatorAutomaticModeOptions` (NS_ENUM)
-enum TextInsertionIndicatorAutomaticModeOptions {
-    ShowEffectsView,
-    ShowWhileTracking,
-}
-
-fn text_insertion_indicator_automatic_mode_options_raw(v: TextInsertionIndicatorAutomaticModeOptions) -> i64 {
-    return match v {
-        TextInsertionIndicatorAutomaticModeOptions::ShowEffectsView => { 1 as i64 },
-        TextInsertionIndicatorAutomaticModeOptions::ShowWhileTracking => { 2 as i64 },
-    };
-}
-
-fn text_insertion_indicator_automatic_mode_options_from_raw(raw: i64) -> TextInsertionIndicatorAutomaticModeOptions {
-    if raw == (2 as i64) { return TextInsertionIndicatorAutomaticModeOptions::ShowWhileTracking; }
-    return TextInsertionIndicatorAutomaticModeOptions::ShowEffectsView;
-}
+// `NSTextInsertionIndicatorAutomaticModeOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_insertion_indicator_automatic_mode_options_show_effects_view: u64 = 1 as u64;
+const text_insertion_indicator_automatic_mode_options_show_while_tracking: u64 = 2 as u64;
 
 #[repr(C)]
 struct TextInsertionIndicator_set_effects_view_inserter_block {
@@ -72,6 +58,8 @@ struct TextInsertionIndicator {
 impl TextInsertionIndicator {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextInsertionIndicator { return TextInsertionIndicator { _obj: ptr }; }
+
     fn display_mode(this) -> TextInsertionIndicatorDisplayMode {
         return text_insertion_indicator_display_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("displayMode\0"))));
     }
@@ -85,8 +73,8 @@ impl TextInsertionIndicator {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), color);
     }
 
-    fn automatic_mode_options(this) -> TextInsertionIndicatorAutomaticModeOptions {
-        return text_insertion_indicator_automatic_mode_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("automaticModeOptions\0"))));
+    fn automatic_mode_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("automaticModeOptions\0")));
     }
 
     // SKIPPED `setAutomaticModeOptions:`: (return, arg) shape not yet modelled

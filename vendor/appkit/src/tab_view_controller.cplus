@@ -31,44 +31,16 @@ fn tab_view_controller_tab_style_from_raw(raw: i64) -> TabViewControllerTabStyle
     return TabViewControllerTabStyle::SegmentedControlOnTop;
 }
 
-// `NSViewControllerTransitionOptions` (NS_ENUM)
-enum ViewControllerTransitionOptions {
-    NSViewControllerTransitionNone,
-    NSViewControllerTransitionCrossfade,
-    NSViewControllerTransitionSlideUp,
-    NSViewControllerTransitionSlideDown,
-    NSViewControllerTransitionSlideLeft,
-    NSViewControllerTransitionSlideRight,
-    NSViewControllerTransitionSlideForward,
-    NSViewControllerTransitionSlideBackward,
-    NSViewControllerTransitionAllowUserInteraction,
-}
-
-fn view_controller_transition_options_raw(v: ViewControllerTransitionOptions) -> i64 {
-    return match v {
-        ViewControllerTransitionOptions::NSViewControllerTransitionNone => { 0 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionCrossfade => { 1 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideUp => { 16 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideDown => { 32 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideLeft => { 64 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideRight => { 128 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideForward => { 320 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionSlideBackward => { 384 as i64 },
-        ViewControllerTransitionOptions::NSViewControllerTransitionAllowUserInteraction => { 4096 as i64 },
-    };
-}
-
-fn view_controller_transition_options_from_raw(raw: i64) -> ViewControllerTransitionOptions {
-    if raw == (1 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionCrossfade; }
-    if raw == (16 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideUp; }
-    if raw == (32 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideDown; }
-    if raw == (64 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideLeft; }
-    if raw == (128 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideRight; }
-    if raw == (320 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideForward; }
-    if raw == (384 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionSlideBackward; }
-    if raw == (4096 as i64) { return ViewControllerTransitionOptions::NSViewControllerTransitionAllowUserInteraction; }
-    return ViewControllerTransitionOptions::NSViewControllerTransitionNone;
-}
+// `NSViewControllerTransitionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const view_controller_transition_options_n_s_view_controller_transition_none: u64 = 0 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_crossfade: u64 = 1 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_up: u64 = 16 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_down: u64 = 32 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_left: u64 = 64 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_right: u64 = 128 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_forward: u64 = 320 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_slide_backward: u64 = 384 as u64;
+const view_controller_transition_options_n_s_view_controller_transition_allow_user_interaction: u64 = 4096 as u64;
 
 // `NSTabViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TabViewController {
@@ -77,6 +49,8 @@ struct TabViewController {
 
 impl TabViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TabViewController { return TabViewController { _obj: ptr }; }
 
     fn add_tab_view_item(this, tab_view_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item);
@@ -155,8 +129,8 @@ impl TabViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTabView:\0")), tab_view);
     }
 
-    fn transition_options(this) -> ViewControllerTransitionOptions {
-        return view_controller_transition_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transitionOptions\0"))));
+    fn transition_options(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("transitionOptions\0")));
     }
 
     // SKIPPED `setTransitionOptions:`: (return, arg) shape not yet modelled

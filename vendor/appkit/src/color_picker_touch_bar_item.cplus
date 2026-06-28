@@ -14,6 +14,8 @@ struct ViewController {
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
+
 }
 
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -23,6 +25,8 @@ struct Color {
 
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
 
 }
 
@@ -34,6 +38,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +49,8 @@ struct String {
 
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
 }
 
@@ -54,6 +62,8 @@ struct ColorList {
 impl ColorList {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorList { return ColorList { _obj: ptr }; }
+
 }
 
 // `NSColorSpace` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -64,6 +74,8 @@ struct ColorSpace {
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
+
 }
 
 // `NSColorPickerTouchBarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -73,6 +85,8 @@ struct ColorPickerTouchBarItem {
 
 impl ColorPickerTouchBarItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorPickerTouchBarItem { return ColorPickerTouchBarItem { _obj: ptr }; }
 
     fn color_picker_with_identifier(identifier: str) -> ColorPickerTouchBarItem {
         return ColorPickerTouchBarItem { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSColorPickerTouchBarItem\0")), rt::sel(#str_ptr("colorPickerWithIdentifier:\0")), bridge::nsstring(identifier)) };
@@ -87,12 +101,12 @@ impl ColorPickerTouchBarItem {
     }
 
     // SKIPPED `colorPickerWithIdentifier:buttonImage:`: (return, arg) shape not yet modelled
-    fn color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("color\0")));
+    fn color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("color\0"))));
     }
 
-    fn set_color(this, color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), color);
+    fn set_color(this, color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), color.raw());
     }
 
     fn shows_alpha(this) -> bool {
@@ -105,12 +119,12 @@ impl ColorPickerTouchBarItem {
 
     // SKIPPED `allowedColorSpaces`: return `API_AVAILABLE NSArray<NSColorSpace *> *` — generic collection
     // SKIPPED `setAllowedColorSpaces:`: param `API_AVAILABLE NSArray<NSColorSpace *> *` — generic collection
-    fn color_list(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorList\0")));
+    fn color_list(this) -> ColorList {
+        return ColorList::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorList\0"))));
     }
 
-    fn set_color_list(this, color_list: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorList:\0")), color_list);
+    fn set_color_list(this, color_list: ColorList) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorList:\0")), color_list.raw());
     }
 
     fn customization_label(this) -> text::Text {

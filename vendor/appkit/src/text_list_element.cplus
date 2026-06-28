@@ -14,6 +14,8 @@ struct TextList {
 impl TextList {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
+
 }
 
 // `NSTextListElement` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -24,12 +26,14 @@ struct TextListElement {
 impl TextListElement {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextListElement { return TextListElement { _obj: ptr }; }
+
     // SKIPPED `initWithParentElement:textList:contents:markerAttributes:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
     // SKIPPED `initWithAttributedString:`: extra init variant (one `new` per type)
     // SKIPPED `textListElementWithContents:markerAttributes:textList:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
     // SKIPPED `textListElementWithChildElements:textList:nestingLevel:`: param `NSArray<NSTextListElement *> * _Nonnull` — generic collection
-    fn text_list(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textList\0")));
+    fn text_list(this) -> TextList {
+        return TextList::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textList\0"))));
     }
 
     fn contents(this) -> option::Option[*u8] {
@@ -43,9 +47,12 @@ impl TextListElement {
     }
 
     // SKIPPED `childElements`: return `NSArray<NSTextListElement *> * _Nonnull` — generic collection
-    fn parent_element(this) -> option::Option[*u8] {
+    fn parent_element(this) -> option::Option[TextListElement] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentElement\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextListElement]::None;
+        }
+        return option::some(TextListElement::from_raw(obj));
     }
 
     fn drop(ref this) {

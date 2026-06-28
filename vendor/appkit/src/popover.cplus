@@ -7,6 +7,42 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
+// `NSRectEdge` (NS_ENUM)
+enum RectEdge {
+    MinX,
+    MinY,
+    MaxX,
+    MaxY,
+    NSMinXEdge,
+    NSMinYEdge,
+    NSMaxXEdge,
+    NSMaxYEdge,
+}
+
+fn rect_edge_raw(v: RectEdge) -> i64 {
+    return match v {
+        RectEdge::MinX => { 0 as i64 },
+        RectEdge::MinY => { 1 as i64 },
+        RectEdge::MaxX => { 2 as i64 },
+        RectEdge::MaxY => { 3 as i64 },
+        RectEdge::NSMinXEdge => { 0 as i64 },
+        RectEdge::NSMinYEdge => { 1 as i64 },
+        RectEdge::NSMaxXEdge => { 2 as i64 },
+        RectEdge::NSMaxYEdge => { 3 as i64 },
+    };
+}
+
+fn rect_edge_from_raw(raw: i64) -> RectEdge {
+    if raw == (1 as i64) { return RectEdge::MinY; }
+    if raw == (2 as i64) { return RectEdge::MaxX; }
+    if raw == (3 as i64) { return RectEdge::MaxY; }
+    if raw == (0 as i64) { return RectEdge::NSMinXEdge; }
+    if raw == (1 as i64) { return RectEdge::NSMinYEdge; }
+    if raw == (2 as i64) { return RectEdge::NSMaxXEdge; }
+    if raw == (3 as i64) { return RectEdge::NSMaxYEdge; }
+    return RectEdge::MinX;
+}
+
 // `NSPopoverBehavior` (NS_ENUM)
 enum PopoverBehavior {
     ApplicationDefined,
@@ -36,6 +72,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -45,6 +83,8 @@ struct ViewController {
 
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
 
 }
 
@@ -56,6 +96,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSNotification` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -65,6 +107,8 @@ struct Notification {
 
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
 
 }
 
@@ -76,6 +120,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSToolbarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -85,6 +131,8 @@ struct ToolbarItem {
 
 impl ToolbarItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ToolbarItem { return ToolbarItem { _obj: ptr }; }
 
 }
 
@@ -96,6 +144,8 @@ struct Popover {
 impl Popover {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Popover { return Popover { _obj: ptr }; }
+
     fn new() -> Popover {
         let cls: *u8 = rt::get_class(#str_ptr("NSPopover\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -103,9 +153,9 @@ impl Popover {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: param `NSRect` — unmapped type `NSRect`
-    fn show_relative_to_toolbar_item(this, toolbar_item: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("showRelativeToToolbarItem:\0")), toolbar_item);
+    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: (return, arg) shape not yet modelled
+    fn show_relative_to_toolbar_item(this, toolbar_item: ToolbarItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("showRelativeToToolbarItem:\0")), toolbar_item.raw());
     }
 
     fn perform_close(this, sender: *u8) {
@@ -116,8 +166,15 @@ impl Popover {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSPopoverDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSPopoverDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn appearance(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("appearance\0")));
     }
@@ -143,17 +200,26 @@ impl Popover {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAnimates:\0")), animates as i8);
     }
 
-    fn content_view_controller(this) -> option::Option[*u8] {
+    fn content_view_controller(this) -> option::Option[ViewController] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ViewController]::None;
+        }
+        return option::some(ViewController::from_raw(obj));
     }
 
-    fn set_content_view_controller(this, content_view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller);
+    fn set_content_view_controller(this, content_view_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller.raw());
     }
 
-    // SKIPPED `contentSize`: return `NSSize` — unmapped type `NSSize`
-    // SKIPPED `setContentSize:`: param `NSSize` — unmapped type `NSSize`
+    fn content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentSize\0")));
+    }
+
+    fn set_content_size(this, content_size: rt::Size) {
+        rt::msg_void_size(this._obj, rt::sel(#str_ptr("setContentSize:\0")), content_size);
+    }
+
     fn is_shown(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isShown\0"))) != (0 as i8);
     }
@@ -162,8 +228,14 @@ impl Popover {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDetached\0"))) != (0 as i8);
     }
 
-    // SKIPPED `positioningRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setPositioningRect:`: param `NSRect` — unmapped type `NSRect`
+    fn positioning_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("positioningRect\0")));
+    }
+
+    fn set_positioning_rect(this, positioning_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("setPositioningRect:\0")), positioning_rect);
+    }
+
     fn has_full_size_content(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasFullSizeContent\0"))) != (0 as i8);
     }
@@ -178,11 +250,11 @@ impl Popover {
 }
 
 // `NSPopoverDelegate` delegate protocol -> runtime class-synthesis helper.
-fn PopoverDelegateProtocol_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn PopoverDelegateProtocol_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn PopoverDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
+fn PopoverDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn PopoverDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn PopoverDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
 
-struct PopoverDelegateProtocol {
+struct PopoverDelegate {
     popover_should_close: fn(*u8, *u8) -> i8,
     popover_should_detach: fn(*u8, *u8) -> i8,
     popover_did_detach: fn(*u8, *u8),
@@ -194,11 +266,11 @@ struct PopoverDelegateProtocol {
     opaque user: *u8,
 }
 
-fn PopoverDelegateProtocol_new(user: *u8) -> PopoverDelegateProtocol {
-    return PopoverDelegateProtocol { popover_should_close: PopoverDelegateProtocol_noop_i8_1, popover_should_detach: PopoverDelegateProtocol_noop_i8_1, popover_did_detach: PopoverDelegateProtocol_noop_v_1, detachable_window_for_popover: PopoverDelegateProtocol_noop_id_1, popover_will_show: PopoverDelegateProtocol_noop_v_1, popover_did_show: PopoverDelegateProtocol_noop_v_1, popover_will_close: PopoverDelegateProtocol_noop_v_1, popover_did_close: PopoverDelegateProtocol_noop_v_1, user: user };
+fn PopoverDelegate_new(user: *u8) -> PopoverDelegate {
+    return PopoverDelegate { popover_should_close: PopoverDelegate_noop_i8_1, popover_should_detach: PopoverDelegate_noop_i8_1, popover_did_detach: PopoverDelegate_noop_v_1, detachable_window_for_popover: PopoverDelegate_noop_id_1, popover_will_show: PopoverDelegate_noop_v_1, popover_did_show: PopoverDelegate_noop_v_1, popover_will_close: PopoverDelegate_noop_v_1, popover_did_close: PopoverDelegate_noop_v_1, user: user };
 }
 
-impl PopoverDelegateProtocol {
+impl PopoverDelegate {
     fn set_popover_should_close(ref this, handler: fn(*u8, *u8) -> i8) {
         this.popover_should_close = handler;
         return;
@@ -233,86 +305,86 @@ impl PopoverDelegateProtocol {
     }
 }
 
-fn PopoverDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn PopoverDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn PopoverDelegateProtocol_popover_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_should_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).popover_should_close };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn PopoverDelegateProtocol_popover_should_detach_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_should_detach_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).popover_should_detach };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn PopoverDelegateProtocol_popover_did_detach_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_did_detach_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) = { (*c).popover_did_detach };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn PopoverDelegateProtocol_detachable_window_for_popover_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_detachable_window_for_popover_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).detachable_window_for_popover };
     let u: *u8 = { (*c).user };
     return f(u, a0);
 }
 
-fn PopoverDelegateProtocol_popover_will_show_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_will_show_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) = { (*c).popover_will_show };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn PopoverDelegateProtocol_popover_did_show_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_did_show_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) = { (*c).popover_did_show };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn PopoverDelegateProtocol_popover_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_will_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) = { (*c).popover_will_close };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn PopoverDelegateProtocol_popover_did_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *PopoverDelegateProtocol = { synth::get_associated(self_obj, PopoverDelegateProtocol_key()) as *PopoverDelegateProtocol };
+fn PopoverDelegate_popover_did_close_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *PopoverDelegate = { synth::get_associated(self_obj, PopoverDelegate_key()) as *PopoverDelegate };
     let f: fn(*u8, *u8) = { (*c).popover_did_close };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_PopoverDelegateProtocol(ctx: *PopoverDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PopoverDelegateProtocol\0");
+fn create_PopoverDelegate(ctx: *PopoverDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_PopoverDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_popover_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldClose:\0")), PopoverDelegateProtocol_popover_should_close_imp, #str_ptr("c@:@\0"));
-        let add_popover_should_detach: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldDetach:\0")), PopoverDelegateProtocol_popover_should_detach_imp, #str_ptr("c@:@\0"));
-        let add_popover_did_detach: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidDetach:\0")), PopoverDelegateProtocol_popover_did_detach_imp, #str_ptr("v@:@\0"));
-        let add_detachable_window_for_popover: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("detachableWindowForPopover:\0")), PopoverDelegateProtocol_detachable_window_for_popover_imp, #str_ptr("@@:@\0"));
-        let add_popover_will_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillShow:\0")), PopoverDelegateProtocol_popover_will_show_imp, #str_ptr("v@:@\0"));
-        let add_popover_did_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidShow:\0")), PopoverDelegateProtocol_popover_did_show_imp, #str_ptr("v@:@\0"));
-        let add_popover_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillClose:\0")), PopoverDelegateProtocol_popover_will_close_imp, #str_ptr("v@:@\0"));
-        let add_popover_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidClose:\0")), PopoverDelegateProtocol_popover_did_close_imp, #str_ptr("v@:@\0"));
+        let add_popover_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldClose:\0")), PopoverDelegate_popover_should_close_imp, #str_ptr("c@:@\0"));
+        let add_popover_should_detach: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldDetach:\0")), PopoverDelegate_popover_should_detach_imp, #str_ptr("c@:@\0"));
+        let add_popover_did_detach: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidDetach:\0")), PopoverDelegate_popover_did_detach_imp, #str_ptr("v@:@\0"));
+        let add_detachable_window_for_popover: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("detachableWindowForPopover:\0")), PopoverDelegate_detachable_window_for_popover_imp, #str_ptr("@@:@\0"));
+        let add_popover_will_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillShow:\0")), PopoverDelegate_popover_will_show_imp, #str_ptr("v@:@\0"));
+        let add_popover_did_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidShow:\0")), PopoverDelegate_popover_did_show_imp, #str_ptr("v@:@\0"));
+        let add_popover_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillClose:\0")), PopoverDelegate_popover_will_close_imp, #str_ptr("v@:@\0"));
+        let add_popover_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidClose:\0")), PopoverDelegate_popover_did_close_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PopoverDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, PopoverDelegate_key(), { ctx as *u8 });
     return d;
 }
 

@@ -6,27 +6,6 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSEventGestureAxis` (NS_ENUM)
-enum EventGestureAxis {
-    None,
-    Horizontal,
-    Vertical,
-}
-
-fn event_gesture_axis_raw(v: EventGestureAxis) -> i64 {
-    return match v {
-        EventGestureAxis::None => { 0 as i64 },
-        EventGestureAxis::Horizontal => { 1 as i64 },
-        EventGestureAxis::Vertical => { 2 as i64 },
-    };
-}
-
-fn event_gesture_axis_from_raw(raw: i64) -> EventGestureAxis {
-    if raw == (1 as i64) { return EventGestureAxis::Horizontal; }
-    if raw == (2 as i64) { return EventGestureAxis::Vertical; }
-    return EventGestureAxis::None;
-}
-
 // `NSBorderType` (NS_ENUM)
 enum BorderType {
     NSNoBorder,
@@ -49,6 +28,27 @@ fn border_type_from_raw(raw: i64) -> BorderType {
     if raw == (2 as i64) { return BorderType::NSBezelBorder; }
     if raw == (3 as i64) { return BorderType::NSGrooveBorder; }
     return BorderType::NSNoBorder;
+}
+
+// `NSEventGestureAxis` (NS_ENUM)
+enum EventGestureAxis {
+    None,
+    Horizontal,
+    Vertical,
+}
+
+fn event_gesture_axis_raw(v: EventGestureAxis) -> i64 {
+    return match v {
+        EventGestureAxis::None => { 0 as i64 },
+        EventGestureAxis::Horizontal => { 1 as i64 },
+        EventGestureAxis::Vertical => { 2 as i64 },
+    };
+}
+
+fn event_gesture_axis_from_raw(raw: i64) -> EventGestureAxis {
+    if raw == (1 as i64) { return EventGestureAxis::Horizontal; }
+    if raw == (2 as i64) { return EventGestureAxis::Vertical; }
+    return EventGestureAxis::None;
 }
 
 // `NSScrollerStyle` (NS_ENUM)
@@ -140,6 +140,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSClipView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -149,6 +151,8 @@ struct ClipView {
 
 impl ClipView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ClipView { return ClipView { _obj: ptr }; }
 
 }
 
@@ -160,6 +164,8 @@ struct RulerView {
 impl RulerView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
+
 }
 
 // `NSScroller` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -169,6 +175,8 @@ struct Scroller {
 
 impl Scroller {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
 
 }
 
@@ -180,18 +188,25 @@ struct ScrollView {
 impl ScrollView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `initWithFrame:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> ScrollView { return ScrollView { _obj: ptr }; }
+
+    fn new(frame_rect: rt::Rect) -> ScrollView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrollView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrollView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: param `NSSize` — unmapped type `NSSize`
-    // SKIPPED `contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: param `NSSize` — unmapped type `NSSize`
+    // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
+    // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
+    // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: (return, arg) shape not yet modelled
+    // SKIPPED `contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: (return, arg) shape not yet modelled
     fn tile(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("tile\0")));
     }
 
-    fn reflect_scrolled_clip_view(this, c_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("reflectScrolledClipView:\0")), c_view);
+    fn reflect_scrolled_clip_view(this, c_view: ClipView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("reflectScrolledClipView:\0")), c_view.raw());
     }
 
     fn scroll_wheel(this, event: *u8) {
@@ -202,11 +217,20 @@ impl ScrollView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flashScrollers\0")));
     }
 
-    // SKIPPED `magnifyToFitRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `setMagnification:centeredAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    fn magnify_to_fit_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("magnifyToFitRect:\0")), rect);
+    }
+
+    // SKIPPED `setMagnification:centeredAtPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `addFloatingSubview:forAxis:`: (return, arg) shape not yet modelled
-    // SKIPPED `documentVisibleRect`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `contentSize`: return `NSSize` — unmapped type `NSSize`
+    fn document_visible_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentVisibleRect\0")));
+    }
+
+    fn content_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("contentSize\0")));
+    }
+
     fn document_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("documentView\0")));
         return bridge::obj_option(obj);
@@ -216,12 +240,12 @@ impl ScrollView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDocumentView:\0")), document_view);
     }
 
-    fn content_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
+    fn content_view(this) -> ClipView {
+        return ClipView::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0"))));
     }
 
-    fn set_content_view(this, content_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view);
+    fn set_content_view(this, content_view: ClipView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentView:\0")), content_view.raw());
     }
 
     fn document_cursor(this) -> option::Option[*u8] {
@@ -238,12 +262,12 @@ impl ScrollView {
     }
 
     // SKIPPED `setBorderType:`: (return, arg) shape not yet modelled
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn draws_background(this) -> bool {
@@ -270,22 +294,28 @@ impl ScrollView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasHorizontalScroller:\0")), has_horizontal_scroller as i8);
     }
 
-    fn vertical_scroller(this) -> option::Option[*u8] {
+    fn vertical_scroller(this) -> option::Option[Scroller] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("verticalScroller\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Scroller]::None;
+        }
+        return option::some(Scroller::from_raw(obj));
     }
 
-    fn set_vertical_scroller(this, vertical_scroller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVerticalScroller:\0")), vertical_scroller);
+    fn set_vertical_scroller(this, vertical_scroller: Scroller) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVerticalScroller:\0")), vertical_scroller.raw());
     }
 
-    fn horizontal_scroller(this) -> option::Option[*u8] {
+    fn horizontal_scroller(this) -> option::Option[Scroller] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("horizontalScroller\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Scroller]::None;
+        }
+        return option::some(Scroller::from_raw(obj));
     }
 
-    fn set_horizontal_scroller(this, horizontal_scroller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHorizontalScroller:\0")), horizontal_scroller);
+    fn set_horizontal_scroller(this, horizontal_scroller: Scroller) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHorizontalScroller:\0")), horizontal_scroller.raw());
     }
 
     fn autohides_scrollers(this) -> bool {
@@ -450,22 +480,28 @@ impl ScrollView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasVerticalRuler:\0")), has_vertical_ruler as i8);
     }
 
-    fn horizontal_ruler_view(this) -> option::Option[*u8] {
+    fn horizontal_ruler_view(this) -> option::Option[RulerView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("horizontalRulerView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[RulerView]::None;
+        }
+        return option::some(RulerView::from_raw(obj));
     }
 
-    fn set_horizontal_ruler_view(this, horizontal_ruler_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHorizontalRulerView:\0")), horizontal_ruler_view);
+    fn set_horizontal_ruler_view(this, horizontal_ruler_view: RulerView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHorizontalRulerView:\0")), horizontal_ruler_view.raw());
     }
 
-    fn vertical_ruler_view(this) -> option::Option[*u8] {
+    fn vertical_ruler_view(this) -> option::Option[RulerView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("verticalRulerView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[RulerView]::None;
+        }
+        return option::some(RulerView::from_raw(obj));
     }
 
-    fn set_vertical_ruler_view(this, vertical_ruler_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVerticalRulerView:\0")), vertical_ruler_view);
+    fn set_vertical_ruler_view(this, vertical_ruler_view: RulerView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVerticalRulerView:\0")), vertical_ruler_view.raw());
     }
 
     fn find_bar_position(this) -> ScrollViewFindBarPosition {

@@ -147,6 +147,8 @@ struct Font {
 impl Font {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
+
 }
 
 // `NSTabViewItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -156,6 +158,8 @@ struct TabViewItem {
 
 impl TabViewItem {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TabViewItem { return TabViewItem { _obj: ptr }; }
 
 }
 
@@ -167,8 +171,10 @@ struct TabView {
 impl TabView {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn select_tab_view_item(this, tab_view_item: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectTabViewItem:\0")), tab_view_item);
+    fn from_raw(ptr: *u8) -> TabView { return TabView { _obj: ptr }; }
+
+    fn select_tab_view_item(this, tab_view_item: TabViewItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectTabViewItem:\0")), tab_view_item.raw());
     }
 
     // SKIPPED `selectTabViewItemAtIndex:`: (return, arg) shape not yet modelled
@@ -196,33 +202,36 @@ impl TabView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectPreviousTabViewItem:\0")), sender);
     }
 
-    fn add_tab_view_item(this, tab_view_item: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item);
+    fn add_tab_view_item(this, tab_view_item: TabViewItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item.raw());
     }
 
     // SKIPPED `insertTabViewItem:atIndex:`: (return, arg) shape not yet modelled
-    fn remove_tab_view_item(this, tab_view_item: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item);
+    fn remove_tab_view_item(this, tab_view_item: TabViewItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `tabViewItemAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `tabViewItemAtPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `indexOfTabViewItem:`: (return, arg) shape not yet modelled
-    fn tab_view_item_at_index(this, index: i64) -> *u8 {
-        return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("tabViewItemAtIndex:\0")), index);
+    fn tab_view_item_at_index(this, index: i64) -> TabViewItem {
+        return TabViewItem::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("tabViewItemAtIndex:\0")), index));
     }
 
     // SKIPPED `indexOfTabViewItemWithIdentifier:`: (return, arg) shape not yet modelled
-    fn selected_tab_view_item(this) -> option::Option[*u8] {
+    fn selected_tab_view_item(this) -> option::Option[TabViewItem] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedTabViewItem\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TabViewItem]::None;
+        }
+        return option::some(TabViewItem::from_raw(obj));
     }
 
-    fn font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("font\0")));
+    fn font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("font\0"))));
     }
 
-    fn set_font(this, font: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font);
+    fn set_font(this, font: Font) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFont:\0")), font.raw());
     }
 
     fn tab_view_type(this) -> TabViewType {
@@ -250,7 +259,10 @@ impl TabView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsTruncatedLabels:\0")), allows_truncated_labels as i8);
     }
 
-    // SKIPPED `minimumSize`: return `NSSize` — unmapped type `NSSize`
+    fn minimum_size(this) -> rt::Size {
+        return rt::msg_size(this._obj, rt::sel(#str_ptr("minimumSize\0")));
+    }
+
     fn draws_background(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("drawsBackground\0"))) != (0 as i8);
     }
@@ -264,9 +276,19 @@ impl TabView {
     }
 
     // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
-    // SKIPPED `delegate`: return `id<NSTabViewDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTabViewDelegate> _Nullable` — generic collection
-    // SKIPPED `contentRect`: return `NSRect` — unmapped type `NSRect`
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    fn content_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("contentRect\0")));
+    }
+
     fn number_of_tab_view_items(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTabViewItems\0")));
     }
@@ -279,11 +301,11 @@ impl TabView {
 }
 
 // `NSTabViewDelegate` delegate protocol -> runtime class-synthesis helper.
-fn TabViewDelegateProtocol_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TabViewDelegateProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-fn TabViewDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TabViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TabViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+fn TabViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct TabViewDelegateProtocol {
+struct TabViewDelegate {
     tab_view_should_select_tab_view_item: fn(*u8, *u8, *u8) -> i8,
     tab_view_will_select_tab_view_item: fn(*u8, *u8, *u8),
     tab_view_did_select_tab_view_item: fn(*u8, *u8, *u8),
@@ -291,11 +313,11 @@ struct TabViewDelegateProtocol {
     opaque user: *u8,
 }
 
-fn TabViewDelegateProtocol_new(user: *u8) -> TabViewDelegateProtocol {
-    return TabViewDelegateProtocol { tab_view_should_select_tab_view_item: TabViewDelegateProtocol_noop_i8_2, tab_view_will_select_tab_view_item: TabViewDelegateProtocol_noop_v_2, tab_view_did_select_tab_view_item: TabViewDelegateProtocol_noop_v_2, tab_view_did_change_number_of_tab_view_items: TabViewDelegateProtocol_noop_v_1, user: user };
+fn TabViewDelegate_new(user: *u8) -> TabViewDelegate {
+    return TabViewDelegate { tab_view_should_select_tab_view_item: TabViewDelegate_noop_i8_2, tab_view_will_select_tab_view_item: TabViewDelegate_noop_v_2, tab_view_did_select_tab_view_item: TabViewDelegate_noop_v_2, tab_view_did_change_number_of_tab_view_items: TabViewDelegate_noop_v_1, user: user };
 }
 
-impl TabViewDelegateProtocol {
+impl TabViewDelegate {
     fn set_tab_view_should_select_tab_view_item(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.tab_view_should_select_tab_view_item = handler;
         return;
@@ -314,52 +336,52 @@ impl TabViewDelegateProtocol {
     }
 }
 
-fn TabViewDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn TabViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TabViewDelegateProtocol_tab_view_should_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
-    let c: *TabViewDelegateProtocol = { synth::get_associated(self_obj, TabViewDelegateProtocol_key()) as *TabViewDelegateProtocol };
+fn TabViewDelegate_tab_view_should_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TabViewDelegate = { synth::get_associated(self_obj, TabViewDelegate_key()) as *TabViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).tab_view_should_select_tab_view_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
 
-fn TabViewDelegateProtocol_tab_view_will_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TabViewDelegateProtocol = { synth::get_associated(self_obj, TabViewDelegateProtocol_key()) as *TabViewDelegateProtocol };
+fn TabViewDelegate_tab_view_will_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TabViewDelegate = { synth::get_associated(self_obj, TabViewDelegate_key()) as *TabViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).tab_view_will_select_tab_view_item };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TabViewDelegateProtocol_tab_view_did_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TabViewDelegateProtocol = { synth::get_associated(self_obj, TabViewDelegateProtocol_key()) as *TabViewDelegateProtocol };
+fn TabViewDelegate_tab_view_did_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TabViewDelegate = { synth::get_associated(self_obj, TabViewDelegate_key()) as *TabViewDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).tab_view_did_select_tab_view_item };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn TabViewDelegateProtocol_tab_view_did_change_number_of_tab_view_items_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TabViewDelegateProtocol = { synth::get_associated(self_obj, TabViewDelegateProtocol_key()) as *TabViewDelegateProtocol };
+fn TabViewDelegate_tab_view_did_change_number_of_tab_view_items_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
+    let c: *TabViewDelegate = { synth::get_associated(self_obj, TabViewDelegate_key()) as *TabViewDelegate };
     let f: fn(*u8, *u8) = { (*c).tab_view_did_change_number_of_tab_view_items };
     let u: *u8 = { (*c).user };
     f(u, a0);
     return;
 }
 
-fn create_TabViewDelegateProtocol(ctx: *TabViewDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TabViewDelegateProtocol\0");
+fn create_TabViewDelegate(ctx: *TabViewDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TabViewDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_tab_view_should_select_tab_view_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tabView:shouldSelectTabViewItem:\0")), TabViewDelegateProtocol_tab_view_should_select_tab_view_item_imp, #str_ptr("c@:@@\0"));
-        let add_tab_view_will_select_tab_view_item: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tabView:willSelectTabViewItem:\0")), TabViewDelegateProtocol_tab_view_will_select_tab_view_item_imp, #str_ptr("v@:@@\0"));
-        let add_tab_view_did_select_tab_view_item: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tabView:didSelectTabViewItem:\0")), TabViewDelegateProtocol_tab_view_did_select_tab_view_item_imp, #str_ptr("v@:@@\0"));
-        let add_tab_view_did_change_number_of_tab_view_items: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tabViewDidChangeNumberOfTabViewItems:\0")), TabViewDelegateProtocol_tab_view_did_change_number_of_tab_view_items_imp, #str_ptr("v@:@\0"));
+        let add_tab_view_should_select_tab_view_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tabView:shouldSelectTabViewItem:\0")), TabViewDelegate_tab_view_should_select_tab_view_item_imp, #str_ptr("c@:@@\0"));
+        let add_tab_view_will_select_tab_view_item: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tabView:willSelectTabViewItem:\0")), TabViewDelegate_tab_view_will_select_tab_view_item_imp, #str_ptr("v@:@@\0"));
+        let add_tab_view_did_select_tab_view_item: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tabView:didSelectTabViewItem:\0")), TabViewDelegate_tab_view_did_select_tab_view_item_imp, #str_ptr("v@:@@\0"));
+        let add_tab_view_did_change_number_of_tab_view_items: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tabViewDidChangeNumberOfTabViewItems:\0")), TabViewDelegate_tab_view_did_change_number_of_tab_view_items_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TabViewDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, TabViewDelegate_key(), { ctx as *u8 });
     return d;
 }
 

@@ -14,6 +14,8 @@ struct Switch {
 impl Switch {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Switch { return Switch { _obj: ptr }; }
+
     // SKIPPED `state`: return `NSControlStateValue` — unmapped type `NSControlStateValue`
     // SKIPPED `setState:`: param `NSControlStateValue` — unmapped type `NSControlStateValue`
 }

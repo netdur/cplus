@@ -113,6 +113,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSImageCell` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -122,6 +124,8 @@ struct ImageCell {
 
 impl ImageCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ImageCell { return ImageCell { _obj: ptr }; }
 
     fn image_alignment(this) -> ImageAlignment {
         return image_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageAlignment\0"))));

@@ -7,47 +7,17 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
-// `NSDragOperation` (NS_ENUM)
-enum DragOperation {
-    None,
-    Copy,
-    Link,
-    Generic,
-    Private,
-    Move,
-    Delete,
-    Every,
-    All_Obsolete,
-    All,
-}
-
-fn drag_operation_raw(v: DragOperation) -> i64 {
-    return match v {
-        DragOperation::None => { 0 as i64 },
-        DragOperation::Copy => { 1 as i64 },
-        DragOperation::Link => { 2 as i64 },
-        DragOperation::Generic => { 4 as i64 },
-        DragOperation::Private => { 8 as i64 },
-        DragOperation::Move => { 16 as i64 },
-        DragOperation::Delete => { 32 as i64 },
-        DragOperation::Every => { 9223372036854775807 as i64 },
-        DragOperation::All_Obsolete => { 15 as i64 },
-        DragOperation::All => { 15 as i64 },
-    };
-}
-
-fn drag_operation_from_raw(raw: i64) -> DragOperation {
-    if raw == (1 as i64) { return DragOperation::Copy; }
-    if raw == (2 as i64) { return DragOperation::Link; }
-    if raw == (4 as i64) { return DragOperation::Generic; }
-    if raw == (8 as i64) { return DragOperation::Private; }
-    if raw == (16 as i64) { return DragOperation::Move; }
-    if raw == (32 as i64) { return DragOperation::Delete; }
-    if raw == (9223372036854775807 as i64) { return DragOperation::Every; }
-    if raw == (15 as i64) { return DragOperation::All_Obsolete; }
-    if raw == (15 as i64) { return DragOperation::All; }
-    return DragOperation::None;
-}
+// `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
+const drag_operation_none: u64 = 0 as u64;
+const drag_operation_copy: u64 = 1 as u64;
+const drag_operation_link: u64 = 2 as u64;
+const drag_operation_generic: u64 = 4 as u64;
+const drag_operation_private: u64 = 8 as u64;
+const drag_operation_move: u64 = 16 as u64;
+const drag_operation_delete: u64 = 32 as u64;
+const drag_operation_every: u64 = 9223372036854775807 as u64;
+const drag_operation_all__obsolete: u64 = 15 as u64;
+const drag_operation_all: u64 = 15 as u64;
 
 // `NSPathStyle` (NS_ENUM)
 enum PathStyle {
@@ -78,6 +48,8 @@ struct PathComponentCell {
 impl PathComponentCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PathComponentCell { return PathComponentCell { _obj: ptr }; }
+
 }
 
 // `NSOpenPanel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -87,6 +59,8 @@ struct OpenPanel {
 
 impl OpenPanel {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> OpenPanel { return OpenPanel { _obj: ptr }; }
 
 }
 
@@ -98,6 +72,8 @@ struct PathControlItem {
 impl PathControlItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PathControlItem { return PathControlItem { _obj: ptr }; }
+
 }
 
 // `NSPathControl` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -107,6 +83,8 @@ struct PathControl {
 
 impl PathControl {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PathControl { return PathControl { _obj: ptr }; }
 
     // SKIPPED `setDraggingSourceOperationMask:forLocal:`: (return, arg) shape not yet modelled
     fn is_editable(this) -> bool {
@@ -166,8 +144,15 @@ impl PathControl {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
     }
 
-    // SKIPPED `delegate`: return `id<NSPathControlDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSPathControlDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn menu(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
         return bridge::obj_option(obj);
@@ -177,9 +162,12 @@ impl PathControl {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu);
     }
 
-    fn clicked_path_component_cell(this) -> option::Option[*u8] {
+    fn clicked_path_component_cell(this) -> option::Option[PathComponentCell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("clickedPathComponentCell\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[PathComponentCell]::None;
+        }
+        return option::some(PathComponentCell::from_raw(obj));
     }
 
     // SKIPPED `pathComponentCells`: return `NSArray<NSPathComponentCell *> * _Nonnull` — generic collection
@@ -189,10 +177,10 @@ impl PathControl {
 // `NSPathControlDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `pathControl:validateDrop:`: arg shape (only <=5 object args modelled)
 // SKIPPED `pathControl:acceptDrop:`: arg shape (only <=5 object args modelled)
-fn PathControlDelegateProtocol_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn PathControlDelegateProtocol_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+fn PathControlDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn PathControlDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
 
-struct PathControlDelegateProtocol {
+struct PathControlDelegate {
     path_control_should_drag_item_with_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     path_control_should_drag_path_component_cell_with_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     path_control_will_display_open_panel: fn(*u8, *u8, *u8),
@@ -200,11 +188,11 @@ struct PathControlDelegateProtocol {
     opaque user: *u8,
 }
 
-fn PathControlDelegateProtocol_new(user: *u8) -> PathControlDelegateProtocol {
-    return PathControlDelegateProtocol { path_control_should_drag_item_with_pasteboard: PathControlDelegateProtocol_noop_i8_3, path_control_should_drag_path_component_cell_with_pasteboard: PathControlDelegateProtocol_noop_i8_3, path_control_will_display_open_panel: PathControlDelegateProtocol_noop_v_2, path_control_will_pop_up_menu: PathControlDelegateProtocol_noop_v_2, user: user };
+fn PathControlDelegate_new(user: *u8) -> PathControlDelegate {
+    return PathControlDelegate { path_control_should_drag_item_with_pasteboard: PathControlDelegate_noop_i8_3, path_control_should_drag_path_component_cell_with_pasteboard: PathControlDelegate_noop_i8_3, path_control_will_display_open_panel: PathControlDelegate_noop_v_2, path_control_will_pop_up_menu: PathControlDelegate_noop_v_2, user: user };
 }
 
-impl PathControlDelegateProtocol {
+impl PathControlDelegate {
     fn set_path_control_should_drag_item_with_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.path_control_should_drag_item_with_pasteboard = handler;
         return;
@@ -223,51 +211,51 @@ impl PathControlDelegateProtocol {
     }
 }
 
-fn PathControlDelegateProtocol_key() -> *u8 { return { 28672 as *u8 }; }
+fn PathControlDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn PathControlDelegateProtocol_path_control_should_drag_item_with_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *PathControlDelegateProtocol = { synth::get_associated(self_obj, PathControlDelegateProtocol_key()) as *PathControlDelegateProtocol };
+fn PathControlDelegate_path_control_should_drag_item_with_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).path_control_should_drag_item_with_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn PathControlDelegateProtocol_path_control_should_drag_path_component_cell_with_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
-    let c: *PathControlDelegateProtocol = { synth::get_associated(self_obj, PathControlDelegateProtocol_key()) as *PathControlDelegateProtocol };
+fn PathControlDelegate_path_control_should_drag_path_component_cell_with_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).path_control_should_drag_path_component_cell_with_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn PathControlDelegateProtocol_path_control_will_display_open_panel_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *PathControlDelegateProtocol = { synth::get_associated(self_obj, PathControlDelegateProtocol_key()) as *PathControlDelegateProtocol };
+fn PathControlDelegate_path_control_will_display_open_panel_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).path_control_will_display_open_panel };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn PathControlDelegateProtocol_path_control_will_pop_up_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *PathControlDelegateProtocol = { synth::get_associated(self_obj, PathControlDelegateProtocol_key()) as *PathControlDelegateProtocol };
+fn PathControlDelegate_path_control_will_pop_up_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).path_control_will_pop_up_menu };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
 }
 
-fn create_PathControlDelegateProtocol(ctx: *PathControlDelegateProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_PathControlDelegateProtocol\0");
+fn create_PathControlDelegate(ctx: *PathControlDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_PathControlDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_path_control_should_drag_item_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragItem:withPasteboard:\0")), PathControlDelegateProtocol_path_control_should_drag_item_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_path_control_should_drag_path_component_cell_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragPathComponentCell:withPasteboard:\0")), PathControlDelegateProtocol_path_control_should_drag_path_component_cell_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_path_control_will_display_open_panel: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willDisplayOpenPanel:\0")), PathControlDelegateProtocol_path_control_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
-        let add_path_control_will_pop_up_menu: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willPopUpMenu:\0")), PathControlDelegateProtocol_path_control_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
+        let add_path_control_should_drag_item_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragItem:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_item_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_path_control_should_drag_path_component_cell_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragPathComponentCell:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_path_component_cell_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_path_control_will_display_open_panel: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willDisplayOpenPanel:\0")), PathControlDelegate_path_control_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
+        let add_path_control_will_pop_up_menu: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willPopUpMenu:\0")), PathControlDelegate_path_control_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, PathControlDelegateProtocol_key(), { ctx as *u8 });
+    synth::set_associated(d, PathControlDelegate_key(), { ctx as *u8 });
     return d;
 }
 

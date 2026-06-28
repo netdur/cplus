@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLRasterizationRateSampleArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct RasterizationRateSampleArray {
@@ -52,12 +51,12 @@ impl RasterizationRateLayerDescriptor {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("verticalSampleStorage\0")));
     }
 
-    fn horizontal(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("horizontal\0")));
+    fn horizontal(this) -> RasterizationRateSampleArray {
+        return RasterizationRateSampleArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("horizontal\0"))));
     }
 
-    fn vertical(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("vertical\0")));
+    fn vertical(this) -> RasterizationRateSampleArray {
+        return RasterizationRateSampleArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertical\0"))));
     }
 
     // SKIPPED `setSampleCount:`: param `MTLSize` — unmapped type `MTLSize`
@@ -76,9 +75,12 @@ impl RasterizationRateLayerArray {
 
     fn from_raw(ptr: *u8) -> RasterizationRateLayerArray { return RasterizationRateLayerArray { _obj: ptr }; }
 
-    fn object_at_indexed_subscript(this, layer_index: u64) -> option::Option[*u8] {
+    fn object_at_indexed_subscript(this, layer_index: u64) -> option::Option[RasterizationRateLayerDescriptor] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), layer_index);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[RasterizationRateLayerDescriptor]::None;
+        }
+        return option::some(RasterizationRateLayerDescriptor::from_raw(obj));
     }
 
     // SKIPPED `setObject:atIndexedSubscript:`: (return, arg) shape not yet modelled
@@ -97,14 +99,17 @@ impl RasterizationRateMapDescriptor {
     // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:`: param `MTLSize` — unmapped type `MTLSize`
     // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:layer:`: param `MTLSize` — unmapped type `MTLSize`
     // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:layerCount:layers:`: param `MTLSize` — unmapped type `MTLSize`
-    fn layer_at_index(this, layer_index: u64) -> option::Option[*u8] {
+    fn layer_at_index(this, layer_index: u64) -> option::Option[RasterizationRateLayerDescriptor] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("layerAtIndex:\0")), layer_index);
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[RasterizationRateLayerDescriptor]::None;
+        }
+        return option::some(RasterizationRateLayerDescriptor::from_raw(obj));
     }
 
     // SKIPPED `setLayer:atIndex:`: (return, arg) shape not yet modelled
-    fn layers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("layers\0")));
+    fn layers(this) -> RasterizationRateLayerArray {
+        return RasterizationRateLayerArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layers\0"))));
     }
 
     // SKIPPED `screenSize`: return `MTLSize` — unmapped type `MTLSize`
@@ -124,66 +129,35 @@ impl RasterizationRateMapDescriptor {
 
 }
 
-// `MTLRasterizationRateMap` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `copyParameterDataToBuffer:offset:`: arg shape (only <=5 object args modelled)
-// SKIPPED `physicalSizeForLayer:`: arg shape (only <=5 object args modelled)
-// SKIPPED `mapScreenToPhysicalCoordinates:forLayer:`: arg shape (only <=5 object args modelled)
-// SKIPPED `mapPhysicalToScreenCoordinates:forLayer:`: arg shape (only <=5 object args modelled)
-// SKIPPED `device`: return `id<MTLDevice> _Nonnull` not modelled
-// SKIPPED `screenSize`: return `MTLSize` not modelled
-// SKIPPED `physicalGranularity`: return `MTLSize` not modelled
-// SKIPPED `parameterBufferSizeAndAlign`: return `MTLSizeAndAlign` not modelled
-fn RasterizationRateMap_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn RasterizationRateMap_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTLRasterizationRateMap` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct RasterizationRateMap {
-    label: fn(*u8) -> *u8,
-    layer_count: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn RasterizationRateMap_new(user: *u8) -> RasterizationRateMap {
-    return RasterizationRateMap { label: RasterizationRateMap_noop_id_0, layer_count: RasterizationRateMap_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl RasterizationRateMap {
-    fn set_label(ref this, handler: fn(*u8) -> *u8) {
-        this.label = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> RasterizationRateMap { return RasterizationRateMap { _obj: ptr }; }
+
+    // SKIPPED `copyParameterDataToBuffer:offset:`: (return, arg) shape not yet modelled
+    // SKIPPED `physicalSizeForLayer:`: return `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `mapScreenToPhysicalCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
+    // SKIPPED `mapPhysicalToScreenCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
     }
-    fn set_layer_count(ref this, handler: fn(*u8) -> u64) {
-        this.layer_count = handler;
-        return;
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
     }
-}
 
-fn RasterizationRateMap_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn RasterizationRateMap_label_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *RasterizationRateMap = { synth::get_associated(self_obj, RasterizationRateMap_key()) as *RasterizationRateMap };
-    let f: fn(*u8) -> *u8 = { (*c).label };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn RasterizationRateMap_layer_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *RasterizationRateMap = { synth::get_associated(self_obj, RasterizationRateMap_key()) as *RasterizationRateMap };
-    let f: fn(*u8) -> u64 = { (*c).layer_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_RasterizationRateMap(ctx: *RasterizationRateMap) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_RasterizationRateMap\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_label: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("label\0")), RasterizationRateMap_label_imp, #str_ptr("@@:\0"));
-        let add_layer_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("layerCount\0")), RasterizationRateMap_layer_count_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    // SKIPPED `screenSize`: return `MTLSize` — unmapped type `MTLSize`
+    // SKIPPED `physicalGranularity`: return `MTLSize` — unmapped type `MTLSize`
+    fn layer_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("layerCount\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, RasterizationRateMap_key(), { ctx as *u8 });
-    return d;
+
+    // SKIPPED `parameterBufferSizeAndAlign`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
 }
 

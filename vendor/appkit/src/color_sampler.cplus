@@ -33,6 +33,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSColorSampler` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -42,6 +44,8 @@ struct ColorSampler {
 
 impl ColorSampler {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ColorSampler { return ColorSampler { _obj: ptr }; }
 
     fn show_sampler_with_selection_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };

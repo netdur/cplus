@@ -14,6 +14,8 @@ struct ActionCell {
 impl ActionCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ActionCell { return ActionCell { _obj: ptr }; }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

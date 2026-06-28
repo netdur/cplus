@@ -14,6 +14,8 @@ struct Array {
 impl Array {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Array { return Array { _obj: ptr }; }
+
 }
 
 // `NSPredicateEditorRowTemplate` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct PredicateEditorRowTemplate {
 impl PredicateEditorRowTemplate {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> PredicateEditorRowTemplate { return PredicateEditorRowTemplate { _obj: ptr }; }
+
 }
 
 // `NSPredicateEditor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -33,6 +37,8 @@ struct PredicateEditor {
 
 impl PredicateEditor {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PredicateEditor { return PredicateEditor { _obj: ptr }; }
 
     // SKIPPED `rowTemplates`: return `NSArray<NSPredicateEditorRowTemplate *> * _Nonnull` — generic collection
     // SKIPPED `setRowTemplates:`: param `NSArray<NSPredicateEditorRowTemplate *> * _Nonnull` — generic collection

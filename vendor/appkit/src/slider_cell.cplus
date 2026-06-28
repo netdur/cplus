@@ -56,14 +56,19 @@ struct SliderCell {
 impl SliderCell {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `knobRectFlipped:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `barRectFlipped:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawKnob:`: param `NSRect` — unmapped type `NSRect`
-    fn draw_knob(this) {
-        rt::msg_void(this._obj, rt::sel(#str_ptr("drawKnob\0")));
+    fn from_raw(ptr: *u8) -> SliderCell { return SliderCell { _obj: ptr }; }
+
+    // SKIPPED `knobRectFlipped:`: (return, arg) shape not yet modelled
+    // SKIPPED `barRectFlipped:`: (return, arg) shape not yet modelled
+    fn draw_knob(this, knob_rect: rt::Rect) {
+        rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawKnob:\0")), knob_rect);
     }
 
-    // SKIPPED `drawBarInside:flipped:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `drawKnob`: method `draw_knob` already defined
+    fn draw_bar_inside_flipped(this, rect: rt::Rect, flipped: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawBarInside:flipped:\0")), rect, flipped as i8);
+    }
+
     fn prefers_tracking_until_mouse_up() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSSliderCell\0")), rt::sel(#str_ptr("prefersTrackingUntilMouseUp\0"))) != (0 as i8);
     }
@@ -105,14 +110,17 @@ impl SliderCell {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setVertical:\0")), vertical as i8);
     }
 
-    // SKIPPED `trackRect`: return `NSRect` — unmapped type `NSRect`
+    fn track_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("trackRect\0")));
+    }
+
     fn knob_thickness(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("knobThickness\0")));
     }
 
     // SKIPPED `tickMarkValueAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: return `NSRect` — unmapped type `NSRect`
-    // SKIPPED `indexOfTickMarkAtPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `rectOfTickMarkAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfTickMarkAtPoint:`: (return, arg) shape not yet modelled
     // SKIPPED `closestTickMarkValueToValue:`: (return, arg) shape not yet modelled
     fn draw_tick_marks(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawTickMarks\0")));

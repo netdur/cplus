@@ -200,8 +200,10 @@ struct Scroller {
 impl Scroller {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
+
     // SKIPPED `scrollerWidthForControlSize:scrollerStyle:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectForPart:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `rectForPart:`: (return, arg) shape not yet modelled
     fn check_space_for_parts(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkSpaceForParts\0")));
     }
@@ -210,8 +212,11 @@ impl Scroller {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawKnob\0")));
     }
 
-    // SKIPPED `drawKnobSlotInRect:highlight:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `testPart:`: param `NSPoint` — unmapped type `NSPoint`
+    fn draw_knob_slot_in_rect_highlight(this, slot_rect: rt::Rect, flag: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawKnobSlotInRect:highlight:\0")), slot_rect, flag as i8);
+    }
+
+    // SKIPPED `testPart:`: (return, arg) shape not yet modelled
     fn track_knob(this, event: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("trackKnob:\0")), event);
     }

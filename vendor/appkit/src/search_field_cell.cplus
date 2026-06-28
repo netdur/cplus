@@ -15,6 +15,8 @@ struct ButtonCell {
 impl ButtonCell {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ButtonCell { return ButtonCell { _obj: ptr }; }
+
 }
 
 // `NSMenu` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct Menu {
 
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
 
 }
 
@@ -35,6 +39,8 @@ struct MutableArray {
 impl MutableArray {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MutableArray { return MutableArray { _obj: ptr }; }
+
 }
 
 // `NSTimer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,6 +50,8 @@ struct Timer {
 
 impl Timer {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Timer { return Timer { _obj: ptr }; }
 
 }
 
@@ -55,6 +63,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSSearchFieldCell` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -64,6 +74,8 @@ struct SearchFieldCell {
 
 impl SearchFieldCell {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SearchFieldCell { return SearchFieldCell { _obj: ptr }; }
 
     fn init_text_cell(this, string: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initTextCell:\0")), bridge::nsstring(string));
@@ -75,8 +87,8 @@ impl SearchFieldCell {
         return SearchFieldCell { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn init_image_cell(this, image: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
+    fn init_image_cell(this, image: Image) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image.raw());
     }
 
     fn reset_search_button_cell(this) {
@@ -87,34 +99,52 @@ impl SearchFieldCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCancelButtonCell\0")));
     }
 
-    // SKIPPED `searchTextRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `searchButtonRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `cancelButtonRectForBounds:`: param `NSRect` — unmapped type `NSRect`
-    fn search_button_cell(this) -> option::Option[*u8] {
+    fn search_text_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("searchTextRectForBounds:\0")), rect);
+    }
+
+    fn search_button_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("searchButtonRectForBounds:\0")), rect);
+    }
+
+    fn cancel_button_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("cancelButtonRectForBounds:\0")), rect);
+    }
+
+    fn search_button_cell(this) -> option::Option[ButtonCell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("searchButtonCell\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ButtonCell]::None;
+        }
+        return option::some(ButtonCell::from_raw(obj));
     }
 
-    fn set_search_button_cell(this, search_button_cell: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchButtonCell:\0")), search_button_cell);
+    fn set_search_button_cell(this, search_button_cell: ButtonCell) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchButtonCell:\0")), search_button_cell.raw());
     }
 
-    fn cancel_button_cell(this) -> option::Option[*u8] {
+    fn cancel_button_cell(this) -> option::Option[ButtonCell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("cancelButtonCell\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[ButtonCell]::None;
+        }
+        return option::some(ButtonCell::from_raw(obj));
     }
 
-    fn set_cancel_button_cell(this, cancel_button_cell: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCancelButtonCell:\0")), cancel_button_cell);
+    fn set_cancel_button_cell(this, cancel_button_cell: ButtonCell) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCancelButtonCell:\0")), cancel_button_cell.raw());
     }
 
-    fn search_menu_template(this) -> option::Option[*u8] {
+    fn search_menu_template(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("searchMenuTemplate\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
     }
 
-    fn set_search_menu_template(this, search_menu_template: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchMenuTemplate:\0")), search_menu_template);
+    fn set_search_menu_template(this, search_menu_template: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchMenuTemplate:\0")), search_menu_template.raw());
     }
 
     fn sends_whole_search_string(this) -> bool {

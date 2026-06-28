@@ -65,11 +65,13 @@ struct ATSTypesetter {
 impl ATSTypesetter {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ATSTypesetter { return ATSTypesetter { _obj: ptr }; }
+
     fn shared_typesetter() -> ATSTypesetter {
         return ATSTypesetter { _obj: rt::msg_id(rt::get_class(#str_ptr("NSATSTypesetter\0")), rt::sel(#str_ptr("sharedTypesetter\0"))) };
     }
 
-    // SKIPPED `lineFragmentRectForProposedRect:remainingRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `lineFragmentRectForProposedRect:remainingRect:`: param `NSRectPointer _Null_unspecified` — unmapped type `NSRectPointer`
     fn substitute_font_for_font(this, original_font: *u8) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("substituteFontForFont:\0")), original_font);
     }
@@ -77,11 +79,11 @@ impl ATSTypesetter {
     // SKIPPED `textTabForGlyphLocation:writingDirection:maxLocation:`: (return, arg) shape not yet modelled
     // SKIPPED `setParagraphGlyphRange:separatorGlyphRange:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutParagraphAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `paragraphSpacingBeforeGlyphAtIndex:withProposedLineFragmentRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `paragraphSpacingBeforeGlyphAtIndex:withProposedLineFragmentRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: (return, arg) shape not yet modelled
     // SKIPPED `setHardInvalidation:forGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `getLineFragmentRect:usedRect:forParagraphSeparatorGlyphRange:atProposedOrigin:`: param `NSPoint` — unmapped type `NSPoint`
+    // SKIPPED `getLineFragmentRect:usedRect:forParagraphSeparatorGlyphRange:atProposedOrigin:`: (return, arg) shape not yet modelled
     fn uses_font_leading(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesFontLeading\0"))) != (0 as i8);
     }
@@ -151,7 +153,7 @@ impl ATSTypesetter {
     // SKIPPED `shouldBreakLineByHyphenatingBeforeCharacterAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `hyphenationFactorForGlyphAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `hyphenCharacterForGlyphAtIndex:`: return `UTF32Char` — unmapped type `UTF32Char`
-    // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:`: (return, arg) shape not yet modelled
 }
 

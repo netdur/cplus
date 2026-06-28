@@ -66,6 +66,8 @@ struct String {
 impl String {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
+
 }
 
 // `NSOrthography` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -75,6 +77,8 @@ struct Orthography {
 
 impl Orthography {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Orthography { return Orthography { _obj: ptr }; }
 
 }
 
@@ -86,6 +90,8 @@ struct Panel {
 impl Panel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Panel { return Panel { _obj: ptr }; }
+
 }
 
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -95,6 +101,8 @@ struct View {
 
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
 }
 
@@ -106,6 +114,8 @@ struct ViewController {
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
+
 }
 
 // `NSMenu` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -116,6 +126,8 @@ struct Menu {
 impl Menu {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Menu { return Menu { _obj: ptr }; }
+
 }
 
 // `NSSpellChecker` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -125,6 +137,8 @@ struct SpellChecker {
 
 impl SpellChecker {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> SpellChecker { return SpellChecker { _obj: ptr }; }
 
     fn unique_spell_document_tag() -> i64 {
         return rt::msg_i64(rt::get_class(#str_ptr("NSSpellChecker\0")), rt::sel(#str_ptr("uniqueSpellDocumentTag\0")));
@@ -183,9 +197,9 @@ impl SpellChecker {
     // SKIPPED `languageForWordRange:inString:orthography:`: (return, arg) shape not yet modelled
     // SKIPPED `closeSpellDocumentWithTag:`: (return, arg) shape not yet modelled
     // SKIPPED `recordResponse:toCorrection:forWord:language:inSpellDocumentWithTag:`: (return, arg) shape not yet modelled
-    // SKIPPED `showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:`: leading param `NSRect` — unmapped type `NSRect`
-    fn dismiss_correction_indicator_for_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("dismissCorrectionIndicatorForView:\0")), view);
+    // SKIPPED `showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:`: block-method msgSend shape not modelled
+    fn dismiss_correction_indicator_for_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("dismissCorrectionIndicatorForView:\0")), view.raw());
     }
 
     // SKIPPED `showInlinePredictionForCandidates:client:`: param `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
@@ -219,17 +233,20 @@ impl SpellChecker {
     }
 
     // SKIPPED `userReplacementsDictionary`: return `API_AVAILABLE NSDictionary<NSString *,NSString *> *` — generic collection
-    fn spelling_panel(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("spellingPanel\0")));
+    fn spelling_panel(this) -> Panel {
+        return Panel::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("spellingPanel\0"))));
     }
 
-    fn accessory_view(this) -> option::Option[*u8] {
+    fn accessory_view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accessoryView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_accessory_view(this, accessory_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), accessory_view);
+    fn set_accessory_view(this, accessory_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), accessory_view.raw());
     }
 
     fn substitutions_panel(this) -> *u8 {
@@ -294,6 +311,18 @@ impl SpellChecker {
     fn forget_word(this, word: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("forgetWord:\0")), bridge::nsstring(word));
     }
+
+}
+
+// `NSTextInputClient` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextInputClient {
+    opaque _obj: *u8,
+}
+
+impl TextInputClient {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextInputClient { return TextInputClient { _obj: ptr }; }
 
 }
 

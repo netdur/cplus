@@ -32,6 +32,8 @@ struct GlassEffectView {
 impl GlassEffectView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GlassEffectView { return GlassEffectView { _obj: ptr }; }
+
     fn content_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));
         return bridge::obj_option(obj);
@@ -72,6 +74,8 @@ struct GlassEffectContainerView {
 
 impl GlassEffectContainerView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> GlassEffectContainerView { return GlassEffectContainerView { _obj: ptr }; }
 
     fn content_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentView\0")));

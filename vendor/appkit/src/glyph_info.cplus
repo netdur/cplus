@@ -44,6 +44,8 @@ struct GlyphInfo {
 impl GlyphInfo {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> GlyphInfo { return GlyphInfo { _obj: ptr }; }
+
     // SKIPPED `glyphInfoWithCGGlyph:forFont:baseString:`: param `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `glyphID`: return `CGGlyph` — unmapped type `CGGlyph`
     fn base_string(this) -> text::Text {

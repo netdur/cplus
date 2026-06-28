@@ -50,6 +50,8 @@ struct Data {
 impl Data {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Data { return Data { _obj: ptr }; }
+
 }
 
 // `NSColorSpace` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -60,18 +62,23 @@ struct ColorSpace {
 impl ColorSpace {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn new(icc_data: *u8) -> ColorSpace {
+    fn from_raw(ptr: *u8) -> ColorSpace { return ColorSpace { _obj: ptr }; }
+
+    fn new(icc_data: Data) -> ColorSpace {
         let cls: *u8 = rt::get_class(#str_ptr("NSColorSpace\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return ColorSpace { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithICCProfileData:\0")), icc_data) };
+        return ColorSpace { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithICCProfileData:\0")), icc_data.raw()) };
     }
 
     // SKIPPED `initWithColorSyncProfile:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCGColorSpace:`: extra init variant (one `new` per type)
     // SKIPPED `availableColorSpacesWithModel:`: return `NSArray<NSColorSpace *> * _Nonnull` — generic collection
-    fn i_c_c_profile_data(this) -> option::Option[*u8] {
+    fn i_c_c_profile_data(this) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("ICCProfileData\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
     }
 
     fn color_sync_profile(this) -> *u8 {

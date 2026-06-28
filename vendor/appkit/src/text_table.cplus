@@ -161,9 +161,11 @@ struct TextTable {
 impl TextTable {
     fn raw(this) -> *u8 { return this._obj; }
 
-    // SKIPPED `rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `boundsRectForBlock:contentRect:inRect:textContainer:characterRange:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:`: param `NSRect` — unmapped type `NSRect`
+    fn from_raw(ptr: *u8) -> TextTable { return TextTable { _obj: ptr }; }
+
+    // SKIPPED `rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundsRectForBlock:contentRect:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:`: (return, arg) shape not yet modelled
     fn number_of_columns(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("numberOfColumns\0")));
     }
@@ -200,6 +202,8 @@ struct LayoutManager {
 impl LayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutManager { return LayoutManager { _obj: ptr }; }
+
 }
 
 // `NSTextContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -210,6 +214,8 @@ struct TextContainer {
 impl TextContainer {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
+
 }
 
 // `NSTextBlock` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -219,6 +225,8 @@ struct TextBlock {
 
 impl TextBlock {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextBlock { return TextBlock { _obj: ptr }; }
 
     fn new() -> TextBlock {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextBlock\0"));
@@ -244,9 +252,9 @@ impl TextBlock {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `rectForLayoutAtPoint:inRect:textContainer:characterRange:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `boundsRectForContentRect:inRect:textContainer:characterRange:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `drawBackgroundWithFrame:inView:characterRange:layoutManager:`: param `NSRect` — unmapped type `NSRect`
+    // SKIPPED `rectForLayoutAtPoint:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundsRectForContentRect:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawBackgroundWithFrame:inView:characterRange:layoutManager:`: (return, arg) shape not yet modelled
     fn content_width(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("contentWidth\0")));
     }
@@ -282,9 +290,11 @@ struct TextTableBlock {
 impl TextTableBlock {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TextTableBlock { return TextTableBlock { _obj: ptr }; }
+
     // SKIPPED `initWithTable:startingRow:rowSpan:startingColumn:columnSpan:`: init arg shape not yet modelled
-    fn table(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("table\0")));
+    fn table(this) -> TextTable {
+        return TextTable::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("table\0"))));
     }
 
     fn starting_row(this) -> i64 {

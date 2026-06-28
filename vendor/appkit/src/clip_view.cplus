@@ -14,6 +14,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSClipView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -24,6 +26,8 @@ struct ClipView {
 impl ClipView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ClipView { return ClipView { _obj: ptr }; }
+
     fn view_frame_changed(this, notification: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewFrameChanged:\0")), notification);
     }
@@ -33,14 +37,20 @@ impl ClipView {
     }
 
     // SKIPPED `autoscroll:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollToPoint:`: param `NSPoint` — unmapped type `NSPoint`
-    // SKIPPED `constrainBoundsRect:`: param `NSRect` — unmapped type `NSRect`
-    fn background_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
+    fn scroll_to_point(this, new_origin: rt::Point) {
+        rt::msg_void_point(this._obj, rt::sel(#str_ptr("scrollToPoint:\0")), new_origin);
     }
 
-    fn set_background_color(this, background_color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color);
+    fn constrain_bounds_rect(this, proposed_bounds: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("constrainBoundsRect:\0")), proposed_bounds);
+    }
+
+    fn background_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
+    }
+
+    fn set_background_color(this, background_color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
     fn draws_background(this) -> bool {
@@ -60,7 +70,10 @@ impl ClipView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDocumentView:\0")), document_view);
     }
 
-    // SKIPPED `documentRect`: return `NSRect` — unmapped type `NSRect`
+    fn document_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentRect\0")));
+    }
+
     fn document_cursor(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("documentCursor\0")));
         return bridge::obj_option(obj);
@@ -70,7 +83,10 @@ impl ClipView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDocumentCursor:\0")), document_cursor);
     }
 
-    // SKIPPED `documentVisibleRect`: return `NSRect` — unmapped type `NSRect`
+    fn document_visible_rect(this) -> rt::Rect {
+        return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentVisibleRect\0")));
+    }
+
     // SKIPPED `contentInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
     // SKIPPED `setContentInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
     fn automatically_adjusts_content_insets(this) -> bool {
@@ -81,7 +97,10 @@ impl ClipView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutomaticallyAdjustsContentInsets:\0")), automatically_adjusts_content_insets as i8);
     }
 
-    // SKIPPED `constrainScrollPoint:`: param `NSPoint` — unmapped type `NSPoint`
+    fn constrain_scroll_point(this, new_origin: rt::Point) -> rt::Point {
+        return rt::msg_point_point(this._obj, rt::sel(#str_ptr("constrainScrollPoint:\0")), new_origin);
+    }
+
     fn copies_on_scroll(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("copiesOnScroll\0"))) != (0 as i8);
     }

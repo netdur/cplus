@@ -6,38 +6,14 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
-// `NSTableViewAnimationOptions` (NS_ENUM)
-enum TableViewAnimationOptions {
-    NSTableViewAnimationEffectNone,
-    NSTableViewAnimationEffectFade,
-    NSTableViewAnimationEffectGap,
-    NSTableViewAnimationSlideUp,
-    NSTableViewAnimationSlideDown,
-    NSTableViewAnimationSlideLeft,
-    NSTableViewAnimationSlideRight,
-}
-
-fn table_view_animation_options_raw(v: TableViewAnimationOptions) -> i64 {
-    return match v {
-        TableViewAnimationOptions::NSTableViewAnimationEffectNone => { 0 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationEffectFade => { 1 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationEffectGap => { 2 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideUp => { 16 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideDown => { 32 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideLeft => { 48 as i64 },
-        TableViewAnimationOptions::NSTableViewAnimationSlideRight => { 64 as i64 },
-    };
-}
-
-fn table_view_animation_options_from_raw(raw: i64) -> TableViewAnimationOptions {
-    if raw == (1 as i64) { return TableViewAnimationOptions::NSTableViewAnimationEffectFade; }
-    if raw == (2 as i64) { return TableViewAnimationOptions::NSTableViewAnimationEffectGap; }
-    if raw == (16 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideUp; }
-    if raw == (32 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideDown; }
-    if raw == (48 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideLeft; }
-    if raw == (64 as i64) { return TableViewAnimationOptions::NSTableViewAnimationSlideRight; }
-    return TableViewAnimationOptions::NSTableViewAnimationEffectNone;
-}
+// `NSTableViewAnimationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const table_view_animation_options_n_s_table_view_animation_effect_none: u64 = 0 as u64;
+const table_view_animation_options_n_s_table_view_animation_effect_fade: u64 = 1 as u64;
+const table_view_animation_options_n_s_table_view_animation_effect_gap: u64 = 2 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_up: u64 = 16 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_down: u64 = 32 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_left: u64 = 48 as u64;
+const table_view_animation_options_n_s_table_view_animation_slide_right: u64 = 64 as u64;
 
 // `NSTableRowView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TableRowView {
@@ -46,6 +22,8 @@ struct TableRowView {
 
 impl TableRowView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableRowView { return TableRowView { _obj: ptr }; }
 
 }
 
@@ -57,6 +35,8 @@ struct TableCellView {
 impl TableCellView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> TableCellView { return TableCellView { _obj: ptr }; }
+
 }
 
 // `NSDiffableDataSourceSnapshot` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -67,6 +47,8 @@ struct DiffableDataSourceSnapshot {
 impl DiffableDataSourceSnapshot {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DiffableDataSourceSnapshot { return DiffableDataSourceSnapshot { _obj: ptr }; }
+
 }
 
 // `NSTableViewDiffableDataSource` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -76,6 +58,8 @@ struct TableViewDiffableDataSource {
 
 impl TableViewDiffableDataSource {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TableViewDiffableDataSource { return TableViewDiffableDataSource { _obj: ptr }; }
 
     // SKIPPED `initWithTableView:cellProvider:`: param `NSTableViewDiffableDataSourceCellProvider _Nonnull` — unmapped type `NSTableViewDiffableDataSourceCellProvider`
     // SKIPPED `init`: extra init variant (one `new` per type)
@@ -94,8 +78,8 @@ impl TableViewDiffableDataSource {
     // SKIPPED `setRowViewProvider:`: param `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
     // SKIPPED `sectionHeaderViewProvider`: return `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
     // SKIPPED `setSectionHeaderViewProvider:`: param `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
-    fn default_row_animation(this) -> TableViewAnimationOptions {
-        return table_view_animation_options_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("defaultRowAnimation\0"))));
+    fn default_row_animation(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("defaultRowAnimation\0")));
     }
 
     // SKIPPED `setDefaultRowAnimation:`: (return, arg) shape not yet modelled

@@ -14,6 +14,8 @@ struct SplitViewController {
 impl SplitViewController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> SplitViewController { return SplitViewController { _obj: ptr }; }
+
     fn add_split_view_item(this, split_view_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSplitViewItem:\0")), split_view_item);
     }
@@ -28,7 +30,7 @@ impl SplitViewController {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: param `id<NSValidatedUserInterfaceItem> _Nonnull` — generic collection
+    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
     fn view_did_load(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidLoad\0")));
     }
@@ -36,8 +38,8 @@ impl SplitViewController {
     // SKIPPED `splitView:canCollapseSubview:`: (return, arg) shape not yet modelled
     // SKIPPED `splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:`: (return, arg) shape not yet modelled
     // SKIPPED `splitView:shouldHideDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: return `NSRect` — unmapped type `NSRect`
+    // SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: (return, arg) shape not yet modelled
     fn split_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0")));
     }

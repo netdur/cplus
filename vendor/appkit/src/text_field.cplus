@@ -132,8 +132,15 @@ impl TextField {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSelectable:\0")), selectable as i8);
     }
 
-    // SKIPPED `delegate`: return `id<NSTextFieldDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTextFieldDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn accepts_first_responder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsFirstResponder\0"))) != (0 as i8);
     }

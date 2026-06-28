@@ -35,6 +35,8 @@ struct Color {
 impl Color {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Color { return Color { _obj: ptr }; }
+
 }
 
 // `NSTabView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -44,6 +46,8 @@ struct TabView {
 
 impl TabView {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TabView { return TabView { _obj: ptr }; }
 
 }
 
@@ -55,6 +59,8 @@ struct View {
 impl View {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
+
 }
 
 // `NSViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -64,6 +70,8 @@ struct ViewController {
 
 impl ViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
 
 }
 
@@ -75,6 +83,8 @@ struct Image {
 impl Image {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Image { return Image { _obj: ptr }; }
+
 }
 
 // `NSTabViewItem` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -85,8 +95,10 @@ struct TabViewItem {
 impl TabViewItem {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn tab_view_item_with_view_controller(view_controller: *u8) -> TabViewItem {
-        return TabViewItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSTabViewItem\0")), rt::sel(#str_ptr("tabViewItemWithViewController:\0")), view_controller)) };
+    fn from_raw(ptr: *u8) -> TabViewItem { return TabViewItem { _obj: ptr }; }
+
+    fn tab_view_item_with_view_controller(view_controller: ViewController) -> TabViewItem {
+        return TabViewItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSTabViewItem\0")), rt::sel(#str_ptr("tabViewItemWithViewController:\0")), view_controller.raw())) };
     }
 
     fn new(identifier: *u8) -> TabViewItem {
@@ -95,8 +107,8 @@ impl TabViewItem {
         return TabViewItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), identifier) };
     }
 
-    // SKIPPED `drawLabel:inRect:`: param `NSRect` — unmapped type `NSRect`
-    // SKIPPED `sizeOfLabel:`: return `NSSize` — unmapped type `NSSize`
+    // SKIPPED `drawLabel:inRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `sizeOfLabel:`: (return, arg) shape not yet modelled
     fn identifier(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
         return bridge::obj_option(obj);
@@ -106,12 +118,12 @@ impl TabViewItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIdentifier:\0")), identifier);
     }
 
-    fn color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("color\0")));
+    fn color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("color\0"))));
     }
 
-    fn set_color(this, color: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), color);
+    fn set_color(this, color: Color) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), color.raw());
     }
 
     fn label(this) -> text::Text {
@@ -131,13 +143,16 @@ impl TabViewItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    fn view(this) -> option::Option[*u8] {
+    fn view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
+    fn set_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
     fn view_controller(this) -> *u8 {
@@ -152,18 +167,24 @@ impl TabViewItem {
         return tab_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabState\0"))));
     }
 
-    fn tab_view(this) -> option::Option[*u8] {
+    fn tab_view(this) -> option::Option[TabView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabView\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[TabView]::None;
+        }
+        return option::some(TabView::from_raw(obj));
     }
 
-    fn initial_first_responder(this) -> option::Option[*u8] {
+    fn initial_first_responder(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("initialFirstResponder\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
     }
 
-    fn set_initial_first_responder(this, initial_first_responder: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialFirstResponder:\0")), initial_first_responder);
+    fn set_initial_first_responder(this, initial_first_responder: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialFirstResponder:\0")), initial_first_responder.raw());
     }
 
     fn tool_tip(this) -> *u8 {

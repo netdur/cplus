@@ -5,25 +5,10 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `NSTextStorageEditActions` (NS_ENUM)
-enum TextStorageEditActions {
-    NSTextStorageEditedAttributes,
-    NSTextStorageEditedCharacters,
-}
-
-fn text_storage_edit_actions_raw(v: TextStorageEditActions) -> i64 {
-    return match v {
-        TextStorageEditActions::NSTextStorageEditedAttributes => { 1 as i64 },
-        TextStorageEditActions::NSTextStorageEditedCharacters => { 2 as i64 },
-    };
-}
-
-fn text_storage_edit_actions_from_raw(raw: i64) -> TextStorageEditActions {
-    if raw == (2 as i64) { return TextStorageEditActions::NSTextStorageEditedCharacters; }
-    return TextStorageEditActions::NSTextStorageEditedAttributes;
-}
+// `NSTextStorageEditActions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u64;
+const text_storage_edit_actions_n_s_text_storage_edited_characters: u64 = 2 as u64;
 
 // `NSArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Array {
@@ -32,6 +17,8 @@ struct Array {
 
 impl Array {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Array { return Array { _obj: ptr }; }
 
 }
 
@@ -43,6 +30,8 @@ struct LayoutManager {
 impl LayoutManager {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> LayoutManager { return LayoutManager { _obj: ptr }; }
+
 }
 
 // `NSNotification` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -52,6 +41,8 @@ struct Notification {
 
 impl Notification {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Notification { return Notification { _obj: ptr }; }
 
 }
 
@@ -63,12 +54,14 @@ struct TextStorage {
 impl TextStorage {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn add_layout_manager(this, a_layout_manager: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addLayoutManager:\0")), a_layout_manager);
+    fn from_raw(ptr: *u8) -> TextStorage { return TextStorage { _obj: ptr }; }
+
+    fn add_layout_manager(this, a_layout_manager: LayoutManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addLayoutManager:\0")), a_layout_manager.raw());
     }
 
-    fn remove_layout_manager(this, a_layout_manager: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeLayoutManager:\0")), a_layout_manager);
+    fn remove_layout_manager(this, a_layout_manager: LayoutManager) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeLayoutManager:\0")), a_layout_manager.raw());
     }
 
     // SKIPPED `edited:range:changeInLength:`: (return, arg) shape not yet modelled
@@ -79,8 +72,8 @@ impl TextStorage {
     // SKIPPED `invalidateAttributesInRange:`: (return, arg) shape not yet modelled
     // SKIPPED `ensureAttributesAreFixedInRange:`: (return, arg) shape not yet modelled
     // SKIPPED `layoutManagers`: return `NSArray<NSLayoutManager *> * _Nonnull` — generic collection
-    fn edited_mask(this) -> TextStorageEditActions {
-        return text_storage_edit_actions_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("editedMask\0"))));
+    fn edited_mask(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("editedMask\0")));
     }
 
     fn edited_range(this) -> rt::Range {
@@ -91,8 +84,15 @@ impl TextStorage {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("changeInLength\0")));
     }
 
-    // SKIPPED `delegate`: return `id<NSTextStorageDelegate> _Nullable` — generic collection
-    // SKIPPED `setDelegate:`: param `id<NSTextStorageDelegate> _Nullable` — generic collection
+    fn delegate(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn fixes_attributes_lazily(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("fixesAttributesLazily\0"))) != (0 as i8);
     }
@@ -101,61 +101,29 @@ impl TextStorage {
     // SKIPPED `setTextStorageObserver:`: param `API_UNAVAILABLE id<NSTextStorageObserving>` — generic collection
 }
 
-// `NSTextStorageObserving` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `performEditingTransactionForTextStorage:usingBlock:`: arg shape (only <=5 object args modelled)
-fn TextStorageObservingProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextStorageObservingProtocol_noop_v_1(user: *u8, a0: *u8) { return; }
-
-struct TextStorageObservingProtocol {
-    text_storage: fn(*u8) -> *u8,
-    set_text_storage: fn(*u8, *u8),
-    opaque user: *u8,
+// `NSTextStorageObserving` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextStorageObserving {
+    opaque _obj: *u8,
 }
 
-fn TextStorageObservingProtocol_new(user: *u8) -> TextStorageObservingProtocol {
-    return TextStorageObservingProtocol { text_storage: TextStorageObservingProtocol_noop_id_0, set_text_storage: TextStorageObservingProtocol_noop_v_1, user: user };
-}
+impl TextStorageObserving {
+    fn raw(this) -> *u8 { return this._obj; }
 
-impl TextStorageObservingProtocol {
-    fn set_text_storage(ref this, handler: fn(*u8) -> *u8) {
-        this.text_storage = handler;
-        return;
+    fn from_raw(ptr: *u8) -> TextStorageObserving { return TextStorageObserving { _obj: ptr }; }
+
+    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `performEditingTransactionForTextStorage:usingBlock:`: block-method msgSend shape not modelled
+    fn text_storage(this) -> option::Option[TextStorage] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textStorage\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextStorage]::None;
+        }
+        return option::some(TextStorage::from_raw(obj));
     }
-    fn set_set_text_storage(ref this, handler: fn(*u8, *u8)) {
-        this.set_text_storage = handler;
-        return;
+
+    fn set_text_storage(this, text_storage: TextStorage) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextStorage:\0")), text_storage.raw());
     }
-}
 
-fn TextStorageObservingProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn TextStorageObservingProtocol_text_storage_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *TextStorageObservingProtocol = { synth::get_associated(self_obj, TextStorageObservingProtocol_key()) as *TextStorageObservingProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).text_storage };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn TextStorageObservingProtocol_set_text_storage_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
-    let c: *TextStorageObservingProtocol = { synth::get_associated(self_obj, TextStorageObservingProtocol_key()) as *TextStorageObservingProtocol };
-    let f: fn(*u8, *u8) = { (*c).set_text_storage };
-    let u: *u8 = { (*c).user };
-    f(u, a0);
-    return;
-}
-
-fn create_TextStorageObservingProtocol(ctx: *TextStorageObservingProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_TextStorageObservingProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_storage: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("textStorage\0")), TextStorageObservingProtocol_text_storage_imp, #str_ptr("@@:\0"));
-        let add_set_text_storage: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("setTextStorage:\0")), TextStorageObservingProtocol_set_text_storage_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, TextStorageObservingProtocol_key(), { ctx as *u8 });
-    return d;
 }
 

@@ -68,6 +68,8 @@ struct ClipView {
 impl ClipView {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> ClipView { return ClipView { _obj: ptr }; }
+
 }
 
 // `NSTitlebarAccessoryViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -77,6 +79,8 @@ struct TitlebarAccessoryViewController {
 
 impl TitlebarAccessoryViewController {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TitlebarAccessoryViewController { return TitlebarAccessoryViewController { _obj: ptr }; }
 
     fn view_will_appear(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewWillAppear\0")));

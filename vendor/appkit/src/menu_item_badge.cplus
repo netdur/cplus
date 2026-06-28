@@ -38,6 +38,8 @@ struct MenuItemBadge {
 impl MenuItemBadge {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItemBadge { return MenuItemBadge { _obj: ptr }; }
+
     fn updates_with_count(item_count: i64) -> MenuItemBadge {
         return MenuItemBadge { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSMenuItemBadge\0")), rt::sel(#str_ptr("updatesWithCount:\0")), item_count)) };
     }

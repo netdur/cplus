@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `MTLPixelFormat` (NS_ENUM)
 enum PixelFormat {
@@ -604,6 +603,27 @@ fn sparse_page_size_from_raw(raw: i64) -> SparsePageSize {
     return SparsePageSize::_16;
 }
 
+// `MTLTextureSparseTier` (NS_ENUM)
+enum TextureSparseTier {
+    None,
+    _1,
+    _2,
+}
+
+fn texture_sparse_tier_raw(v: TextureSparseTier) -> i64 {
+    return match v {
+        TextureSparseTier::None => { 0 as i64 },
+        TextureSparseTier::_1 => { 1 as i64 },
+        TextureSparseTier::_2 => { 2 as i64 },
+    };
+}
+
+fn texture_sparse_tier_from_raw(raw: i64) -> TextureSparseTier {
+    if raw == (1 as i64) { return TextureSparseTier::_1; }
+    if raw == (2 as i64) { return TextureSparseTier::_2; }
+    return TextureSparseTier::None;
+}
+
 // `MTLSharedTextureHandle` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct SharedTextureHandle {
     opaque _obj: *u8,
@@ -614,7 +634,10 @@ impl SharedTextureHandle {
 
     fn from_raw(ptr: *u8) -> SharedTextureHandle { return SharedTextureHandle { _obj: ptr }; }
 
-    // SKIPPED `device`: return `id<MTLDevice> _Nonnull` — generic collection
+    fn device(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("device\0")));
+    }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -756,299 +779,166 @@ impl TextureViewDescriptor {
     // SKIPPED `setSwizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
 }
 
-// `MTLTexture` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:`: arg shape (only <=5 object args modelled)
-// SKIPPED `replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:`: arg shape (only <=5 object args modelled)
-// SKIPPED `getBytes:bytesPerRow:fromRegion:mipmapLevel:`: arg shape (only <=5 object args modelled)
-// SKIPPED `replaceRegion:mipmapLevel:withBytes:bytesPerRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTextureViewWithPixelFormat:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTextureViewWithDescriptor:`: return `id<MTLTexture> _Nullable` not modelled
-// SKIPPED `newRemoteTextureViewForDevice:`: arg shape (only <=5 object args modelled)
-// SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:`: arg shape (only <=5 object args modelled)
-// SKIPPED `rootResource`: return `id<MTLResource> _Nullable` not modelled
-// SKIPPED `parentTexture`: return `id<MTLTexture> _Nullable` not modelled
-// SKIPPED `buffer`: return `id<MTLBuffer> _Nullable` not modelled
-// SKIPPED `iosurface`: return `IOSurfaceRef _Nullable` not modelled
-// SKIPPED `isShareable`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `isFramebufferOnly`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `isSparse`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `allowGPUOptimizedContents`: no `i8`-return / 0-arg IMP shape
-// SKIPPED `gpuResourceID`: return `MTLResourceID` not modelled
-// SKIPPED `remoteStorageTexture`: return `API_AVAILABLE id<MTLTexture>` not modelled
-// SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` not modelled
-fn Texture_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-fn Texture_noop_u64_0(user: *u8) -> u64 { return 0 as u64; }
-
+// `MTLTexture` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct Texture {
-    new_shared_texture_handle: fn(*u8) -> *u8,
-    parent_relative_level: fn(*u8) -> u64,
-    parent_relative_slice: fn(*u8) -> u64,
-    buffer_offset: fn(*u8) -> u64,
-    buffer_bytes_per_row: fn(*u8) -> u64,
-    iosurface_plane: fn(*u8) -> u64,
-    texture_type: fn(*u8) -> u64,
-    pixel_format: fn(*u8) -> u64,
-    width: fn(*u8) -> u64,
-    height: fn(*u8) -> u64,
-    depth: fn(*u8) -> u64,
-    mipmap_level_count: fn(*u8) -> u64,
-    sample_count: fn(*u8) -> u64,
-    array_length: fn(*u8) -> u64,
-    usage: fn(*u8) -> u64,
-    first_mipmap_in_tail: fn(*u8) -> u64,
-    tail_size_in_bytes: fn(*u8) -> u64,
-    compression_type: fn(*u8) -> u64,
-    sparse_texture_tier: fn(*u8) -> u64,
-    opaque user: *u8,
-}
-
-fn Texture_new(user: *u8) -> Texture {
-    return Texture { new_shared_texture_handle: Texture_noop_id_0, parent_relative_level: Texture_noop_u64_0, parent_relative_slice: Texture_noop_u64_0, buffer_offset: Texture_noop_u64_0, buffer_bytes_per_row: Texture_noop_u64_0, iosurface_plane: Texture_noop_u64_0, texture_type: Texture_noop_u64_0, pixel_format: Texture_noop_u64_0, width: Texture_noop_u64_0, height: Texture_noop_u64_0, depth: Texture_noop_u64_0, mipmap_level_count: Texture_noop_u64_0, sample_count: Texture_noop_u64_0, array_length: Texture_noop_u64_0, usage: Texture_noop_u64_0, first_mipmap_in_tail: Texture_noop_u64_0, tail_size_in_bytes: Texture_noop_u64_0, compression_type: Texture_noop_u64_0, sparse_texture_tier: Texture_noop_u64_0, user: user };
+    opaque _obj: *u8,
 }
 
 impl Texture {
-    fn set_new_shared_texture_handle(ref this, handler: fn(*u8) -> *u8) {
-        this.new_shared_texture_handle = handler;
-        return;
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
+
+    // SKIPPED `getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:`: param `MTLRegion` — unmapped type `MTLRegion`
+    // SKIPPED `replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:`: param `MTLRegion` — unmapped type `MTLRegion`
+    // SKIPPED `getBytes:bytesPerRow:fromRegion:mipmapLevel:`: param `MTLRegion` — unmapped type `MTLRegion`
+    // SKIPPED `replaceRegion:mipmapLevel:withBytes:bytesPerRow:`: param `MTLRegion` — unmapped type `MTLRegion`
+    fn new_texture_view_with_pixel_format(this, pixel_format: PixelFormat) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("newTextureViewWithPixelFormat:\0")), pixel_format_raw(pixel_format));
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
     }
-    fn set_parent_relative_level(ref this, handler: fn(*u8) -> u64) {
-        this.parent_relative_level = handler;
-        return;
+
+    // SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:`: (return, arg) shape not yet modelled
+    fn new_shared_texture_handle(this) -> option::Option[SharedTextureHandle] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("newSharedTextureHandle\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[SharedTextureHandle]::None;
+        }
+        return option::some(SharedTextureHandle::from_raw(obj));
     }
-    fn set_parent_relative_slice(ref this, handler: fn(*u8) -> u64) {
-        this.parent_relative_slice = handler;
-        return;
+
+    fn new_texture_view_with_descriptor(this, descriptor: TextureViewDescriptor) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newTextureViewWithDescriptor:\0")), descriptor.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
     }
-    fn set_buffer_offset(ref this, handler: fn(*u8) -> u64) {
-        this.buffer_offset = handler;
-        return;
+
+    fn new_remote_texture_view_for_device(this, device: *u8) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newRemoteTextureViewForDevice:\0")), device);
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
     }
-    fn set_buffer_bytes_per_row(ref this, handler: fn(*u8) -> u64) {
-        this.buffer_bytes_per_row = handler;
-        return;
+
+    // SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn root_resource(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rootResource\0")));
+        return bridge::obj_option(obj);
     }
-    fn set_iosurface_plane(ref this, handler: fn(*u8) -> u64) {
-        this.iosurface_plane = handler;
-        return;
+
+    fn parent_texture(this) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentTexture\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
     }
-    fn set_texture_type(ref this, handler: fn(*u8) -> u64) {
-        this.texture_type = handler;
-        return;
+
+    fn parent_relative_level(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("parentRelativeLevel\0")));
     }
-    fn set_pixel_format(ref this, handler: fn(*u8) -> u64) {
-        this.pixel_format = handler;
-        return;
+
+    fn parent_relative_slice(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("parentRelativeSlice\0")));
     }
-    fn set_width(ref this, handler: fn(*u8) -> u64) {
-        this.width = handler;
-        return;
+
+    fn buffer(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("buffer\0")));
+        return bridge::obj_option(obj);
     }
-    fn set_height(ref this, handler: fn(*u8) -> u64) {
-        this.height = handler;
-        return;
+
+    fn buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferOffset\0")));
     }
-    fn set_depth(ref this, handler: fn(*u8) -> u64) {
-        this.depth = handler;
-        return;
+
+    fn buffer_bytes_per_row(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferBytesPerRow\0")));
     }
-    fn set_mipmap_level_count(ref this, handler: fn(*u8) -> u64) {
-        this.mipmap_level_count = handler;
-        return;
+
+    // SKIPPED `iosurface`: return `IOSurfaceRef _Nullable` — unmapped type `IOSurfaceRef`
+    fn iosurface_plane(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("iosurfacePlane\0")));
     }
-    fn set_sample_count(ref this, handler: fn(*u8) -> u64) {
-        this.sample_count = handler;
-        return;
+
+    fn texture_type(this) -> TextureType {
+        return texture_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureType\0"))));
     }
-    fn set_array_length(ref this, handler: fn(*u8) -> u64) {
-        this.array_length = handler;
-        return;
+
+    fn pixel_format(this) -> PixelFormat {
+        return pixel_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));
     }
-    fn set_usage(ref this, handler: fn(*u8) -> u64) {
-        this.usage = handler;
-        return;
+
+    fn width(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("width\0")));
     }
-    fn set_first_mipmap_in_tail(ref this, handler: fn(*u8) -> u64) {
-        this.first_mipmap_in_tail = handler;
-        return;
+
+    fn height(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("height\0")));
     }
-    fn set_tail_size_in_bytes(ref this, handler: fn(*u8) -> u64) {
-        this.tail_size_in_bytes = handler;
-        return;
+
+    fn depth(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("depth\0")));
     }
-    fn set_compression_type(ref this, handler: fn(*u8) -> u64) {
-        this.compression_type = handler;
-        return;
+
+    fn mipmap_level_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("mipmapLevelCount\0")));
     }
-    fn set_sparse_texture_tier(ref this, handler: fn(*u8) -> u64) {
-        this.sparse_texture_tier = handler;
-        return;
+
+    fn sample_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("sampleCount\0")));
     }
-}
 
-fn Texture_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn Texture_new_shared_texture_handle_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> *u8 = { (*c).new_shared_texture_handle };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_parent_relative_level_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).parent_relative_level };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_parent_relative_slice_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).parent_relative_slice };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_buffer_offset_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).buffer_offset };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_buffer_bytes_per_row_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).buffer_bytes_per_row };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_iosurface_plane_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).iosurface_plane };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_texture_type_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).texture_type };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_pixel_format_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).pixel_format };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_width_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).width };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_height_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).height };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_depth_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).depth };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_mipmap_level_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).mipmap_level_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_sample_count_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).sample_count };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_array_length_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).array_length };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_usage_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).usage };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_first_mipmap_in_tail_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).first_mipmap_in_tail };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_tail_size_in_bytes_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).tail_size_in_bytes };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_compression_type_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).compression_type };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn Texture_sparse_texture_tier_imp(self_obj: *u8, cmd: *u8) -> u64 {
-    let c: *Texture = { synth::get_associated(self_obj, Texture_key()) as *Texture };
-    let f: fn(*u8) -> u64 = { (*c).sparse_texture_tier };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_Texture(ctx: *Texture) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_Texture\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_new_shared_texture_handle: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("newSharedTextureHandle\0")), Texture_new_shared_texture_handle_imp, #str_ptr("@@:\0"));
-        let add_parent_relative_level: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("parentRelativeLevel\0")), Texture_parent_relative_level_imp, #str_ptr("Q@:\0"));
-        let add_parent_relative_slice: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("parentRelativeSlice\0")), Texture_parent_relative_slice_imp, #str_ptr("Q@:\0"));
-        let add_buffer_offset: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("bufferOffset\0")), Texture_buffer_offset_imp, #str_ptr("Q@:\0"));
-        let add_buffer_bytes_per_row: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("bufferBytesPerRow\0")), Texture_buffer_bytes_per_row_imp, #str_ptr("Q@:\0"));
-        let add_iosurface_plane: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("iosurfacePlane\0")), Texture_iosurface_plane_imp, #str_ptr("Q@:\0"));
-        let add_texture_type: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("textureType\0")), Texture_texture_type_imp, #str_ptr("Q@:\0"));
-        let add_pixel_format: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("pixelFormat\0")), Texture_pixel_format_imp, #str_ptr("Q@:\0"));
-        let add_width: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("width\0")), Texture_width_imp, #str_ptr("Q@:\0"));
-        let add_height: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("height\0")), Texture_height_imp, #str_ptr("Q@:\0"));
-        let add_depth: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("depth\0")), Texture_depth_imp, #str_ptr("Q@:\0"));
-        let add_mipmap_level_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("mipmapLevelCount\0")), Texture_mipmap_level_count_imp, #str_ptr("Q@:\0"));
-        let add_sample_count: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sampleCount\0")), Texture_sample_count_imp, #str_ptr("Q@:\0"));
-        let add_array_length: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("arrayLength\0")), Texture_array_length_imp, #str_ptr("Q@:\0"));
-        let add_usage: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("usage\0")), Texture_usage_imp, #str_ptr("Q@:\0"));
-        let add_first_mipmap_in_tail: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("firstMipmapInTail\0")), Texture_first_mipmap_in_tail_imp, #str_ptr("Q@:\0"));
-        let add_tail_size_in_bytes: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("tailSizeInBytes\0")), Texture_tail_size_in_bytes_imp, #str_ptr("Q@:\0"));
-        let add_compression_type: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("compressionType\0")), Texture_compression_type_imp, #str_ptr("Q@:\0"));
-        let add_sparse_texture_tier: i8 = synth::add_method_u64_0id(cls, rt::sel(#str_ptr("sparseTextureTier\0")), Texture_sparse_texture_tier_imp, #str_ptr("Q@:\0"));
-        synth::register_class_pair(cls);
+    fn array_length(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("arrayLength\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, Texture_key(), { ctx as *u8 });
-    return d;
+
+    fn usage(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("usage\0")));
+    }
+
+    fn is_shareable(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isShareable\0"))) != (0 as i8);
+    }
+
+    fn is_framebuffer_only(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFramebufferOnly\0"))) != (0 as i8);
+    }
+
+    fn first_mipmap_in_tail(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("firstMipmapInTail\0")));
+    }
+
+    fn tail_size_in_bytes(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("tailSizeInBytes\0")));
+    }
+
+    fn is_sparse(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSparse\0"))) != (0 as i8);
+    }
+
+    fn allow_g_p_u_optimized_contents(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowGPUOptimizedContents\0"))) != (0 as i8);
+    }
+
+    fn compression_type(this) -> TextureCompressionType {
+        return texture_compression_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("compressionType\0"))));
+    }
+
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
+
+    // SKIPPED `remoteStorageTexture`: return `API_AVAILABLE id<MTLTexture>` — generic collection
+    // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn sparse_texture_tier(this) -> TextureSparseTier {
+        return texture_sparse_tier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sparseTextureTier\0"))));
+    }
+
 }
 

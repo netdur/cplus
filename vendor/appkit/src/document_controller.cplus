@@ -34,6 +34,8 @@ struct Document {
 impl Document {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Document { return Document { _obj: ptr }; }
+
 }
 
 // `NSError` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43,6 +45,8 @@ struct Error {
 
 impl Error {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Error { return Error { _obj: ptr }; }
 
 }
 
@@ -54,6 +58,8 @@ struct MenuItem {
 impl MenuItem {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> MenuItem { return MenuItem { _obj: ptr }; }
+
 }
 
 // `NSMutableDictionary` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -63,6 +69,8 @@ struct MutableDictionary {
 
 impl MutableDictionary {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MutableDictionary { return MutableDictionary { _obj: ptr }; }
 
 }
 
@@ -74,6 +82,8 @@ struct OpenPanel {
 impl OpenPanel {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> OpenPanel { return OpenPanel { _obj: ptr }; }
+
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -83,6 +93,8 @@ struct URL {
 
 impl URL {
     fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> URL { return URL { _obj: ptr }; }
 
 }
 
@@ -94,6 +106,8 @@ struct Window {
 impl Window {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> Window { return Window { _obj: ptr }; }
+
 }
 
 // `NSDocumentController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -104,6 +118,8 @@ struct DocumentController {
 impl DocumentController {
     fn raw(this) -> *u8 { return this._obj; }
 
+    fn from_raw(ptr: *u8) -> DocumentController { return DocumentController { _obj: ptr }; }
+
     fn new() -> DocumentController {
         let cls: *u8 = rt::get_class(#str_ptr("NSDocumentController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -111,22 +127,28 @@ impl DocumentController {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    fn document_for_u_r_l(this, url: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentForURL:\0")), url);
-        return bridge::obj_option(obj);
+    fn document_for_u_r_l(this, url: URL) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentForURL:\0")), url.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
     }
 
-    fn document_for_window(this, window: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentForWindow:\0")), window);
-        return bridge::obj_option(obj);
+    fn document_for_window(this, window: Window) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentForWindow:\0")), window.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
     }
 
-    fn add_document(this, document: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addDocument:\0")), document);
+    fn add_document(this, document: Document) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addDocument:\0")), document.raw());
     }
 
-    fn remove_document(this, document: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeDocument:\0")), document);
+    fn remove_document(this, document: Document) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeDocument:\0")), document.raw());
     }
 
     fn new_document(this, sender: *u8) {
@@ -161,26 +183,26 @@ impl DocumentController {
     // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: (return, arg) shape not yet modelled
-    fn standard_share_menu_item(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0")));
+    fn standard_share_menu_item(this) -> MenuItem {
+        return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `presentError:`: (return, arg) shape not yet modelled
-    fn will_present_error(this, error: *u8) -> *u8 {
-        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error);
+    fn will_present_error(this, error: Error) -> Error {
+        return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
 
     fn clear_recent_documents(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("clearRecentDocuments:\0")), sender);
     }
 
-    fn note_new_recent_document(this, document: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocument:\0")), document);
+    fn note_new_recent_document(this, document: Document) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocument:\0")), document.raw());
     }
 
-    fn note_new_recent_document_u_r_l(this, url: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocumentURL:\0")), url);
+    fn note_new_recent_document_u_r_l(this, url: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocumentURL:\0")), url.raw());
     }
 
     // SKIPPED `typeForContentsOfURL:error:`: (return, arg) shape not yet modelled
@@ -190,15 +212,18 @@ impl DocumentController {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: param `id<NSValidatedUserInterfaceItem> _Nonnull` — generic collection
-    fn shared_document_controller() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSDocumentController\0")), rt::sel(#str_ptr("sharedDocumentController\0")));
+    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
+    fn shared_document_controller() -> DocumentController {
+        return DocumentController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSDocumentController\0")), rt::sel(#str_ptr("sharedDocumentController\0")))) };
     }
 
     // SKIPPED `documents`: return `NSArray<__kindof NSDocument *> * _Nonnull` — generic collection
-    fn current_document(this) -> option::Option[*u8] {
+    fn current_document(this) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("currentDocument\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
     }
 
     fn current_directory(this) -> option::Option[text::Text] {

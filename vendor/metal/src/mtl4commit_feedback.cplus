@@ -5,48 +5,29 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
-// `MTL4CommitFeedback` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `GPUStartTime`: return `CFTimeInterval` not modelled
-// SKIPPED `GPUEndTime`: return `CFTimeInterval` not modelled
-fn MTL4CommitFeedbackProtocol_noop_id_0(user: *u8) -> *u8 { return { 0 as *u8 }; }
-
-struct MTL4CommitFeedbackProtocol {
-    error: fn(*u8) -> *u8,
-    opaque user: *u8,
+// `MTL4CommitFeedback` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct MTL4CommitFeedback {
+    opaque _obj: *u8,
 }
 
-fn MTL4CommitFeedbackProtocol_new(user: *u8) -> MTL4CommitFeedbackProtocol {
-    return MTL4CommitFeedbackProtocol { error: MTL4CommitFeedbackProtocol_noop_id_0, user: user };
-}
+impl MTL4CommitFeedback {
+    fn raw(this) -> *u8 { return this._obj; }
 
-impl MTL4CommitFeedbackProtocol {
-    fn set_error(ref this, handler: fn(*u8) -> *u8) {
-        this.error = handler;
-        return;
+    fn from_raw(ptr: *u8) -> MTL4CommitFeedback { return MTL4CommitFeedback { _obj: ptr }; }
+
+    fn error(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("error\0")));
+        return bridge::obj_option(obj);
     }
-}
 
-fn MTL4CommitFeedbackProtocol_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn MTL4CommitFeedbackProtocol_error_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    let c: *MTL4CommitFeedbackProtocol = { synth::get_associated(self_obj, MTL4CommitFeedbackProtocol_key()) as *MTL4CommitFeedbackProtocol };
-    let f: fn(*u8) -> *u8 = { (*c).error };
-    let u: *u8 = { (*c).user };
-    return f(u);
-}
-
-fn create_MTL4CommitFeedbackProtocol(ctx: *MTL4CommitFeedbackProtocol) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_MTL4CommitFeedbackProtocol\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_error: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("error\0")), MTL4CommitFeedbackProtocol_error_imp, #str_ptr("@@:\0"));
-        synth::register_class_pair(cls);
+    fn g_p_u_start_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("GPUStartTime\0")));
     }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, MTL4CommitFeedbackProtocol_key(), { ctx as *u8 });
-    return d;
+
+    fn g_p_u_end_time(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("GPUEndTime\0")));
+    }
+
 }
 

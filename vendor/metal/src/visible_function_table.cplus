@@ -27,3 +27,21 @@ impl VisibleFunctionTableDescriptor {
     // SKIPPED `setFunctionCount:`: (return, arg) shape not yet modelled
 }
 
+// `MTLVisibleFunctionTable` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct VisibleFunctionTable {
+    opaque _obj: *u8,
+}
+
+impl VisibleFunctionTable {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> VisibleFunctionTable { return VisibleFunctionTable { _obj: ptr }; }
+
+    // SKIPPED `setFunction:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFunctions:withRange:`: (return, arg) shape not yet modelled
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
+
+}
+
