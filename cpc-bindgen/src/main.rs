@@ -1033,9 +1033,30 @@ fn map_c_type_to_cplus(
     c_ty: &str,
     complete: &std::collections::HashSet<String>,
 ) -> Result<String, String> {
-    // Function pointers (inline `RET (*)(args)` or typedef'd) -> opaque code
-    // pointer. Checked on the raw spelling before `*` normalization below.
-    if c_ty.contains("(*") {
+    // SIMD vector types — `__attribute__((__vector_size__(N * sizeof(T)))) T`
+    // (Accelerate's vForce/vDSP/vImage lane types) -> the built-in `<T>x<N>`
+    // (e.g. `f32x4`, `u8x16`). Handled before the `*` normalization below,
+    // which would mangle the `N * sizeof` spelling. The element must be a
+    // scalar; the lane count is the multiplier.
+    if let Some(p) = c_ty.find("__vector_size__(") {
+        let after = &c_ty[p + "__vector_size__(".len()..];
+        let n: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let elem = c_ty.rsplit(')').next().map(str::trim).unwrap_or("");
+        if !n.is_empty() && !elem.is_empty() {
+            if let Ok(es) = map_c_type_to_cplus(elem, complete) {
+                if matches!(
+                    es.as_str(),
+                    "f32" | "f64" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64"
+                ) {
+                    return Ok(format!("{es}x{n}"));
+                }
+            }
+        }
+    }
+    // Function pointers (inline `RET (*)(args)` or typedef'd to a canonical
+    // `RET ( * )(args)` with spaces) -> opaque code pointer. Checked on the raw
+    // spelling, space-insensitively, before `*` normalization below.
+    if c_ty.replace(' ', "").contains("(*") {
         return Ok("*u8".to_string());
     }
     // Normalize the spelling: put spaces around every `*`, then drop the
@@ -1239,6 +1260,32 @@ mod tests {
         assert_eq!(map_c_type_to_cplus("const char *", &c).unwrap(), "*i8");
         assert_eq!(map_c_type_to_cplus("void", &c).unwrap(), "()");
         assert_eq!(map_c_type_to_cplus("uint32_t **", &c).unwrap(), "**u32");
+    }
+
+    #[test]
+    fn simd_vector_map() {
+        let c: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // `__attribute__((__vector_size__(N * sizeof(T)))) T` -> built-in `<T>x<N>`.
+        let v = |s: &str| map_c_type_to_cplus(s, &c).unwrap();
+        assert_eq!(v("__attribute__((__vector_size__(4 * sizeof(float)))) float"), "f32x4");
+        assert_eq!(v("__attribute__((__vector_size__(4 * sizeof(int)))) int"), "i32x4");
+        assert_eq!(v("__attribute__((__vector_size__(4 * sizeof(unsigned int)))) unsigned int"), "u32x4");
+        assert_eq!(v("__attribute__((__vector_size__(16 * sizeof(unsigned char)))) unsigned char"), "u8x16");
+        assert_eq!(v("__attribute__((__vector_size__(16 * sizeof(signed char)))) signed char"), "i8x16");
+        assert_eq!(v("__attribute__((__vector_size__(8 * sizeof(short)))) short"), "i16x8");
+        assert_eq!(v("__attribute__((__vector_size__(8 * sizeof(unsigned short)))) unsigned short"), "u16x8");
+        // A pointer to a vector type stays a typed pointer.
+        assert_eq!(v("__attribute__((__vector_size__(4 * sizeof(float)))) float *"), "*f32x4");
+    }
+
+    #[test]
+    fn function_pointer_map() {
+        let c: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let f = |s: &str| map_c_type_to_cplus(s, &c).unwrap();
+        // Inline and typedef-canonical (spaced) function pointers -> opaque code ptr.
+        assert_eq!(f("void (*)(void *, void *)"), "*u8");
+        assert_eq!(f("int ( * )()"), "*u8"); // __CLPK_L_fp canonical form
+        assert_eq!(f("void ( * )(const char * , char * , int * , int * )"), "*u8");
     }
 
     #[test]
