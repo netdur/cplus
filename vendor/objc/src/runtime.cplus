@@ -538,6 +538,107 @@ fn msg_point_point(recv: *u8, selector: *u8, a: Point) -> Point {
     return { objc_msg_point_point(recv, selector, a) };
 }
 
+// Further (return, arg) shapes drawn from the most-used AppKit / Metal selector
+// signatures. Every component is an integer eightbyte (`id`/`i64`/`u64`/`i8`), an
+// `f64` (fp register class), or an HFA geometry value (`Rect`/`Size`) — the same
+// ABI classes proven above, so each combination lowers correctly by construction.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_id(recv: *u8, sel: *u8, a: *u8) -> i64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_id(recv: *u8, sel: *u8, a: *u8) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_i64(recv: *u8, sel: *u8, a: i64) -> i64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f64_i64(recv: *u8, sel: *u8, a: i64) -> f64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_u64(recv: *u8, sel: *u8, a: u64) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_i64(recv: *u8, sel: *u8, a: i64, b: i64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i8_i64(recv: *u8, sel: *u8, a: i8, b: i64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_f64(recv: *u8, sel: *u8, a: *u8, b: f64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64(recv: *u8, sel: *u8, a: i64, b: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f64_f64_f64_f64(recv: *u8, sel: *u8, a: f64, b: f64, c: f64, d: f64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_id(recv: *u8, sel: *u8, a: Rect, b: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_i64(recv: *u8, sel: *u8, a: i64) -> Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_size_size(recv: *u8, sel: *u8, a: Size) -> Size;
+
+fn msg_i64_id(recv: *u8, selector: *u8, a: *u8) -> i64 {
+    return { objc_msg_i64_id(recv, selector, a) };
+}
+fn msg_u64_id(recv: *u8, selector: *u8, a: *u8) -> u64 {
+    return { objc_msg_u64_id(recv, selector, a) };
+}
+fn msg_i64_i64(recv: *u8, selector: *u8, a: i64) -> i64 {
+    return { objc_msg_i64_i64(recv, selector, a) };
+}
+fn msg_f64_i64(recv: *u8, selector: *u8, a: i64) -> f64 {
+    return { objc_msg_f64_i64(recv, selector, a) };
+}
+fn msg_i8_u64(recv: *u8, selector: *u8, a: u64) -> i8 {
+    return { objc_msg_i8_u64(recv, selector, a) };
+}
+fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
+    { objc_msg_void_id_i64(recv, selector, a, b); };
+}
+fn msg_void_id_i8(recv: *u8, selector: *u8, a: *u8, b: i8) {
+    { objc_msg_void_id_i8(recv, selector, a, b); };
+}
+fn msg_void_i64_i64(recv: *u8, selector: *u8, a: i64, b: i64) {
+    { objc_msg_void_i64_i64(recv, selector, a, b); };
+}
+fn msg_void_i8_i64(recv: *u8, selector: *u8, a: i8, b: i64) {
+    { objc_msg_void_i8_i64(recv, selector, a, b); };
+}
+fn msg_id_id_i8(recv: *u8, selector: *u8, a: *u8, b: i8) -> *u8 {
+    return { objc_msg_id_id_i8(recv, selector, a, b) };
+}
+fn msg_id_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) -> *u8 {
+    return { objc_msg_id_id_i64(recv, selector, a, b) };
+}
+fn msg_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) -> *u8 {
+    return { objc_msg_id_id_f64(recv, selector, a, b) };
+}
+fn msg_id_i64_i64(recv: *u8, selector: *u8, a: i64, b: i64) -> *u8 {
+    return { objc_msg_id_i64_i64(recv, selector, a, b) };
+}
+fn msg_i64_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i64 {
+    return { objc_msg_i64_id_id(recv, selector, a, b) };
+}
+fn msg_i8_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8) -> i8 {
+    return { objc_msg_i8_id_id_id(recv, selector, a, b, c) };
+}
+fn msg_id_f64_f64_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64, c: f64, d: f64) -> *u8 {
+    return { objc_msg_id_f64_f64_f64_f64(recv, selector, a, b, c, d) };
+}
+fn msg_void_rect_id(recv: *u8, selector: *u8, a: Rect, b: *u8) {
+    { objc_msg_void_rect_id(recv, selector, a, b); };
+}
+fn msg_rect_i64(recv: *u8, selector: *u8, a: i64) -> Rect {
+    return { objc_msg_rect_i64(recv, selector, a) };
+}
+fn msg_size_size(recv: *u8, selector: *u8, a: Size) -> Size {
+    return { objc_msg_size_size(recv, selector, a) };
+}
+
 // class_addMethod wrapper for action IMPs: `void (*)(id self, SEL _cmd, id arg)`.
 // The `types` encoding string is passed by the caller ("v@:@\0" for a void
 // method taking one id argument).

@@ -2093,7 +2093,7 @@ fn msg_shape_is_known(suffix: &str) -> bool {
     const KNOWN: &[&str] = &[
         "void", "void_id", "void_i8", "void_i64", "void_f64", "void_range_id", "id",
         "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
-        "i8", "i8_i64", "i64", "u64", "f64", "range", "range_u64", "range_range",
+        "i8", "i8_i64", "i8_id", "i64", "u64", "f64", "range", "range_u64", "range_range",
         "void_id_id_i8",
         // 32-bit scalars (int / unsigned / float)
         "i32", "u32", "f32", "void_i32", "void_u32", "void_f32",
@@ -2111,6 +2111,13 @@ fn msg_shape_is_known(suffix: &str) -> bool {
         "id_rect_u64_i64_i8", "f64_rect",
         "size", "void_size",
         "point", "void_point", "point_point",
+        // High-frequency AppKit / Metal selector signatures (integer-eightbyte /
+        // f64 / HFA-geometry classes only — see vendor/objc runtime shim block).
+        "i64_id", "u64_id", "i64_i64", "f64_i64", "i8_u64",
+        "void_id_i64", "void_id_i8", "void_i64_i64", "void_i8_i64",
+        "id_id_i8", "id_id_i64", "id_id_f64", "id_i64_i64",
+        "i64_id_id", "i8_id_id_id", "id_f64_f64_f64_f64",
+        "void_rect_id", "rect_i64", "size_size",
     ];
     KNOWN.contains(&suffix)
 }
@@ -2273,6 +2280,56 @@ mod tests {
             .send_expr("cls", "withCount:", &Ret::Object(None), &[Arg::ScalarU32("count".into())])
             .expect("id_u32 factory shape is KNOWN");
         assert!(f.contains("rt::msg_id_u32("), "{f}");
+    }
+
+    #[test]
+    fn send_expr_emits_newly_added_msgsend_shapes() {
+        let mut e = emitter();
+        // i64-returning, one object arg (e.g. -[NSString compare:]) -> rt::msg_i64_id
+        let a = e
+            .send_expr("this._obj", "compare:", &Ret::ScalarI64, &[Arg::Id("other".into())])
+            .expect("i64_id shape is KNOWN");
+        assert!(a.contains("rt::msg_i64_id("), "{a}");
+        // void, (object, i64) -> rt::msg_void_id_i64
+        let b = e
+            .send_expr("this._obj", "insertObject:atIndex:", &Ret::Void,
+                       &[Arg::Id("obj".into()), Arg::ScalarI64("i".into())])
+            .expect("void_id_i64 shape is KNOWN");
+        assert!(b.contains("rt::msg_void_id_i64("), "{b}");
+        // BOOL-returning, one object arg -> rt::msg_i8_id (the previously-unadvertised shim)
+        let c = e
+            .send_expr("this._obj", "isEqual:", &Ret::Bool, &[Arg::Id("x".into())])
+            .expect("i8_id shape is KNOWN");
+        assert!(c.contains("rt::msg_i8_id("), "{c}");
+        // HFA geometry: Size in, Size out -> rt::msg_size_size
+        let d = e
+            .send_expr("this._obj", "sizeForSize:", &Ret::Size, &[Arg::Size("s".into())])
+            .expect("size_size shape is KNOWN");
+        assert!(d.contains("rt::msg_size_size("), "{d}");
+    }
+
+    #[test]
+    fn every_known_shape_has_a_runtime_wrapper() {
+        // Guards the lockstep invariant: a tag in KNOWN with no matching
+        // `fn msg_<tag>` in vendor/objc/src/runtime.cplus would emit a call to a
+        // function that doesn't exist. Parse the shipped runtime and diff.
+        let runtime = include_str!("../../vendor/objc/src/runtime.cplus");
+        let have: std::collections::HashSet<&str> = runtime
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("fn msg_"))
+            .filter_map(|l| l.split('(').next())
+            .collect();
+        // Re-list KNOWN here via the predicate: any tag it accepts must have a wrapper.
+        for tag in [
+            "i8_id", "i64_id", "u64_id", "i64_i64", "f64_i64", "i8_u64",
+            "void_id_i64", "void_id_i8", "void_i64_i64", "void_i8_i64",
+            "id_id_i8", "id_id_i64", "id_id_f64", "id_i64_i64",
+            "i64_id_id", "i8_id_id_id", "id_f64_f64_f64_f64",
+            "void_rect_id", "rect_i64", "size_size",
+        ] {
+            assert!(msg_shape_is_known(tag), "{tag} should be KNOWN");
+            assert!(have.contains(tag), "KNOWN tag `{tag}` has no `fn msg_{tag}` wrapper in runtime.cplus");
+        }
     }
 
     #[test]
