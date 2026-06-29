@@ -3523,7 +3523,21 @@ impl FunctionDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
 }
 
 // `MTLIntersectionFunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -3612,7 +3626,21 @@ impl CompileOptions {
         return out;
     }
 
-    // SKIPPED `setLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
+    fn set_libraries(this, libraries: vec::Vec[DynamicLibrary]) {
+        let arr_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_libraries: usize = libraries.count();
+        var i_libraries: usize = 0 as usize;
+        while i_libraries < n_libraries {
+            match libraries.at(i_libraries) {
+                option::Option[DynamicLibrary]::Some(e_libraries) => { rt::msg_void_id(arr_libraries, add_sel_libraries, e_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_libraries = i_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLibraries:\0")), arr_libraries);
+    }
+
     fn preserve_invariance(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("preserveInvariance\0"))) != (0 as i8);
     }
@@ -4321,7 +4349,21 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryLinkedFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_binary_linked_functions(this, binary_linked_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_binary_linked_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_linked_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_linked_functions: usize = binary_linked_functions.count();
+        var i_binary_linked_functions: usize = 0 as usize;
+        while i_binary_linked_functions < n_binary_linked_functions {
+            match binary_linked_functions.at(i_binary_linked_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_binary_linked_functions) => { rt::msg_void_id(arr_binary_linked_functions, add_sel_binary_linked_functions, e_binary_linked_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_binary_linked_functions = i_binary_linked_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryLinkedFunctions:\0")), arr_binary_linked_functions);
+    }
+
     fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -4335,7 +4377,21 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         return out;
     }
 
-    // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn set_preloaded_libraries(this, preloaded_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_preloaded_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_preloaded_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_preloaded_libraries: usize = preloaded_libraries.count();
+        var i_preloaded_libraries: usize = 0 as usize;
+        while i_preloaded_libraries < n_preloaded_libraries {
+            match preloaded_libraries.at(i_preloaded_libraries) {
+                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreloadedLibraries:\0")), arr_preloaded_libraries);
+    }
+
 }
 
 // `MTL4RenderPipelineDynamicLinkingDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -4426,7 +4482,21 @@ impl MTL4CompilerTaskOptions {
         return out;
     }
 
-    // SKIPPED `setLookupArchives:`: param `NSArray<id<MTL4Archive>> * _Nullable` — generic collection
+    fn set_lookup_archives(this, lookup_archives: vec::Vec[MTL4Archive]) {
+        let arr_lookup_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_lookup_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_lookup_archives: usize = lookup_archives.count();
+        var i_lookup_archives: usize = 0 as usize;
+        while i_lookup_archives < n_lookup_archives {
+            match lookup_archives.at(i_lookup_archives) {
+                option::Option[MTL4Archive]::Some(e_lookup_archives) => { rt::msg_void_id(arr_lookup_archives, add_sel_lookup_archives, e_lookup_archives.raw()); }
+                option::Option[MTL4Archive]::None => {}
+            }
+            i_lookup_archives = i_lookup_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLookupArchives:\0")), arr_lookup_archives);
+    }
+
 }
 
 // `MTL4CounterHeapDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -4645,7 +4715,21 @@ impl TileRenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
     fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -4659,7 +4743,21 @@ impl TileRenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn set_preloaded_libraries(this, preloaded_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_preloaded_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_preloaded_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_preloaded_libraries: usize = preloaded_libraries.count();
+        var i_preloaded_libraries: usize = 0 as usize;
+        while i_preloaded_libraries < n_preloaded_libraries {
+            match preloaded_libraries.at(i_preloaded_libraries) {
+                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreloadedLibraries:\0")), arr_preloaded_libraries);
+    }
+
     fn linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("linkedFunctions\0"))));
     }
@@ -4914,7 +5012,21 @@ impl MeshRenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
     fn object_linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("objectLinkedFunctions\0"))));
     }
@@ -5471,7 +5583,21 @@ impl RenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
     fn vertex_preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexPreloadedLibraries\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -5485,7 +5611,21 @@ impl RenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setVertexPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn set_vertex_preloaded_libraries(this, vertex_preloaded_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_vertex_preloaded_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_vertex_preloaded_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_vertex_preloaded_libraries: usize = vertex_preloaded_libraries.count();
+        var i_vertex_preloaded_libraries: usize = 0 as usize;
+        while i_vertex_preloaded_libraries < n_vertex_preloaded_libraries {
+            match vertex_preloaded_libraries.at(i_vertex_preloaded_libraries) {
+                option::Option[DynamicLibrary]::Some(e_vertex_preloaded_libraries) => { rt::msg_void_id(arr_vertex_preloaded_libraries, add_sel_vertex_preloaded_libraries, e_vertex_preloaded_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_vertex_preloaded_libraries = i_vertex_preloaded_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexPreloadedLibraries:\0")), arr_vertex_preloaded_libraries);
+    }
+
     fn fragment_preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentPreloadedLibraries\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -5499,7 +5639,21 @@ impl RenderPipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setFragmentPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn set_fragment_preloaded_libraries(this, fragment_preloaded_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_fragment_preloaded_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_fragment_preloaded_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_fragment_preloaded_libraries: usize = fragment_preloaded_libraries.count();
+        var i_fragment_preloaded_libraries: usize = 0 as usize;
+        while i_fragment_preloaded_libraries < n_fragment_preloaded_libraries {
+            match fragment_preloaded_libraries.at(i_fragment_preloaded_libraries) {
+                option::Option[DynamicLibrary]::Some(e_fragment_preloaded_libraries) => { rt::msg_void_id(arr_fragment_preloaded_libraries, add_sel_fragment_preloaded_libraries, e_fragment_preloaded_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_fragment_preloaded_libraries = i_fragment_preloaded_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentPreloadedLibraries:\0")), arr_fragment_preloaded_libraries);
+    }
+
     fn vertex_linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertexLinkedFunctions\0"))));
     }
@@ -5840,7 +5994,21 @@ impl ComputePipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setInsertLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
+    fn set_insert_libraries(this, insert_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_insert_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_insert_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_insert_libraries: usize = insert_libraries.count();
+        var i_insert_libraries: usize = 0 as usize;
+        while i_insert_libraries < n_insert_libraries {
+            match insert_libraries.at(i_insert_libraries) {
+                option::Option[DynamicLibrary]::Some(e_insert_libraries) => { rt::msg_void_id(arr_insert_libraries, add_sel_insert_libraries, e_insert_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_insert_libraries = i_insert_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInsertLibraries:\0")), arr_insert_libraries);
+    }
+
     fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -5854,7 +6022,21 @@ impl ComputePipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn set_preloaded_libraries(this, preloaded_libraries: vec::Vec[DynamicLibrary]) {
+        let arr_preloaded_libraries: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_preloaded_libraries: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_preloaded_libraries: usize = preloaded_libraries.count();
+        var i_preloaded_libraries: usize = 0 as usize;
+        while i_preloaded_libraries < n_preloaded_libraries {
+            match preloaded_libraries.at(i_preloaded_libraries) {
+                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
+                option::Option[DynamicLibrary]::None => {}
+            }
+            i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreloadedLibraries:\0")), arr_preloaded_libraries);
+    }
+
     fn binary_archives(this) -> vec::Vec[BinaryArchive] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -5868,7 +6050,21 @@ impl ComputePipelineDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
     fn linked_functions(this) -> option::Option[LinkedFunctions] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("linkedFunctions\0")));
         if obj == { 0 as *u8 } {
@@ -6310,7 +6506,21 @@ impl StitchedLibraryDescriptor {
         return out;
     }
 
-    // SKIPPED `setFunctions:`: param `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
+    fn set_functions(this, functions: vec::Vec[Function]) {
+        let arr_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_functions: usize = functions.count();
+        var i_functions: usize = 0 as usize;
+        while i_functions < n_functions {
+            match functions.at(i_functions) {
+                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_functions = i_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctions:\0")), arr_functions);
+    }
+
     fn binary_archives(this) -> vec::Vec[BinaryArchive] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -6324,7 +6534,21 @@ impl StitchedLibraryDescriptor {
         return out;
     }
 
-    // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nonnull` — generic collection
+    fn set_binary_archives(this, binary_archives: vec::Vec[BinaryArchive]) {
+        let arr_binary_archives: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_archives: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_archives: usize = binary_archives.count();
+        var i_binary_archives: usize = 0 as usize;
+        while i_binary_archives < n_binary_archives {
+            match binary_archives.at(i_binary_archives) {
+                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
+                option::Option[BinaryArchive]::None => {}
+            }
+            i_binary_archives = i_binary_archives +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryArchives:\0")), arr_binary_archives);
+    }
+
     fn options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
@@ -7450,7 +7674,21 @@ impl LinkedFunctions {
         return out;
     }
 
-    // SKIPPED `setFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_functions(this, functions: vec::Vec[Function]) {
+        let arr_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_functions: usize = functions.count();
+        var i_functions: usize = 0 as usize;
+        while i_functions < n_functions {
+            match functions.at(i_functions) {
+                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_functions = i_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctions:\0")), arr_functions);
+    }
+
     fn binary_functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7464,7 +7702,21 @@ impl LinkedFunctions {
         return out;
     }
 
-    // SKIPPED `setBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_binary_functions(this, binary_functions: vec::Vec[Function]) {
+        let arr_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_binary_functions: usize = binary_functions.count();
+        var i_binary_functions: usize = 0 as usize;
+        while i_binary_functions < n_binary_functions {
+            match binary_functions.at(i_binary_functions) {
+                option::Option[Function]::Some(e_binary_functions) => { rt::msg_void_id(arr_binary_functions, add_sel_binary_functions, e_binary_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_binary_functions = i_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryFunctions:\0")), arr_binary_functions);
+    }
+
     // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — NSDictionary value `NSArray<id<MTLFunction>> *` not modelled (NSString / NSNumber only)
     // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — generic collection
     fn private_functions(this) -> vec::Vec[Function] {
@@ -7480,7 +7732,21 @@ impl LinkedFunctions {
         return out;
     }
 
-    // SKIPPED `setPrivateFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_private_functions(this, private_functions: vec::Vec[Function]) {
+        let arr_private_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_private_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_private_functions: usize = private_functions.count();
+        var i_private_functions: usize = 0 as usize;
+        while i_private_functions < n_private_functions {
+            match private_functions.at(i_private_functions) {
+                option::Option[Function]::Some(e_private_functions) => { rt::msg_void_id(arr_private_functions, add_sel_private_functions, e_private_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_private_functions = i_private_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrivateFunctions:\0")), arr_private_functions);
+    }
+
 }
 
 // `MTLLogicalToPhysicalColorAttachmentMap` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -7547,7 +7813,21 @@ impl RenderPipelineFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setVertexAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_vertex_additional_binary_functions(this, vertex_additional_binary_functions: vec::Vec[Function]) {
+        let arr_vertex_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_vertex_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_vertex_additional_binary_functions: usize = vertex_additional_binary_functions.count();
+        var i_vertex_additional_binary_functions: usize = 0 as usize;
+        while i_vertex_additional_binary_functions < n_vertex_additional_binary_functions {
+            match vertex_additional_binary_functions.at(i_vertex_additional_binary_functions) {
+                option::Option[Function]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, e_vertex_additional_binary_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_vertex_additional_binary_functions = i_vertex_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexAdditionalBinaryFunctions:\0")), arr_vertex_additional_binary_functions);
+    }
+
     fn fragment_additional_binary_functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7561,7 +7841,21 @@ impl RenderPipelineFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setFragmentAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_fragment_additional_binary_functions(this, fragment_additional_binary_functions: vec::Vec[Function]) {
+        let arr_fragment_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_fragment_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_fragment_additional_binary_functions: usize = fragment_additional_binary_functions.count();
+        var i_fragment_additional_binary_functions: usize = 0 as usize;
+        while i_fragment_additional_binary_functions < n_fragment_additional_binary_functions {
+            match fragment_additional_binary_functions.at(i_fragment_additional_binary_functions) {
+                option::Option[Function]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, e_fragment_additional_binary_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_fragment_additional_binary_functions = i_fragment_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentAdditionalBinaryFunctions:\0")), arr_fragment_additional_binary_functions);
+    }
+
     fn tile_additional_binary_functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7575,7 +7869,21 @@ impl RenderPipelineFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setTileAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn set_tile_additional_binary_functions(this, tile_additional_binary_functions: vec::Vec[Function]) {
+        let arr_tile_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_tile_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_tile_additional_binary_functions: usize = tile_additional_binary_functions.count();
+        var i_tile_additional_binary_functions: usize = 0 as usize;
+        while i_tile_additional_binary_functions < n_tile_additional_binary_functions {
+            match tile_additional_binary_functions.at(i_tile_additional_binary_functions) {
+                option::Option[Function]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, e_tile_additional_binary_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_tile_additional_binary_functions = i_tile_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTileAdditionalBinaryFunctions:\0")), arr_tile_additional_binary_functions);
+    }
+
 }
 
 // `MTL4RenderPipelineBinaryFunctionsDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -7605,7 +7913,21 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setVertexAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_vertex_additional_binary_functions(this, vertex_additional_binary_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_vertex_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_vertex_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_vertex_additional_binary_functions: usize = vertex_additional_binary_functions.count();
+        var i_vertex_additional_binary_functions: usize = 0 as usize;
+        while i_vertex_additional_binary_functions < n_vertex_additional_binary_functions {
+            match vertex_additional_binary_functions.at(i_vertex_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, e_vertex_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_vertex_additional_binary_functions = i_vertex_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexAdditionalBinaryFunctions:\0")), arr_vertex_additional_binary_functions);
+    }
+
     fn fragment_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7619,7 +7941,21 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setFragmentAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_fragment_additional_binary_functions(this, fragment_additional_binary_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_fragment_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_fragment_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_fragment_additional_binary_functions: usize = fragment_additional_binary_functions.count();
+        var i_fragment_additional_binary_functions: usize = 0 as usize;
+        while i_fragment_additional_binary_functions < n_fragment_additional_binary_functions {
+            match fragment_additional_binary_functions.at(i_fragment_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, e_fragment_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_fragment_additional_binary_functions = i_fragment_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFragmentAdditionalBinaryFunctions:\0")), arr_fragment_additional_binary_functions);
+    }
+
     fn tile_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7633,7 +7969,21 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setTileAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_tile_additional_binary_functions(this, tile_additional_binary_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_tile_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_tile_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_tile_additional_binary_functions: usize = tile_additional_binary_functions.count();
+        var i_tile_additional_binary_functions: usize = 0 as usize;
+        while i_tile_additional_binary_functions < n_tile_additional_binary_functions {
+            match tile_additional_binary_functions.at(i_tile_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, e_tile_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_tile_additional_binary_functions = i_tile_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTileAdditionalBinaryFunctions:\0")), arr_tile_additional_binary_functions);
+    }
+
     fn object_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7647,7 +7997,21 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setObjectAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_object_additional_binary_functions(this, object_additional_binary_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_object_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_object_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_object_additional_binary_functions: usize = object_additional_binary_functions.count();
+        var i_object_additional_binary_functions: usize = 0 as usize;
+        while i_object_additional_binary_functions < n_object_additional_binary_functions {
+            match object_additional_binary_functions.at(i_object_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_object_additional_binary_functions) => { rt::msg_void_id(arr_object_additional_binary_functions, add_sel_object_additional_binary_functions, e_object_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_object_additional_binary_functions = i_object_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectAdditionalBinaryFunctions:\0")), arr_object_additional_binary_functions);
+    }
+
     fn mesh_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("meshAdditionalBinaryFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -7661,7 +8025,21 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         return out;
     }
 
-    // SKIPPED `setMeshAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn set_mesh_additional_binary_functions(this, mesh_additional_binary_functions: vec::Vec[MTL4BinaryFunction]) {
+        let arr_mesh_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_mesh_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_mesh_additional_binary_functions: usize = mesh_additional_binary_functions.count();
+        var i_mesh_additional_binary_functions: usize = 0 as usize;
+        while i_mesh_additional_binary_functions < n_mesh_additional_binary_functions {
+            match mesh_additional_binary_functions.at(i_mesh_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_mesh_additional_binary_functions) => { rt::msg_void_id(arr_mesh_additional_binary_functions, add_sel_mesh_additional_binary_functions, e_mesh_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_mesh_additional_binary_functions = i_mesh_additional_binary_functions +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMeshAdditionalBinaryFunctions:\0")), arr_mesh_additional_binary_functions);
+    }
+
 }
 
 // `MTLTileRenderPipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -8179,7 +8557,7 @@ impl FunctionStitchingFunctionNode {
 
     fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: ptr }; }
 
-    // SKIPPED `initWithName:arguments:controlDependencies:`: param `NSArray<id<MTLFunctionStitchingNode>> * _Nonnull` — generic collection
+    // SKIPPED `initWithName:arguments:controlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);
@@ -8202,7 +8580,21 @@ impl FunctionStitchingFunctionNode {
         return out;
     }
 
-    // SKIPPED `setArguments:`: param `NSArray<id<MTLFunctionStitchingNode>> * _Nonnull` — generic collection
+    fn set_arguments(this, arguments: vec::Vec[FunctionStitchingNode]) {
+        let arr_arguments: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_arguments: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_arguments: usize = arguments.count();
+        var i_arguments: usize = 0 as usize;
+        while i_arguments < n_arguments {
+            match arguments.at(i_arguments) {
+                option::Option[FunctionStitchingNode]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, e_arguments.raw()); }
+                option::Option[FunctionStitchingNode]::None => {}
+            }
+            i_arguments = i_arguments +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setArguments:\0")), arr_arguments);
+    }
+
     // SKIPPED `controlDependencies`: return `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     // SKIPPED `setControlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     fn drop(ref this) {
@@ -8257,7 +8649,21 @@ impl FunctionStitchingGraph {
         return out;
     }
 
-    // SKIPPED `setAttributes:`: param `NSArray<id<MTLFunctionStitchingAttribute>> * _Nonnull` — generic collection
+    fn set_attributes(this, attributes: vec::Vec[FunctionStitchingAttribute]) {
+        let arr_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_attributes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_attributes: usize = attributes.count();
+        var i_attributes: usize = 0 as usize;
+        while i_attributes < n_attributes {
+            match attributes.at(i_attributes) {
+                option::Option[FunctionStitchingAttribute]::Some(e_attributes) => { rt::msg_void_id(arr_attributes, add_sel_attributes, e_attributes.raw()); }
+                option::Option[FunctionStitchingAttribute]::None => {}
+            }
+            i_attributes = i_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributes:\0")), arr_attributes);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -10432,7 +10838,25 @@ impl ComputePipelineState {
         return option::some(FunctionHandle::from_raw(obj));
     }
 
-    // SKIPPED `newComputePipelineStateWithBinaryFunctions:error:`: param `NSArray<id<MTL4BinaryFunction>> * _Nonnull` — generic collection
+    fn new_compute_pipeline_state_with_binary_functions_error(this, additional_binary_functions: vec::Vec[MTL4BinaryFunction], error: *u8) -> option::Option[ComputePipelineState] {
+        let arr_additional_binary_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_additional_binary_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_additional_binary_functions: usize = additional_binary_functions.count();
+        var i_additional_binary_functions: usize = 0 as usize;
+        while i_additional_binary_functions < n_additional_binary_functions {
+            match additional_binary_functions.at(i_additional_binary_functions) {
+                option::Option[MTL4BinaryFunction]::Some(e_additional_binary_functions) => { rt::msg_void_id(arr_additional_binary_functions, add_sel_additional_binary_functions, e_additional_binary_functions.raw()); }
+                option::Option[MTL4BinaryFunction]::None => {}
+            }
+            i_additional_binary_functions = i_additional_binary_functions +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithBinaryFunctions:error:\0")), arr_additional_binary_functions, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[ComputePipelineState]::None;
+        }
+        return option::some(ComputePipelineState::from_raw(obj));
+    }
+
     fn imageblock_memory_length_for_dimensions(this, imageblock_dimensions: Size) -> u64 {
         return objc_msg_u64_Size(this._obj, rt::sel(#str_ptr("imageblockMemoryLengthForDimensions:\0")), imageblock_dimensions);
     }
@@ -10445,7 +10869,25 @@ impl ComputePipelineState {
         return option::some(FunctionHandle::from_raw(obj));
     }
 
-    // SKIPPED `newComputePipelineStateWithAdditionalBinaryFunctions:error:`: param `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
+    fn new_compute_pipeline_state_with_additional_binary_functions_error(this, functions: vec::Vec[Function], error: *u8) -> option::Option[ComputePipelineState] {
+        let arr_functions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_functions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_functions: usize = functions.count();
+        var i_functions: usize = 0 as usize;
+        while i_functions < n_functions {
+            match functions.at(i_functions) {
+                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
+                option::Option[Function]::None => {}
+            }
+            i_functions = i_functions +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithAdditionalBinaryFunctions:error:\0")), arr_functions, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[ComputePipelineState]::None;
+        }
+        return option::some(ComputePipelineState::from_raw(obj));
+    }
+
     fn new_visible_function_table_with_descriptor(this, descriptor: VisibleFunctionTableDescriptor) -> option::Option[VisibleFunctionTable] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newVisibleFunctionTableWithDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {

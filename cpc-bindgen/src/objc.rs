@@ -154,6 +154,7 @@ enum Arg {
     Point(String), // NSPoint / CGPoint — rt::Point HFA
     Size(String),  // NSSize / CGSize — rt::Size HFA
     Struct(String, String), // (C+ struct type, arg expr) — by-value C struct (MTLSize)
+    IdArray { elem: String, pname: String }, // NSArray<id<P>> param built from Vec[P]
     Unsupported(String),
 }
 
@@ -1109,7 +1110,14 @@ impl ObjcEmitter {
         let sig_param = sig_parts.join(", ");
 
         // Constructors: alloc + send the init selector, wrap in Self.
+        let has_id_array = args.iter().any(|a| matches!(a, Arg::IdArray { .. }));
         if is_init {
+            // The Vec[P]->NSArray prologue is only wired into the general path; an
+            // init taking one is rare — skip rather than emit a dangling local.
+            if has_id_array {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: init with an NSArray<id> param not modelled\n"));
+                return;
+            }
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
                 Some(s) => s,
@@ -1155,6 +1163,7 @@ impl ObjcEmitter {
         // we `retain` it to balance `drop`.
         let (ret_base, ret_nullable) = strip_nullability(ret_qt);
         let returns_self = !is_instance
+            && !has_id_array // the prologue is built only in the general path
             && matches!(ret, Ret::Object(_) | Ret::ObjectOption(_))
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
@@ -1352,7 +1361,28 @@ impl ObjcEmitter {
             Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => unreachable!(),
         };
 
-        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
+        // Prologue: build an NSMutableArray from each Vec[P] param (the send call
+        // already references the `arr_<pname>` local via arg_expr).
+        let mut prologue = String::new();
+        for a in &args {
+            if let Arg::IdArray { elem, pname } = a {
+                prologue.push_str(&format!(
+                    "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                     \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                     \x20       let n_{pname}: usize = {pname}.count();\n\
+                     \x20       var i_{pname}: usize = 0 as usize;\n\
+                     \x20       while i_{pname} < n_{pname} {{\n\
+                     \x20           match {pname}.at(i_{pname}) {{\n\
+                     \x20               option::Option[{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, e_{pname}.raw()); }}\n\
+                     \x20               option::Option[{elem}]::None => {{}}\n\
+                     \x20           }}\n\
+                     \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                     \x20       }}\n"
+                ));
+            }
+        }
+
+        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{prologue}{body_line}    }}\n\n"));
     }
 
     /// A method with a trailing `usingBlock:` param: emit a per-method
@@ -1703,6 +1733,16 @@ impl ObjcEmitter {
             self.needs_vec = true;
             return Arg::Id(format!("bridge::nsarray_of_text({pname})"));
         }
+        // NSArray<id<P>> (P a non-owning protocol) -> build an NSMutableArray from a
+        // Vec[P] (mirrors the return path; only protocol elements, like ObjectArray).
+        if let Some(elem) = array_element(base_ty) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.protocol_types.contains(&w) {
+                    self.needs_vec = true;
+                    return Arg::IdArray { elem: w, pname: pname.to_string() };
+                }
+            }
+        }
         if let Some(objc_enum) = self.enum_of(base_ty) {
             if !self.used_enums.contains(&objc_enum) {
                 self.used_enums.push(objc_enum.clone());
@@ -1780,6 +1820,14 @@ impl ObjcEmitter {
         }
         if self.is_string_array(b) {
             return "vec::Vec[text::Text]".to_string();
+        }
+        // NSArray<id<P>> (protocol element) param -> Vec[P] (same gate as map_arg).
+        if let Some(elem) = array_element(b) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.protocol_types.contains(&w) {
+                    return format!("vec::Vec[{w}]");
+                }
+            }
         }
         if let Some(objc_enum) = self.enum_of(b) {
             let info = self.enums.get(&objc_enum).unwrap();
@@ -1960,6 +2008,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::Point(_) => "point".into(),
         Arg::Size(_) => "size".into(),
         Arg::Struct(name, _) => name.clone(),
+        Arg::IdArray { .. } => "id".into(), // the built NSArray is an id on the wire
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2007,6 +2056,8 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::Point(e)
         | Arg::Size(e)
         | Arg::Struct(_, e) => e.clone(),
+        // The NSMutableArray built in the method prologue (see emit_method).
+        Arg::IdArray { pname, .. } => format!("arr_{pname}"),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2388,6 +2439,28 @@ mod tests {
         assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_of_protocol_param_builds_from_a_typed_vec() {
+        // NSArray<id<P>> (P a non-owning protocol) param -> Vec[P]; the method body
+        // builds an NSMutableArray from the Vec before the send.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLBuffer", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "useBuffers:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "buffers",
+                        "type": { "qualType": "NSArray<id<MTLBuffer>> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn use_buffers(this, buffers: vec::Vec[Buffer])"), "typed Vec param:\n{out}");
+        assert!(out.contains("let arr_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\"))"), "builds NSArray:\n{out}");
+        assert!(out.contains("buffers.at(i_buffers)"), "iterates the Vec:\n{out}");
+        assert!(out.contains("e_buffers.raw()"), "adds each element's handle:\n{out}");
+        assert!(out.contains("\"useBuffers:\\0\")), arr_buffers)"), "passes the built array:\n{out}");
     }
 
     #[test]
