@@ -16,6 +16,7 @@ pub fn generate(
     prefix: &str,
     overrides_path: Option<&str>,
     out_dir: Option<&str>,
+    merge: bool,
 ) -> i32 {
     let sdk = match sdk_path() {
         Some(s) => s,
@@ -65,6 +66,13 @@ pub fn generate(
         return 1;
     }
 
+    // `--merge`: emit the whole framework as ONE module. Every wrapper type is
+    // co-resident, so object returns/args resolve to FULL types (chaining works,
+    // no method-less cross-module stubs) and there is no cyclic-import problem.
+    if merge {
+        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg);
+    }
+
     // One module per header. Detect Objective-C vs C per header (a header is
     // ObjC iff it defines an ObjC interface/protocol/category of its own) and
     // dispatch to the matching emitter, so C frameworks (Accelerate) bind too.
@@ -110,7 +118,7 @@ pub fn generate(
     std::fs::write(src.join(format!("{pkg}.cplus")), build_umbrella(name, &modules)).ok();
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(), modules.len(), any_objc),
+        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(), modules.len(), any_objc, false),
     )
     .ok();
     if overrides_path.is_none() {
@@ -123,6 +131,77 @@ pub fn generate(
     eprintln!(
         "cpc-bindgen: wrote package `{pkg}` ({} modules) to {}",
         modules.len(),
+        out.display()
+    );
+    0
+}
+
+/// `--merge`: emit the whole framework as one module by parsing the framework
+/// umbrella once (one AST, correct locs, each type appearing once) and running a
+/// single merged `ObjcEmitter` that owns every framework-home header.
+#[allow(clippy::too_many_arguments)]
+fn generate_merged(
+    name: &str,
+    prefix: &str,
+    overrides: serde_json::Value,
+    overrides_path: Option<&str>,
+    out: &Path,
+    src: &Path,
+    header_paths: &[PathBuf],
+    sdk: &str,
+    pkg: &str,
+) -> i32 {
+    // Header basenames this framework owns; the merged emitter accepts decls from
+    // any of them and drops everything #imported from a system header.
+    let home_set: std::collections::HashSet<String> = header_paths
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect();
+    // The umbrella (`Headers/<name>.h`) transitively imports every public header,
+    // so one parse yields all framework types with their home-header locs intact.
+    let umbrella = match header_paths.first().and_then(|p| p.parent()) {
+        Some(d) => d.join(format!("{name}.h")),
+        None => {
+            eprintln!("cpc-bindgen --merge: cannot locate the `{name}` umbrella header");
+            return 1;
+        }
+    };
+    let ast = match clang_ast(&umbrella, sdk) {
+        Some(a) => a,
+        None => {
+            eprintln!("cpc-bindgen --merge: clang failed on {}", umbrella.display());
+            return 1;
+        }
+    };
+    let text =
+        ObjcEmitter::new_merged(&umbrella.to_string_lossy(), prefix, overrides, home_set).run(&ast);
+
+    // Going from N per-header modules to one: clear stale module files first.
+    for entry in std::fs::read_dir(src).into_iter().flatten().flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("cplus") {
+            std::fs::remove_file(&p).ok();
+        }
+    }
+    let types = exported_types(&text);
+    if let Err(e) = std::fs::write(src.join(format!("{pkg}.cplus")), &text) {
+        eprintln!("cpc-bindgen --merge: write failed: {e}");
+        return 1;
+    }
+    std::fs::write(
+        out.join("Cplus.toml"),
+        cplus_toml(name, pkg, prefix, overrides_path.is_some(), &sdk_version(), header_paths.len(), true, true),
+    )
+    .ok();
+    if overrides_path.is_none() {
+        let ov = out.join("overrides.json");
+        if !ov.exists() {
+            std::fs::write(&ov, overrides_stub(name)).ok();
+        }
+    }
+    eprintln!(
+        "cpc-bindgen: wrote merged package `{pkg}` (1 module, {} types) to {}",
+        types.len(),
         out.display()
     );
     0
@@ -333,6 +412,7 @@ fn build_umbrella(name: &str, modules: &[(String, Vec<String>)]) -> String {
     s
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cplus_toml(
     name: &str,
     pkg: &str,
@@ -341,6 +421,7 @@ fn cplus_toml(
     sdk_version: &str,
     n_headers: usize,
     any_objc: bool,
+    merge: bool,
 ) -> String {
     // A pure-C framework (Accelerate) needs no `objc` runtime dependency.
     let deps = if any_objc {
@@ -352,6 +433,9 @@ fn cplus_toml(
     let mut repro = format!("cpc-bindgen --framework {name}");
     if !prefix.is_empty() {
         repro.push_str(&format!(" --prefix {prefix}"));
+    }
+    if merge {
+        repro.push_str(" --merge");
     }
     if overrides_used {
         repro.push_str(" --overrides overrides.json");

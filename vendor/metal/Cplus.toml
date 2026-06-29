@@ -4,7 +4,7 @@
 # sdk       = "26.5"
 # generator = "cpc-bindgen 0.0.25"
 # headers   = 87
-# reproduce = "cpc-bindgen --framework Metal --prefix MTL"
+# reproduce = "cpc-bindgen --framework Metal --prefix MTL --merge"
 
 [package]
 name    = "metal"

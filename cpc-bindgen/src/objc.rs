@@ -23,6 +23,14 @@ use std::collections::{HashMap, HashSet};
 
 pub struct ObjcEmitter {
     header_path: String,
+    // Header basenames whose decls this emitter owns. Single-header mode: just
+    // the target header. `--merge` mode: every framework-home header, so the
+    // whole framework emits as one module (full co-resident types, no stubs).
+    home_set: HashSet<String>,
+    // `--merge` parses the framework umbrella, so every real decl is `#include`d
+    // (loc_included == true). The `home_set` basename match is then the only
+    // home test; the loc_included guard (single-header only) must be bypassed.
+    merge: bool,
     prefix: String,
     overrides: serde_json::Value,
     body: String,
@@ -138,6 +146,8 @@ impl ObjcEmitter {
     pub fn new(header_path: &str, prefix: &str, overrides: serde_json::Value) -> Self {
         ObjcEmitter {
             header_path: header_path.to_string(),
+            home_set: std::iter::once(base(header_path)).collect(),
+            merge: false,
             prefix: prefix.to_string(),
             overrides,
             body: String::new(),
@@ -153,6 +163,21 @@ impl ObjcEmitter {
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
         }
+    }
+
+    /// `--merge` mode: one emitter that owns every framework-home header, so the
+    /// whole framework lands in one module with all wrapper types co-resident
+    /// (full types, no cross-module stubs, no cyclic-import problem).
+    pub fn new_merged(
+        label: &str,
+        prefix: &str,
+        overrides: serde_json::Value,
+        home_set: HashSet<String>,
+    ) -> Self {
+        let mut e = ObjcEmitter::new(label, prefix, overrides);
+        e.home_set = home_set;
+        e.merge = true;
+        e
     }
 
     // --- override-file lookups (the hand-curated naming taste) ---
@@ -194,10 +219,11 @@ impl ObjcEmitter {
                 _ => {}
             }
         }
-        // Pass 2: collect header-local interfaces + the categories that extend
+        // Pass 2: collect home-header interfaces + the categories that extend
         // them (Foundation puts much of NSScanner/NSString/... in categories),
         // then emit each class with its interface + category methods merged.
-        let target = base(&self.header_path);
+        // "Home" = the target header (single-header) or any framework header
+        // (`--merge`); decls from #imported system headers are skipped either way.
         let mut current_file: Option<String> = None;
         let mut interfaces: Vec<serde_json::Value> = Vec::new();
         let mut categories: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
@@ -215,10 +241,15 @@ impl ObjcEmitter {
             {
                 continue;
             }
-            if decl.get("loc").map(loc_included).unwrap_or(false) {
+            if !self.merge && decl.get("loc").map(loc_included).unwrap_or(false) {
                 continue;
             }
-            if current_file.as_deref().map(base) != Some(target.clone()) {
+            let in_home = current_file
+                .as_deref()
+                .map(base)
+                .map(|f| self.home_set.contains(&f))
+                .unwrap_or(false);
+            if !in_home {
                 continue;
             }
             if kind == Some("ObjCInterfaceDecl") {
