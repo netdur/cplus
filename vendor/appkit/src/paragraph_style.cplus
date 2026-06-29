@@ -170,7 +170,10 @@ impl ParagraphStyle {
 
     fn from_raw(ptr: *u8) -> ParagraphStyle { return ParagraphStyle { _obj: ptr }; }
 
-    // SKIPPED `defaultWritingDirectionForLanguage:`: msgSend shape `i64_id` not yet modelled
+    fn default_writing_direction_for_language(language_name: str) -> WritingDirection {
+        return writing_direction_from_raw(rt::msg_i64_id(rt::get_class(#str_ptr("NSParagraphStyle\0")), rt::sel(#str_ptr("defaultWritingDirectionForLanguage:\0")), bridge::nsstring(language_name)));
+    }
+
     fn default_paragraph_style() -> ParagraphStyle {
         return ParagraphStyle { _obj: rt::msg_id(rt::get_class(#str_ptr("NSParagraphStyle\0")), rt::sel(#str_ptr("defaultParagraphStyle\0"))) };
     }

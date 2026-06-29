@@ -177,7 +177,14 @@ impl TextSelectionNavigation {
     // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
     // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: msgSend shape `id_i64_id` not yet modelled
     // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: msgSend shape `id_i64_point_id` not yet modelled
-    // SKIPPED `resolvedInsertionLocationForTextSelection:writingDirection:`: msgSend shape `id_id_i64` not yet modelled
+    fn resolved_insertion_location_for_text_selection_writing_direction(this, text_selection: TextSelection, writing_direction: TextSelectionNavigationWritingDirection) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("resolvedInsertionLocationForTextSelection:writingDirection:\0")), text_selection.raw(), text_selection_navigation_writing_direction_raw(writing_direction));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLocation]::None;
+        }
+        return option::some(TextLocation::from_raw(obj));
+    }
+
     // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: return `NSArray<NSTextRange *> * _Nonnull` — generic collection
     fn text_selection_data_source(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionDataSource\0")));

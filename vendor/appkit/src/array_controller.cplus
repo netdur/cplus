@@ -64,13 +64,34 @@ impl ArrayController {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("arrangeObjects:\0")), objects);
     }
 
-    // SKIPPED `setSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `setSelectionIndex:`: msgSend shape `i8_u64` not yet modelled
-    // SKIPPED `addSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `removeSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `setSelectedObjects:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `addSelectedObjects:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `removeSelectedObjects:`: msgSend shape `i8_id` not yet modelled
+    fn set_selection_indexes(this, indexes: IndexSet) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setSelectionIndexes:\0")), indexes.raw()) != (0 as i8);
+    }
+
+    fn set_selection_index(this, index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("setSelectionIndex:\0")), index) != (0 as i8);
+    }
+
+    fn add_selection_indexes(this, indexes: IndexSet) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("addSelectionIndexes:\0")), indexes.raw()) != (0 as i8);
+    }
+
+    fn remove_selection_indexes(this, indexes: IndexSet) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("removeSelectionIndexes:\0")), indexes.raw()) != (0 as i8);
+    }
+
+    fn set_selected_objects(this, objects: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setSelectedObjects:\0")), objects) != (0 as i8);
+    }
+
+    fn add_selected_objects(this, objects: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("addSelectedObjects:\0")), objects) != (0 as i8);
+    }
+
+    fn remove_selected_objects(this, objects: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("removeSelectedObjects:\0")), objects) != (0 as i8);
+    }
+
     fn add(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("add:\0")), sender);
     }

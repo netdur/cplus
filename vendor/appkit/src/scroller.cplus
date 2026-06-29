@@ -203,7 +203,10 @@ impl Scroller {
     fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
 
     // SKIPPED `scrollerWidthForControlSize:scrollerStyle:`: msgSend shape `f64_i64_i64` not yet modelled
-    // SKIPPED `rectForPart:`: msgSend shape `rect_i64` not yet modelled
+    fn rect_for_part(this, part_code: ScrollerPart) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectForPart:\0")), scroller_part_raw(part_code));
+    }
+
     fn check_space_for_parts(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkSpaceForParts\0")));
     }
@@ -269,7 +272,10 @@ impl Scroller {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("knobProportion\0")));
     }
 
-    // SKIPPED `scrollerWidthForControlSize:`: msgSend shape `f64_i64` not yet modelled
+    fn scroller_width_for_control_size(control_size: ControlSize) -> f64 {
+        return rt::msg_f64_i64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidthForControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn scroller_width() -> f64 {
         return rt::msg_f64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidth\0")));
     }

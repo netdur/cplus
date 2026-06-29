@@ -70,8 +70,14 @@ impl LevelIndicatorCell {
         return LevelIndicatorCell { _obj: rt::msg_id_i64(alloced, rt::sel(#str_ptr("initWithLevelIndicatorStyle:\0")), level_indicator_style_raw(level_indicator_style)) };
     }
 
-    // SKIPPED `rectOfTickMarkAtIndex:`: msgSend shape `rect_i64` not yet modelled
-    // SKIPPED `tickMarkValueAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    fn rect_of_tick_mark_at_index(this, index: i64) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectOfTickMarkAtIndex:\0")), index);
+    }
+
+    fn tick_mark_value_at_index(this, index: i64) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("tickMarkValueAtIndex:\0")), index);
+    }
+
     fn level_indicator_style(this) -> LevelIndicatorStyle {
         return level_indicator_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("levelIndicatorStyle\0"))));
     }

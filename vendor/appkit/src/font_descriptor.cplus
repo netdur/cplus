@@ -58,7 +58,10 @@ impl FontDescriptor {
     }
 
     // SKIPPED `fontDescriptorWithFontAttributes:`: param `NSDictionary<NSFontDescriptorAttributeName,id> * _Nullable` — generic collection
-    // SKIPPED `fontDescriptorWithName:size:`: msgSend shape `id_id_f64` not yet modelled
+    fn font_descriptor_with_name_size(font_name: str, size: f64) -> FontDescriptor {
+        return FontDescriptor { _obj: rt::retain(rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFontDescriptor\0")), rt::sel(#str_ptr("fontDescriptorWithName:size:\0")), bridge::nsstring(font_name), size)) };
+    }
+
     fn font_descriptor_with_name_matrix(font_name: str, matrix: AffineTransform) -> FontDescriptor {
         return FontDescriptor { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSFontDescriptor\0")), rt::sel(#str_ptr("fontDescriptorWithName:matrix:\0")), bridge::nsstring(font_name), matrix.raw())) };
     }

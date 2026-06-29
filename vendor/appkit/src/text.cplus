@@ -131,7 +131,10 @@ impl Text {
     }
 
     // SKIPPED `writeRTFDToFile:atomically:`: msgSend shape `i8_id_i8` not yet modelled
-    // SKIPPED `readRTFDFromFile:`: msgSend shape `i8_id` not yet modelled
+    fn read_r_t_f_d_from_file(this, path: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("readRTFDFromFile:\0")), bridge::nsstring(path)) != (0 as i8);
+    }
+
     fn scroll_range_to_visible(this, range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("scrollRangeToVisible:\0")), range);
     }

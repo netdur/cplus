@@ -4244,7 +4244,10 @@ impl MTL4MachineLearningPipelineDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineDescriptor { return MTL4MachineLearningPipelineDescriptor { _obj: ptr }; }
 
-    // SKIPPED `setInputDimensions:atBufferIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_input_dimensions_at_buffer_index(this, dimensions: TensorExtents, buffer_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setInputDimensions:atBufferIndex:\0")), dimensions.raw(), buffer_index);
+    }
+
     // SKIPPED `setInputDimensions:withRange:`: param `NSArray<MTLTensorExtents *> * _Nonnull` — generic collection
     fn input_dimensions_at_buffer_index(this, buffer_index: i64) -> option::Option[TensorExtents] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("inputDimensionsAtBufferIndex:\0")), buffer_index);
@@ -9481,7 +9484,10 @@ impl Device {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("supportsFamily:\0")), g_p_u_family_raw(gpu_family)) != (0 as i8);
     }
 
-    // SKIPPED `supportsTextureSampleCount:`: msgSend shape `i8_u64` not yet modelled
+    fn supports_texture_sample_count(this, sample_count: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("supportsTextureSampleCount:\0")), sample_count) != (0 as i8);
+    }
+
     fn minimum_linear_texture_alignment_for_pixel_format(this, format: PixelFormat) -> u64 {
         return rt::msg_u64_i64(this._obj, rt::sel(#str_ptr("minimumLinearTextureAlignmentForPixelFormat:\0")), pixel_format_raw(format));
     }
@@ -9499,7 +9505,10 @@ impl Device {
     }
 
     // SKIPPED `newArgumentEncoderWithArguments:`: param `NSArray<MTLArgumentDescriptor *> * _Nonnull` — generic collection
-    // SKIPPED `supportsRasterizationRateMapWithLayerCount:`: msgSend shape `i8_u64` not yet modelled
+    fn supports_rasterization_rate_map_with_layer_count(this, layer_count: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("supportsRasterizationRateMapWithLayerCount:\0")), layer_count) != (0 as i8);
+    }
+
     fn new_rasterization_rate_map_with_descriptor(this, descriptor: RasterizationRateMapDescriptor) -> option::Option[RasterizationRateMap] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newRasterizationRateMapWithDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {
@@ -9599,7 +9608,10 @@ impl Device {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("supportsCounterSampling:\0")), counter_sampling_point_raw(sampling_point)) != (0 as i8);
     }
 
-    // SKIPPED `supportsVertexAmplificationCount:`: msgSend shape `i8_u64` not yet modelled
+    fn supports_vertex_amplification_count(this, count: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("supportsVertexAmplificationCount:\0")), count) != (0 as i8);
+    }
+
     fn new_dynamic_library_error(this, library: Library, error: *u8) -> option::Option[DynamicLibrary] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newDynamicLibrary:error:\0")), library.raw(), error);
         if obj == { 0 as *u8 } {
@@ -9989,7 +10001,10 @@ impl Heap {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `setPurgeableState:`: msgSend shape `i64_i64` not yet modelled
+    fn set_purgeable_state(this, state: PurgeableState) -> PurgeableState {
+        return purgeable_state_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("setPurgeableState:\0")), purgeable_state_raw(state)));
+    }
+
     // SKIPPED `newBufferWithLength:options:offset:`: msgSend shape `id_u64_u64_u64` not yet modelled
     fn new_texture_with_descriptor_offset(this, descriptor: TextureDescriptor, offset: u64) -> option::Option[Texture] {
         let obj: *u8 = rt::msg_id_id_u64(this._obj, rt::sel(#str_ptr("newTextureWithDescriptor:offset:\0")), descriptor.raw(), offset);
@@ -10081,7 +10096,10 @@ impl Resource {
 
     fn from_raw(ptr: *u8) -> Resource { return Resource { _obj: ptr }; }
 
-    // SKIPPED `setPurgeableState:`: msgSend shape `i64_i64` not yet modelled
+    fn set_purgeable_state(this, state: PurgeableState) -> PurgeableState {
+        return purgeable_state_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("setPurgeableState:\0")), purgeable_state_raw(state)));
+    }
+
     fn make_aliasable(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("makeAliasable\0")));
     }
@@ -10454,7 +10472,10 @@ impl BinaryArchive {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("serializeToURL:error:\0")), url, error) != (0 as i8);
     }
 
-    // SKIPPED `addFunctionWithDescriptor:library:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn add_function_with_descriptor_library_error(this, descriptor: FunctionDescriptor, library: Library, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("addFunctionWithDescriptor:library:error:\0")), descriptor.raw(), library.raw(), error) != (0 as i8);
+    }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -11935,7 +11956,10 @@ impl ResidencySet {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllAllocations\0")));
     }
 
-    // SKIPPED `containsAllocation:`: msgSend shape `i8_id` not yet modelled
+    fn contains_allocation(this, an_allocation: Allocation) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("containsAllocation:\0")), an_allocation.raw()) != (0 as i8);
+    }
+
     fn commit(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("commit\0")));
     }

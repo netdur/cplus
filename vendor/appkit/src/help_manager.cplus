@@ -65,7 +65,10 @@ impl HelpManager {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("findString:inBook:\0")), bridge::nsstring(query), bridge::nsstring(book));
     }
 
-    // SKIPPED `registerBooksInBundle:`: msgSend shape `i8_id` not yet modelled
+    fn register_books_in_bundle(this, bundle: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("registerBooksInBundle:\0")), bundle) != (0 as i8);
+    }
+
     fn shared_help_manager() -> HelpManager {
         return HelpManager { _obj: rt::msg_id(rt::get_class(#str_ptr("NSHelpManager\0")), rt::sel(#str_ptr("sharedHelpManager\0"))) };
     }

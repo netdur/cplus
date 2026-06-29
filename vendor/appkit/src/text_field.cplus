@@ -44,8 +44,14 @@ impl TextField {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    // SKIPPED `textShouldBeginEditing:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `textShouldEndEditing:`: msgSend shape `i8_id` not yet modelled
+    fn text_should_begin_editing(this, text_object: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("textShouldBeginEditing:\0")), text_object) != (0 as i8);
+    }
+
+    fn text_should_end_editing(this, text_object: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("textShouldEndEditing:\0")), text_object) != (0 as i8);
+    }
+
     fn text_did_begin_editing(this, notification: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidBeginEditing:\0")), notification);
     }

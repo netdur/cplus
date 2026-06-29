@@ -874,7 +874,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller.raw());
     }
 
-    // SKIPPED `insertTitlebarAccessoryViewController:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_titlebar_accessory_view_controller_at_index(this, child_view_controller: TitlebarAccessoryViewController, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTitlebarAccessoryViewController:atIndex:\0")), child_view_controller.raw(), index);
+    }
+
     fn remove_titlebar_accessory_view_controller_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeTitlebarAccessoryViewControllerAtIndex:\0")), index);
     }
@@ -932,7 +935,10 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("update\0")));
     }
 
-    // SKIPPED `makeFirstResponder:`: msgSend shape `i8_id` not yet modelled
+    fn make_first_responder(this, responder: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("makeFirstResponder:\0")), responder) != (0 as i8);
+    }
+
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
@@ -956,8 +962,14 @@ impl Window {
     }
 
     // SKIPPED `setContentBorderThickness:forEdge:`: msgSend shape `void_f64_i64` not yet modelled
-    // SKIPPED `contentBorderThicknessForEdge:`: msgSend shape `f64_i64` not yet modelled
-    // SKIPPED `setAutorecalculatesContentBorderThickness:forEdge:`: msgSend shape `void_i8_i64` not yet modelled
+    fn content_border_thickness_for_edge(this, edge: RectEdge) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("contentBorderThicknessForEdge:\0")), rect_edge_raw(edge));
+    }
+
+    fn set_autorecalculates_content_border_thickness_for_edge(this, flag: bool, edge: RectEdge) {
+        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setAutorecalculatesContentBorderThickness:forEdge:\0")), flag as i8, rect_edge_raw(edge));
+    }
+
     fn autorecalculates_content_border_thickness_for_edge(this, edge: RectEdge) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("autorecalculatesContentBorderThicknessForEdge:\0")), rect_edge_raw(edge)) != (0 as i8);
     }
@@ -982,7 +994,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderOut:\0")), sender);
     }
 
-    // SKIPPED `orderWindow:relativeTo:`: msgSend shape `void_i64_i64` not yet modelled
+    fn order_window_relative_to(this, place: WindowOrderingMode, other_win: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("orderWindow:relativeTo:\0")), window_ordering_mode_raw(place), other_win);
+    }
+
     fn order_front_regardless(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("orderFrontRegardless\0")));
     }
@@ -1092,8 +1107,14 @@ impl Window {
     }
 
     // SKIPPED `setFrameUsingName:force:`: msgSend shape `i8_id_i8` not yet modelled
-    // SKIPPED `setFrameUsingName:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `setFrameAutosaveName:`: msgSend shape `i8_id` not yet modelled
+    fn set_frame_using_name(this, name: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setFrameUsingName:\0")), bridge::nsstring(name)) != (0 as i8);
+    }
+
+    fn set_frame_autosave_name(this, name: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setFrameAutosaveName:\0")), bridge::nsstring(name)) != (0 as i8);
+    }
+
     fn remove_frame_using_name(name: str) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("removeFrameUsingName:\0")), bridge::nsstring(name));
     }
@@ -1128,7 +1149,10 @@ impl Window {
         return option::some(Button::from_raw(obj));
     }
 
-    // SKIPPED `addChildWindow:ordered:`: msgSend shape `void_id_i64` not yet modelled
+    fn add_child_window_ordered(this, child_win: Window, place: WindowOrderingMode) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addChildWindow:ordered:\0")), child_win.raw(), window_ordering_mode_raw(place));
+    }
+
     fn remove_child_window(this, child_win: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeChildWindow:\0")), child_win.raw());
     }
@@ -1207,7 +1231,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleTabOverview:\0")), sender);
     }
 
-    // SKIPPED `addTabbedWindow:ordered:`: msgSend shape `void_id_i64` not yet modelled
+    fn add_tabbed_window_ordered(this, window: Window, ordered: WindowOrderingMode) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addTabbedWindow:ordered:\0")), window.raw(), window_ordering_mode_raw(ordered));
+    }
+
     fn transfer_window_sharing_to_window_completion_handler(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Window_transfer_window_sharing_to_window_completion_handler_block = Window_transfer_window_sharing_to_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -1888,7 +1915,10 @@ impl Window {
 
     // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
     // SKIPPED `discardEventsMatchingMask:beforeEvent:`: msgSend shape `void_u64_id` not yet modelled
-    // SKIPPED `postEvent:atStart:`: msgSend shape `void_id_i8` not yet modelled
+    fn post_event_at_start(this, event: Event, flag: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event.raw(), flag as i8);
+    }
+
     fn send_event(this, event: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event.raw());
     }

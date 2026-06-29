@@ -75,7 +75,10 @@ impl TreeController {
 
     // SKIPPED `removeObjectsAtArrangedObjectIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `setSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `setSelectionIndexPath:`: msgSend shape `i8_id` not yet modelled
+    fn set_selection_index_path(this, index_path: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setSelectionIndexPath:\0")), index_path) != (0 as i8);
+    }
+
     // SKIPPED `addSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `removeSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     fn move_node_to_index_path(this, node: TreeNode, index_path: *u8) {

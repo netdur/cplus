@@ -209,18 +209,27 @@ impl TabView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `insertTabViewItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_tab_view_item_at_index(this, tab_view_item: TabViewItem, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTabViewItem:atIndex:\0")), tab_view_item.raw(), index);
+    }
+
     fn remove_tab_view_item(this, tab_view_item: TabViewItem) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item.raw());
     }
 
     // SKIPPED `tabViewItemAtPoint:`: msgSend shape `id_point` not yet modelled
-    // SKIPPED `indexOfTabViewItem:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_tab_view_item(this, tab_view_item: TabViewItem) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfTabViewItem:\0")), tab_view_item.raw());
+    }
+
     fn tab_view_item_at_index(this, index: i64) -> TabViewItem {
         return TabViewItem::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("tabViewItemAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfTabViewItemWithIdentifier:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_tab_view_item_with_identifier(this, identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfTabViewItemWithIdentifier:\0")), identifier);
+    }
+
     fn selected_tab_view_item(this) -> option::Option[TabViewItem] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedTabViewItem\0")));
         if obj == { 0 as *u8 } {

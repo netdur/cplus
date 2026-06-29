@@ -624,7 +624,10 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("readSelectionFromPasteboard:type:\0")), pboard, bridge::nsstring(type_)) != (0 as i8);
     }
 
-    // SKIPPED `readSelectionFromPasteboard:`: msgSend shape `i8_id` not yet modelled
+    fn read_selection_from_pasteboard(this, pboard: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("readSelectionFromPasteboard:\0")), pboard) != (0 as i8);
+    }
+
     fn register_for_services() {
         rt::msg_void(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("registerForServices\0")));
     }

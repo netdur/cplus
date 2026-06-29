@@ -129,7 +129,10 @@ impl TextInputClient {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowLevel\0")));
     }
 
-    // SKIPPED `drawsVerticallyForCharacterAtIndex:`: msgSend shape `i8_u64` not yet modelled
+    fn draws_vertically_for_character_at_index(this, char_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("drawsVerticallyForCharacterAtIndex:\0")), char_index) != (0 as i8);
+    }
+
     fn preferred_text_accessory_placement(this) -> TextCursorAccessoryPlacement {
         return text_cursor_accessory_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredTextAccessoryPlacement\0"))));
     }

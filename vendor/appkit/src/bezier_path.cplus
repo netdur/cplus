@@ -197,7 +197,10 @@ impl BezierPath {
     }
 
     // SKIPPED `elementAtIndex:associatedPoints:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
-    // SKIPPED `elementAtIndex:`: msgSend shape `i64_i64` not yet modelled
+    fn element_at_index(this, index: i64) -> BezierPathElement {
+        return bezier_path_element_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("elementAtIndex:\0")), index));
+    }
+
     // SKIPPED `setAssociatedPoints:atIndex:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
     fn append_bezier_path(this, path: BezierPath) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendBezierPath:\0")), path.raw());

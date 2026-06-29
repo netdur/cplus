@@ -125,12 +125,22 @@ impl Form {
         return FormCell::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("addEntry:\0")), bridge::nsstring(title)));
     }
 
-    // SKIPPED `insertEntry:atIndex:`: msgSend shape `id_id_i64` not yet modelled
+    fn insert_entry_at_index(this, title: str, index: i64) -> option::Option[FormCell] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("insertEntry:atIndex:\0")), bridge::nsstring(title), index);
+        if obj == { 0 as *u8 } {
+            return option::Option[FormCell]::None;
+        }
+        return option::some(FormCell::from_raw(obj));
+    }
+
     fn remove_entry_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeEntryAtIndex:\0")), index);
     }
 
-    // SKIPPED `indexOfCellWithTag:`: msgSend shape `i64_i64` not yet modelled
+    fn index_of_cell_with_tag(this, tag: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("indexOfCellWithTag:\0")), tag);
+    }
+
     fn select_text_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("selectTextAtIndex:\0")), index);
     }

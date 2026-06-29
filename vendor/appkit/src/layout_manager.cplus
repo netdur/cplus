@@ -309,11 +309,17 @@ impl LayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForTextContainer:\0")), container.raw());
     }
 
-    // SKIPPED `ensureLayoutForBoundingRect:inTextContainer:`: msgSend shape `void_rect_id` not yet modelled
+    fn ensure_layout_for_bounding_rect_in_text_container(this, bounds: rt::Rect, container: TextContainer) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("ensureLayoutForBoundingRect:inTextContainer:\0")), bounds, container.raw());
+    }
+
     // SKIPPED `setGlyphs:properties:characterIndexes:font:forGlyphRange:`: msgSend shape `void_id_id_id_id_range` not yet modelled
     // SKIPPED `CGGlyphAtIndex:isValidIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `CGGlyphAtIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `isValidGlyphIndex:`: msgSend shape `i8_u64` not yet modelled
+    fn is_valid_glyph_index(this, glyph_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("isValidGlyphIndex:\0")), glyph_index) != (0 as i8);
+    }
+
     // SKIPPED `propertyForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
     // SKIPPED `characterIndexForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
     // SKIPPED `glyphIndexForCharacterAtIndex:`: msgSend shape `u64_u64` not yet modelled
@@ -348,8 +354,14 @@ impl LayoutManager {
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `locationForGlyphAtIndex:`: msgSend shape `point_u64` not yet modelled
-    // SKIPPED `notShownAttributeForGlyphAtIndex:`: msgSend shape `i8_u64` not yet modelled
-    // SKIPPED `drawsOutsideLineFragmentForGlyphAtIndex:`: msgSend shape `i8_u64` not yet modelled
+    fn not_shown_attribute_for_glyph_at_index(this, glyph_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("notShownAttributeForGlyphAtIndex:\0")), glyph_index) != (0 as i8);
+    }
+
+    fn draws_outside_line_fragment_for_glyph_at_index(this, glyph_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("drawsOutsideLineFragmentForGlyphAtIndex:\0")), glyph_index) != (0 as i8);
+    }
+
     // SKIPPED `attachmentSizeForGlyphAtIndex:`: msgSend shape `size_u64` not yet modelled
     fn truncated_glyph_range_in_line_fragment_for_glyph_at_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("truncatedGlyphRangeInLineFragmentForGlyphAtIndex:\0")), glyph_index);
@@ -535,7 +547,10 @@ impl LayoutManager {
 
     // SKIPPED `rulerMarkersForTextView:paragraphStyle:ruler:`: return `NSArray<NSRulerMarker *> * _Nonnull` — generic collection
     // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: msgSend shape `id_id_id_id_i8` not yet modelled
-    // SKIPPED `layoutManagerOwnsFirstResponderInWindow:`: msgSend shape `i8_id` not yet modelled
+    fn layout_manager_owns_first_responder_in_window(this, window: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("layoutManagerOwnsFirstResponderInWindow:\0")), window) != (0 as i8);
+    }
+
     fn first_text_view(this) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("firstTextView\0")));
         if obj == { 0 as *u8 } {

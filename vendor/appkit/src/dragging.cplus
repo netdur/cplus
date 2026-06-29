@@ -293,14 +293,26 @@ impl DraggingDestination {
 
     fn from_raw(ptr: *u8) -> DraggingDestination { return DraggingDestination { _obj: ptr }; }
 
-    // SKIPPED `draggingEntered:`: msgSend shape `u64_id` not yet modelled
-    // SKIPPED `draggingUpdated:`: msgSend shape `u64_id` not yet modelled
+    fn dragging_entered(this, sender: DraggingInfo) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("draggingEntered:\0")), sender.raw());
+    }
+
+    fn dragging_updated(this, sender: DraggingInfo) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("draggingUpdated:\0")), sender.raw());
+    }
+
     fn dragging_exited(this, sender: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("draggingExited:\0")), sender.raw());
     }
 
-    // SKIPPED `prepareForDragOperation:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `performDragOperation:`: msgSend shape `i8_id` not yet modelled
+    fn prepare_for_drag_operation(this, sender: DraggingInfo) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("prepareForDragOperation:\0")), sender.raw()) != (0 as i8);
+    }
+
+    fn perform_drag_operation(this, sender: DraggingInfo) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performDragOperation:\0")), sender.raw()) != (0 as i8);
+    }
+
     fn conclude_drag_operation(this, sender: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("concludeDragOperation:\0")), sender.raw());
     }
@@ -333,7 +345,10 @@ impl DraggingSource {
     // SKIPPED `draggingSession:willBeginAtPoint:`: msgSend shape `void_id_point` not yet modelled
     // SKIPPED `draggingSession:movedToPoint:`: msgSend shape `void_id_point` not yet modelled
     // SKIPPED `draggingSession:endedAtPoint:operation:`: msgSend shape `void_id_point_u64` not yet modelled
-    // SKIPPED `ignoreModifierKeysForDraggingSession:`: msgSend shape `i8_id` not yet modelled
+    fn ignore_modifier_keys_for_dragging_session(this, session: DraggingSession) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("ignoreModifierKeysForDraggingSession:\0")), session.raw()) != (0 as i8);
+    }
+
 }
 
 // `NSSpringLoadingDestination` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -351,8 +366,14 @@ impl SpringLoadingDestination {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("springLoadingHighlightChanged:\0")), dragging_info.raw());
     }
 
-    // SKIPPED `springLoadingEntered:`: msgSend shape `u64_id` not yet modelled
-    // SKIPPED `springLoadingUpdated:`: msgSend shape `u64_id` not yet modelled
+    fn spring_loading_entered(this, dragging_info: DraggingInfo) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("springLoadingEntered:\0")), dragging_info.raw());
+    }
+
+    fn spring_loading_updated(this, dragging_info: DraggingInfo) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("springLoadingUpdated:\0")), dragging_info.raw());
+    }
+
     fn spring_loading_exited(this, dragging_info: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("springLoadingExited:\0")), dragging_info.raw());
     }

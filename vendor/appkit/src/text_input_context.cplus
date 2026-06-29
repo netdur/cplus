@@ -44,7 +44,10 @@ impl TextInputContext {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deactivate\0")));
     }
 
-    // SKIPPED `handleEvent:`: msgSend shape `i8_id` not yet modelled
+    fn handle_event(this, event: Event) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("handleEvent:\0")), event.raw()) != (0 as i8);
+    }
+
     fn discard_marked_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("discardMarkedText\0")));
     }

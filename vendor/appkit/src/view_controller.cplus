@@ -267,7 +267,10 @@ impl ViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFromParentViewController\0")));
     }
 
-    // SKIPPED `insertChildViewController:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_child_view_controller_at_index(this, child_view_controller: ViewController, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertChildViewController:atIndex:\0")), child_view_controller.raw(), index);
+    }
+
     fn remove_child_view_controller_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeChildViewControllerAtIndex:\0")), index);
     }

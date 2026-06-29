@@ -106,7 +106,10 @@ impl DraggingItem {
     }
 
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `setDraggingFrame:contents:`: msgSend shape `void_rect_id` not yet modelled
+    fn set_dragging_frame_contents(this, frame: rt::Rect, contents: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, contents);
+    }
+
     fn item(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("item\0")));
     }

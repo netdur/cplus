@@ -50,7 +50,10 @@ impl ClipView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewBoundsChanged:\0")), notification);
     }
 
-    // SKIPPED `autoscroll:`: msgSend shape `i8_id` not yet modelled
+    fn autoscroll(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("autoscroll:\0")), event) != (0 as i8);
+    }
+
     fn scroll_to_point(this, new_origin: rt::Point) {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("scrollToPoint:\0")), new_origin);
     }

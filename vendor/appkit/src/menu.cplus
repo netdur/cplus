@@ -136,7 +136,10 @@ impl Menu {
         return rt::msg_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("menuBarVisible\0"))) != (0 as i8);
     }
 
-    // SKIPPED `insertItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_item_at_index(this, new_item: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItem:atIndex:\0")), new_item, index);
+    }
+
     fn add_item(this, new_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItem:\0")), new_item);
     }
@@ -164,11 +167,26 @@ impl Menu {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `indexOfItem:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `indexOfItemWithTitle:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `indexOfItemWithTag:`: msgSend shape `i64_i64` not yet modelled
-    // SKIPPED `indexOfItemWithRepresentedObject:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `indexOfItemWithSubmenu:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItem:\0")), item);
+    }
+
+    fn index_of_item_with_title(this, title: str) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTitle:\0")), bridge::nsstring(title));
+    }
+
+    fn index_of_item_with_tag(this, tag: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("indexOfItemWithTag:\0")), tag);
+    }
+
+    fn index_of_item_with_represented_object(this, object: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), object);
+    }
+
+    fn index_of_item_with_submenu(this, submenu: Menu) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithSubmenu:\0")), submenu.raw());
+    }
+
     // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn item_with_title(this, title: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemWithTitle:\0")), bridge::nsstring(title));
@@ -184,7 +202,10 @@ impl Menu {
         rt::msg_void(this._obj, rt::sel(#str_ptr("update\0")));
     }
 
-    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
+    fn perform_key_equivalent(this, event: Event) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), event.raw()) != (0 as i8);
+    }
+
     fn item_changed(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("itemChanged:\0")), item);
     }
@@ -519,6 +540,9 @@ impl MenuItemValidation {
 
     fn from_raw(ptr: *u8) -> MenuItemValidation { return MenuItemValidation { _obj: ptr }; }
 
-    // SKIPPED `validateMenuItem:`: msgSend shape `i8_id` not yet modelled
+    fn validate_menu_item(this, menu_item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("validateMenuItem:\0")), menu_item) != (0 as i8);
+    }
+
 }
 

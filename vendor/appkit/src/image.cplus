@@ -322,7 +322,10 @@ impl ImageSymbolConfiguration {
 
     // SKIPPED `configurationWithPointSize:weight:scale:`: param `NSFontWeight` — unmapped type `NSFontWeight`
     // SKIPPED `configurationWithPointSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `configurationWithTextStyle:scale:`: msgSend shape `id_id_i64` not yet modelled
+    fn configuration_with_text_style_scale(style: str, scale: ImageSymbolScale) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration { _obj: rt::msg_id_id_i64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithTextStyle:scale:\0")), bridge::nsstring(style), image_symbol_scale_raw(scale)) };
+    }
+
     fn configuration_with_text_style(style: str) -> ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithTextStyle:\0")), bridge::nsstring(style)) };
     }
@@ -389,7 +392,14 @@ impl Image {
     }
 
     // SKIPPED `imageWithSystemSymbolName:variableValue:accessibilityDescription:`: msgSend shape `id_id_f64_id` not yet modelled
-    // SKIPPED `imageWithSymbolName:variableValue:`: msgSend shape `id_id_f64` not yet modelled
+    fn image_with_symbol_name_variable_value(name: str, value: f64) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSymbolName:variableValue:\0")), bridge::nsstring(name), value);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image { _obj: rt::retain(obj) });
+    }
+
     // SKIPPED `imageWithSymbolName:bundle:variableValue:`: msgSend shape `id_id_id_f64` not yet modelled
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
@@ -407,7 +417,10 @@ impl Image {
     // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
     // SKIPPED `initWithDataIgnoringOrientation:`: extra init variant (one `new` per type)
     // SKIPPED `imageWithSize:flipped:drawingHandler:`: block method with non-void return
-    // SKIPPED `setName:`: msgSend shape `i8_id` not yet modelled
+    fn set_name(this, string: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(string)) != (0 as i8);
+    }
+
     fn name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text_option(ns);
@@ -435,7 +448,10 @@ impl Image {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeRepresentation:\0")), image_rep.raw());
     }
 
-    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
+    fn can_init_with_pasteboard(pasteboard: *u8) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard) != (0 as i8);
+    }
+
     // SKIPPED `initWithCGImage:size:`: extra init variant (one `new` per type)
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection

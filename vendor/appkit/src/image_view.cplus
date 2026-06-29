@@ -280,7 +280,10 @@ impl ImageView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeAllSymbolEffectsWithOptions:\0")), options);
     }
 
-    // SKIPPED `removeAllSymbolEffectsWithOptions:animated:`: msgSend shape `void_id_i8` not yet modelled
+    fn remove_all_symbol_effects_with_options_animated(this, options: *u8, animated: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("removeAllSymbolEffectsWithOptions:animated:\0")), options, animated as i8);
+    }
+
     fn set_symbol_image_with_content_transition(this, symbol_image: *u8, transition: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:\0")), symbol_image, transition);
     }

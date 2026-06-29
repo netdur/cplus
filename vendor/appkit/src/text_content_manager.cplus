@@ -146,9 +146,26 @@ impl TextContentStorage {
         return option::some(TextElement::from_raw(obj));
     }
 
-    // SKIPPED `locationFromLocation:withOffset:`: msgSend shape `id_id_i64` not yet modelled
-    // SKIPPED `offsetFromLocation:toLocation:`: msgSend shape `i64_id_id` not yet modelled
-    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: msgSend shape `id_id_i8` not yet modelled
+    fn location_from_location_with_offset(this, location: TextLocation, offset: i64) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), offset);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLocation]::None;
+        }
+        return option::some(TextLocation::from_raw(obj));
+    }
+
+    fn offset_from_location_to_location(this, from: TextLocation, to: TextLocation) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to.raw());
+    }
+
+    fn adjusted_range_from_range_for_editing_text_selection(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("adjustedRangeFromRange:forEditingTextSelection:\0")), text_range.raw(), for_editing_text_selection as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextRange]::None;
+        }
+        return option::some(TextRange::from_raw(obj));
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -314,9 +331,26 @@ impl TextElementProvider {
         return;
     }
 
-    // SKIPPED `locationFromLocation:withOffset:`: msgSend shape `id_id_i64` not yet modelled
-    // SKIPPED `offsetFromLocation:toLocation:`: msgSend shape `i64_id_id` not yet modelled
-    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: msgSend shape `id_id_i8` not yet modelled
+    fn location_from_location_with_offset(this, location: TextLocation, offset: i64) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), offset);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLocation]::None;
+        }
+        return option::some(TextLocation::from_raw(obj));
+    }
+
+    fn offset_from_location_to_location(this, from: TextLocation, to: TextLocation) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to.raw());
+    }
+
+    fn adjusted_range_from_range_for_editing_text_selection(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("adjustedRangeFromRange:forEditingTextSelection:\0")), text_range.raw(), for_editing_text_selection as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextRange]::None;
+        }
+        return option::some(TextRange::from_raw(obj));
+    }
+
     fn document_range(this) -> TextRange {
         return TextRange::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("documentRange\0"))));
     }

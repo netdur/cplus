@@ -82,7 +82,10 @@ impl Slider {
 
     fn from_raw(ptr: *u8) -> Slider { return Slider { _obj: ptr }; }
 
-    // SKIPPED `acceptsFirstMouse:`: msgSend shape `i8_id` not yet modelled
+    fn accepts_first_mouse(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("acceptsFirstMouse:\0")), event) != (0 as i8);
+    }
+
     fn slider_type(this) -> SliderType {
         return slider_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sliderType\0"))));
     }
@@ -151,8 +154,14 @@ impl Slider {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTintProminence:\0")), tint_prominence_raw(tint_prominence));
     }
 
-    // SKIPPED `tickMarkValueAtIndex:`: msgSend shape `f64_i64` not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: msgSend shape `rect_i64` not yet modelled
+    fn tick_mark_value_at_index(this, index: i64) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("tickMarkValueAtIndex:\0")), index);
+    }
+
+    fn rect_of_tick_mark_at_index(this, index: i64) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectOfTickMarkAtIndex:\0")), index);
+    }
+
     // SKIPPED `indexOfTickMarkAtPoint:`: msgSend shape `i64_point` not yet modelled
     // SKIPPED `closestTickMarkValueToValue:`: msgSend shape `f64_f64` not yet modelled
     fn number_of_tick_marks(this) -> i64 {

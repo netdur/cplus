@@ -121,8 +121,14 @@ impl SliderCell {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("knobThickness\0")));
     }
 
-    // SKIPPED `tickMarkValueAtIndex:`: msgSend shape `f64_i64` not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: msgSend shape `rect_i64` not yet modelled
+    fn tick_mark_value_at_index(this, index: i64) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("tickMarkValueAtIndex:\0")), index);
+    }
+
+    fn rect_of_tick_mark_at_index(this, index: i64) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectOfTickMarkAtIndex:\0")), index);
+    }
+
     // SKIPPED `indexOfTickMarkAtPoint:`: msgSend shape `i64_point` not yet modelled
     // SKIPPED `closestTickMarkValueToValue:`: msgSend shape `f64_f64` not yet modelled
     fn draw_tick_marks(this) {

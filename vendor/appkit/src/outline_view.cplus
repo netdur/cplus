@@ -128,20 +128,35 @@ impl OutlineView {
 
     fn from_raw(ptr: *u8) -> OutlineView { return OutlineView { _obj: ptr }; }
 
-    // SKIPPED `isExpandable:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `numberOfChildrenOfItem:`: msgSend shape `i64_id` not yet modelled
+    fn is_expandable(this, item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isExpandable:\0")), item) != (0 as i8);
+    }
+
+    fn number_of_children_of_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("numberOfChildrenOfItem:\0")), item);
+    }
+
     // SKIPPED `child:ofItem:`: msgSend shape `id_i64_id` not yet modelled
-    // SKIPPED `expandItem:expandChildren:`: msgSend shape `void_id_i8` not yet modelled
+    fn expand_item_expand_children(this, item: *u8, expand_children: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("expandItem:expandChildren:\0")), item, expand_children as i8);
+    }
+
     fn expand_item(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("expandItem:\0")), item);
     }
 
-    // SKIPPED `collapseItem:collapseChildren:`: msgSend shape `void_id_i8` not yet modelled
+    fn collapse_item_collapse_children(this, item: *u8, collapse_children: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("collapseItem:collapseChildren:\0")), item, collapse_children as i8);
+    }
+
     fn collapse_item(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("collapseItem:\0")), item);
     }
 
-    // SKIPPED `reloadItem:reloadChildren:`: msgSend shape `void_id_i8` not yet modelled
+    fn reload_item_reload_children(this, item: *u8, reload_children: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("reloadItem:reloadChildren:\0")), item, reload_children as i8);
+    }
+
     fn reload_item(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItem:\0")), item);
     }
@@ -151,18 +166,39 @@ impl OutlineView {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `childIndexForItem:`: msgSend shape `i64_id` not yet modelled
+    fn child_index_for_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("childIndexForItem:\0")), item);
+    }
+
     fn item_at_row(this, row: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtRow:\0")), row);
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `rowForItem:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `levelForItem:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `levelForRow:`: msgSend shape `i64_i64` not yet modelled
-    // SKIPPED `isItemExpanded:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `frameOfOutlineCellAtRow:`: msgSend shape `rect_i64` not yet modelled
-    // SKIPPED `setDropItem:dropChildIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn row_for_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("rowForItem:\0")), item);
+    }
+
+    fn level_for_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("levelForItem:\0")), item);
+    }
+
+    fn level_for_row(this, row: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("levelForRow:\0")), row);
+    }
+
+    fn is_item_expanded(this, item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isItemExpanded:\0")), item) != (0 as i8);
+    }
+
+    fn frame_of_outline_cell_at_row(this, row: i64) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("frameOfOutlineCellAtRow:\0")), row);
+    }
+
+    fn set_drop_item_drop_child_index(this, item: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setDropItem:dropChildIndex:\0")), item, index);
+    }
+
     // SKIPPED `shouldCollapseAutoExpandedItemsForDeposited:`: msgSend shape `i8_i8` not yet modelled
     // SKIPPED `insertItemsAtIndexes:inParent:withAnimation:`: msgSend shape `void_id_id_u64` not yet modelled
     // SKIPPED `removeItemsAtIndexes:inParent:withAnimation:`: msgSend shape `void_id_id_u64` not yet modelled
@@ -175,7 +211,10 @@ impl OutlineView {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")), indexes, animation_options);
     }
 
-    // SKIPPED `moveRowAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    fn move_row_at_index_to_index(this, old_index: i64, new_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), old_index, new_index);
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);

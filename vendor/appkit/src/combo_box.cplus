@@ -49,7 +49,10 @@ impl ComboBox {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithObjectValues:\0")), objects);
     }
 
-    // SKIPPED `insertItemWithObjectValue:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_item_with_object_value_at_index(this, object: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithObjectValue:atIndex:\0")), object, index);
+    }
+
     fn remove_item_with_object_value(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithObjectValue:\0")), object);
     }
@@ -70,7 +73,10 @@ impl ComboBox {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemObjectValueAtIndex:\0")), index);
     }
 
-    // SKIPPED `indexOfItemWithObjectValue:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_item_with_object_value(this, object: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithObjectValue:\0")), object);
+    }
+
     fn has_vertical_scroller(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasVerticalScroller\0"))) != (0 as i8);
     }

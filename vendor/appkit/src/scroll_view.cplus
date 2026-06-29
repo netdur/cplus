@@ -236,7 +236,10 @@ impl ScrollView {
     }
 
     // SKIPPED `setMagnification:centeredAtPoint:`: msgSend shape `void_f64_point` not yet modelled
-    // SKIPPED `addFloatingSubview:forAxis:`: msgSend shape `void_id_i64` not yet modelled
+    fn add_floating_subview_for_axis(this, view: *u8, axis: EventGestureAxis) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addFloatingSubview:forAxis:\0")), view, event_gesture_axis_raw(axis));
+    }
+
     fn document_visible_rect(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentVisibleRect\0")));
     }

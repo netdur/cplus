@@ -238,7 +238,10 @@ impl Control {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `sizeThatFits:`: msgSend shape `size_size` not yet modelled
+    fn size_that_fits(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("sizeThatFits:\0")), size);
+    }
+
     fn size_to_fit(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
@@ -277,7 +280,10 @@ impl Control {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:\0")), content_frame);
     }
 
-    // SKIPPED `drawWithExpansionFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    fn draw_with_expansion_frame_in_view(this, content_frame: rt::Rect, view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithExpansionFrame:inView:\0")), content_frame, view);
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

@@ -28,7 +28,10 @@ impl Nib {
     }
 
     // SKIPPED `initWithContentsOfURL:`: extra init variant (one `new` per type)
-    // SKIPPED `instantiateNibWithExternalNameTable:`: msgSend shape `i8_id` not yet modelled
+    fn instantiate_nib_with_external_name_table(this, external_name_table: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("instantiateNibWithExternalNameTable:\0")), external_name_table) != (0 as i8);
+    }
+
     fn instantiate_nib_with_owner_top_level_objects(this, owner: *u8, top_level_objects: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("instantiateNibWithOwner:topLevelObjects:\0")), owner, top_level_objects) != (0 as i8);
     }

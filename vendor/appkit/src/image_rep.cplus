@@ -193,7 +193,10 @@ impl ImageRep {
     // SKIPPED `imageRepClassForPasteboardType:`: return `Class _Nullable` — unmapped type `Class`
     // SKIPPED `imageRepClassForType:`: return `Class _Nullable` — unmapped type `Class`
     // SKIPPED `imageRepClassForData:`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `canInitWithData:`: msgSend shape `i8_id` not yet modelled
+    fn can_init_with_data(data: *u8) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("canInitWithData:\0")), data) != (0 as i8);
+    }
+
     fn image_unfiltered_file_types() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageUnfilteredFileTypes\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -250,7 +253,10 @@ impl ImageRep {
         return out;
     }
 
-    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
+    fn can_init_with_pasteboard(pasteboard: Pasteboard) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard.raw()) != (0 as i8);
+    }
+
     // SKIPPED `imageRepsWithContentsOfFile:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
     fn image_rep_with_contents_of_file(filename: str) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfFile:\0")), bridge::nsstring(filename));

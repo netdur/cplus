@@ -110,7 +110,21 @@ impl AlignmentFeedbackFilter {
     // SKIPPED `alignmentFeedbackTokenForMovementInView:previousPoint:alignedPoint:defaultPoint:`: msgSend shape `id_id_point_point_point` not yet modelled
     // SKIPPED `alignmentFeedbackTokenForHorizontalMovementInView:previousX:alignedX:defaultX:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
     // SKIPPED `alignmentFeedbackTokenForVerticalMovementInView:previousY:alignedY:defaultY:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
-    // SKIPPED `performFeedback:performanceTime:`: msgSend shape `void_id_i64` not yet modelled
+    fn perform_feedback_performance_time(this, alignment_feedback_tokens: vec::Vec[AlignmentFeedbackToken], performance_time: HapticFeedbackPerformanceTime) {
+        let arr_alignment_feedback_tokens: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_alignment_feedback_tokens: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_alignment_feedback_tokens: usize = alignment_feedback_tokens.count();
+        var i_alignment_feedback_tokens: usize = 0 as usize;
+        while i_alignment_feedback_tokens < n_alignment_feedback_tokens {
+            match alignment_feedback_tokens.at(i_alignment_feedback_tokens) {
+                option::Option[AlignmentFeedbackToken]::Some(e_alignment_feedback_tokens) => { rt::msg_void_id(arr_alignment_feedback_tokens, add_sel_alignment_feedback_tokens, e_alignment_feedback_tokens.raw()); }
+                option::Option[AlignmentFeedbackToken]::None => {}
+            }
+            i_alignment_feedback_tokens = i_alignment_feedback_tokens +% (1 as usize);
+        }
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("performFeedback:performanceTime:\0")), arr_alignment_feedback_tokens, haptic_feedback_performance_time_raw(performance_time));
+    }
+
     fn input_event_mask() -> u64 {
         return rt::msg_u64(rt::get_class(#str_ptr("NSAlignmentFeedbackFilter\0")), rt::sel(#str_ptr("inputEventMask\0")));
     }

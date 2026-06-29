@@ -78,7 +78,10 @@ impl ATSTypesetter {
 
     // SKIPPED `textTabForGlyphLocation:writingDirection:maxLocation:`: msgSend shape `id_f64_i64_f64` not yet modelled
     // SKIPPED `setParagraphGlyphRange:separatorGlyphRange:`: msgSend shape `void_range_range` not yet modelled
-    // SKIPPED `layoutParagraphAtPoint:`: msgSend shape `u64_id` not yet modelled
+    fn layout_paragraph_at_point(this, line_fragment_origin: *u8) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("layoutParagraphAtPoint:\0")), line_fragment_origin);
+    }
+
     // SKIPPED `lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
     // SKIPPED `paragraphSpacingBeforeGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
     // SKIPPED `paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
@@ -152,8 +155,14 @@ impl ATSTypesetter {
     }
 
     // SKIPPED `willSetLineFragmentRect:forGlyphRange:usedRect:baselineOffset:`: msgSend shape `void_id_range_id_id` not yet modelled
-    // SKIPPED `shouldBreakLineByWordBeforeCharacterAtIndex:`: msgSend shape `i8_u64` not yet modelled
-    // SKIPPED `shouldBreakLineByHyphenatingBeforeCharacterAtIndex:`: msgSend shape `i8_u64` not yet modelled
+    fn should_break_line_by_word_before_character_at_index(this, char_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("shouldBreakLineByWordBeforeCharacterAtIndex:\0")), char_index) != (0 as i8);
+    }
+
+    fn should_break_line_by_hyphenating_before_character_at_index(this, char_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("shouldBreakLineByHyphenatingBeforeCharacterAtIndex:\0")), char_index) != (0 as i8);
+    }
+
     // SKIPPED `hyphenationFactorForGlyphAtIndex:`: msgSend shape `f32_u64` not yet modelled
     // SKIPPED `hyphenCharacterForGlyphAtIndex:`: return `UTF32Char` — unmapped type `UTF32Char`
     // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_u64_id_rect_point_u64` not yet modelled

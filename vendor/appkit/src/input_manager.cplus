@@ -140,7 +140,10 @@ impl InputManager {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToHandleMouseEvents\0"))) != (0 as i8);
     }
 
-    // SKIPPED `handleMouseEvent:`: msgSend shape `i8_id` not yet modelled
+    fn handle_mouse_event(this, mouse_event: Event) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("handleMouseEvent:\0")), mouse_event.raw()) != (0 as i8);
+    }
+
     fn wants_to_delay_text_change_notifications(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToDelayTextChangeNotifications\0"))) != (0 as i8);
     }

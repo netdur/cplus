@@ -58,9 +58,18 @@ impl SplitView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("adjustSubviews\0")));
     }
 
-    // SKIPPED `isSubviewCollapsed:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `minPossiblePositionOfDividerAtIndex:`: msgSend shape `f64_i64` not yet modelled
-    // SKIPPED `maxPossiblePositionOfDividerAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    fn is_subview_collapsed(this, subview: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isSubviewCollapsed:\0")), subview) != (0 as i8);
+    }
+
+    fn min_possible_position_of_divider_at_index(this, divider_index: i64) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("minPossiblePositionOfDividerAtIndex:\0")), divider_index);
+    }
+
+    fn max_possible_position_of_divider_at_index(this, divider_index: i64) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("maxPossiblePositionOfDividerAtIndex:\0")), divider_index);
+    }
+
     // SKIPPED `setPosition:ofDividerAtIndex:`: msgSend shape `void_f64_i64` not yet modelled
     // SKIPPED `holdingPriorityForSubviewAtIndex:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
     // SKIPPED `setHoldingPriority:forSubviewAtIndex:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
@@ -103,7 +112,10 @@ impl SplitView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
-    // SKIPPED `insertArrangedSubview:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_arranged_subview_at_index(this, view: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view, index);
+    }
+
     fn remove_arranged_subview(this, view: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
     }

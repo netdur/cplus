@@ -60,7 +60,10 @@ impl Matrix {
 
     // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
-    // SKIPPED `makeCellAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
+    fn make_cell_at_row_column(this, row: i64, col: i64) -> *u8 {
+        return rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, col);
+    }
+
     // SKIPPED `sendAction:to:forAllCells:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `sortUsingSelector:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `sortUsingFunction:context:`: param `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)` — unmapped type `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)`
@@ -73,7 +76,10 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deselectAllCells\0")));
     }
 
-    // SKIPPED `selectCellAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
+    fn select_cell_at_row_column(this, row: i64, col: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("selectCellAtRow:column:\0")), row, col);
+    }
+
     fn select_all(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
     }
@@ -91,11 +97,21 @@ impl Matrix {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getNumberOfRows:columns:\0")), row_count, col_count);
     }
 
-    // SKIPPED `cellAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
+    fn cell_at_row_column(this, row: i64, col: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("cellAtRow:column:\0")), row, col);
+        return bridge::obj_option(obj);
+    }
+
     // SKIPPED `cellFrameAtRow:column:`: msgSend shape `rect_i64_i64` not yet modelled
-    // SKIPPED `getRow:column:ofCell:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn get_row_column_of_cell(this, row: *u8, col: *u8, cell: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getRow:column:ofCell:\0")), row, col, cell) != (0 as i8);
+    }
+
     // SKIPPED `getRow:column:forPoint:`: msgSend shape `i8_id_id_point` not yet modelled
-    // SKIPPED `renewRows:columns:`: msgSend shape `void_i64_i64` not yet modelled
+    fn renew_rows_columns(this, new_rows: i64, new_cols: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("renewRows:columns:\0")), new_rows, new_cols);
+    }
+
     // SKIPPED `putCell:atRow:column:`: msgSend shape `void_id_i64_i64` not yet modelled
     fn add_row(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addRow\0")));
@@ -138,14 +154,23 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setValidateSize:\0")), flag as i8);
     }
 
-    // SKIPPED `drawCellAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
+    fn draw_cell_at_row_column(this, row: i64, col: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("drawCellAtRow:column:\0")), row, col);
+    }
+
     // SKIPPED `highlightCell:atRow:column:`: msgSend shape `void_i8_i64_i64` not yet modelled
-    // SKIPPED `scrollCellToVisibleAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
+    fn scroll_cell_to_visible_at_row_column(this, row: i64, col: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollCellToVisibleAtRow:column:\0")), row, col);
+    }
+
     fn mouse_down(this, event: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event);
     }
 
-    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
+    fn perform_key_equivalent(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), event) != (0 as i8);
+    }
+
     fn send_action(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
@@ -154,8 +179,14 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sendDoubleAction\0")));
     }
 
-    // SKIPPED `textShouldBeginEditing:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `textShouldEndEditing:`: msgSend shape `i8_id` not yet modelled
+    fn text_should_begin_editing(this, text_object: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("textShouldBeginEditing:\0")), text_object) != (0 as i8);
+    }
+
+    fn text_should_end_editing(this, text_object: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("textShouldEndEditing:\0")), text_object) != (0 as i8);
+    }
+
     fn text_did_begin_editing(this, notification: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidBeginEditing:\0")), notification);
     }
@@ -172,8 +203,15 @@ impl Matrix {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    // SKIPPED `selectTextAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
-    // SKIPPED `acceptsFirstMouse:`: msgSend shape `i8_id` not yet modelled
+    fn select_text_at_row_column(this, row: i64, col: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("selectTextAtRow:column:\0")), row, col);
+        return bridge::obj_option(obj);
+    }
+
+    fn accepts_first_mouse(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("acceptsFirstMouse:\0")), event) != (0 as i8);
+    }
+
     fn reset_cursor_rects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }

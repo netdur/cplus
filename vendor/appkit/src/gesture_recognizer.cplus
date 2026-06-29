@@ -236,10 +236,22 @@ impl GestureRecognizer {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    // SKIPPED `canPreventGestureRecognizer:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `canBePreventedByGestureRecognizer:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `shouldRequireFailureOfGestureRecognizer:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `shouldBeRequiredToFailByGestureRecognizer:`: msgSend shape `i8_id` not yet modelled
+    fn can_prevent_gesture_recognizer(this, prevented_gesture_recognizer: GestureRecognizer) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canPreventGestureRecognizer:\0")), prevented_gesture_recognizer.raw()) != (0 as i8);
+    }
+
+    fn can_be_prevented_by_gesture_recognizer(this, preventing_gesture_recognizer: GestureRecognizer) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canBePreventedByGestureRecognizer:\0")), preventing_gesture_recognizer.raw()) != (0 as i8);
+    }
+
+    fn should_require_failure_of_gesture_recognizer(this, other_gesture_recognizer: GestureRecognizer) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("shouldRequireFailureOfGestureRecognizer:\0")), other_gesture_recognizer.raw()) != (0 as i8);
+    }
+
+    fn should_be_required_to_fail_by_gesture_recognizer(this, other_gesture_recognizer: GestureRecognizer) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("shouldBeRequiredToFailByGestureRecognizer:\0")), other_gesture_recognizer.raw()) != (0 as i8);
+    }
+
     fn mouse_down(this, event: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event.raw());
     }

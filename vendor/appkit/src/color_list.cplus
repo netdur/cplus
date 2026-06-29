@@ -77,7 +77,10 @@ impl ColorList {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:error:\0")), url, err_ptr) != (0 as i8);
     }
 
-    // SKIPPED `writeToFile:`: msgSend shape `i8_id` not yet modelled
+    fn write_to_file(this, path: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeToFile:\0")), bridge::nsstring(path)) != (0 as i8);
+    }
+
     fn remove_file(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFile\0")));
     }

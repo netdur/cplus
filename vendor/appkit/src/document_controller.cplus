@@ -169,7 +169,10 @@ impl DocumentController {
     }
 
     // SKIPPED `URLsFromRunningOpenPanel`: return `NSArray<NSURL *> * _Nullable` — generic collection
-    // SKIPPED `runModalOpenPanel:forTypes:`: msgSend shape `i64_id_id` not yet modelled
+    fn run_modal_open_panel_for_types(this, open_panel: OpenPanel, types: vec::Vec[text::Text]) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalOpenPanel:forTypes:\0")), open_panel.raw(), bridge::nsarray_of_text(types));
+    }
+
     fn begin_open_panel_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: DocumentController_begin_open_panel_with_completion_handler_block = DocumentController_begin_open_panel_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -202,7 +205,10 @@ impl DocumentController {
     }
 
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `presentError:`: msgSend shape `i8_id` not yet modelled
+    fn present_error(this, error: Error) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
+    }
+
     fn will_present_error(this, error: Error) -> Error {
         return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
@@ -230,7 +236,10 @@ impl DocumentController {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
+    fn validate_user_interface_item(this, item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("validateUserInterfaceItem:\0")), item) != (0 as i8);
+    }
+
     fn shared_document_controller() -> DocumentController {
         return DocumentController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSDocumentController\0")), rt::sel(#str_ptr("sharedDocumentController\0")))) };
     }
@@ -290,7 +299,10 @@ impl DocumentController {
     }
 
     // SKIPPED `openDocumentWithContentsOfURL:display:error:`: msgSend shape `id_id_i8_id` not yet modelled
-    // SKIPPED `reopenDocumentForURL:withContentsOfURL:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn reopen_document_for_u_r_l_with_contents_of_u_r_l_error(this, url: URL, contents_u_r_l: URL, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:error:\0")), url.raw(), contents_u_r_l.raw(), out_error) != (0 as i8);
+    }
+
     fn file_extensions_from_type(this, type_name: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fileExtensionsFromType:\0")), bridge::nsstring(type_name));
         return bridge::obj_option(obj);
@@ -326,9 +338,21 @@ impl DocumentController {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `openDocumentWithContentsOfFile:display:`: msgSend shape `id_id_i8` not yet modelled
-    // SKIPPED `openDocumentWithContentsOfURL:display:`: msgSend shape `id_id_i8` not yet modelled
-    // SKIPPED `openUntitledDocumentOfType:display:`: msgSend shape `id_id_i8` not yet modelled
+    fn open_document_with_contents_of_file_display(this, file_name: str, display: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfFile:display:\0")), bridge::nsstring(file_name), display as i8);
+        return bridge::obj_option(obj);
+    }
+
+    fn open_document_with_contents_of_u_r_l_display(this, url: URL, display: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfURL:display:\0")), url.raw(), display as i8);
+        return bridge::obj_option(obj);
+    }
+
+    fn open_untitled_document_of_type_display(this, type_: str, display: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openUntitledDocumentOfType:display:\0")), bridge::nsstring(type_), display as i8);
+        return bridge::obj_option(obj);
+    }
+
     fn set_should_create_u_i(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShouldCreateUI:\0")), flag as i8);
     }

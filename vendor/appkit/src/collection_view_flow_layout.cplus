@@ -78,7 +78,10 @@ impl CollectionViewFlowLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewFlowLayout { return CollectionViewFlowLayout { _obj: ptr }; }
 
-    // SKIPPED `sectionAtIndexIsCollapsed:`: msgSend shape `i8_u64` not yet modelled
+    fn section_at_index_is_collapsed(this, section_index: u64) -> bool {
+        return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("sectionAtIndexIsCollapsed:\0")), section_index) != (0 as i8);
+    }
+
     fn collapse_section_at_index(this, section_index: u64) {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("collapseSectionAtIndex:\0")), section_index);
     }

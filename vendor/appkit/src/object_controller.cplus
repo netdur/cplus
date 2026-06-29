@@ -95,7 +95,10 @@ impl ObjectController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("remove:\0")), sender);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
+    fn validate_user_interface_item(this, item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("validateUserInterfaceItem:\0")), item) != (0 as i8);
+    }
+
     fn content(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("content\0")));
         return bridge::obj_option(obj);

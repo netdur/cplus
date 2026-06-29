@@ -81,7 +81,10 @@ impl SpeechSynthesizer {
         return SpeechSynthesizer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithVoice:\0")), bridge::nsstring(voice)) };
     }
 
-    // SKIPPED `startSpeakingString:`: msgSend shape `i8_id` not yet modelled
+    fn start_speaking_string(this, string: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("startSpeakingString:\0")), bridge::nsstring(string)) != (0 as i8);
+    }
+
     fn start_speaking_string_to_u_r_l(this, string: str, url: URL) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("startSpeakingString:toURL:\0")), bridge::nsstring(string), url.raw()) != (0 as i8);
     }
@@ -107,7 +110,10 @@ impl SpeechSynthesizer {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setVoice:`: msgSend shape `i8_id` not yet modelled
+    fn set_voice(this, voice: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setVoice:\0")), bridge::nsstring(voice)) != (0 as i8);
+    }
+
     // SKIPPED `addSpeechDictionary:`: param `NSDictionary<NSSpeechDictionaryKey,id> * _Nonnull` — generic collection
     fn phonemes_from_text(this, text: str) -> text::Text {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("phonemesFromText:\0")), bridge::nsstring(text));
@@ -119,7 +125,10 @@ impl SpeechSynthesizer {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `setObject:forProperty:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn set_object_for_property_error(this, object: *u8, property: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("setObject:forProperty:error:\0")), object, bridge::nsstring(property), out_error) != (0 as i8);
+    }
+
     // SKIPPED `attributesForVoice:`: return `NSDictionary<NSVoiceAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn is_speaking(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSpeaking\0"))) != (0 as i8);

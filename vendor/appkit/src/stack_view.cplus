@@ -197,7 +197,10 @@ impl StackView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view.raw());
     }
 
-    // SKIPPED `insertArrangedSubview:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_arranged_subview_at_index(this, view: View, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view.raw(), index);
+    }
+
     fn remove_arranged_subview(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
@@ -267,7 +270,10 @@ impl StackView {
 
     // SKIPPED `arrangedSubviews`: return `API_AVAILABLE NSArray<__kindof NSView *> *` — generic collection
     // SKIPPED `detachedViews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
-    // SKIPPED `addView:inGravity:`: msgSend shape `void_id_i64` not yet modelled
+    fn add_view_in_gravity(this, view: View, gravity: StackViewGravity) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addView:inGravity:\0")), view.raw(), stack_view_gravity_raw(gravity));
+    }
+
     // SKIPPED `insertView:atIndex:inGravity:`: msgSend shape `void_id_u64_i64` not yet modelled
     fn remove_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view.raw());

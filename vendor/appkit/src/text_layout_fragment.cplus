@@ -133,7 +133,14 @@ impl TextLayoutFragment {
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
     // SKIPPED `textLineFragmentForVerticalOffset:requiresExactMatch:`: msgSend shape `id_f64_i8` not yet modelled
-    // SKIPPED `textLineFragmentForTextLocation:isUpstreamAffinity:`: msgSend shape `id_id_i8` not yet modelled
+    fn text_line_fragment_for_text_location_is_upstream_affinity(this, text_location: TextLocation, is_upstream_affinity: bool) -> option::Option[TextLineFragment] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("textLineFragmentForTextLocation:isUpstreamAffinity:\0")), text_location.raw(), is_upstream_affinity as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLineFragment]::None;
+        }
+        return option::some(TextLineFragment::from_raw(obj));
+    }
+
     fn invalidate_layout(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }

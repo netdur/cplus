@@ -202,8 +202,14 @@ impl OpenGLContext {
     }
 
     // SKIPPED `copyAttributesFromContext:withMask:`: param `GLbitfield` — unmapped type `GLbitfield`
-    // SKIPPED `setValues:forParameter:`: msgSend shape `void_id_i64` not yet modelled
-    // SKIPPED `getValues:forParameter:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_values_for_parameter(this, vals: *u8, param: OpenGLContextParameter) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setValues:forParameter:\0")), vals, open_g_l_context_parameter_raw(param));
+    }
+
+    fn get_values_for_parameter(this, vals: *u8, param: OpenGLContextParameter) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("getValues:forParameter:\0")), vals, open_g_l_context_parameter_raw(param));
+    }
+
     // SKIPPED `createTexture:fromView:internalFormat:`: param `GLenum` — unmapped type `GLenum`
     fn pixel_format(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0")));

@@ -86,7 +86,10 @@ impl PopUpButtonCell {
 
     fn from_raw(ptr: *u8) -> PopUpButtonCell { return PopUpButtonCell { _obj: ptr }; }
 
-    // SKIPPED `initTextCell:pullsDown:`: msgSend shape `id_id_i8` not yet modelled
+    fn init_text_cell_pulls_down(this, string_value: str, pull_down: bool) -> *u8 {
+        return rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("initTextCell:pullsDown:\0")), bridge::nsstring(string_value), pull_down as i8);
+    }
+
     fn new(coder: *u8) -> PopUpButtonCell {
         let cls: *u8 = rt::get_class(#str_ptr("NSPopUpButtonCell\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -101,7 +104,10 @@ impl PopUpButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithTitles:\0")), bridge::nsarray_of_text(item_titles));
     }
 
-    // SKIPPED `insertItemWithTitle:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_item_with_title_at_index(this, title: str, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:atIndex:\0")), bridge::nsstring(title), index);
+    }
+
     fn remove_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithTitle:\0")), bridge::nsstring(title));
     }
@@ -114,10 +120,22 @@ impl PopUpButtonCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    // SKIPPED `indexOfItem:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `indexOfItemWithTitle:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `indexOfItemWithTag:`: msgSend shape `i64_i64` not yet modelled
-    // SKIPPED `indexOfItemWithRepresentedObject:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_item(this, item: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItem:\0")), item);
+    }
+
+    fn index_of_item_with_title(this, title: str) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTitle:\0")), bridge::nsstring(title));
+    }
+
+    fn index_of_item_with_tag(this, tag: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("indexOfItemWithTag:\0")), tag);
+    }
+
+    fn index_of_item_with_represented_object(this, obj: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), obj);
+    }
+
     // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
@@ -158,12 +176,18 @@ impl PopUpButtonCell {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `attachPopUpWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    fn attach_pop_up_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("attachPopUpWithFrame:inView:\0")), cell_frame, control_view);
+    }
+
     fn dismiss_pop_up(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("dismissPopUp\0")));
     }
 
-    // SKIPPED `performClickWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    fn perform_click_with_frame_in_view(this, frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("performClickWithFrame:inView:\0")), frame, control_view);
+    }
+
     fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
         if obj == { 0 as *u8 } {

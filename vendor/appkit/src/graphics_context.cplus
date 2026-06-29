@@ -314,7 +314,10 @@ impl GraphicsContext {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFocusStack:\0")), stack);
     }
 
-    // SKIPPED `graphicsContextWithGraphicsPort:flipped:`: msgSend shape `id_id_i8` not yet modelled
+    fn graphics_context_with_graphics_port_flipped(graphics_port: *u8, initial_flipped_state: bool) -> GraphicsContext {
+        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithGraphicsPort:flipped:\0")), graphics_port, initial_flipped_state as i8) };
+    }
+
     fn graphics_context_with_window(window: Window) -> GraphicsContext {
         return GraphicsContext { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithWindow:\0")), window.raw()) };
     }

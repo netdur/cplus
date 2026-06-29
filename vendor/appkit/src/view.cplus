@@ -426,7 +426,10 @@ impl View {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `isDescendantOf:`: msgSend shape `i8_id` not yet modelled
+    fn is_descendant_of(this, view: View) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isDescendantOf:\0")), view.raw()) != (0 as i8);
+    }
+
     fn ancestor_shared_with_view(this, view: View) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("ancestorSharedWithView:\0")), view.raw());
         if obj == { 0 as *u8 } {
@@ -558,8 +561,14 @@ impl View {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromBacking:\0")), point);
     }
 
-    // SKIPPED `convertSizeToBacking:`: msgSend shape `size_size` not yet modelled
-    // SKIPPED `convertSizeFromBacking:`: msgSend shape `size_size` not yet modelled
+    fn convert_size_to_backing(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeToBacking:\0")), size);
+    }
+
+    fn convert_size_from_backing(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeFromBacking:\0")), size);
+    }
+
     fn convert_rect_to_backing(this, rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectToBacking:\0")), rect);
     }
@@ -576,8 +585,14 @@ impl View {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromLayer:\0")), point);
     }
 
-    // SKIPPED `convertSizeToLayer:`: msgSend shape `size_size` not yet modelled
-    // SKIPPED `convertSizeFromLayer:`: msgSend shape `size_size` not yet modelled
+    fn convert_size_to_layer(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeToLayer:\0")), size);
+    }
+
+    fn convert_size_from_layer(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeFromLayer:\0")), size);
+    }
+
     fn convert_rect_to_layer(this, rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectToLayer:\0")), rect);
     }
@@ -602,7 +617,10 @@ impl View {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("lockFocusIfCanDraw\0"))) != (0 as i8);
     }
 
-    // SKIPPED `lockFocusIfCanDrawInContext:`: msgSend shape `i8_id` not yet modelled
+    fn lock_focus_if_can_draw_in_context(this, context: GraphicsContext) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("lockFocusIfCanDrawInContext:\0")), context.raw()) != (0 as i8);
+    }
+
     fn display(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("display\0")));
     }
@@ -635,7 +653,10 @@ impl View {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawRect:\0")), dirty_rect);
     }
 
-    // SKIPPED `displayRectIgnoringOpacity:inContext:`: msgSend shape `void_rect_id` not yet modelled
+    fn display_rect_ignoring_opacity_in_context(this, rect: rt::Rect, context: GraphicsContext) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("displayRectIgnoringOpacity:inContext:\0")), rect, context.raw());
+    }
+
     fn bitmap_image_rep_for_caching_display_in_rect(this, rect: rt::Rect) -> option::Option[BitmapImageRep] {
         let obj: *u8 = rt::msg_id_rect(this._obj, rt::sel(#str_ptr("bitmapImageRepForCachingDisplayInRect:\0")), rect);
         if obj == { 0 as *u8 } {
@@ -644,7 +665,10 @@ impl View {
         return option::some(BitmapImageRep::from_raw(obj));
     }
 
-    // SKIPPED `cacheDisplayInRect:toBitmapImageRep:`: msgSend shape `void_rect_id` not yet modelled
+    fn cache_display_in_rect_to_bitmap_image_rep(this, rect: rt::Rect, bitmap_image_rep: BitmapImageRep) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), rect, bitmap_image_rep.raw());
+    }
+
     fn view_will_draw(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewWillDraw\0")));
     }
@@ -654,7 +678,10 @@ impl View {
     }
 
     // SKIPPED `scrollRectToVisible:`: msgSend shape `i8_rect` not yet modelled
-    // SKIPPED `autoscroll:`: msgSend shape `i8_id` not yet modelled
+    fn autoscroll(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("autoscroll:\0")), event) != (0 as i8);
+    }
+
     fn adjust_scroll(this, new_visible: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("adjustScroll:\0")), new_visible);
     }
@@ -671,9 +698,18 @@ impl View {
         return option::some(View::from_raw(obj));
     }
 
-    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `acceptsFirstMouse:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `shouldDelayWindowOrderingForEvent:`: msgSend shape `i8_id` not yet modelled
+    fn perform_key_equivalent(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), event) != (0 as i8);
+    }
+
+    fn accepts_first_mouse(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("acceptsFirstMouse:\0")), event) != (0 as i8);
+    }
+
+    fn should_delay_window_ordering_for_event(this, event: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("shouldDelayWindowOrderingForEvent:\0")), event) != (0 as i8);
+    }
+
     fn make_backing_layer(this) -> CALayer {
         return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("makeBackingLayer\0"))));
     }
@@ -1150,12 +1186,18 @@ impl View {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("focusRingMaskBounds\0")));
     }
 
-    // SKIPPED `writeEPSInsideRect:toPasteboard:`: msgSend shape `void_rect_id` not yet modelled
+    fn write_e_p_s_inside_rect_to_pasteboard(this, rect: rt::Rect, pasteboard: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writeEPSInsideRect:toPasteboard:\0")), rect, pasteboard);
+    }
+
     fn data_with_e_p_s_inside_rect(this, rect: rt::Rect) -> *u8 {
         return rt::msg_id_rect(this._obj, rt::sel(#str_ptr("dataWithEPSInsideRect:\0")), rect);
     }
 
-    // SKIPPED `writePDFInsideRect:toPasteboard:`: msgSend shape `void_rect_id` not yet modelled
+    fn write_p_d_f_inside_rect_to_pasteboard(this, rect: rt::Rect, pasteboard: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writePDFInsideRect:toPasteboard:\0")), rect, pasteboard);
+    }
+
     fn data_with_p_d_f_inside_rect(this, rect: rt::Rect) -> *u8 {
         return rt::msg_id_rect(this._obj, rt::sel(#str_ptr("dataWithPDFInsideRect:\0")), rect);
     }
@@ -1167,7 +1209,10 @@ impl View {
     // SKIPPED `knowsPageRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
     // SKIPPED `adjustPageWidthNew:left:right:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
     // SKIPPED `adjustPageHeightNew:top:bottom:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
-    // SKIPPED `rectForPage:`: msgSend shape `rect_i64` not yet modelled
+    fn rect_for_page(this, page: i64) -> rt::Rect {
+        return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectForPage:\0")), page);
+    }
+
     // SKIPPED `locationOfPrintRect:`: msgSend shape `point_rect` not yet modelled
     fn draw_page_border_with_size(this, border_size: rt::Size) {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("drawPageBorderWithSize:\0")), border_size);
@@ -1308,8 +1353,14 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateTrackingAreas\0")));
     }
 
-    // SKIPPED `addCursorRect:cursor:`: msgSend shape `void_rect_id` not yet modelled
-    // SKIPPED `removeCursorRect:cursor:`: msgSend shape `void_rect_id` not yet modelled
+    fn add_cursor_rect_cursor(this, rect: rt::Rect, object: Cursor) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("addCursorRect:cursor:\0")), rect, object.raw());
+    }
+
+    fn remove_cursor_rect_cursor(this, rect: rt::Rect, object: Cursor) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("removeCursorRect:cursor:\0")), rect, object.raw());
+    }
+
     fn discard_cursor_rects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("discardCursorRects\0")));
     }
@@ -1333,8 +1384,14 @@ impl View {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromBase:\0")), point);
     }
 
-    // SKIPPED `convertSizeToBase:`: msgSend shape `size_size` not yet modelled
-    // SKIPPED `convertSizeFromBase:`: msgSend shape `size_size` not yet modelled
+    fn convert_size_to_base(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeToBase:\0")), size);
+    }
+
+    fn convert_size_from_base(this, size: rt::Size) -> rt::Size {
+        return rt::msg_size_size(this._obj, rt::sel(#str_ptr("convertSizeFromBase:\0")), size);
+    }
+
     fn convert_rect_to_base(this, rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectToBase:\0")), rect);
     }
@@ -1343,7 +1400,10 @@ impl View {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectFromBase:\0")), rect);
     }
 
-    // SKIPPED `performMnemonic:`: msgSend shape `i8_id` not yet modelled
+    fn perform_mnemonic(this, string: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performMnemonic:\0")), bridge::nsstring(string)) != (0 as i8);
+    }
+
     fn should_draw_color(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("shouldDrawColor\0"))) != (0 as i8);
     }

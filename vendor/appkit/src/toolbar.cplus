@@ -106,7 +106,10 @@ impl Toolbar {
     }
 
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `insertItemWithItemIdentifier:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_item_with_item_identifier_at_index(this, item_identifier: str, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithItemIdentifier:atIndex:\0")), bridge::nsstring(item_identifier), index);
+    }
+
     fn remove_item_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
     }

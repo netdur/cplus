@@ -56,7 +56,10 @@ impl TabViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item);
     }
 
-    // SKIPPED `insertTabViewItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn insert_tab_view_item_at_index(this, tab_view_item: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTabViewItem:atIndex:\0")), tab_view_item, index);
+    }
+
     fn remove_tab_view_item(this, tab_view_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item);
     }

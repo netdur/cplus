@@ -314,19 +314,31 @@ impl GridView {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `gridViewWithNumberOfColumns:rows:`: msgSend shape `id_i64_i64` not yet modelled
+    fn grid_view_with_number_of_columns_rows(column_count: i64, row_count: i64) -> GridView {
+        return GridView { _obj: rt::retain(rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSGridView\0")), rt::sel(#str_ptr("gridViewWithNumberOfColumns:rows:\0")), column_count, row_count)) };
+    }
+
     // SKIPPED `gridViewWithViews:`: param `NSArray<NSArray<NSView *> *> * _Nonnull` — generic collection
     fn row_at_index(this, index: i64) -> GridRow {
         return GridRow::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("rowAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfRow:`: msgSend shape `i64_id` not yet modelled
+    fn index_of_row(this, row: GridRow) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfRow:\0")), row.raw());
+    }
+
     fn column_at_index(this, index: i64) -> GridColumn {
         return GridColumn::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("columnAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfColumn:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `cellAtColumnIndex:rowIndex:`: msgSend shape `id_i64_i64` not yet modelled
+    fn index_of_column(this, column: GridColumn) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfColumn:\0")), column.raw());
+    }
+
+    fn cell_at_column_index_row_index(this, column_index: i64, row_index: i64) -> GridCell {
+        return GridCell::from_raw(rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("cellAtColumnIndex:rowIndex:\0")), column_index, row_index));
+    }
+
     fn cell_for_view(this, view: *u8) -> option::Option[GridCell] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("cellForView:\0")), view);
         if obj == { 0 as *u8 } {
@@ -337,14 +349,20 @@ impl GridView {
 
     // SKIPPED `addRowWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertRowAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    // SKIPPED `moveRowAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    fn move_row_at_index_to_index(this, from_index: i64, to_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), from_index, to_index);
+    }
+
     fn remove_row_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), index);
     }
 
     // SKIPPED `addColumnWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertColumnAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    // SKIPPED `moveColumnAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    fn move_column_at_index_to_index(this, from_index: i64, to_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveColumnAtIndex:toIndex:\0")), from_index, to_index);
+    }
+
     fn remove_column_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumnAtIndex:\0")), index);
     }

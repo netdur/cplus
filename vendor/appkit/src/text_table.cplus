@@ -241,14 +241,23 @@ impl TextBlock {
     }
 
     // SKIPPED `setValue:type:forDimension:`: msgSend shape `void_f64_i64_i64` not yet modelled
-    // SKIPPED `valueForDimension:`: msgSend shape `f64_i64` not yet modelled
-    // SKIPPED `valueTypeForDimension:`: msgSend shape `i64_i64` not yet modelled
+    fn value_for_dimension(this, dimension: TextBlockDimension) -> f64 {
+        return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("valueForDimension:\0")), text_block_dimension_raw(dimension));
+    }
+
+    fn value_type_for_dimension(this, dimension: TextBlockDimension) -> TextBlockValueType {
+        return text_block_value_type_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("valueTypeForDimension:\0")), text_block_dimension_raw(dimension)));
+    }
+
     // SKIPPED `setContentWidth:type:`: msgSend shape `void_f64_i64` not yet modelled
     // SKIPPED `setWidth:type:forLayer:edge:`: msgSend shape `void_f64_i64_i64_i64` not yet modelled
     // SKIPPED `setWidth:type:forLayer:`: msgSend shape `void_f64_i64_i64` not yet modelled
     // SKIPPED `widthForLayer:edge:`: msgSend shape `f64_i64_i64` not yet modelled
     // SKIPPED `widthValueTypeForLayer:edge:`: msgSend shape `i64_i64_i64` not yet modelled
-    // SKIPPED `setBorderColor:forEdge:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_border_color_for_edge(this, color: *u8, edge: RectEdge) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setBorderColor:forEdge:\0")), color, rect_edge_raw(edge));
+    }
+
     fn set_border_color(this, color: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBorderColor:\0")), color);
     }

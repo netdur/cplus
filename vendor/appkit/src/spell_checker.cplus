@@ -146,7 +146,10 @@ impl SpellChecker {
 
     // SKIPPED `checkSpellingOfString:startingAt:language:wrap:inSpellDocumentWithTag:wordCount:`: msgSend shape `range_id_i64_id_i8_i64_id` not yet modelled
     // SKIPPED `checkSpellingOfString:startingAt:`: msgSend shape `range_id_i64` not yet modelled
-    // SKIPPED `countWordsInString:language:`: msgSend shape `i64_id_id` not yet modelled
+    fn count_words_in_string_language(this, string_to_count: str, language: str) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("countWordsInString:language:\0")), bridge::nsstring(string_to_count), bridge::nsstring(language));
+    }
+
     // SKIPPED `checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:`: param `NSArray<NSDictionary<NSString *,id> *> * _Nullable * _Nullable` — generic collection
     // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
     // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with non-void return
@@ -175,7 +178,10 @@ impl SpellChecker {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updatePanels\0")));
     }
 
-    // SKIPPED `ignoreWord:inSpellDocumentWithTag:`: msgSend shape `void_id_i64` not yet modelled
+    fn ignore_word_in_spell_document_with_tag(this, word_to_ignore: str, tag: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("ignoreWord:inSpellDocumentWithTag:\0")), bridge::nsstring(word_to_ignore), tag);
+    }
+
     fn ignored_words_in_spell_document_with_tag(this, tag: i64) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("ignoredWordsInSpellDocumentWithTag:\0")), tag);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -190,7 +196,10 @@ impl SpellChecker {
         return out;
     }
 
-    // SKIPPED `setIgnoredWords:inSpellDocumentWithTag:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_ignored_words_in_spell_document_with_tag(this, words: vec::Vec[text::Text], tag: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setIgnoredWords:inSpellDocumentWithTag:\0")), bridge::nsarray_of_text(words), tag);
+    }
+
     // SKIPPED `guessesForWordRange:inString:language:inSpellDocumentWithTag:`: NSArray<NSString> arg shape not modelled
     // SKIPPED `correctionForWordRange:inString:language:inSpellDocumentWithTag:`: msgSend shape `id_range_id_id_i64` not yet modelled
     // SKIPPED `completionsForPartialWordRange:inString:language:inSpellDocumentWithTag:`: NSArray<NSString> arg shape not modelled
@@ -210,7 +219,10 @@ impl SpellChecker {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("preventsAutocorrectionBeforeString:language:\0")), bridge::nsstring(string), bridge::nsstring(language)) != (0 as i8);
     }
 
-    // SKIPPED `deletesAutospaceBetweenString:andString:language:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn deletes_autospace_between_string_and_string_language(this, preceding_string: str, following_string: str, language: str) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("deletesAutospaceBetweenString:andString:language:\0")), bridge::nsstring(preceding_string), bridge::nsstring(following_string), bridge::nsstring(language)) != (0 as i8);
+    }
+
     fn set_word_field_string_value(this, string: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWordFieldStringValue:\0")), bridge::nsstring(string));
     }
@@ -219,7 +231,10 @@ impl SpellChecker {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("learnWord:\0")), bridge::nsstring(word));
     }
 
-    // SKIPPED `hasLearnedWord:`: msgSend shape `i8_id` not yet modelled
+    fn has_learned_word(this, word: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("hasLearnedWord:\0")), bridge::nsstring(word)) != (0 as i8);
+    }
+
     fn unlearn_word(this, word: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("unlearnWord:\0")), bridge::nsstring(word));
     }
@@ -229,7 +244,10 @@ impl SpellChecker {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `setLanguage:`: msgSend shape `i8_id` not yet modelled
+    fn set_language(this, language: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setLanguage:\0")), bridge::nsstring(language)) != (0 as i8);
+    }
+
     fn shared_spell_checker() -> SpellChecker {
         return SpellChecker { _obj: rt::msg_id(rt::get_class(#str_ptr("NSSpellChecker\0")), rt::sel(#str_ptr("sharedSpellChecker\0"))) };
     }

@@ -109,8 +109,14 @@ impl Scrubber {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItemsAtIndexes:\0")), indexes);
     }
 
-    // SKIPPED `moveItemAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
-    // SKIPPED `scrollItemAtIndex:toAlignment:`: msgSend shape `void_i64_i64` not yet modelled
+    fn move_item_at_index_to_index(this, old_index: i64, new_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveItemAtIndex:toIndex:\0")), old_index, new_index);
+    }
+
+    fn scroll_item_at_index_to_alignment(this, index: i64, alignment: ScrubberAlignment) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollItemAtIndex:toAlignment:\0")), index, scrubber_alignment_raw(alignment));
+    }
+
     fn item_view_for_item_at_index(this, index: i64) -> option::Option[ScrubberItemView] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemViewForItemAtIndex:\0")), index);
         if obj == { 0 as *u8 } {

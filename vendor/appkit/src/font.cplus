@@ -103,7 +103,14 @@ impl Font {
 
     fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
-    // SKIPPED `fontWithName:size:`: msgSend shape `id_id_f64` not yet modelled
+    fn font_with_name_size(font_name: str, font_size: f64) -> option::Option[Font] {
+        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithName:size:\0")), bridge::nsstring(font_name), font_size);
+        if obj == { 0 as *u8 } {
+            return option::Option[Font]::None;
+        }
+        return option::some(Font { _obj: obj });
+    }
+
     fn font_with_name_matrix(font_name: str, font_matrix: *u8) -> option::Option[Font] {
         let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithName:matrix:\0")), bridge::nsstring(font_name), font_matrix);
         if obj == { 0 as *u8 } {
@@ -112,7 +119,14 @@ impl Font {
         return option::some(Font { _obj: obj });
     }
 
-    // SKIPPED `fontWithDescriptor:size:`: msgSend shape `id_id_f64` not yet modelled
+    fn font_with_descriptor_size(font_descriptor: FontDescriptor, font_size: f64) -> option::Option[Font] {
+        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithDescriptor:size:\0")), font_descriptor.raw(), font_size);
+        if obj == { 0 as *u8 } {
+            return option::Option[Font]::None;
+        }
+        return option::some(Font { _obj: obj });
+    }
+
     fn font_with_descriptor_text_transform(font_descriptor: FontDescriptor, text_transform: AffineTransform) -> option::Option[Font] {
         let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithDescriptor:textTransform:\0")), font_descriptor.raw(), text_transform.raw());
         if obj == { 0 as *u8 } {
@@ -193,7 +207,10 @@ impl Font {
         return Font::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontWithSize:\0")), font_size));
     }
 
-    // SKIPPED `systemFontSizeForControlSize:`: msgSend shape `f64_i64` not yet modelled
+    fn system_font_size_for_control_size(control_size: ControlSize) -> f64 {
+        return rt::msg_f64_i64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontSizeForControlSize:\0")), control_size_raw(control_size));
+    }
+
     // SKIPPED `boundingRectForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `advancementForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `getBoundingRects:forCGGlyphs:count:`: param `NSRectArray _Nonnull` — unmapped type `NSRectArray`

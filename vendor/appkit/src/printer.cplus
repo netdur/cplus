@@ -110,7 +110,10 @@ impl Printer {
     }
 
     // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `statusForTable:`: msgSend shape `i64_id` not yet modelled
+    fn status_for_table(this, table_name: str) -> PrinterTableStatus {
+        return printer_table_status_from_raw(rt::msg_i64_id(this._obj, rt::sel(#str_ptr("statusForTable:\0")), bridge::nsstring(table_name)));
+    }
+
     fn is_key_in_table(this, key: str, table: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("isKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
     }
@@ -142,7 +145,10 @@ impl Printer {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isColor\0"))) != (0 as i8);
     }
 
-    // SKIPPED `isFontAvailable:`: msgSend shape `i8_id` not yet modelled
+    fn is_font_available(this, face_name: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isFontAvailable:\0")), bridge::nsstring(face_name)) != (0 as i8);
+    }
+
     fn is_output_stack_in_reverse_order(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isOutputStackInReverseOrder\0"))) != (0 as i8);
     }

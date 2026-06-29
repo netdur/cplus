@@ -85,7 +85,10 @@ impl PickerTouchBarItem {
 
     // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
-    // SKIPPED `setImage:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_image_at_index(this, image: Image, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:atIndex:\0")), image.raw(), index);
+    }
+
     fn image_at_index(this, index: i64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageAtIndex:\0")), index);
         if obj == { 0 as *u8 } {
@@ -94,13 +97,19 @@ impl PickerTouchBarItem {
         return option::some(Image::from_raw(obj));
     }
 
-    // SKIPPED `setLabel:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn set_label_at_index(this, label: str, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setLabel:atIndex:\0")), bridge::nsstring(label), index);
+    }
+
     fn label_at_index(this, index: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("labelAtIndex:\0")), index);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setEnabled:atIndex:`: msgSend shape `void_i8_i64` not yet modelled
+    fn set_enabled_at_index(this, enabled: bool, index: i64) {
+        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setEnabled:atIndex:\0")), enabled as i8, index);
+    }
+
     fn is_enabled_at_index(this, index: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledAtIndex:\0")), index) != (0 as i8);
     }

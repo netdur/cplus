@@ -64,7 +64,10 @@ impl TextAttachmentCellProtocol {
 
     fn from_raw(ptr: *u8) -> TextAttachmentCellProtocol { return TextAttachmentCellProtocol { _obj: ptr }; }
 
-    // SKIPPED `drawWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    fn draw_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:\0")), cell_frame, control_view);
+    }
+
     fn wants_to_track_mouse(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToTrackMouse\0"))) != (0 as i8);
     }

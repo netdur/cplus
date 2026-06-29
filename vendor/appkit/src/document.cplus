@@ -586,7 +586,10 @@ impl Document {
     }
 
     // SKIPPED `initWithType:error:`: extra init variant (one `new` per type)
-    // SKIPPED `canConcurrentlyReadDocumentsOfType:`: msgSend shape `i8_id` not yet modelled
+    fn can_concurrently_read_documents_of_type(type_name: str) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("canConcurrentlyReadDocumentsOfType:\0")), bridge::nsstring(type_name)) != (0 as i8);
+    }
+
     // SKIPPED `initWithContentsOfURL:ofType:error:`: extra init variant (one `new` per type)
     // SKIPPED `initForURL:withContentsOfURL:ofType:error:`: msgSend shape `id_id_id_id_id` not yet modelled
     // SKIPPED `performActivityWithSynchronousWaiting:usingBlock:`: block-method msgSend shape not modelled
@@ -626,11 +629,26 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("revertDocumentToSaved:\0")), sender);
     }
 
-    // SKIPPED `revertToContentsOfURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
-    // SKIPPED `readFromURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
-    // SKIPPED `readFromFileWrapper:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
-    // SKIPPED `readFromData:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
-    // SKIPPED `writeToURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn revert_to_contents_of_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("revertToContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error) != (0 as i8);
+    }
+
+    fn read_from_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error) != (0 as i8);
+    }
+
+    fn read_from_file_wrapper_of_type_error(this, file_wrapper: FileWrapper, type_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromFileWrapper:ofType:error:\0")), file_wrapper.raw(), bridge::nsstring(type_name), out_error) != (0 as i8);
+    }
+
+    fn read_from_data_of_type_error(this, data: Data, type_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromData:ofType:error:\0")), data.raw(), bridge::nsstring(type_name), out_error) != (0 as i8);
+    }
+
+    fn write_to_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error) != (0 as i8);
+    }
+
     fn file_wrapper_of_type_error(this, type_name: str, out_error: *u8) -> option::Option[FileWrapper] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("fileWrapperOfType:error:\0")), bridge::nsstring(type_name), out_error);
         if obj == { 0 as *u8 } {
@@ -668,11 +686,17 @@ impl Document {
 
     // SKIPPED `saveDocumentWithDelegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `runModalSavePanelForSaveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `prepareSavePanel:`: msgSend shape `i8_id` not yet modelled
+    fn prepare_save_panel(this, save_panel: SavePanel) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("prepareSavePanel:\0")), save_panel.raw()) != (0 as i8);
+    }
+
     // SKIPPED `saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `saveToURL:ofType:forSaveOperation:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `canAsynchronouslyWriteToURL:ofType:forSaveOperation:`: msgSend shape `i8_id_id_i64` not yet modelled
-    // SKIPPED `checkAutosavingSafetyAndReturnError:`: msgSend shape `i8_id` not yet modelled
+    fn check_autosaving_safety_and_return_error(this, out_error: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("checkAutosavingSafetyAndReturnError:\0")), out_error) != (0 as i8);
+    }
+
     fn schedule_autosaving(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("scheduleAutosaving\0")));
     }
@@ -782,8 +806,14 @@ impl Document {
     }
 
     // SKIPPED `runModalPageLayoutWithPrintInfo:delegate:didRunSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `preparePageLayout:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `shouldChangePrintInfo:`: msgSend shape `i8_id` not yet modelled
+    fn prepare_page_layout(this, page_layout: PageLayout) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("preparePageLayout:\0")), page_layout.raw()) != (0 as i8);
+    }
+
+    fn should_change_print_info(this, new_print_info: PrintInfo) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("shouldChangePrintInfo:\0")), new_print_info.raw()) != (0 as i8);
+    }
+
     fn print_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("printDocument:\0")), sender);
     }
@@ -815,9 +845,15 @@ impl Document {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("changeCountTokenForSaveOperation:\0")), save_operation_type_raw(save_operation));
     }
 
-    // SKIPPED `updateChangeCountWithToken:forSaveOperation:`: msgSend shape `void_id_i64` not yet modelled
+    fn update_change_count_with_token_for_save_operation(this, change_count_token: *u8, save_operation: SaveOperationType) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("updateChangeCountWithToken:forSaveOperation:\0")), change_count_token, save_operation_type_raw(save_operation));
+    }
+
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `presentError:`: msgSend shape `i8_id` not yet modelled
+    fn present_error(this, error: Error) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
+    }
+
     fn will_present_error(this, error: Error) -> Error {
         return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
@@ -864,7 +900,10 @@ impl Document {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `isNativeType:`: msgSend shape `i8_id` not yet modelled
+    fn is_native_type(type_: str) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("isNativeType:\0")), bridge::nsstring(type_)) != (0 as i8);
+    }
+
     fn writable_types_for_save_operation(this, save_operation: SaveOperationType) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("writableTypesForSaveOperation:\0")), save_operation_type_raw(save_operation));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -879,8 +918,15 @@ impl Document {
         return out;
     }
 
-    // SKIPPED `fileNameExtensionForType:saveOperation:`: msgSend shape `id_id_i64` not yet modelled
-    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
+    fn file_name_extension_for_type_save_operation(this, type_name: str, save_operation: SaveOperationType) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("fileNameExtensionForType:saveOperation:\0")), bridge::nsstring(type_name), save_operation_type_raw(save_operation));
+        return bridge::to_text_option(ns);
+    }
+
+    fn validate_user_interface_item(this, item: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("validateUserInterfaceItem:\0")), item) != (0 as i8);
+    }
+
     fn relinquish_presented_item_to_reader(this, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Document_relinquish_presented_item_to_reader_block = Document_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -1200,7 +1246,10 @@ impl Document {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("revertToSavedFromURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
     }
 
-    // SKIPPED `runModalPageLayoutWithPrintInfo:`: msgSend shape `i64_id` not yet modelled
+    fn run_modal_page_layout_with_print_info(this, print_info: PrintInfo) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalPageLayoutWithPrintInfo:\0")), print_info.raw());
+    }
+
     // SKIPPED `saveToFile:saveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     fn set_file_name(this, file_name: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileName:\0")), bridge::nsstring(file_name));

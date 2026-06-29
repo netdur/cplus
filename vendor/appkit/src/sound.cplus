@@ -48,11 +48,22 @@ impl Sound {
         return option::some(Sound { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `initWithContentsOfURL:byReference:`: init arg shape not yet modelled
+    fn new(url: URL, by_ref: bool) -> Sound {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSound\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Sound { _obj: rt::msg_id_id_i8(alloced, rt::sel(#str_ptr("initWithContentsOfURL:byReference:\0")), url.raw(), by_ref as i8) };
+    }
+
     // SKIPPED `initWithContentsOfFile:byReference:`: extra init variant (one `new` per type)
     // SKIPPED `initWithData:`: extra init variant (one `new` per type)
-    // SKIPPED `setName:`: msgSend shape `i8_id` not yet modelled
-    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
+    fn set_name(this, string: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(string)) != (0 as i8);
+    }
+
+    fn can_init_with_pasteboard(pasteboard: *u8) -> bool {
+        return rt::msg_i8_id(rt::get_class(#str_ptr("NSSound\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard) != (0 as i8);
+    }
+
     // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
     fn write_to_pasteboard(this, pasteboard: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("writeToPasteboard:\0")), pasteboard);

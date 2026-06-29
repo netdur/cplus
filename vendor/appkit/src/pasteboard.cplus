@@ -106,13 +106,39 @@ impl Pasteboard {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("clearContents\0")));
     }
 
-    // SKIPPED `writeObjects:`: msgSend shape `i8_id` not yet modelled
+    fn write_objects(this, objects: vec::Vec[PasteboardWriting]) -> bool {
+        let arr_objects: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_objects: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_objects: usize = objects.count();
+        var i_objects: usize = 0 as usize;
+        while i_objects < n_objects {
+            match objects.at(i_objects) {
+                option::Option[PasteboardWriting]::Some(e_objects) => { rt::msg_void_id(arr_objects, add_sel_objects, e_objects.raw()); }
+                option::Option[PasteboardWriting]::None => {}
+            }
+            i_objects = i_objects +% (1 as usize);
+        }
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeObjects:\0")), arr_objects) != (0 as i8);
+    }
+
     // SKIPPED `readObjectsForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
-    // SKIPPED `indexOfPasteboardItem:`: msgSend shape `u64_id` not yet modelled
-    // SKIPPED `canReadItemWithDataConformingToTypes:`: msgSend shape `i8_id` not yet modelled
+    fn index_of_pasteboard_item(this, pasteboard_item: PasteboardItem) -> u64 {
+        return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("indexOfPasteboardItem:\0")), pasteboard_item.raw());
+    }
+
+    fn can_read_item_with_data_conforming_to_types(this, types: vec::Vec[text::Text]) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canReadItemWithDataConformingToTypes:\0")), bridge::nsarray_of_text(types)) != (0 as i8);
+    }
+
     // SKIPPED `canReadObjectForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
-    // SKIPPED `declareTypes:owner:`: msgSend shape `i64_id_id` not yet modelled
-    // SKIPPED `addTypes:owner:`: msgSend shape `i64_id_id` not yet modelled
+    fn declare_types_owner(this, new_types: vec::Vec[text::Text], new_owner: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("declareTypes:owner:\0")), bridge::nsarray_of_text(new_types), new_owner);
+    }
+
+    fn add_types_owner(this, new_types: vec::Vec[text::Text], new_owner: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("addTypes:owner:\0")), bridge::nsarray_of_text(new_types), new_owner);
+    }
+
     fn available_type_from_array(this, types: vec::Vec[text::Text]) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("availableTypeFromArray:\0")), bridge::nsarray_of_text(types));
         return bridge::to_text_option(ns);
@@ -209,13 +235,19 @@ impl Pasteboard {
         return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringTypesInPasteboard:\0")), pboard.raw()) };
     }
 
-    // SKIPPED `writeFileContents:`: msgSend shape `i8_id` not yet modelled
+    fn write_file_contents(this, filename: str) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeFileContents:\0")), bridge::nsstring(filename)) != (0 as i8);
+    }
+
     fn read_file_contents_type_to_file(this, type_: str, filename: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("readFileContentsType:toFile:\0")), bridge::nsstring(type_), bridge::nsstring(filename));
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `writeFileWrapper:`: msgSend shape `i8_id` not yet modelled
+    fn write_file_wrapper(this, wrapper: FileWrapper) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeFileWrapper:\0")), wrapper.raw()) != (0 as i8);
+    }
+
     fn read_file_wrapper(this) -> option::Option[FileWrapper] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("readFileWrapper\0")));
         if obj == { 0 as *u8 } {

@@ -336,7 +336,10 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event);
     }
 
-    // SKIPPED `drawBezelWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    fn draw_bezel_with_frame_in_view(this, frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBezelWithFrame:inView:\0")), frame, control_view);
+    }
+
     // SKIPPED `drawImage:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
     // SKIPPED `drawTitle:withFrame:inView:`: msgSend shape `rect_id_rect_id` not yet modelled
     fn bezel_style(this) -> BezelStyle {

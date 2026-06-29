@@ -87,7 +87,10 @@ impl CollectionView {
 
     // SKIPPED `frameForItemAtIndex:`: msgSend shape `rect_u64` not yet modelled
     // SKIPPED `frameForItemAtIndex:withNumberOfItems:`: msgSend shape `rect_u64_u64` not yet modelled
-    // SKIPPED `numberOfItemsInSection:`: msgSend shape `i64_i64` not yet modelled
+    fn number_of_items_in_section(this, section: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("numberOfItemsInSection:\0")), section);
+    }
+
     // SKIPPED `selectItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `deselectItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     fn select_all(this, sender: *u8) {
@@ -152,7 +155,10 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadSections:\0")), sections.raw());
     }
 
-    // SKIPPED `moveSection:toSection:`: msgSend shape `void_i64_i64` not yet modelled
+    fn move_section_to_section(this, section: i64, new_section: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveSection:toSection:\0")), section, new_section);
+    }
+
     // SKIPPED `insertItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `deleteItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `reloadItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection

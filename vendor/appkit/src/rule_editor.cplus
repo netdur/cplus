@@ -148,9 +148,18 @@ impl RuleEditor {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("displayValuesForRow:\0")), row);
     }
 
-    // SKIPPED `rowForDisplayValue:`: msgSend shape `i64_id` not yet modelled
-    // SKIPPED `rowTypeForRow:`: msgSend shape `i64_i64` not yet modelled
-    // SKIPPED `parentRowForRow:`: msgSend shape `i64_i64` not yet modelled
+    fn row_for_display_value(this, display_value: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("rowForDisplayValue:\0")), display_value);
+    }
+
+    fn row_type_for_row(this, row_index: i64) -> RuleEditorRowType {
+        return rule_editor_row_type_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("rowTypeForRow:\0")), row_index));
+    }
+
+    fn parent_row_for_row(this, row_index: i64) -> i64 {
+        return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("parentRowForRow:\0")), row_index);
+    }
+
     fn add_row(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRow:\0")), sender);
     }
@@ -161,8 +170,14 @@ impl RuleEditor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), row_index);
     }
 
-    // SKIPPED `removeRowsAtIndexes:includeSubrows:`: msgSend shape `void_id_i8` not yet modelled
-    // SKIPPED `selectRowIndexes:byExtendingSelection:`: msgSend shape `void_id_i8` not yet modelled
+    fn remove_rows_at_indexes_include_subrows(this, row_indexes: IndexSet, include_subrows: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:includeSubrows:\0")), row_indexes.raw(), include_subrows as i8);
+    }
+
+    fn select_row_indexes_by_extending_selection(this, indexes: IndexSet, extend: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), indexes.raw(), extend as i8);
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);

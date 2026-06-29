@@ -313,7 +313,10 @@ impl Button {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("highlight:\0")), flag as i8);
     }
 
-    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
+    fn perform_key_equivalent(this, key: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), key) != (0 as i8);
+    }
+
     // SKIPPED `compressWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     // SKIPPED `minimumSizeWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     fn title(this) -> text::Text {
