@@ -519,29 +519,37 @@ impl ObjcEmitter {
         }
     }
 
-    /// A value-struct field's C+ type: a scalar, or a nested value struct (which
-    /// the header always declares before the struct that contains it).
+    /// A value-struct field's C+ type: a scalar, a nested value struct (the header
+    /// always declares it first), or a typedef chain to either (`MTLGPUAddress` ->
+    /// `uint64_t` -> u64). Returns None for anything else, so the struct isn't
+    /// recorded (keeps its repr(C) layout exactly C-ABI or absent — never wrong).
     fn struct_field_type(&self, fqt: &str) -> Option<String> {
-        let t = fqt.trim();
-        let mapped = match t {
-            "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => "u64",
-            "NSInteger" | "long" | "long long" | "int64_t" => "i64",
-            "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64",
-            "float" => "f32",
-            "int" | "int32_t" => "i32",
-            "unsigned int" | "unsigned" | "uint32_t" => "u32",
-            "BOOL" | "_Bool" | "bool" => "bool",
-            "uint16_t" | "unsigned short" => "u16",
-            "int16_t" | "short" => "i16",
-            "uint8_t" | "unsigned char" => "u8",
-            "int8_t" | "signed char" => "i8",
-            _ => "",
-        };
-        if !mapped.is_empty() {
-            return Some(mapped.to_string());
-        }
-        if self.value_structs.contains_key(t) {
-            return Some(self.cplus_type_name(t));
+        let mut cur = fqt.trim().to_string();
+        for _ in 0..8 {
+            let mapped = match cur.as_str() {
+                "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => "u64",
+                "NSInteger" | "long" | "long long" | "int64_t" => "i64",
+                "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64",
+                "float" => "f32",
+                "int" | "int32_t" => "i32",
+                "unsigned int" | "unsigned" | "uint32_t" => "u32",
+                "BOOL" | "_Bool" | "bool" => "bool",
+                "uint16_t" | "unsigned short" => "u16",
+                "int16_t" | "short" => "i16",
+                "uint8_t" | "unsigned char" => "u8",
+                "int8_t" | "signed char" => "i8",
+                _ => "",
+            };
+            if !mapped.is_empty() {
+                return Some(mapped.to_string());
+            }
+            if self.value_structs.contains_key(&cur) {
+                return Some(self.cplus_type_name(&cur));
+            }
+            match self.typedefs.get(&cur) {
+                Some(u) => cur = u.trim().to_string(),
+                None => break,
+            }
         }
         None
     }

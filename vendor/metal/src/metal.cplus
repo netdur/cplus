@@ -2925,6 +2925,13 @@ fn i_o_status_from_raw(raw: i64) -> IOStatus {
     return IOStatus::Pending;
 }
 
+// `MTL4BufferRange` — by-value C struct.
+#[repr(C)]
+struct MTL4BufferRange {
+    bufferAddress: u64,
+    length: u64,
+}
+
 // `MTLAccelerationStructureSizes` — by-value C struct.
 #[repr(C)]
 struct AccelerationStructureSizes {
@@ -3039,13 +3046,23 @@ extern fn objc_msg_void_Size_Size_Size(recv: *u8, sel: *u8, a0: Size, a1: Size, 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_Viewport(recv: *u8, sel: *u8, a0: Viewport);
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_MTL4BufferRange(recv: *u8, sel: *u8, a0: *u8, a1: MTL4BufferRange);
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_Region_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_Region_u64_u64_i8_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64, a4: i8, a5: *u8, a6: u64);
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_MTL4BufferRange(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: MTL4BufferRange);
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_Size_i64_u64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: Size, a3: i64, a4: u64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_Size_u64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: Size, a3: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_MTL4BufferRange(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: MTL4BufferRange);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_MTL4BufferRange_u64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: MTL4BufferRange, a4: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_range_MTL4BufferRange_id_id(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: MTL4BufferRange, a3: *u8, a4: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_u64_Region_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: Region, a3: u64);
 #[link_name = "objc_msgSend"]
@@ -11649,7 +11666,10 @@ impl MTL4CommandBuffer {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("writeTimestampIntoHeap:atIndex:\0")), counter_heap.raw(), index);
     }
 
-    // SKIPPED `resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`: param `MTL4BufferRange` — unmapped type `MTL4BufferRange`
+    fn resolve_counter_heap_with_range_into_buffer_wait_fence_update_fence(this, counter_heap: MTL4CounterHeap, range: rt::Range, buffer_range: MTL4BufferRange, fence_to_wait: Fence, fence_to_update: Fence) {
+        objc_msg_void_id_range_MTL4BufferRange_id_id(this._obj, rt::sel(#str_ptr("resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:\0")), counter_heap.raw(), range, buffer_range, fence_to_wait.raw(), fence_to_update.raw());
+    }
+
     fn device(this) -> Device {
         return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
     }
@@ -13246,14 +13266,26 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setArgumentTable:\0")), argument_table.raw());
     }
 
-    // SKIPPED `buildAccelerationStructure:descriptor:scratchBuffer:`: param `MTL4BufferRange` — unmapped type `MTL4BufferRange`
-    // SKIPPED `refitAccelerationStructure:descriptor:destination:scratchBuffer:`: param `MTL4BufferRange` — unmapped type `MTL4BufferRange`
-    // SKIPPED `refitAccelerationStructure:descriptor:destination:scratchBuffer:options:`: param `MTL4BufferRange` — unmapped type `MTL4BufferRange`
+    fn build_acceleration_structure_descriptor_scratch_buffer(this, acceleration_structure: AccelerationStructure, descriptor: *u8, scratch_buffer: MTL4BufferRange) {
+        objc_msg_void_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("buildAccelerationStructure:descriptor:scratchBuffer:\0")), acceleration_structure.raw(), descriptor, scratch_buffer);
+    }
+
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer(this, source_acceleration_structure: AccelerationStructure, descriptor: *u8, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange) {
+        objc_msg_void_id_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:\0")), source_acceleration_structure.raw(), descriptor, destination_acceleration_structure.raw(), scratch_buffer);
+    }
+
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer_options(this, source_acceleration_structure: AccelerationStructure, descriptor: *u8, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange, options: u64) {
+        objc_msg_void_id_id_id_MTL4BufferRange_u64(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:options:\0")), source_acceleration_structure.raw(), descriptor, destination_acceleration_structure.raw(), scratch_buffer, options);
+    }
+
     fn copy_acceleration_structure_to_acceleration_structure(this, source_acceleration_structure: AccelerationStructure, destination_acceleration_structure: AccelerationStructure) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyAccelerationStructure:toAccelerationStructure:\0")), source_acceleration_structure.raw(), destination_acceleration_structure.raw());
     }
 
-    // SKIPPED `writeCompactedAccelerationStructureSize:toBuffer:`: param `MTL4BufferRange` — unmapped type `MTL4BufferRange`
+    fn write_compacted_acceleration_structure_size_to_buffer(this, acceleration_structure: AccelerationStructure, buffer: MTL4BufferRange) {
+        objc_msg_void_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("writeCompactedAccelerationStructureSize:toBuffer:\0")), acceleration_structure.raw(), buffer);
+    }
+
     fn copy_and_compact_acceleration_structure_to_acceleration_structure(this, source_acceleration_structure: AccelerationStructure, destination_acceleration_structure: AccelerationStructure) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyAndCompactAccelerationStructure:toAccelerationStructure:\0")), source_acceleration_structure.raw(), destination_acceleration_structure.raw());
     }
