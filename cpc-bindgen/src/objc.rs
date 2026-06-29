@@ -1117,7 +1117,11 @@ impl ObjcEmitter {
         let send = match self.send_expr(&recv, &sel, &ret, &args) {
             Some(s) => s,
             None => {
-                self.body.push_str(&format!("    // SKIPPED `{sel}`: (return, arg) shape not yet modelled\n"));
+                // Name the missing shape so the gap is actionable (which shim to add).
+                let shape = msg_shape(&ret, &args)
+                    .map(|s| format!("`{s}`"))
+                    .unwrap_or_else(|| "value-type".to_string());
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: msgSend shape {shape} not yet modelled\n"));
                 return;
             }
         };
@@ -1360,71 +1364,17 @@ impl ObjcEmitter {
     /// arity (the vendor/objc shim must exist; it's added per signature). For
     /// enum returns the raw integer call is produced (caller wraps in from_raw).
     fn send_expr(&self, recv: &str, sel: &str, ret: &Ret, args: &[Arg]) -> Option<String> {
-        let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
-        let ret_tag = match ret {
-            Ret::Void => "void",
-            Ret::Object(_) | Ret::ObjectOption(_) | Ret::Text { .. } => "id",
-            Ret::Bool => "i8",
-            Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
-            Ret::ScalarU64 => "u64",
-            Ret::ScalarF64 => "f64",
-            Ret::ScalarI32 => "i32",
-            Ret::ScalarU32 => "u32",
-            Ret::ScalarF32 => "f32",
-            Ret::Range => "range",
-            Ret::Rect => "rect",
-            Ret::Point => "point",
-            Ret::Size => "size",
-            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => {
-                return None
-            }
-        };
-        let mut tags: Vec<&str> = vec![ret_tag];
-        let mut exprs: Vec<String> = Vec::new();
-        for a in args {
-            let (t, e): (&str, String) = match a {
-                Arg::Id(e) => ("id", e.clone()),
-                Arg::Bool(e) => ("i8", format!("{e} as i8")),
-                Arg::ScalarI64(e) => ("i64", e.clone()),
-                Arg::ScalarU64(e) => ("u64", e.clone()),
-                Arg::ScalarF64(e) => ("f64", e.clone()),
-                Arg::ScalarI32(e) => ("i32", e.clone()),
-                Arg::ScalarU32(e) => ("u32", e.clone()),
-                Arg::ScalarF32(e) => ("f32", e.clone()),
-                Arg::Range(e) => ("range", e.clone()),
-                Arg::Rect(e) => ("rect", e.clone()),
-                Arg::Point(e) => ("point", e.clone()),
-                Arg::Size(e) => ("size", e.clone()),
-                Arg::Unsupported(_) => return None,
-            };
-            tags.push(t);
-            exprs.push(e);
-        }
+        let suffix = msg_shape(ret, args)?;
         // The runtime provides a fixed set of msgSend ABI shapes; only emit a
         // call when its shape exists, otherwise SKIP (keeps output compilable).
         // Grow this in lockstep with vendor/objc/src/runtime.cplus.
-        let suffix = tags.join("_");
-        const KNOWN: &[&str] = &[
-            "void", "void_id", "void_i8", "void_f64", "void_range_id", "id",
-            "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
-            "i8", "i8_i64", "i64", "u64", "f64", "range", "range_u64", "range_range",
-            // 32-bit scalars (int / unsigned / float)
-            "i32", "u32", "f32", "void_i32", "void_u32", "void_f32",
-            "id_i32", "id_u32", "id_f32",
-            // Geometry (NSRect/NSPoint/NSSize) — arm64 HFA, passes in v-regs.
-            "rect", "void_rect", "id_rect",
-            "rect_rect", "rect_rect_id", "rect_rect_u64",
-            "void_rect_i8", "void_rect_i8_i8",
-            "id_rect_u64_i64_i8", "f64_rect",
-            "size", "void_size",
-            "point", "void_point", "point_point",
-        ];
-        if !KNOWN.contains(&suffix.as_str()) {
+        if !msg_shape_is_known(&suffix) {
             return None;
         }
+        let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
         let mut call = format!("rt::msg_{suffix}({recv}, {sl}");
-        for e in &exprs {
-            call.push_str(&format!(", {e}"));
+        for a in args {
+            call.push_str(&format!(", {}", arg_expr(a)?));
         }
         call.push(')');
         Some(call)
@@ -1739,6 +1689,99 @@ impl ObjcEmitter {
 
 fn base(p: &str) -> String {
     std::path::Path::new(p).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// The msgSend ABI shape `<ret>[_<arg>...]` for a (return, args) pair — the key
+/// into the runtime's typed `objc_msgSend` shims. None when a return or arg is a
+/// value type with no shim tag (NSArray/NSDictionary/Unsupported). Shared by
+/// `send_expr` (to pick the shim) and the skip diagnostic (to name the gap).
+fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
+    let ret_tag = match ret {
+        Ret::Void => "void",
+        Ret::Object(_) | Ret::ObjectOption(_) | Ret::Text { .. } => "id",
+        Ret::Bool => "i8",
+        Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
+        Ret::ScalarU64 => "u64",
+        Ret::ScalarF64 => "f64",
+        Ret::ScalarI32 => "i32",
+        Ret::ScalarU32 => "u32",
+        Ret::ScalarF32 => "f32",
+        Ret::Range => "range",
+        Ret::Rect => "rect",
+        Ret::Point => "point",
+        Ret::Size => "size",
+        Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+    };
+    let mut tags: Vec<&str> = vec![ret_tag];
+    for a in args {
+        tags.push(arg_tag(a)?);
+    }
+    Some(tags.join("_"))
+}
+
+fn arg_tag(a: &Arg) -> Option<&'static str> {
+    Some(match a {
+        Arg::Id(_) => "id",
+        Arg::Bool(_) => "i8",
+        Arg::ScalarI64(_) => "i64",
+        Arg::ScalarU64(_) => "u64",
+        Arg::ScalarF64(_) => "f64",
+        Arg::ScalarI32(_) => "i32",
+        Arg::ScalarU32(_) => "u32",
+        Arg::ScalarF32(_) => "f32",
+        Arg::Range(_) => "range",
+        Arg::Rect(_) => "rect",
+        Arg::Point(_) => "point",
+        Arg::Size(_) => "size",
+        Arg::Unsupported(_) => return None,
+    })
+}
+
+/// The wire expression for an argument (raw int / bridged NSString / `bool as i8`).
+fn arg_expr(a: &Arg) -> Option<String> {
+    Some(match a {
+        Arg::Bool(e) => format!("{e} as i8"),
+        Arg::Id(e)
+        | Arg::ScalarI64(e)
+        | Arg::ScalarU64(e)
+        | Arg::ScalarF64(e)
+        | Arg::ScalarI32(e)
+        | Arg::ScalarU32(e)
+        | Arg::ScalarF32(e)
+        | Arg::Range(e)
+        | Arg::Rect(e)
+        | Arg::Point(e)
+        | Arg::Size(e) => e.clone(),
+        Arg::Unsupported(_) => return None,
+    })
+}
+
+/// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
+/// Grow the two in lockstep.
+fn msg_shape_is_known(suffix: &str) -> bool {
+    const KNOWN: &[&str] = &[
+        "void", "void_id", "void_i8", "void_i64", "void_f64", "void_range_id", "id",
+        "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
+        "i8", "i8_i64", "i64", "u64", "f64", "range", "range_u64", "range_range",
+        "void_id_id_i8",
+        // 32-bit scalars (int / unsigned / float)
+        "i32", "u32", "f32", "void_i32", "void_u32", "void_f32",
+        "id_i32", "id_u32", "id_f32",
+        // Metal setter / encoder / resource surface (integer-eightbyte + Range + f32).
+        "void_u64", "void_u64_u64", "void_u64_u64_u64", "void_i64_u64", "u64_i64",
+        "id_id_id", "id_id_id_id", "i8_id_id", "void_id_id",
+        "void_id_u64", "void_id_u64_u64", "void_id_u64_u64_u64", "void_id_u64_i8",
+        "void_range", "void_id_range", "void_id_id_range", "void_id_id_id_range",
+        "void_f32_f32_f32", "void_id_f32_f32_u64",
+        // Geometry (NSRect/NSPoint/NSSize) — arm64 HFA, passes in v-regs.
+        "rect", "void_rect", "id_rect",
+        "rect_rect", "rect_rect_id", "rect_rect_u64",
+        "void_rect_i8", "void_rect_i8_i8",
+        "id_rect_u64_i64_i8", "f64_rect",
+        "size", "void_size",
+        "point", "void_point", "point_point",
+    ];
+    KNOWN.contains(&suffix)
 }
 
 /// clang's `loc` puts the file directly, or (for macro-expanded decls like

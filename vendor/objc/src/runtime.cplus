@@ -175,6 +175,49 @@ extern fn objc_msg_range_range(recv: *u8, sel: *u8, a: Range) -> Range;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_range_id(recv: *u8, sel: *u8, a: Range, b: *u8);
 
+// Additional (return, arg) shapes covering the Metal setter / encoder / resource
+// surface. Every element is an integer eightbyte (`id`/`i64`/`u64`/`i8`), an
+// `NSRange` (two eightbytes), or an `f32` (fp register class) — same ABI classes
+// as the shims above, so each combination lowers correctly by construction.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64(recv: *u8, sel: *u8, a: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64(recv: *u8, sel: *u8, a: i64, b: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_i64(recv: *u8, sel: *u8, a: i64) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: u64, d: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_i8(recv: *u8, sel: *u8, a: *u8, b: u64, c: i8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_range(recv: *u8, sel: *u8, a: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_range(recv: *u8, sel: *u8, a: *u8, b: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_range(recv: *u8, sel: *u8, a: *u8, b: *u8, c: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_range(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f32_f32_f32(recv: *u8, sel: *u8, a: f32, b: f32, c: f32);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_f32_f32_u64(recv: *u8, sel: *u8, a: *u8, b: f32, c: f32, d: u64);
+
 extern fn object_getClassName(obj: *u8) -> *u8;
 
 fn get_class(name: *u8) -> *u8 {
@@ -329,6 +372,83 @@ fn msg_range_range(recv: *u8, selector: *u8, a: Range) -> Range {
 
 fn msg_void_range_id(recv: *u8, selector: *u8, a: Range, b: *u8) {
     { objc_msg_void_range_id(recv, selector, a, b); };
+}
+
+// --- Additional (return, arg) shapes (Metal setter / encoder / resource surface) ---
+fn msg_void_u64(recv: *u8, selector: *u8, a: u64) {
+    { objc_msg_void_u64(recv, selector, a); };
+}
+
+fn msg_void_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64) {
+    { objc_msg_void_u64_u64(recv, selector, a, b); };
+}
+
+fn msg_void_u64_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64) {
+    { objc_msg_void_u64_u64_u64(recv, selector, a, b, c); };
+}
+
+fn msg_void_i64_u64(recv: *u8, selector: *u8, a: i64, b: u64) {
+    { objc_msg_void_i64_u64(recv, selector, a, b); };
+}
+
+fn msg_u64_i64(recv: *u8, selector: *u8, a: i64) -> u64 {
+    return { objc_msg_u64_i64(recv, selector, a) };
+}
+
+fn msg_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> *u8 {
+    return { objc_msg_id_id_id(recv, selector, a, b) };
+}
+
+fn msg_id_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8) -> *u8 {
+    return { objc_msg_id_id_id_id(recv, selector, a, b, c) };
+}
+
+fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
+    return { objc_msg_i8_id_id(recv, selector, a, b) };
+}
+
+fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
+    { objc_msg_void_id_id(recv, selector, a, b); };
+}
+
+fn msg_void_id_u64(recv: *u8, selector: *u8, a: *u8, b: u64) {
+    { objc_msg_void_id_u64(recv, selector, a, b); };
+}
+
+fn msg_void_id_u64_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: u64) {
+    { objc_msg_void_id_u64_u64(recv, selector, a, b, c); };
+}
+
+fn msg_void_id_u64_u64_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: u64, d: u64) {
+    { objc_msg_void_id_u64_u64_u64(recv, selector, a, b, c, d); };
+}
+
+fn msg_void_id_u64_i8(recv: *u8, selector: *u8, a: *u8, b: u64, c: i8) {
+    { objc_msg_void_id_u64_i8(recv, selector, a, b, c); };
+}
+
+fn msg_void_range(recv: *u8, selector: *u8, a: Range) {
+    { objc_msg_void_range(recv, selector, a); };
+}
+
+fn msg_void_id_range(recv: *u8, selector: *u8, a: *u8, b: Range) {
+    { objc_msg_void_id_range(recv, selector, a, b); };
+}
+
+fn msg_void_id_id_range(recv: *u8, selector: *u8, a: *u8, b: *u8, c: Range) {
+    { objc_msg_void_id_id_range(recv, selector, a, b, c); };
+}
+
+fn msg_void_id_id_id_range(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: Range) {
+    { objc_msg_void_id_id_id_range(recv, selector, a, b, c, d); };
+}
+
+fn msg_void_f32_f32_f32(recv: *u8, selector: *u8, a: f32, b: f32, c: f32) {
+    { objc_msg_void_f32_f32_f32(recv, selector, a, b, c); };
+}
+
+fn msg_void_id_f32_f32_u64(recv: *u8, selector: *u8, a: *u8, b: f32, c: f32, d: u64) {
+    { objc_msg_void_id_f32_f32_u64(recv, selector, a, b, c, d); };
 }
 
 // alloc + init — the common +1-owned constructor.
