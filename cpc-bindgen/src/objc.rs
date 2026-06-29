@@ -399,12 +399,35 @@ impl ObjcEmitter {
         s
     }
 
+    /// Discriminator prepended to module-local `objc_msg_*` value-struct shim
+    /// names. `extern fn`s share one global bare-name namespace (they bind to a
+    /// literal C symbol; resolver Slice 10.FFI.1 leaves them un-qualified), and
+    /// same-named externs are deduped keeping the first declaration. In
+    /// per-header framework mode a by-value struct (`NSEdgeInsets`) recurs across
+    /// many modules, each emitting its own `objc_msg_EdgeInsets` shim returning
+    /// *its* local struct — identical names, different signatures. Without a
+    /// per-module discriminator the dedup binds later modules' calls to the first
+    /// module's signature, so the return type mismatches its own struct (E0302).
+    /// `--merge` emits the whole framework as one module: no recurrence, no
+    /// collision, so the bare prefix is kept and merged output stays byte-stable.
+    fn struct_shim_prefix(&self) -> String {
+        if self.merge {
+            return "objc_msg_".to_string();
+        }
+        let b = base(&self.header_path);
+        let stem = b.strip_suffix(".h").unwrap_or(&b);
+        let stripped = stem.strip_prefix(self.prefix.as_str()).unwrap_or(stem);
+        let chosen = if stripped.starts_with(|c: char| c.is_ascii_digit()) { stem } else { stripped };
+        format!("objc_msg_{}_", crate::sanitize_ident(&snake(chosen)))
+    }
+
     /// Module-local `objc_msgSend` shims for the by-value-struct call shapes used.
     /// The struct types ride registers/indirect per the platform ABI (verified
     /// against clang for the 24-byte case); cpc lowers the by-value extern the same.
     fn render_struct_shims(&self) -> String {
         let mut shapes: Vec<&String> = self.used_struct_shapes.iter().collect();
         shapes.sort();
+        let shim_prefix = self.struct_shim_prefix();
         let mut s = String::new();
         for suffix in shapes {
             let parts: Vec<&str> = suffix.split('_').collect();
@@ -418,7 +441,7 @@ impl ObjcEmitter {
                 format!(" -> {}", tag_to_type(parts[0]))
             };
             s.push_str(&format!(
-                "#[link_name = \"objc_msgSend\"]\nextern fn objc_msg_{suffix}({params}){ret};\n"
+                "#[link_name = \"objc_msgSend\"]\nextern fn {shim_prefix}{suffix}({params}){ret};\n"
             ));
         }
         if !s.is_empty() {
@@ -1583,13 +1606,15 @@ impl ObjcEmitter {
         // A by-value-struct shape uses a module-local `objc_msg_*` shim (emitted
         // alongside the struct); everything else uses the shared rt:: zoo, which
         // only models a fixed set of shapes (others SKIP to stay compilable).
-        let prefix = if msg_shape_has_struct(&suffix) {
+        let prefix: String = if msg_shape_has_struct(&suffix) {
             // Record it here (not in the caller) so every path — factory/init/
-            // collection helpers included — gets its shim emitted.
+            // collection helpers included — gets its shim emitted. The shim name
+            // is module-discriminated (see `struct_shim_prefix`) so per-header
+            // modules sharing a value struct don't collide on one extern name.
             self.used_struct_shapes.insert(suffix.clone());
-            "objc_msg_"
+            self.struct_shim_prefix()
         } else if msg_shape_is_known(&suffix) {
-            "rt::msg_"
+            "rt::msg_".to_string()
         } else {
             return None;
         };
@@ -2488,9 +2513,44 @@ mod tests {
         assert!(out.contains("fn size(this) -> Size"), "sret return:\n{out}");
         assert!(out.contains("fn set_size(this, size: Size)"), "by-value arg:\n{out}");
         // Module-local shims (objc_msg_*, not rt::msg_*), with the by-value struct typed.
-        assert!(out.contains("extern fn objc_msg_Size(recv: *u8, sel: *u8) -> Size;"), "sret shim:\n{out}");
-        assert!(out.contains("extern fn objc_msg_void_Size(recv: *u8, sel: *u8, a0: Size);"), "arg shim:\n{out}");
-        assert!(out.contains("objc_msg_void_Size(this._obj"), "uses local shim:\n{out}");
+        // In per-header mode the shim name is module-discriminated (here `test`) so the
+        // same value struct used by sibling modules doesn't collide on one extern name.
+        assert!(out.contains("extern fn objc_msg_test_Size(recv: *u8, sel: *u8) -> Size;"), "sret shim:\n{out}");
+        assert!(out.contains("extern fn objc_msg_test_void_Size(recv: *u8, sel: *u8, a0: Size);"), "arg shim:\n{out}");
+        assert!(out.contains("objc_msg_test_void_Size(this._obj"), "uses local shim:\n{out}");
+    }
+
+    #[test]
+    fn value_struct_shims_are_module_discriminated_per_header_but_bare_when_merged() {
+        // Regression: extern fns share one global bare-name namespace, so two
+        // per-header modules each emitting `objc_msg_Size` for their *own* local
+        // `Size` struct collide — the dedup binds one module's call to the other's
+        // signature (E0302). The shim name must be discriminated by module in
+        // per-header mode, and stay bare under `--merge` (one module, no collision).
+        let tu = |home: &str| serde_json::json!({
+            "inner": [
+                { "kind": "RecordDecl", "loc": { "file": home }, "inner": [
+                    { "kind": "FieldDecl", "name": "width", "type": { "qualType": "NSUInteger" } },
+                    { "kind": "FieldDecl", "name": "height", "type": { "qualType": "NSUInteger" } } ] },
+                { "kind": "TypedefDecl", "name": "MTLSize", "loc": { "file": home },
+                  "type": { "qualType": "struct MTLSize" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": home }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "size", "instance": true, "loc": { "file": home },
+                      "returnType": { "qualType": "MTLSize" }, "inner": [] } ] },
+            ]
+        });
+        // Two different headers -> two different shim names (no cross-module clash).
+        let a = ObjcEmitter::new("MTLAlpha.h", "MTL", serde_json::json!({})).run(&tu("MTLAlpha.h"));
+        let b = ObjcEmitter::new("MTLBeta.h", "MTL", serde_json::json!({})).run(&tu("MTLBeta.h"));
+        assert!(a.contains("extern fn objc_msg_alpha_Size("), "module-A shim name:\n{a}");
+        assert!(b.contains("extern fn objc_msg_beta_Size("), "module-B shim name:\n{b}");
+        assert!(!a.contains("objc_msg_beta_Size") && !b.contains("objc_msg_alpha_Size"),
+            "shim names must not collide across modules");
+        // `--merge`: one module, so the bare name is kept (output stays byte-stable).
+        let home: HashSet<String> = std::iter::once("MTLAlpha.h".to_string()).collect();
+        let m = ObjcEmitter::new_merged("merged", "MTL", serde_json::json!({}), home).run(&tu("MTLAlpha.h"));
+        assert!(m.contains("extern fn objc_msg_Size("), "merged keeps the bare shim name:\n{m}");
+        assert!(!m.contains("objc_msg_alpha_Size"), "merged must not discriminate:\n{m}");
     }
 
     #[test]
