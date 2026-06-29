@@ -173,11 +173,11 @@ impl TextSelectionNavigation {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushLayoutCache\0")));
     }
 
-    // SKIPPED `destinationSelectionForTextSelection:direction:destination:extending:confined:`: (return, arg) shape not yet modelled
+    // SKIPPED `destinationSelectionForTextSelection:direction:destination:extending:confined:`: msgSend shape `id_id_i64_i64_i8_i8` not yet modelled
     // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
-    // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: (return, arg) shape not yet modelled
-    // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `resolvedInsertionLocationForTextSelection:writingDirection:`: (return, arg) shape not yet modelled
+    // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: msgSend shape `id_i64_id` not yet modelled
+    // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: msgSend shape `id_i64_point_id` not yet modelled
+    // SKIPPED `resolvedInsertionLocationForTextSelection:writingDirection:`: msgSend shape `id_id_i64` not yet modelled
     // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: return `NSArray<NSTextRange *> * _Nonnull` — generic collection
     fn text_selection_data_source(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionDataSource\0")));

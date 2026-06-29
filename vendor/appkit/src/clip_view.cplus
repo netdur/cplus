@@ -6,6 +6,20 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_clip_view_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_clip_view_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
     opaque _obj: *u8,
@@ -36,7 +50,7 @@ impl ClipView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewBoundsChanged:\0")), notification);
     }
 
-    // SKIPPED `autoscroll:`: (return, arg) shape not yet modelled
+    // SKIPPED `autoscroll:`: msgSend shape `i8_id` not yet modelled
     fn scroll_to_point(this, new_origin: rt::Point) {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("scrollToPoint:\0")), new_origin);
     }
@@ -87,8 +101,14 @@ impl ClipView {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentVisibleRect\0")));
     }
 
-    // SKIPPED `contentInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setContentInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn content_insets(this) -> EdgeInsets {
+        return objc_msg_clip_view_EdgeInsets(this._obj, rt::sel(#str_ptr("contentInsets\0")));
+    }
+
+    fn set_content_insets(this, content_insets: EdgeInsets) {
+        objc_msg_clip_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setContentInsets:\0")), content_insets);
+    }
+
     fn automatically_adjusts_content_insets(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("automaticallyAdjustsContentInsets\0"))) != (0 as i8);
     }

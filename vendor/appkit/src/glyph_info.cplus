@@ -53,9 +53,16 @@ impl GlyphInfo {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `glyphInfoWithGlyphName:forFont:baseString:`: (return, arg) shape not yet modelled
+    fn glyph_info_with_glyph_name_for_font_base_string(glyph_name: str, font: *u8, string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyphName:forFont:baseString:\0")), bridge::nsstring(glyph_name), font, bridge::nsstring(string));
+        if obj == { 0 as *u8 } {
+            return option::Option[GlyphInfo]::None;
+        }
+        return option::some(GlyphInfo { _obj: obj });
+    }
+
     // SKIPPED `glyphInfoWithGlyph:forFont:baseString:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `glyphInfoWithCharacterIdentifier:collection:baseString:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphInfoWithCharacterIdentifier:collection:baseString:`: msgSend shape `id_u64_i64_id` not yet modelled
     fn glyph_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("glyphName\0")));
         return bridge::to_text_option(ns);

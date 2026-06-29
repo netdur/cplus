@@ -78,7 +78,7 @@ impl FormCell {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
     }
 
-    // SKIPPED `titleWidth:`: (return, arg) shape not yet modelled
+    // SKIPPED `titleWidth:`: msgSend shape `f64_size` not yet modelled
     // SKIPPED `titleWidth`: method `title_width` already defined
     fn set_title_width(this, title_width: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setTitleWidth:\0")), title_width);
@@ -127,12 +127,18 @@ impl FormCell {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("titleAlignment\0"))));
     }
 
-    // SKIPPED `setTitleAlignment:`: (return, arg) shape not yet modelled
+    fn set_title_alignment(this, title_alignment: TextAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitleAlignment:\0")), text_alignment_raw(title_alignment));
+    }
+
     fn title_base_writing_direction(this) -> WritingDirection {
         return writing_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("titleBaseWritingDirection\0"))));
     }
 
-    // SKIPPED `setTitleBaseWritingDirection:`: (return, arg) shape not yet modelled
+    fn set_title_base_writing_direction(this, title_base_writing_direction: WritingDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitleBaseWritingDirection:\0")), writing_direction_raw(title_base_writing_direction));
+    }
+
     fn preferred_text_field_width(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("preferredTextFieldWidth\0")));
     }

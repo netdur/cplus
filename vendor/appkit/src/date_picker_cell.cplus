@@ -118,7 +118,10 @@ impl DatePickerCell {
         return date_picker_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("datePickerStyle\0"))));
     }
 
-    // SKIPPED `setDatePickerStyle:`: (return, arg) shape not yet modelled
+    fn set_date_picker_style(this, date_picker_style: DatePickerStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDatePickerStyle:\0")), date_picker_style_raw(date_picker_style));
+    }
+
     fn draws_background(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("drawsBackground\0"))) != (0 as i8);
     }
@@ -147,12 +150,18 @@ impl DatePickerCell {
         return date_picker_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("datePickerMode\0"))));
     }
 
-    // SKIPPED `setDatePickerMode:`: (return, arg) shape not yet modelled
+    fn set_date_picker_mode(this, date_picker_mode: DatePickerMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDatePickerMode:\0")), date_picker_mode_raw(date_picker_mode));
+    }
+
     fn date_picker_elements(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("datePickerElements\0")));
     }
 
-    // SKIPPED `setDatePickerElements:`: (return, arg) shape not yet modelled
+    fn set_date_picker_elements(this, date_picker_elements: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setDatePickerElements:\0")), date_picker_elements);
+    }
+
     fn calendar(this) -> option::Option[Calendar] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("calendar\0")));
         if obj == { 0 as *u8 } {

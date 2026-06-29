@@ -483,6 +483,82 @@ fn window_backing_location_from_raw(raw: i64) -> WindowBackingLocation {
     return WindowBackingLocation::Default;
 }
 
+#[repr(C)]
+struct Window_begin_sheet_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Window_begin_sheet_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *Window_begin_sheet_completion_handler_block = { block as *Window_begin_sheet_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Window_begin_critical_sheet_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Window_begin_critical_sheet_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *Window_begin_critical_sheet_completion_handler_block = { block as *Window_begin_critical_sheet_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Window_transfer_window_sharing_to_window_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Window_transfer_window_sharing_to_window_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_transfer_window_sharing_to_window_completion_handler_block = { block as *Window_transfer_window_sharing_to_window_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Window_request_sharing_of_window_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Window_request_sharing_of_window_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_request_sharing_of_window_completion_handler_block = { block as *Window_request_sharing_of_window_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `CADisplayLink` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct CADisplayLink {
     opaque _obj: *u8,
@@ -777,7 +853,7 @@ impl Window {
         return rt::msg_rect_rect_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("contentRectForFrameRect:styleMask:\0")), f_rect, style);
     }
 
-    // SKIPPED `minFrameWidthWithTitle:styleMask:`: (return, arg) shape not yet modelled
+    // SKIPPED `minFrameWidthWithTitle:styleMask:`: msgSend shape `f64_id_u64` not yet modelled
     fn frame_rect_for_content_rect(this, content_rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("frameRectForContentRect:\0")), content_rect);
     }
@@ -798,13 +874,16 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller.raw());
     }
 
-    // SKIPPED `insertTitlebarAccessoryViewController:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeTitlebarAccessoryViewControllerAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertTitlebarAccessoryViewController:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn remove_titlebar_accessory_view_controller_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeTitlebarAccessoryViewControllerAtIndex:\0")), index);
+    }
+
     fn set_title_with_represented_filename(this, filename: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleWithRepresentedFilename:\0")), bridge::nsstring(filename));
     }
 
-    // SKIPPED `fieldEditor:forObject:`: (return, arg) shape not yet modelled
+    // SKIPPED `fieldEditor:forObject:`: msgSend shape `id_i8_id` not yet modelled
     fn end_editing_for(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditingFor:\0")), object);
     }
@@ -853,7 +932,7 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("update\0")));
     }
 
-    // SKIPPED `makeFirstResponder:`: (return, arg) shape not yet modelled
+    // SKIPPED `makeFirstResponder:`: msgSend shape `i8_id` not yet modelled
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
@@ -871,10 +950,14 @@ impl Window {
     }
 
     // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `validRequestorForSendType:returnType:`: (return, arg) shape not yet modelled
-    // SKIPPED `setContentBorderThickness:forEdge:`: (return, arg) shape not yet modelled
-    // SKIPPED `contentBorderThicknessForEdge:`: (return, arg) shape not yet modelled
-    // SKIPPED `setAutorecalculatesContentBorderThickness:forEdge:`: (return, arg) shape not yet modelled
+    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
+        return bridge::obj_option(obj);
+    }
+
+    // SKIPPED `setContentBorderThickness:forEdge:`: msgSend shape `void_f64_i64` not yet modelled
+    // SKIPPED `contentBorderThicknessForEdge:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `setAutorecalculatesContentBorderThickness:forEdge:`: msgSend shape `void_i8_i64` not yet modelled
     fn autorecalculates_content_border_thickness_for_edge(this, edge: RectEdge) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("autorecalculatesContentBorderThicknessForEdge:\0")), rect_edge_raw(edge)) != (0 as i8);
     }
@@ -899,7 +982,7 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderOut:\0")), sender);
     }
 
-    // SKIPPED `orderWindow:relativeTo:`: (return, arg) shape not yet modelled
+    // SKIPPED `orderWindow:relativeTo:`: msgSend shape `void_i64_i64` not yet modelled
     fn order_front_regardless(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("orderFrontRegardless\0")));
     }
@@ -1008,21 +1091,35 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveFrameUsingName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `setFrameUsingName:force:`: (return, arg) shape not yet modelled
-    // SKIPPED `setFrameUsingName:`: (return, arg) shape not yet modelled
-    // SKIPPED `setFrameAutosaveName:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFrameUsingName:force:`: msgSend shape `i8_id_i8` not yet modelled
+    // SKIPPED `setFrameUsingName:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `setFrameAutosaveName:`: msgSend shape `i8_id` not yet modelled
     fn remove_frame_using_name(name: str) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("removeFrameUsingName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `beginSheet:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `beginCriticalSheet:completionHandler:`: block-method msgSend shape not modelled
+    fn begin_sheet_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_begin_sheet_completion_handler_block = Window_begin_sheet_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_sheet_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheet:completionHandler:\0")), sheet_window.raw(), bp);
+        return;
+    }
+
+    fn begin_critical_sheet_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_begin_critical_sheet_completion_handler_block = Window_begin_critical_sheet_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_critical_sheet_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginCriticalSheet:completionHandler:\0")), sheet_window.raw(), bp);
+        return;
+    }
+
     fn end_sheet(this, sheet_window: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet_window.raw());
     }
 
     // SKIPPED `endSheet:returnCode:`: param `NSModalResponse` — unmapped type `NSModalResponse`
-    // SKIPPED `standardWindowButton:forStyleMask:`: (return, arg) shape not yet modelled
+    // SKIPPED `standardWindowButton:forStyleMask:`: msgSend shape `id_i64_u64` not yet modelled
     fn standard_window_button(this, b: WindowButton) -> option::Option[Button] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("standardWindowButton:\0")), window_button_raw(b));
         if obj == { 0 as *u8 } {
@@ -1031,7 +1128,7 @@ impl Window {
         return option::some(Button::from_raw(obj));
     }
 
-    // SKIPPED `addChildWindow:ordered:`: (return, arg) shape not yet modelled
+    // SKIPPED `addChildWindow:ordered:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_child_window(this, child_win: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeChildWindow:\0")), child_win.raw());
     }
@@ -1041,7 +1138,7 @@ impl Window {
     }
 
     // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
-    // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: (return, arg) shape not yet modelled
+    // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: msgSend shape `i64_point_i64` not yet modelled
     fn window_with_content_view_controller(content_view_controller: ViewController) -> Window {
         return Window { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowWithContentViewController:\0")), content_view_controller.raw())) };
     }
@@ -1110,9 +1207,23 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleTabOverview:\0")), sender);
     }
 
-    // SKIPPED `addTabbedWindow:ordered:`: (return, arg) shape not yet modelled
-    // SKIPPED `transferWindowSharingToWindow:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `requestSharingOfWindow:completionHandler:`: block-method msgSend shape not modelled
+    // SKIPPED `addTabbedWindow:ordered:`: msgSend shape `void_id_i64` not yet modelled
+    fn transfer_window_sharing_to_window_completion_handler(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_transfer_window_sharing_to_window_completion_handler_block = Window_transfer_window_sharing_to_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("transferWindowSharingToWindow:completionHandler:\0")), window.raw(), bp);
+        return;
+    }
+
+    fn request_sharing_of_window_completion_handler(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_request_sharing_of_window_completion_handler_block = Window_request_sharing_of_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindow:completionHandler:\0")), window.raw(), bp);
+        return;
+    }
+
     // SKIPPED `requestSharingOfWindowUsingPreview:title:completionHandler:`: block-method msgSend shape not modelled
     fn default_depth_limit() -> WindowDepth {
         return window_depth_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("defaultDepthLimit\0"))));
@@ -1139,7 +1250,10 @@ impl Window {
         return window_title_visibility_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("titleVisibility\0"))));
     }
 
-    // SKIPPED `setTitleVisibility:`: (return, arg) shape not yet modelled
+    fn set_title_visibility(this, title_visibility: WindowTitleVisibility) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitleVisibility:\0")), window_title_visibility_raw(title_visibility));
+    }
+
     fn titlebar_appears_transparent(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("titlebarAppearsTransparent\0"))) != (0 as i8);
     }
@@ -1152,7 +1266,10 @@ impl Window {
         return window_toolbar_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("toolbarStyle\0"))));
     }
 
-    // SKIPPED `setToolbarStyle:`: (return, arg) shape not yet modelled
+    fn set_toolbar_style(this, toolbar_style: WindowToolbarStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setToolbarStyle:\0")), window_toolbar_style_raw(toolbar_style));
+    }
+
     fn content_layout_rect(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("contentLayoutRect\0")));
     }
@@ -1214,7 +1331,10 @@ impl Window {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("styleMask\0")));
     }
 
-    // SKIPPED `setStyleMask:`: (return, arg) shape not yet modelled
+    fn set_style_mask(this, style_mask: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setStyleMask:\0")), style_mask);
+    }
+
     fn cascading_reference_frame(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("cascadingReferenceFrame\0")));
     }
@@ -1421,14 +1541,20 @@ impl Window {
         return backing_store_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("backingType\0"))));
     }
 
-    // SKIPPED `setBackingType:`: (return, arg) shape not yet modelled
+    fn set_backing_type(this, backing_type: BackingStoreType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBackingType:\0")), backing_store_type_raw(backing_type));
+    }
+
     // SKIPPED `level`: return `NSWindowLevel` — unmapped type `NSWindowLevel`
     // SKIPPED `setLevel:`: param `NSWindowLevel` — unmapped type `NSWindowLevel`
     fn depth_limit(this) -> WindowDepth {
         return window_depth_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("depthLimit\0"))));
     }
 
-    // SKIPPED `setDepthLimit:`: (return, arg) shape not yet modelled
+    fn set_depth_limit(this, depth_limit: WindowDepth) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDepthLimit:\0")), window_depth_raw(depth_limit));
+    }
+
     fn has_dynamic_depth_limit(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasDynamicDepthLimit\0"))) != (0 as i8);
     }
@@ -1477,7 +1603,10 @@ impl Window {
         return window_sharing_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sharingType\0"))));
     }
 
-    // SKIPPED `setSharingType:`: (return, arg) shape not yet modelled
+    fn set_sharing_type(this, sharing_type: WindowSharingType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSharingType:\0")), window_sharing_type_raw(sharing_type));
+    }
+
     fn allows_concurrent_view_drawing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsConcurrentViewDrawing\0"))) != (0 as i8);
     }
@@ -1506,12 +1635,18 @@ impl Window {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("collectionBehavior\0")));
     }
 
-    // SKIPPED `setCollectionBehavior:`: (return, arg) shape not yet modelled
+    fn set_collection_behavior(this, collection_behavior: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setCollectionBehavior:\0")), collection_behavior);
+    }
+
     fn animation_behavior(this) -> WindowAnimationBehavior {
         return window_animation_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("animationBehavior\0"))));
     }
 
-    // SKIPPED `setAnimationBehavior:`: (return, arg) shape not yet modelled
+    fn set_animation_behavior(this, animation_behavior: WindowAnimationBehavior) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAnimationBehavior:\0")), window_animation_behavior_raw(animation_behavior));
+    }
+
     fn is_on_active_space(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isOnActiveSpace\0"))) != (0 as i8);
     }
@@ -1635,7 +1770,10 @@ impl Window {
         return titlebar_separator_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("titlebarSeparatorStyle\0"))));
     }
 
-    // SKIPPED `setTitlebarSeparatorStyle:`: (return, arg) shape not yet modelled
+    fn set_titlebar_separator_style(this, titlebar_separator_style: TitlebarSeparatorStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitlebarSeparatorStyle:\0")), titlebar_separator_style_raw(titlebar_separator_style));
+    }
+
     fn content_view_controller(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0")));
     }
@@ -1716,7 +1854,10 @@ impl Window {
         return window_tabbing_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabbingMode\0"))));
     }
 
-    // SKIPPED `setTabbingMode:`: (return, arg) shape not yet modelled
+    fn set_tabbing_mode(this, tabbing_mode: WindowTabbingMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabbingMode:\0")), window_tabbing_mode_raw(tabbing_mode));
+    }
+
     // SKIPPED `tabbingIdentifier`: return `API_AVAILABLE NSWindowTabbingIdentifier` — unmapped type `API_AVAILABLE NSWindowTabbingIdentifier`
     // SKIPPED `setTabbingIdentifier:`: param `API_AVAILABLE NSWindowTabbingIdentifier` — unmapped type `API_AVAILABLE NSWindowTabbingIdentifier`
     // SKIPPED `tabbedWindows`: return `API_AVAILABLE NSArray<NSWindow *> *` — generic collection
@@ -1745,9 +1886,9 @@ impl Window {
         return option::some(Event::from_raw(obj));
     }
 
-    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: (return, arg) shape not yet modelled
-    // SKIPPED `discardEventsMatchingMask:beforeEvent:`: (return, arg) shape not yet modelled
-    // SKIPPED `postEvent:atStart:`: (return, arg) shape not yet modelled
+    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
+    // SKIPPED `discardEventsMatchingMask:beforeEvent:`: msgSend shape `void_u64_id` not yet modelled
+    // SKIPPED `postEvent:atStart:`: msgSend shape `void_id_i8` not yet modelled
     fn send_event(this, event: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event.raw());
     }
@@ -1805,7 +1946,7 @@ impl Window {
     }
 
     // SKIPPED `beginDraggingSessionWithItems:event:source:`: param `NSArray<NSDraggingItem *> * _Nonnull` — generic collection
-    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: (return, arg) shape not yet modelled
+    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: msgSend shape `void_id_point_size_id_id_id_i8` not yet modelled
     fn register_for_dragged_types(this, new_types: vec::Vec[text::Text]) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("registerForDraggedTypes:\0")), bridge::nsarray_of_text(new_types));
     }
@@ -1904,7 +2045,10 @@ impl Window {
         return window_backing_location_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredBackingLocation\0"))));
     }
 
-    // SKIPPED `setPreferredBackingLocation:`: (return, arg) shape not yet modelled
+    fn set_preferred_backing_location(this, preferred_backing_location: WindowBackingLocation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPreferredBackingLocation:\0")), window_backing_location_raw(preferred_backing_location));
+    }
+
     fn backing_location(this) -> WindowBackingLocation {
         return window_backing_location_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("backingLocation\0"))));
     }

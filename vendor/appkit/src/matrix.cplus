@@ -60,11 +60,11 @@ impl Matrix {
 
     // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
-    // SKIPPED `makeCellAtRow:column:`: (return, arg) shape not yet modelled
+    // SKIPPED `makeCellAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
     // SKIPPED `sendAction:to:forAllCells:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `sortUsingSelector:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `sortUsingFunction:context:`: param `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)` — unmapped type `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)`
-    // SKIPPED `setSelectionFrom:to:anchor:highlight:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSelectionFrom:to:anchor:highlight:`: msgSend shape `void_i64_i64_i64_i8` not yet modelled
     fn deselect_selected_cell(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deselectSelectedCell\0")));
     }
@@ -73,7 +73,7 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deselectAllCells\0")));
     }
 
-    // SKIPPED `selectCellAtRow:column:`: (return, arg) shape not yet modelled
+    // SKIPPED `selectCellAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
     fn select_all(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
     }
@@ -86,30 +86,45 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setScrollable:\0")), flag as i8);
     }
 
-    // SKIPPED `setState:atRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `getNumberOfRows:columns:`: (return, arg) shape not yet modelled
-    // SKIPPED `cellAtRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `cellFrameAtRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `getRow:column:ofCell:`: (return, arg) shape not yet modelled
-    // SKIPPED `getRow:column:forPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `renewRows:columns:`: (return, arg) shape not yet modelled
-    // SKIPPED `putCell:atRow:column:`: (return, arg) shape not yet modelled
+    // SKIPPED `setState:atRow:column:`: msgSend shape `void_i64_i64_i64` not yet modelled
+    fn get_number_of_rows_columns(this, row_count: *u8, col_count: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getNumberOfRows:columns:\0")), row_count, col_count);
+    }
+
+    // SKIPPED `cellAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
+    // SKIPPED `cellFrameAtRow:column:`: msgSend shape `rect_i64_i64` not yet modelled
+    // SKIPPED `getRow:column:ofCell:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `getRow:column:forPoint:`: msgSend shape `i8_id_id_point` not yet modelled
+    // SKIPPED `renewRows:columns:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `putCell:atRow:column:`: msgSend shape `void_id_i64_i64` not yet modelled
     fn add_row(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addRow\0")));
     }
 
     // SKIPPED `addRowWithCells:`: param `NSArray<NSCell *> * _Nonnull` — generic collection
-    // SKIPPED `insertRow:`: (return, arg) shape not yet modelled
+    fn insert_row(this, row: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("insertRow:\0")), row);
+    }
+
     // SKIPPED `insertRow:withCells:`: param `NSArray<NSCell *> * _Nullable` — generic collection
-    // SKIPPED `removeRow:`: (return, arg) shape not yet modelled
+    fn remove_row(this, row: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRow:\0")), row);
+    }
+
     fn add_column(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addColumn\0")));
     }
 
     // SKIPPED `addColumnWithCells:`: param `NSArray<NSCell *> * _Nonnull` — generic collection
-    // SKIPPED `insertColumn:`: (return, arg) shape not yet modelled
+    fn insert_column(this, column: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("insertColumn:\0")), column);
+    }
+
     // SKIPPED `insertColumn:withCells:`: param `NSArray<NSCell *> * _Nullable` — generic collection
-    // SKIPPED `removeColumn:`: (return, arg) shape not yet modelled
+    fn remove_column(this, col: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumn:\0")), col);
+    }
+
     fn cell_with_tag(this, tag: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellWithTag:\0")), tag);
         return bridge::obj_option(obj);
@@ -123,14 +138,14 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setValidateSize:\0")), flag as i8);
     }
 
-    // SKIPPED `drawCellAtRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `highlightCell:atRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollCellToVisibleAtRow:column:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawCellAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `highlightCell:atRow:column:`: msgSend shape `void_i8_i64_i64` not yet modelled
+    // SKIPPED `scrollCellToVisibleAtRow:column:`: msgSend shape `void_i64_i64` not yet modelled
     fn mouse_down(this, event: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event);
     }
 
-    // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
+    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
     fn send_action(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
@@ -139,8 +154,8 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sendDoubleAction\0")));
     }
 
-    // SKIPPED `textShouldBeginEditing:`: (return, arg) shape not yet modelled
-    // SKIPPED `textShouldEndEditing:`: (return, arg) shape not yet modelled
+    // SKIPPED `textShouldBeginEditing:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `textShouldEndEditing:`: msgSend shape `i8_id` not yet modelled
     fn text_did_begin_editing(this, notification: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidBeginEditing:\0")), notification);
     }
@@ -157,13 +172,16 @@ impl Matrix {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    // SKIPPED `selectTextAtRow:column:`: (return, arg) shape not yet modelled
-    // SKIPPED `acceptsFirstMouse:`: (return, arg) shape not yet modelled
+    // SKIPPED `selectTextAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
+    // SKIPPED `acceptsFirstMouse:`: msgSend shape `i8_id` not yet modelled
     fn reset_cursor_rects(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }
 
-    // SKIPPED `setToolTip:forCell:`: (return, arg) shape not yet modelled
+    fn set_tool_tip_for_cell(this, tool_tip_string: str, cell: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setToolTip:forCell:\0")), bridge::nsstring(tool_tip_string), cell);
+    }
+
     fn tool_tip_for_cell(this, cell: *u8) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("toolTipForCell:\0")), cell);
         return bridge::to_text_option(ns);
@@ -184,7 +202,10 @@ impl Matrix {
         return matrix_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mode\0"))));
     }
 
-    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn set_mode(this, mode: MatrixMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMode:\0")), matrix_mode_raw(mode));
+    }
+
     fn allows_empty_selection(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsEmptySelection\0"))) != (0 as i8);
     }

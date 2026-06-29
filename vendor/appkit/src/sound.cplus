@@ -51,8 +51,8 @@ impl Sound {
     // SKIPPED `initWithContentsOfURL:byReference:`: init arg shape not yet modelled
     // SKIPPED `initWithContentsOfFile:byReference:`: extra init variant (one `new` per type)
     // SKIPPED `initWithData:`: extra init variant (one `new` per type)
-    // SKIPPED `setName:`: (return, arg) shape not yet modelled
-    // SKIPPED `canInitWithPasteboard:`: (return, arg) shape not yet modelled
+    // SKIPPED `setName:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
     fn write_to_pasteboard(this, pasteboard: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("writeToPasteboard:\0")), pasteboard);

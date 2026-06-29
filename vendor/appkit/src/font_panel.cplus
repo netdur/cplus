@@ -29,7 +29,7 @@ impl FontPanel {
 
     fn from_raw(ptr: *u8) -> FontPanel { return FontPanel { _obj: ptr }; }
 
-    // SKIPPED `setPanelFont:isMultiple:`: (return, arg) shape not yet modelled
+    // SKIPPED `setPanelFont:isMultiple:`: msgSend shape `void_id_i8` not yet modelled
     fn panel_convert_font(this, font_obj: Font) -> Font {
         return Font::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("panelConvertFont:\0")), font_obj.raw()));
     }
@@ -159,6 +159,6 @@ impl FontChanging {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeFont:\0")), sender.raw());
     }
 
-    // SKIPPED `validModesForFontPanel:`: (return, arg) shape not yet modelled
+    // SKIPPED `validModesForFontPanel:`: msgSend shape `u64_id` not yet modelled
 }
 

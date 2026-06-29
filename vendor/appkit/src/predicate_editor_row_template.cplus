@@ -134,7 +134,7 @@ impl PredicateEditorRowTemplate {
 
     fn from_raw(ptr: *u8) -> PredicateEditorRowTemplate { return PredicateEditorRowTemplate { _obj: ptr }; }
 
-    // SKIPPED `matchForPredicate:`: (return, arg) shape not yet modelled
+    // SKIPPED `matchForPredicate:`: msgSend shape `f64_id` not yet modelled
     fn set_predicate(this, predicate: Predicate) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPredicate:\0")), predicate.raw());
     }

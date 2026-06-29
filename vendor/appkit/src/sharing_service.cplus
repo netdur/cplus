@@ -172,7 +172,7 @@ impl SharingService {
 
     // SKIPPED `initWithTitle:image:alternateImage:handler:`: block method with non-void return
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `canPerformWithItems:`: (return, arg) shape not yet modelled
+    // SKIPPED `canPerformWithItems:`: msgSend shape `i8_id` not yet modelled
     fn perform_with_items(this, items: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performWithItems:\0")), items);
     }
@@ -256,7 +256,7 @@ impl SharingServicePicker {
     }
 
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: (return, arg) shape not yet modelled
+    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: msgSend shape `void_rect_id_i64` not yet modelled
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }

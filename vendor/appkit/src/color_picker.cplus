@@ -56,7 +56,10 @@ impl ColorPicker {
     fn from_raw(ptr: *u8) -> ColorPicker { return ColorPicker { _obj: ptr }; }
 
     // SKIPPED `initWithPickerMask:colorPanel:`: init arg shape not yet modelled
-    // SKIPPED `insertNewButtonImage:in:`: (return, arg) shape not yet modelled
+    fn insert_new_button_image_in(this, new_button_image: *u8, button_cell: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image, button_cell);
+    }
+
     fn view_size_changed(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewSizeChanged:\0")), sender);
     }
@@ -69,7 +72,10 @@ impl ColorPicker {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("detachColorList:\0")), color_list);
     }
 
-    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn set_mode(this, mode: ColorPanelMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMode:\0")), color_panel_mode_raw(mode));
+    }
+
     fn color_panel(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("colorPanel\0")));
     }

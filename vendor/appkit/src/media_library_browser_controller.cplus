@@ -49,6 +49,9 @@ impl MediaLibraryBrowserController {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("mediaLibraries\0")));
     }
 
-    // SKIPPED `setMediaLibraries:`: (return, arg) shape not yet modelled
+    fn set_media_libraries(this, media_libraries: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMediaLibraries:\0")), media_libraries);
+    }
+
 }
 

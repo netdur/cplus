@@ -362,14 +362,14 @@ impl Event {
     // SKIPPED `touchesForView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `coalescedTouchesForTouch:`: return `NSArray<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `trackSwipeEventWithOptions:dampenAmountThresholdMin:max:usingHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `startPeriodicEventsAfterDelay:withPeriod:`: (return, arg) shape not yet modelled
+    // SKIPPED `startPeriodicEventsAfterDelay:withPeriod:`: msgSend shape `void_f64_f64` not yet modelled
     fn stop_periodic_events() {
         rt::msg_void(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("stopPeriodicEvents\0")));
     }
 
-    // SKIPPED `mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:`: (return, arg) shape not yet modelled
+    // SKIPPED `mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:`: msgSend shape `id_i64_point_u64_f64_i64_id_i64_i64_f32` not yet modelled
     // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `unsigned short` — unmapped type `unsigned short`
-    // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: (return, arg) shape not yet modelled
+    // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: msgSend shape `id_i64_point_u64_f64_i64_id_i64_i64_id` not yet modelled
     // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `short` — unmapped type `short`
     // SKIPPED `addGlobalMonitorForEventsMatchingMask:handler:`: block method with non-void return
     // SKIPPED `addLocalMonitorForEventsMatchingMask:handler:`: block method with non-void return

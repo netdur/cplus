@@ -115,7 +115,7 @@ impl OpenPanel {
 
     // SKIPPED `beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `beginForDirectory:file:types:modelessDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `runModalForDirectory:file:types:`: (return, arg) shape not yet modelled
-    // SKIPPED `runModalForTypes:`: (return, arg) shape not yet modelled
+    // SKIPPED `runModalForDirectory:file:types:`: msgSend shape `i64_id_id_id` not yet modelled
+    // SKIPPED `runModalForTypes:`: msgSend shape `i64_id` not yet modelled
 }
 

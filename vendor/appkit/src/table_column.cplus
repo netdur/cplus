@@ -178,7 +178,10 @@ impl TableColumn {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("resizingMask\0")));
     }
 
-    // SKIPPED `setResizingMask:`: (return, arg) shape not yet modelled
+    fn set_resizing_mask(this, resizing_mask: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setResizingMask:\0")), resizing_mask);
+    }
+
     fn header_tool_tip(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("headerToolTip\0")));
     }

@@ -177,7 +177,10 @@ impl TabView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `selectTabViewItemAtIndex:`: (return, arg) shape not yet modelled
+    fn select_tab_view_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("selectTabViewItemAtIndex:\0")), index);
+    }
+
     fn select_tab_view_item_with_identifier(this, identifier: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectTabViewItemWithIdentifier:\0")), identifier);
     }
@@ -206,18 +209,18 @@ impl TabView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `insertTabViewItem:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertTabViewItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_tab_view_item(this, tab_view_item: TabViewItem) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `tabViewItemAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfTabViewItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `tabViewItemAtPoint:`: msgSend shape `id_point` not yet modelled
+    // SKIPPED `indexOfTabViewItem:`: msgSend shape `i64_id` not yet modelled
     fn tab_view_item_at_index(this, index: i64) -> TabViewItem {
         return TabViewItem::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("tabViewItemAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfTabViewItemWithIdentifier:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfTabViewItemWithIdentifier:`: msgSend shape `i64_id` not yet modelled
     fn selected_tab_view_item(this) -> option::Option[TabViewItem] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedTabViewItem\0")));
         if obj == { 0 as *u8 } {
@@ -238,17 +241,26 @@ impl TabView {
         return tab_view_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabViewType\0"))));
     }
 
-    // SKIPPED `setTabViewType:`: (return, arg) shape not yet modelled
+    fn set_tab_view_type(this, tab_view_type: TabViewType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabViewType:\0")), tab_view_type_raw(tab_view_type));
+    }
+
     fn tab_position(this) -> TabPosition {
         return tab_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabPosition\0"))));
     }
 
-    // SKIPPED `setTabPosition:`: (return, arg) shape not yet modelled
+    fn set_tab_position(this, tab_position: TabPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabPosition:\0")), tab_position_raw(tab_position));
+    }
+
     fn tab_view_border_type(this) -> TabViewBorderType {
         return tab_view_border_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabViewBorderType\0"))));
     }
 
-    // SKIPPED `setTabViewBorderType:`: (return, arg) shape not yet modelled
+    fn set_tab_view_border_type(this, tab_view_border_type: TabViewBorderType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabViewBorderType:\0")), tab_view_border_type_raw(tab_view_border_type));
+    }
+
     // SKIPPED `tabViewItems`: return `NSArray<__kindof NSTabViewItem *> * _Nonnull` — generic collection
     // SKIPPED `setTabViewItems:`: param `NSArray<__kindof NSTabViewItem *> * _Nonnull` — generic collection
     fn allows_truncated_labels(this) -> bool {
@@ -275,7 +287,10 @@ impl TabView {
         return control_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlSize\0"))));
     }
 
-    // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
+    fn set_control_size(this, control_size: ControlSize) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -297,7 +312,10 @@ impl TabView {
         return control_tint_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlTint\0"))));
     }
 
-    // SKIPPED `setControlTint:`: (return, arg) shape not yet modelled
+    fn set_control_tint(this, control_tint: ControlTint) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlTint:\0")), control_tint_raw(control_tint));
+    }
+
 }
 
 // `NSTabViewDelegate` delegate protocol -> runtime class-synthesis helper.

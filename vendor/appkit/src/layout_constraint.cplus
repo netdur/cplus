@@ -110,7 +110,7 @@ impl LayoutConstraint {
     fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
 
     // SKIPPED `constraintsWithVisualFormat:options:metrics:views:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
-    // SKIPPED `constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:`: (return, arg) shape not yet modelled
+    // SKIPPED `constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:`: msgSend shape `id_id_i64_i64_id_i64_f64_f64` not yet modelled
     // SKIPPED `activateConstraints:`: param `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
     // SKIPPED `deactivateConstraints:`: param `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
     // SKIPPED `priority`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`

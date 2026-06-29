@@ -102,7 +102,10 @@ impl PDFPanel {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
-    // SKIPPED `setOptions:`: (return, arg) shape not yet modelled
+    fn set_options(this, options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setOptions:\0")), options);
+    }
+
     fn default_file_name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("defaultFileName\0")));
         return bridge::to_text(ns);

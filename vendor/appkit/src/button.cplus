@@ -296,9 +296,15 @@ impl Button {
     // SKIPPED `buttonWithImage:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `checkboxWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `radioButtonWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setButtonType:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPeriodicDelay:interval:`: (return, arg) shape not yet modelled
-    // SKIPPED `getPeriodicDelay:interval:`: (return, arg) shape not yet modelled
+    fn set_button_type(this, type_: ButtonType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setButtonType:\0")), button_type_raw(type_));
+    }
+
+    // SKIPPED `setPeriodicDelay:interval:`: msgSend shape `void_f32_f32` not yet modelled
+    fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
+    }
+
     fn set_next_state(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setNextState\0")));
     }
@@ -307,7 +313,7 @@ impl Button {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("highlight:\0")), flag as i8);
     }
 
-    // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
+    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `compressWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     // SKIPPED `minimumSizeWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     fn title(this) -> text::Text {
@@ -376,12 +382,18 @@ impl Button {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("maxAcceleratorLevel\0")));
     }
 
-    // SKIPPED `setMaxAcceleratorLevel:`: (return, arg) shape not yet modelled
+    fn set_max_accelerator_level(this, max_accelerator_level: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaxAcceleratorLevel:\0")), max_accelerator_level);
+    }
+
     fn bezel_style(this) -> BezelStyle {
         return bezel_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bezelStyle\0"))));
     }
 
-    // SKIPPED `setBezelStyle:`: (return, arg) shape not yet modelled
+    fn set_bezel_style(this, bezel_style: BezelStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBezelStyle:\0")), bezel_style_raw(bezel_style));
+    }
+
     fn is_bordered(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isBordered\0"))) != (0 as i8);
     }
@@ -426,7 +438,10 @@ impl Button {
         return tint_prominence_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tintProminence\0"))));
     }
 
-    // SKIPPED `setTintProminence:`: (return, arg) shape not yet modelled
+    fn set_tint_prominence(this, tint_prominence: TintProminence) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTintProminence:\0")), tint_prominence_raw(tint_prominence));
+    }
+
     fn image(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
         return bridge::obj_option(obj);
@@ -449,12 +464,18 @@ impl Button {
         return cell_image_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imagePosition\0"))));
     }
 
-    // SKIPPED `setImagePosition:`: (return, arg) shape not yet modelled
+    fn set_image_position(this, image_position: CellImagePosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImagePosition:\0")), cell_image_position_raw(image_position));
+    }
+
     fn image_scaling(this) -> ImageScaling {
         return image_scaling_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageScaling\0"))));
     }
 
-    // SKIPPED `setImageScaling:`: (return, arg) shape not yet modelled
+    fn set_image_scaling(this, image_scaling: ImageScaling) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageScaling:\0")), image_scaling_raw(image_scaling));
+    }
+
     fn image_hugs_title(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("imageHugsTitle\0"))) != (0 as i8);
     }
@@ -494,7 +515,10 @@ impl Button {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("keyEquivalentModifierMask\0")));
     }
 
-    // SKIPPED `setKeyEquivalentModifierMask:`: (return, arg) shape not yet modelled
+    fn set_key_equivalent_modifier_mask(this, key_equivalent_modifier_mask: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setKeyEquivalentModifierMask:\0")), key_equivalent_modifier_mask);
+    }
+
     fn active_compression_options(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("activeCompressionOptions\0")));
     }
@@ -503,7 +527,10 @@ impl Button {
         return control_border_shape_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("borderShape\0"))));
     }
 
-    // SKIPPED `setBorderShape:`: (return, arg) shape not yet modelled
+    fn set_border_shape(this, border_shape: ControlBorderShape) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderShape:\0")), control_border_shape_raw(border_shape));
+    }
+
     fn set_title_with_mnemonic(this, string_with_ampersand: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleWithMnemonic:\0")), bridge::nsstring(string_with_ampersand));
     }

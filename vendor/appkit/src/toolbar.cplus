@@ -106,8 +106,11 @@ impl Toolbar {
     }
 
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `insertItemWithItemIdentifier:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeItemAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertItemWithItemIdentifier:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn remove_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
+    }
+
     fn remove_item_with_item_identifier(this, item_identifier: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithItemIdentifier:\0")), bridge::nsstring(item_identifier));
     }
@@ -145,7 +148,10 @@ impl Toolbar {
         return toolbar_display_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("displayMode\0"))));
     }
 
-    // SKIPPED `setDisplayMode:`: (return, arg) shape not yet modelled
+    fn set_display_mode(this, display_mode: ToolbarDisplayMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDisplayMode:\0")), toolbar_display_mode_raw(display_mode));
+    }
+
     fn selected_item_identifier(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedItemIdentifier\0")));
         return bridge::to_text_option(ns);
@@ -219,7 +225,10 @@ impl Toolbar {
         return toolbar_size_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sizeMode\0"))));
     }
 
-    // SKIPPED `setSizeMode:`: (return, arg) shape not yet modelled
+    fn set_size_mode(this, size_mode: ToolbarSizeMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSizeMode:\0")), toolbar_size_mode_raw(size_mode));
+    }
+
     fn centered_item_identifier(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("centeredItemIdentifier\0")));
         return bridge::to_text_option(ns);

@@ -171,7 +171,7 @@ impl TextLayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForRange:\0")), range.raw());
     }
 
-    // SKIPPED `textLayoutFragmentForPosition:`: (return, arg) shape not yet modelled
+    // SKIPPED `textLayoutFragmentForPosition:`: msgSend shape `id_point` not yet modelled
     fn text_layout_fragment_for_location(this, location: TextLocation) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("textLayoutFragmentForLocation:\0")), location.raw());
         return bridge::obj_option(obj);
@@ -180,8 +180,11 @@ impl TextLayoutManager {
     // SKIPPED `enumerateTextLayoutFragmentsFromLocation:options:usingBlock:`: block method with non-void return
     // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `setRenderingAttributes:forTextRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    // SKIPPED `addRenderingAttribute:value:forTextRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeRenderingAttribute:forTextRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `addRenderingAttribute:value:forTextRange:`: msgSend shape `void_id_id_id` not yet modelled
+    fn remove_rendering_attribute_for_text_range(this, rendering_attribute: str, text_range: TextRange) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRenderingAttribute:forTextRange:\0")), bridge::nsstring(rendering_attribute), text_range.raw());
+    }
+
     fn invalidate_rendering_attributes_for_text_range(this, text_range: TextRange) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateRenderingAttributesForTextRange:\0")), text_range.raw());
     }
@@ -189,7 +192,10 @@ impl TextLayoutManager {
     // SKIPPED `renderingAttributesForLink:atLocation:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `enumerateTextSegmentsInRange:type:options:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `replaceContentsInRange:withTextElements:`: param `NSArray<NSTextElement *> * _Nonnull` — generic collection
-    // SKIPPED `replaceContentsInRange:withAttributedString:`: (return, arg) shape not yet modelled
+    fn replace_contents_in_range_with_attributed_string(this, range: TextRange, attributed_string: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withAttributedString:\0")), range.raw(), attributed_string);
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);

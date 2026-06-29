@@ -81,14 +81,23 @@ impl SpeechSynthesizer {
         return SpeechSynthesizer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithVoice:\0")), bridge::nsstring(voice)) };
     }
 
-    // SKIPPED `startSpeakingString:`: (return, arg) shape not yet modelled
-    // SKIPPED `startSpeakingString:toURL:`: (return, arg) shape not yet modelled
+    // SKIPPED `startSpeakingString:`: msgSend shape `i8_id` not yet modelled
+    fn start_speaking_string_to_u_r_l(this, string: str, url: URL) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("startSpeakingString:toURL:\0")), bridge::nsstring(string), url.raw()) != (0 as i8);
+    }
+
     fn stop_speaking(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopSpeaking\0")));
     }
 
-    // SKIPPED `stopSpeakingAtBoundary:`: (return, arg) shape not yet modelled
-    // SKIPPED `pauseSpeakingAtBoundary:`: (return, arg) shape not yet modelled
+    fn stop_speaking_at_boundary(this, boundary: SpeechBoundary) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("stopSpeakingAtBoundary:\0")), speech_boundary_raw(boundary));
+    }
+
+    fn pause_speaking_at_boundary(this, boundary: SpeechBoundary) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("pauseSpeakingAtBoundary:\0")), speech_boundary_raw(boundary));
+    }
+
     fn continue_speaking(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("continueSpeaking\0")));
     }
@@ -98,15 +107,19 @@ impl SpeechSynthesizer {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setVoice:`: (return, arg) shape not yet modelled
+    // SKIPPED `setVoice:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `addSpeechDictionary:`: param `NSDictionary<NSSpeechDictionaryKey,id> * _Nonnull` — generic collection
     fn phonemes_from_text(this, text: str) -> text::Text {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("phonemesFromText:\0")), bridge::nsstring(text));
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `objectForProperty:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `setObject:forProperty:error:`: (return, arg) shape not yet modelled
+    fn object_for_property_error(this, property: str, out_error: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("objectForProperty:error:\0")), bridge::nsstring(property), out_error);
+        return bridge::obj_option(obj);
+    }
+
+    // SKIPPED `setObject:forProperty:error:`: msgSend shape `i8_id_id_id` not yet modelled
     // SKIPPED `attributesForVoice:`: return `NSDictionary<NSVoiceAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn is_speaking(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSpeaking\0"))) != (0 as i8);

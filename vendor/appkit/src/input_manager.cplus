@@ -92,7 +92,12 @@ impl InputManager {
         rt::msg_void_id(rt::get_class(#str_ptr("NSInputManager\0")), rt::sel(#str_ptr("cycleToNextInputServerInLanguage:\0")), sender);
     }
 
-    // SKIPPED `initWithName:host:`: init arg shape not yet modelled
+    fn new(input_server_name: str, host_name: str) -> InputManager {
+        let cls: *u8 = rt::get_class(#str_ptr("NSInputManager\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return InputManager { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithName:host:\0")), bridge::nsstring(input_server_name), bridge::nsstring(host_name)) };
+    }
+
     fn localized_input_manager_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("localizedInputManagerName\0")));
         return bridge::to_text_option(ns);
@@ -135,7 +140,7 @@ impl InputManager {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToHandleMouseEvents\0"))) != (0 as i8);
     }
 
-    // SKIPPED `handleMouseEvent:`: (return, arg) shape not yet modelled
+    // SKIPPED `handleMouseEvent:`: msgSend shape `i8_id` not yet modelled
     fn wants_to_delay_text_change_notifications(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToDelayTextChangeNotifications\0"))) != (0 as i8);
     }
@@ -160,7 +165,10 @@ impl TextInput {
     }
 
     // SKIPPED `doCommandBySelector:`: param `SEL _Null_unspecified` — unmapped type `SEL`
-    // SKIPPED `setMarkedText:selectedRange:`: (return, arg) shape not yet modelled
+    fn set_marked_text_selected_range(this, string: *u8, sel_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:\0")), string, sel_range);
+    }
+
     fn unmark_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unmarkText\0")));
     }
@@ -189,8 +197,8 @@ impl TextInput {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("selectedRange\0")));
     }
 
-    // SKIPPED `firstRectForCharacterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `characterIndexForPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `firstRectForCharacterRange:`: msgSend shape `rect_range` not yet modelled
+    // SKIPPED `characterIndexForPoint:`: msgSend shape `u64_point` not yet modelled
     fn valid_attributes_for_marked_text(this) -> option::Option[Array] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("validAttributesForMarkedText\0")));
         if obj == { 0 as *u8 } {

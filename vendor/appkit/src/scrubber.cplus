@@ -109,8 +109,8 @@ impl Scrubber {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItemsAtIndexes:\0")), indexes);
     }
 
-    // SKIPPED `moveItemAtIndex:toIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollItemAtIndex:toAlignment:`: (return, arg) shape not yet modelled
+    // SKIPPED `moveItemAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `scrollItemAtIndex:toAlignment:`: msgSend shape `void_i64_i64` not yet modelled
     fn item_view_for_item_at_index(this, index: i64) -> option::Option[ScrubberItemView] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemViewForItemAtIndex:\0")), index);
         if obj == { 0 as *u8 } {
@@ -120,8 +120,18 @@ impl Scrubber {
     }
 
     // SKIPPED `registerClass:forItemIdentifier:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `registerNib:forItemIdentifier:`: (return, arg) shape not yet modelled
-    // SKIPPED `makeItemWithIdentifier:owner:`: (return, arg) shape not yet modelled
+    fn register_nib_for_item_identifier(this, nib: Nib, item_identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemIdentifier:\0")), nib.raw(), bridge::nsstring(item_identifier));
+    }
+
+    fn make_item_with_identifier_owner(this, item_identifier: str, owner: *u8) -> option::Option[ScrubberItemView] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeItemWithIdentifier:owner:\0")), bridge::nsstring(item_identifier), owner);
+        if obj == { 0 as *u8 } {
+            return option::Option[ScrubberItemView]::None;
+        }
+        return option::some(ScrubberItemView::from_raw(obj));
+    }
+
     fn data_source(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
         return bridge::obj_option(obj);
@@ -160,17 +170,26 @@ impl Scrubber {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("selectedIndex\0")));
     }
 
-    // SKIPPED `setSelectedIndex:`: (return, arg) shape not yet modelled
+    fn set_selected_index(this, selected_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectedIndex:\0")), selected_index);
+    }
+
     fn mode(this) -> ScrubberMode {
         return scrubber_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mode\0"))));
     }
 
-    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn set_mode(this, mode: ScrubberMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMode:\0")), scrubber_mode_raw(mode));
+    }
+
     fn item_alignment(this) -> ScrubberAlignment {
         return scrubber_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("itemAlignment\0"))));
     }
 
-    // SKIPPED `setItemAlignment:`: (return, arg) shape not yet modelled
+    fn set_item_alignment(this, item_alignment: ScrubberAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setItemAlignment:\0")), scrubber_alignment_raw(item_alignment));
+    }
+
     fn is_continuous(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isContinuous\0"))) != (0 as i8);
     }

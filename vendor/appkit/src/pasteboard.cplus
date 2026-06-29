@@ -101,26 +101,35 @@ impl Pasteboard {
         rt::msg_void(this._obj, rt::sel(#str_ptr("releaseGlobally\0")));
     }
 
-    // SKIPPED `prepareForNewContentsWithOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `prepareForNewContentsWithOptions:`: msgSend shape `i64_u64` not yet modelled
     fn clear_contents(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("clearContents\0")));
     }
 
-    // SKIPPED `writeObjects:`: param `NSArray<id<NSPasteboardWriting>> * _Nonnull` — generic collection
+    // SKIPPED `writeObjects:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `readObjectsForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
-    // SKIPPED `indexOfPasteboardItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `canReadItemWithDataConformingToTypes:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfPasteboardItem:`: msgSend shape `u64_id` not yet modelled
+    // SKIPPED `canReadItemWithDataConformingToTypes:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `canReadObjectForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
-    // SKIPPED `declareTypes:owner:`: (return, arg) shape not yet modelled
-    // SKIPPED `addTypes:owner:`: (return, arg) shape not yet modelled
+    // SKIPPED `declareTypes:owner:`: msgSend shape `i64_id_id` not yet modelled
+    // SKIPPED `addTypes:owner:`: msgSend shape `i64_id_id` not yet modelled
     fn available_type_from_array(this, types: vec::Vec[text::Text]) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("availableTypeFromArray:\0")), bridge::nsarray_of_text(types));
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setData:forType:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPropertyList:forType:`: (return, arg) shape not yet modelled
-    // SKIPPED `setString:forType:`: (return, arg) shape not yet modelled
+    fn set_data_for_type(this, data: Data, data_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setData:forType:\0")), data.raw(), bridge::nsstring(data_type)) != (0 as i8);
+    }
+
+    fn set_property_list_for_type(this, plist: *u8, data_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setPropertyList:forType:\0")), plist, bridge::nsstring(data_type)) != (0 as i8);
+    }
+
+    fn set_string_for_type(this, string: str, data_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setString:forType:\0")), bridge::nsstring(string), bridge::nsstring(data_type)) != (0 as i8);
+    }
+
     fn data_for_type(this, data_type: str) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("dataForType:\0")), bridge::nsstring(data_type));
         if obj == { 0 as *u8 } {
@@ -192,14 +201,21 @@ impl Pasteboard {
         return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringFile:\0")), bridge::nsstring(filename)) };
     }
 
-    // SKIPPED `pasteboardByFilteringData:ofType:`: (return, arg) shape not yet modelled
+    fn pasteboard_by_filtering_data_of_type(data: Data, type_: str) -> Pasteboard {
+        return Pasteboard { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringData:ofType:\0")), data.raw(), bridge::nsstring(type_)) };
+    }
+
     fn pasteboard_by_filtering_types_in_pasteboard(pboard: Pasteboard) -> Pasteboard {
         return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringTypesInPasteboard:\0")), pboard.raw()) };
     }
 
-    // SKIPPED `writeFileContents:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFileContentsType:toFile:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeFileWrapper:`: (return, arg) shape not yet modelled
+    // SKIPPED `writeFileContents:`: msgSend shape `i8_id` not yet modelled
+    fn read_file_contents_type_to_file(this, type_: str, filename: str) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("readFileContentsType:toFile:\0")), bridge::nsstring(type_), bridge::nsstring(filename));
+        return bridge::to_text_option(ns);
+    }
+
+    // SKIPPED `writeFileWrapper:`: msgSend shape `i8_id` not yet modelled
     fn read_file_wrapper(this) -> option::Option[FileWrapper] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("readFileWrapper\0")));
         if obj == { 0 as *u8 } {
@@ -246,7 +262,7 @@ impl PasteboardWriting {
         return out;
     }
 
-    // SKIPPED `writingOptionsForType:pasteboard:`: (return, arg) shape not yet modelled
+    // SKIPPED `writingOptionsForType:pasteboard:`: msgSend shape `u64_id_id` not yet modelled
     fn pasteboard_property_list_for_type(this, type_: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("pasteboardPropertyListForType:\0")), bridge::nsstring(type_));
         return bridge::obj_option(obj);
@@ -264,7 +280,10 @@ impl PasteboardTypeOwner {
 
     fn from_raw(ptr: *u8) -> PasteboardTypeOwner { return PasteboardTypeOwner { _obj: ptr }; }
 
-    // SKIPPED `pasteboard:provideDataForType:`: (return, arg) shape not yet modelled
+    fn pasteboard_provide_data_for_type(this, sender: Pasteboard, type_: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("pasteboard:provideDataForType:\0")), sender.raw(), bridge::nsstring(type_));
+    }
+
     fn pasteboard_changed_owner(this, sender: Pasteboard) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("pasteboardChangedOwner:\0")), sender.raw());
     }
@@ -295,7 +314,11 @@ impl PasteboardReading {
         return out;
     }
 
-    // SKIPPED `readingOptionsForType:pasteboard:`: (return, arg) shape not yet modelled
-    // SKIPPED `initWithPasteboardPropertyList:ofType:`: (return, arg) shape not yet modelled
+    // SKIPPED `readingOptionsForType:pasteboard:`: msgSend shape `u64_id_id` not yet modelled
+    fn init_with_pasteboard_property_list_of_type(this, property_list: *u8, type_: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithPasteboardPropertyList:ofType:\0")), property_list, bridge::nsstring(type_));
+        return bridge::obj_option(obj);
+    }
+
 }
 

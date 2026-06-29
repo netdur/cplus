@@ -265,7 +265,10 @@ impl GraphicsContext {
         return image_interpolation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageInterpolation\0"))));
     }
 
-    // SKIPPED `setImageInterpolation:`: (return, arg) shape not yet modelled
+    fn set_image_interpolation(this, image_interpolation: ImageInterpolation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageInterpolation:\0")), image_interpolation_raw(image_interpolation));
+    }
+
     fn pattern_phase(this) -> rt::Point {
         return rt::msg_point(this._obj, rt::sel(#str_ptr("patternPhase\0")));
     }
@@ -278,12 +281,18 @@ impl GraphicsContext {
         return compositing_operation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("compositingOperation\0"))));
     }
 
-    // SKIPPED `setCompositingOperation:`: (return, arg) shape not yet modelled
+    fn set_compositing_operation(this, compositing_operation: CompositingOperation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCompositingOperation:\0")), compositing_operation_raw(compositing_operation));
+    }
+
     fn color_rendering_intent(this) -> ColorRenderingIntent {
         return color_rendering_intent_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("colorRenderingIntent\0"))));
     }
 
-    // SKIPPED `setColorRenderingIntent:`: (return, arg) shape not yet modelled
+    fn set_color_rendering_intent(this, color_rendering_intent: ColorRenderingIntent) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setColorRenderingIntent:\0")), color_rendering_intent_raw(color_rendering_intent));
+    }
+
     fn c_i_context(this) -> option::Option[CIContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("CIContext\0")));
         if obj == { 0 as *u8 } {
@@ -292,7 +301,10 @@ impl GraphicsContext {
         return option::some(CIContext::from_raw(obj));
     }
 
-    // SKIPPED `setGraphicsState:`: (return, arg) shape not yet modelled
+    fn set_graphics_state(g_state: i64) {
+        rt::msg_void_i64(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("setGraphicsState:\0")), g_state);
+    }
+
     fn focus_stack(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("focusStack\0")));
         return bridge::obj_option(obj);
@@ -302,7 +314,7 @@ impl GraphicsContext {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFocusStack:\0")), stack);
     }
 
-    // SKIPPED `graphicsContextWithGraphicsPort:flipped:`: (return, arg) shape not yet modelled
+    // SKIPPED `graphicsContextWithGraphicsPort:flipped:`: msgSend shape `id_id_i8` not yet modelled
     fn graphics_context_with_window(window: Window) -> GraphicsContext {
         return GraphicsContext { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithWindow:\0")), window.raw()) };
     }

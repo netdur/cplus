@@ -100,7 +100,10 @@ impl ColorPickerTouchBarItem {
         return ColorPickerTouchBarItem { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSColorPickerTouchBarItem\0")), rt::sel(#str_ptr("strokeColorPickerWithIdentifier:\0")), bridge::nsstring(identifier)) };
     }
 
-    // SKIPPED `colorPickerWithIdentifier:buttonImage:`: (return, arg) shape not yet modelled
+    fn color_picker_with_identifier_button_image(identifier: str, image: Image) -> ColorPickerTouchBarItem {
+        return ColorPickerTouchBarItem { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSColorPickerTouchBarItem\0")), rt::sel(#str_ptr("colorPickerWithIdentifier:buttonImage:\0")), bridge::nsstring(identifier), image.raw()) };
+    }
+
     fn color(this) -> Color {
         return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("color\0"))));
     }

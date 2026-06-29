@@ -43,9 +43,9 @@ impl FontCollection {
         return option::some(FontCollection { _obj: obj });
     }
 
-    // SKIPPED `showFontCollection:withName:visibility:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `hideFontCollectionWithName:visibility:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `renameFontCollectionWithName:visibility:toName:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `showFontCollection:withName:visibility:error:`: msgSend shape `i8_id_id_u64_id` not yet modelled
+    // SKIPPED `hideFontCollectionWithName:visibility:error:`: msgSend shape `i8_id_u64_id` not yet modelled
+    // SKIPPED `renameFontCollectionWithName:visibility:toName:error:`: msgSend shape `i8_id_u64_id_id` not yet modelled
     fn font_collection_with_name(name: str) -> option::Option[FontCollection] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithName:\0")), bridge::nsstring(name));
         if obj == { 0 as *u8 } {

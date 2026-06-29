@@ -64,13 +64,13 @@ impl ArrayController {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("arrangeObjects:\0")), objects);
     }
 
-    // SKIPPED `setSelectionIndexes:`: (return, arg) shape not yet modelled
-    // SKIPPED `setSelectionIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `addSelectionIndexes:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeSelectionIndexes:`: (return, arg) shape not yet modelled
-    // SKIPPED `setSelectedObjects:`: (return, arg) shape not yet modelled
-    // SKIPPED `addSelectedObjects:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeSelectedObjects:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `setSelectionIndex:`: msgSend shape `i8_u64` not yet modelled
+    // SKIPPED `addSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `removeSelectionIndexes:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `setSelectedObjects:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `addSelectedObjects:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `removeSelectedObjects:`: msgSend shape `i8_id` not yet modelled
     fn add(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("add:\0")), sender);
     }
@@ -99,9 +99,18 @@ impl ArrayController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addObjects:\0")), objects);
     }
 
-    // SKIPPED `insertObject:atArrangedObjectIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `insertObjects:atArrangedObjectIndexes:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeObjectAtArrangedObjectIndex:`: (return, arg) shape not yet modelled
+    fn insert_object_at_arranged_object_index(this, object: *u8, index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndex:\0")), object, index);
+    }
+
+    fn insert_objects_at_arranged_object_indexes(this, objects: *u8, indexes: IndexSet) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObjects:atArrangedObjectIndexes:\0")), objects, indexes.raw());
+    }
+
+    fn remove_object_at_arranged_object_index(this, index: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("removeObjectAtArrangedObjectIndex:\0")), index);
+    }
+
     fn remove_objects_at_arranged_object_indexes(this, indexes: IndexSet) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeObjectsAtArrangedObjectIndexes:\0")), indexes.raw());
     }

@@ -58,10 +58,10 @@ impl SplitView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("adjustSubviews\0")));
     }
 
-    // SKIPPED `isSubviewCollapsed:`: (return, arg) shape not yet modelled
-    // SKIPPED `minPossiblePositionOfDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `maxPossiblePositionOfDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPosition:ofDividerAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `isSubviewCollapsed:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `minPossiblePositionOfDividerAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `maxPossiblePositionOfDividerAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `setPosition:ofDividerAtIndex:`: msgSend shape `void_f64_i64` not yet modelled
     // SKIPPED `holdingPriorityForSubviewAtIndex:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
     // SKIPPED `setHoldingPriority:forSubviewAtIndex:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
     fn is_vertical(this) -> bool {
@@ -76,7 +76,10 @@ impl SplitView {
         return split_view_divider_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dividerStyle\0"))));
     }
 
-    // SKIPPED `setDividerStyle:`: (return, arg) shape not yet modelled
+    fn set_divider_style(this, divider_style: SplitViewDividerStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDividerStyle:\0")), split_view_divider_style_raw(divider_style));
+    }
+
     // SKIPPED `autosaveName`: return `API_AVAILABLE NSSplitViewAutosaveName` — unmapped type `API_AVAILABLE NSSplitViewAutosaveName`
     // SKIPPED `setAutosaveName:`: param `API_AVAILABLE NSSplitViewAutosaveName` — unmapped type `API_AVAILABLE NSSplitViewAutosaveName`
     fn delegate(this) -> option::Option[*u8] {
@@ -100,7 +103,7 @@ impl SplitView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
-    // SKIPPED `insertArrangedSubview:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertArrangedSubview:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_arranged_subview(this, view: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
     }

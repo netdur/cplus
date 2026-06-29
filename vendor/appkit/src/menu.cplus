@@ -125,9 +125,9 @@ impl Menu {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `popUpContextMenu:withEvent:forView:`: (return, arg) shape not yet modelled
-    // SKIPPED `popUpContextMenu:withEvent:forView:withFont:`: (return, arg) shape not yet modelled
-    // SKIPPED `popUpMenuPositioningItem:atLocation:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `popUpContextMenu:withEvent:forView:`: msgSend shape `void_id_id_id` not yet modelled
+    // SKIPPED `popUpContextMenu:withEvent:forView:withFont:`: msgSend shape `void_id_id_id_id` not yet modelled
+    // SKIPPED `popUpMenuPositioningItem:atLocation:inView:`: msgSend shape `i8_id_point_id` not yet modelled
     fn set_menu_bar_visible(visible: bool) {
         rt::msg_void_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("setMenuBarVisible:\0")), visible as i8);
     }
@@ -136,19 +136,25 @@ impl Menu {
         return rt::msg_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("menuBarVisible\0"))) != (0 as i8);
     }
 
-    // SKIPPED `insertItem:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn add_item(this, new_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItem:\0")), new_item);
     }
 
     // SKIPPED `insertItemWithTitle:action:keyEquivalent:atIndex:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `addItemWithTitle:action:keyEquivalent:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `removeItemAtIndex:`: (return, arg) shape not yet modelled
+    fn remove_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
+    }
+
     fn remove_item(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItem:\0")), item);
     }
 
-    // SKIPPED `setSubmenu:forItem:`: (return, arg) shape not yet modelled
+    fn set_submenu_for_item(this, menu: Menu, item: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSubmenu:forItem:\0")), menu.raw(), item);
+    }
+
     fn remove_all_items(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
@@ -158,11 +164,11 @@ impl Menu {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `indexOfItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTitle:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTag:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithRepresentedObject:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithSubmenu:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfItem:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTitle:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTag:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `indexOfItemWithRepresentedObject:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithSubmenu:`: msgSend shape `i64_id` not yet modelled
     // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn item_with_title(this, title: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemWithTitle:\0")), bridge::nsstring(title));
@@ -178,12 +184,15 @@ impl Menu {
         rt::msg_void(this._obj, rt::sel(#str_ptr("update\0")));
     }
 
-    // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
+    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
     fn item_changed(this, item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("itemChanged:\0")), item);
     }
 
-    // SKIPPED `performActionForItemAtIndex:`: (return, arg) shape not yet modelled
+    fn perform_action_for_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), index);
+    }
+
     fn cancel_tracking(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("cancelTracking\0")));
     }
@@ -292,19 +301,28 @@ impl Menu {
         return user_interface_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("userInterfaceLayoutDirection\0"))));
     }
 
-    // SKIPPED `setUserInterfaceLayoutDirection:`: (return, arg) shape not yet modelled
+    fn set_user_interface_layout_direction(this, user_interface_layout_direction: UserInterfaceLayoutDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), user_interface_layout_direction_raw(user_interface_layout_direction));
+    }
+
     // SKIPPED `paletteMenuWithColors:titles:selectionHandler:`: block method with non-void return
     // SKIPPED `paletteMenuWithColors:titles:templateImage:selectionHandler:`: block method with non-void return
     fn presentation_style(this) -> MenuPresentationStyle {
         return menu_presentation_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("presentationStyle\0"))));
     }
 
-    // SKIPPED `setPresentationStyle:`: (return, arg) shape not yet modelled
+    fn set_presentation_style(this, presentation_style: MenuPresentationStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPresentationStyle:\0")), menu_presentation_style_raw(presentation_style));
+    }
+
     fn selection_mode(this) -> MenuSelectionMode {
         return menu_selection_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("selectionMode\0"))));
     }
 
-    // SKIPPED `setSelectionMode:`: (return, arg) shape not yet modelled
+    fn set_selection_mode(this, selection_mode: MenuSelectionMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectionMode:\0")), menu_selection_mode_raw(selection_mode));
+    }
+
     // SKIPPED `selectedItems`: return `API_AVAILABLE NSArray<NSMenuItem *> *` — generic collection
     // SKIPPED `setSelectedItems:`: param `API_AVAILABLE NSArray<NSMenuItem *> *` — generic collection
     fn submenu_action(this, sender: *u8) {
@@ -367,7 +385,7 @@ impl Menu {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
 
-    // SKIPPED `locationForSubmenu:`: (return, arg) shape not yet modelled
+    // SKIPPED `locationForSubmenu:`: msgSend shape `point_id` not yet modelled
     fn help_requested(this, event_ptr: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("helpRequested:\0")), event_ptr.raw());
     }
@@ -501,6 +519,6 @@ impl MenuItemValidation {
 
     fn from_raw(ptr: *u8) -> MenuItemValidation { return MenuItemValidation { _obj: ptr }; }
 
-    // SKIPPED `validateMenuItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `validateMenuItem:`: msgSend shape `i8_id` not yet modelled
 }
 

@@ -127,7 +127,10 @@ impl Animation {
         return animation_blocking_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("animationBlockingMode\0"))));
     }
 
-    // SKIPPED `setAnimationBlockingMode:`: (return, arg) shape not yet modelled
+    fn set_animation_blocking_mode(this, animation_blocking_mode: AnimationBlockingMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAnimationBlockingMode:\0")), animation_blocking_mode_raw(animation_blocking_mode));
+    }
+
     fn frame_rate(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("frameRate\0")));
     }
@@ -140,7 +143,10 @@ impl Animation {
         return animation_curve_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("animationCurve\0"))));
     }
 
-    // SKIPPED `setAnimationCurve:`: (return, arg) shape not yet modelled
+    fn set_animation_curve(this, animation_curve: AnimationCurve) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAnimationCurve:\0")), animation_curve_raw(animation_curve));
+    }
+
     fn current_value(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("currentValue\0")));
     }

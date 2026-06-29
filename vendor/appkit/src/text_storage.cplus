@@ -10,6 +10,25 @@ import "stdlib/option" as option;
 const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u64;
 const text_storage_edit_actions_n_s_text_storage_edited_characters: u64 = 2 as u64;
 
+#[repr(C)]
+struct TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_invoke(block: *u8) {
+    let bl: *TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block = { block as *TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block };
+    let f: fn(*u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx);
+    return;
+}
+
 // `NSArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Array {
     opaque _obj: *u8,
@@ -64,13 +83,19 @@ impl TextStorage {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeLayoutManager:\0")), a_layout_manager.raw());
     }
 
-    // SKIPPED `edited:range:changeInLength:`: (return, arg) shape not yet modelled
+    // SKIPPED `edited:range:changeInLength:`: msgSend shape `void_u64_range_i64` not yet modelled
     fn process_editing(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("processEditing\0")));
     }
 
-    // SKIPPED `invalidateAttributesInRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `ensureAttributesAreFixedInRange:`: (return, arg) shape not yet modelled
+    fn invalidate_attributes_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateAttributesInRange:\0")), range);
+    }
+
+    fn ensure_attributes_are_fixed_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureAttributesAreFixedInRange:\0")), range);
+    }
+
     // SKIPPED `layoutManagers`: return `NSArray<NSLayoutManager *> * _Nonnull` — generic collection
     fn edited_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("editedMask\0")));
@@ -111,8 +136,15 @@ impl TextStorageObserving {
 
     fn from_raw(ptr: *u8) -> TextStorageObserving { return TextStorageObserving { _obj: ptr }; }
 
-    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `performEditingTransactionForTextStorage:usingBlock:`: block-method msgSend shape not modelled
+    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: msgSend shape `void_id_u64_range_i64_range` not yet modelled
+    fn perform_editing_transaction_for_text_storage_using_block(this, text_storage: TextStorage, cb: fn(*u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block = TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performEditingTransactionForTextStorage:usingBlock:\0")), text_storage.raw(), bp);
+        return;
+    }
+
     fn text_storage(this) -> option::Option[TextStorage] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textStorage\0")));
         if obj == { 0 as *u8 } {

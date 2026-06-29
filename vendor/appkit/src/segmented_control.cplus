@@ -201,9 +201,9 @@ impl SegmentedControl {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectSegmentWithTag:\0")), tag) != (0 as i8);
     }
 
-    // SKIPPED `setWidth:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `widthForSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `setImage:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setWidth:forSegment:`: msgSend shape `void_f64_i64` not yet modelled
+    // SKIPPED `widthForSegment:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `setImage:forSegment:`: msgSend shape `void_id_i64` not yet modelled
     fn image_for_segment(this, segment: i64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageForSegment:\0")), segment);
         if obj == { 0 as *u8 } {
@@ -212,62 +212,71 @@ impl SegmentedControl {
         return option::some(Image::from_raw(obj));
     }
 
-    // SKIPPED `setImageScaling:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `imageScalingForSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLabel:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setImageScaling:forSegment:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `imageScalingForSegment:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `setLabel:forSegment:`: msgSend shape `void_id_i64` not yet modelled
     fn label_for_segment(this, segment: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("labelForSegment:\0")), segment);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setMenu:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMenu:forSegment:`: msgSend shape `void_id_i64` not yet modelled
     fn menu_for_segment(this, segment: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("menuForSegment:\0")), segment);
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `setSelected:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSelected:forSegment:`: msgSend shape `void_i8_i64` not yet modelled
     fn is_selected_for_segment(this, segment: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isSelectedForSegment:\0")), segment) != (0 as i8);
     }
 
-    // SKIPPED `setEnabled:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setEnabled:forSegment:`: msgSend shape `void_i8_i64` not yet modelled
     fn is_enabled_for_segment(this, segment: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledForSegment:\0")), segment) != (0 as i8);
     }
 
-    // SKIPPED `setToolTip:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setToolTip:forSegment:`: msgSend shape `void_id_i64` not yet modelled
     fn tool_tip_for_segment(this, segment: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("toolTipForSegment:\0")), segment);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setTag:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `tagForSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `setShowsMenuIndicator:forSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setTag:forSegment:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `tagForSegment:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `setShowsMenuIndicator:forSegment:`: msgSend shape `void_i8_i64` not yet modelled
     fn shows_menu_indicator_for_segment(this, segment: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("showsMenuIndicatorForSegment:\0")), segment) != (0 as i8);
     }
 
-    // SKIPPED `setAlignment:forSegment:`: (return, arg) shape not yet modelled
-    // SKIPPED `alignmentForSegment:`: (return, arg) shape not yet modelled
+    // SKIPPED `setAlignment:forSegment:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `alignmentForSegment:`: msgSend shape `i64_i64` not yet modelled
     // SKIPPED `compressWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     // SKIPPED `minimumSizeWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     fn segment_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
     }
 
-    // SKIPPED `setSegmentCount:`: (return, arg) shape not yet modelled
+    fn set_segment_count(this, segment_count: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSegmentCount:\0")), segment_count);
+    }
+
     fn selected_segment(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("selectedSegment\0")));
     }
 
-    // SKIPPED `setSelectedSegment:`: (return, arg) shape not yet modelled
+    fn set_selected_segment(this, selected_segment: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectedSegment:\0")), selected_segment);
+    }
+
     fn segment_style(this) -> SegmentStyle {
         return segment_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("segmentStyle\0"))));
     }
 
-    // SKIPPED `setSegmentStyle:`: (return, arg) shape not yet modelled
+    fn set_segment_style(this, segment_style: SegmentStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSegmentStyle:\0")), segment_style_raw(segment_style));
+    }
+
     fn is_spring_loaded(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSpringLoaded\0"))) != (0 as i8);
     }
@@ -280,7 +289,10 @@ impl SegmentedControl {
         return segment_switch_tracking_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("trackingMode\0"))));
     }
 
-    // SKIPPED `setTrackingMode:`: (return, arg) shape not yet modelled
+    fn set_tracking_mode(this, tracking_mode: SegmentSwitchTracking) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTrackingMode:\0")), segment_switch_tracking_raw(tracking_mode));
+    }
+
     fn double_value_for_selected_segment(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("doubleValueForSelectedSegment\0")));
     }
@@ -301,7 +313,10 @@ impl SegmentedControl {
         return segment_distribution_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("segmentDistribution\0"))));
     }
 
-    // SKIPPED `setSegmentDistribution:`: (return, arg) shape not yet modelled
+    fn set_segment_distribution(this, segment_distribution: SegmentDistribution) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSegmentDistribution:\0")), segment_distribution_raw(segment_distribution));
+    }
+
     fn active_compression_options(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("activeCompressionOptions\0")));
     }
@@ -310,7 +325,10 @@ impl SegmentedControl {
         return control_border_shape_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("borderShape\0"))));
     }
 
-    // SKIPPED `setBorderShape:`: (return, arg) shape not yet modelled
+    fn set_border_shape(this, border_shape: ControlBorderShape) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderShape:\0")), control_border_shape_raw(border_shape));
+    }
+
     // SKIPPED `segmentedControlWithLabels:trackingMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
 }

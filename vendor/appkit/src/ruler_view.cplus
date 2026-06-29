@@ -74,8 +74,11 @@ impl RulerView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeMarker:\0")), marker.raw());
     }
 
-    // SKIPPED `trackMarker:withMouseEvent:`: (return, arg) shape not yet modelled
-    // SKIPPED `moveRulerlineFromLocation:toLocation:`: (return, arg) shape not yet modelled
+    fn track_marker_with_mouse_event(this, marker: RulerMarker, event: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("trackMarker:withMouseEvent:\0")), marker.raw(), event) != (0 as i8);
+    }
+
+    // SKIPPED `moveRulerlineFromLocation:toLocation:`: msgSend shape `void_f64_f64` not yet modelled
     fn invalidate_hash_marks(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateHashMarks\0")));
     }
@@ -104,7 +107,10 @@ impl RulerView {
         return ruler_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
 
-    // SKIPPED `setOrientation:`: (return, arg) shape not yet modelled
+    fn set_orientation(this, orientation: RulerOrientation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setOrientation:\0")), ruler_orientation_raw(orientation));
+    }
+
     fn baseline_location(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("baselineLocation\0")));
     }

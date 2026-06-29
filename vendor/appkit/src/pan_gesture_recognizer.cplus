@@ -16,18 +16,24 @@ impl PanGestureRecognizer {
 
     fn from_raw(ptr: *u8) -> PanGestureRecognizer { return PanGestureRecognizer { _obj: ptr }; }
 
-    // SKIPPED `translationInView:`: (return, arg) shape not yet modelled
-    // SKIPPED `setTranslation:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `velocityInView:`: (return, arg) shape not yet modelled
+    // SKIPPED `translationInView:`: msgSend shape `point_id` not yet modelled
+    // SKIPPED `setTranslation:inView:`: msgSend shape `void_point_id` not yet modelled
+    // SKIPPED `velocityInView:`: msgSend shape `point_id` not yet modelled
     fn button_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }
 
-    // SKIPPED `setButtonMask:`: (return, arg) shape not yet modelled
+    fn set_button_mask(this, button_mask: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setButtonMask:\0")), button_mask);
+    }
+
     fn number_of_touches_required(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTouchesRequired\0")));
     }
 
-    // SKIPPED `setNumberOfTouchesRequired:`: (return, arg) shape not yet modelled
+    fn set_number_of_touches_required(this, number_of_touches_required: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfTouchesRequired:\0")), number_of_touches_required);
+    }
+
 }
 

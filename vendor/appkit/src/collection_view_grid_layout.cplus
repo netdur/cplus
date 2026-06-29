@@ -6,6 +6,20 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_collection_view_grid_layout_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_collection_view_grid_layout_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
     opaque _obj: *u8,
@@ -28,8 +42,14 @@ impl CollectionViewGridLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewGridLayout { return CollectionViewGridLayout { _obj: ptr }; }
 
-    // SKIPPED `margins`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setMargins:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn margins(this) -> EdgeInsets {
+        return objc_msg_collection_view_grid_layout_EdgeInsets(this._obj, rt::sel(#str_ptr("margins\0")));
+    }
+
+    fn set_margins(this, margins: EdgeInsets) {
+        objc_msg_collection_view_grid_layout_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setMargins:\0")), margins);
+    }
+
     fn minimum_interitem_spacing(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("minimumInteritemSpacing\0")));
     }
@@ -50,12 +70,18 @@ impl CollectionViewGridLayout {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maximumNumberOfRows\0")));
     }
 
-    // SKIPPED `setMaximumNumberOfRows:`: (return, arg) shape not yet modelled
+    fn set_maximum_number_of_rows(this, maximum_number_of_rows: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaximumNumberOfRows:\0")), maximum_number_of_rows);
+    }
+
     fn maximum_number_of_columns(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maximumNumberOfColumns\0")));
     }
 
-    // SKIPPED `setMaximumNumberOfColumns:`: (return, arg) shape not yet modelled
+    fn set_maximum_number_of_columns(this, maximum_number_of_columns: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaximumNumberOfColumns:\0")), maximum_number_of_columns);
+    }
+
     fn minimum_item_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("minimumItemSize\0")));
     }

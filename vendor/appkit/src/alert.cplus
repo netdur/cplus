@@ -28,6 +28,25 @@ fn alert_style_from_raw(raw: i64) -> AlertStyle {
     return AlertStyle::Warning;
 }
 
+#[repr(C)]
+struct Alert_begin_sheet_modal_for_window_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Alert_begin_sheet_modal_for_window_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *Alert_begin_sheet_modal_for_window_completion_handler_block = { block as *Alert_begin_sheet_modal_for_window_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSTextField` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextField {
     opaque _obj: *u8,
@@ -123,7 +142,14 @@ impl Alert {
     }
 
     // SKIPPED `runModal`: return `NSModalResponse` — unmapped type `NSModalResponse`
-    // SKIPPED `beginSheetModalForWindow:completionHandler:`: block-method msgSend shape not modelled
+    fn begin_sheet_modal_for_window_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Alert_begin_sheet_modal_for_window_completion_handler_block = Alert_begin_sheet_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), sheet_window.raw(), bp);
+        return;
+    }
+
     fn message_text(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("messageText\0")));
         return bridge::to_text(ns);
@@ -155,7 +181,10 @@ impl Alert {
         return alert_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alertStyle\0"))));
     }
 
-    // SKIPPED `setAlertStyle:`: (return, arg) shape not yet modelled
+    fn set_alert_style(this, alert_style: AlertStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlertStyle:\0")), alert_style_raw(alert_style));
+    }
+
     fn shows_help(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("showsHelp\0"))) != (0 as i8);
     }
@@ -206,7 +235,7 @@ impl Alert {
         return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }
 
-    // SKIPPED `alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:`: (return, arg) shape not yet modelled
+    // SKIPPED `alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:`: msgSend shape `id_id_id_id_id_id` not yet modelled
     // SKIPPED `beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
 }
 

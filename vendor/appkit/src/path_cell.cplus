@@ -139,15 +139,18 @@ impl PathCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectValue:\0")), obj);
     }
 
-    // SKIPPED `rectOfPathComponentCell:withFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `pathComponentCellAtPoint:withFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `mouseEntered:withFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `mouseExited:withFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectOfPathComponentCell:withFrame:inView:`: msgSend shape `rect_id_rect_id` not yet modelled
+    // SKIPPED `pathComponentCellAtPoint:withFrame:inView:`: msgSend shape `id_point_rect_id` not yet modelled
+    // SKIPPED `mouseEntered:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
+    // SKIPPED `mouseExited:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
     fn path_style(this) -> PathStyle {
         return path_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pathStyle\0"))));
     }
 
-    // SKIPPED `setPathStyle:`: (return, arg) shape not yet modelled
+    fn set_path_style(this, path_style: PathStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPathStyle:\0")), path_style_raw(path_style));
+    }
+
     fn u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
         if obj == { 0 as *u8 } {

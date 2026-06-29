@@ -88,7 +88,10 @@ impl DraggingSession {
         return dragging_formation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingFormation\0"))));
     }
 
-    // SKIPPED `setDraggingFormation:`: (return, arg) shape not yet modelled
+    fn set_dragging_formation(this, dragging_formation: DraggingFormation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDraggingFormation:\0")), dragging_formation_raw(dragging_formation));
+    }
+
     fn animates_to_starting_positions_on_cancel_or_fail(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("animatesToStartingPositionsOnCancelOrFail\0"))) != (0 as i8);
     }
@@ -101,7 +104,10 @@ impl DraggingSession {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingLeaderIndex\0")));
     }
 
-    // SKIPPED `setDraggingLeaderIndex:`: (return, arg) shape not yet modelled
+    fn set_dragging_leader_index(this, dragging_leader_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDraggingLeaderIndex:\0")), dragging_leader_index);
+    }
+
     fn dragging_pasteboard(this) -> Pasteboard {
         return Pasteboard::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggingPasteboard\0"))));
     }

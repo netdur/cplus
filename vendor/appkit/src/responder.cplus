@@ -105,8 +105,12 @@ impl Responder {
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `performKeyEquivalent:`: (return, arg) shape not yet modelled
-    // SKIPPED `validRequestorForSendType:returnType:`: (return, arg) shape not yet modelled
+    // SKIPPED `performKeyEquivalent:`: msgSend shape `i8_id` not yet modelled
+    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
+        return bridge::obj_option(obj);
+    }
+
     fn mouse_down(this, event: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseDown:\0")), event.raw());
     }
@@ -265,7 +269,7 @@ impl Responder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("helpRequested:\0")), event_ptr.raw());
     }
 
-    // SKIPPED `shouldBeTreatedAsInkEvent:`: (return, arg) shape not yet modelled
+    // SKIPPED `shouldBeTreatedAsInkEvent:`: msgSend shape `i8_id` not yet modelled
     fn wants_scroll_events_for_swipe_tracking_on_axis(this, axis: EventGestureAxis) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("wantsScrollEventsForSwipeTrackingOnAxis:\0")), event_gesture_axis_raw(axis)) != (0 as i8);
     }
@@ -311,9 +315,12 @@ impl Responder {
         return option::some(UndoManager::from_raw(obj));
     }
 
-    // SKIPPED `validateProposedFirstResponder:forEvent:`: (return, arg) shape not yet modelled
+    fn validate_proposed_first_responder_for_event(this, responder: Responder, event: Event) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")), responder.raw(), event.raw()) != (0 as i8);
+    }
+
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `presentError:`: (return, arg) shape not yet modelled
+    // SKIPPED `presentError:`: msgSend shape `i8_id` not yet modelled
     fn will_present_error(this, error: Error) -> Error {
         return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
@@ -330,7 +337,7 @@ impl Responder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("showWritingTools:\0")), sender);
     }
 
-    // SKIPPED `performMnemonic:`: (return, arg) shape not yet modelled
+    // SKIPPED `performMnemonic:`: msgSend shape `i8_id` not yet modelled
     fn drop(ref this) {
         rt::release(this._obj);
     }

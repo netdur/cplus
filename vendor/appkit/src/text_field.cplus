@@ -44,8 +44,8 @@ impl TextField {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    // SKIPPED `textShouldBeginEditing:`: (return, arg) shape not yet modelled
-    // SKIPPED `textShouldEndEditing:`: (return, arg) shape not yet modelled
+    // SKIPPED `textShouldBeginEditing:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `textShouldEndEditing:`: msgSend shape `i8_id` not yet modelled
     fn text_did_begin_editing(this, notification: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidBeginEditing:\0")), notification);
     }
@@ -149,7 +149,10 @@ impl TextField {
         return text_field_bezel_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bezelStyle\0"))));
     }
 
-    // SKIPPED `setBezelStyle:`: (return, arg) shape not yet modelled
+    fn set_bezel_style(this, bezel_style: TextFieldBezelStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBezelStyle:\0")), text_field_bezel_style_raw(bezel_style));
+    }
+
     fn preferred_max_layout_width(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("preferredMaxLayoutWidth\0")));
     }
@@ -162,7 +165,10 @@ impl TextField {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("maximumNumberOfLines\0")));
     }
 
-    // SKIPPED `setMaximumNumberOfLines:`: (return, arg) shape not yet modelled
+    fn set_maximum_number_of_lines(this, maximum_number_of_lines: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaximumNumberOfLines:\0")), maximum_number_of_lines);
+    }
+
     fn allows_default_tightening_for_truncation(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsDefaultTighteningForTruncation\0"))) != (0 as i8);
     }
@@ -175,7 +181,10 @@ impl TextField {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0")));
     }
 
-    // SKIPPED `setLineBreakStrategy:`: (return, arg) shape not yet modelled
+    fn set_line_break_strategy(this, line_break_strategy: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setLineBreakStrategy:\0")), line_break_strategy);
+    }
+
     fn allows_writing_tools(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsWritingTools\0"))) != (0 as i8);
     }

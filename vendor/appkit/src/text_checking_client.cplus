@@ -109,72 +109,114 @@ impl TextInputTraits {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("autocorrectionType\0"))));
     }
 
-    // SKIPPED `setAutocorrectionType:`: (return, arg) shape not yet modelled
+    fn set_autocorrection_type(this, autocorrection_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAutocorrectionType:\0")), text_input_trait_type_raw(autocorrection_type));
+    }
+
     fn spell_checking_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("spellCheckingType\0"))));
     }
 
-    // SKIPPED `setSpellCheckingType:`: (return, arg) shape not yet modelled
+    fn set_spell_checking_type(this, spell_checking_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSpellCheckingType:\0")), text_input_trait_type_raw(spell_checking_type));
+    }
+
     fn grammar_checking_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("grammarCheckingType\0"))));
     }
 
-    // SKIPPED `setGrammarCheckingType:`: (return, arg) shape not yet modelled
+    fn set_grammar_checking_type(this, grammar_checking_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setGrammarCheckingType:\0")), text_input_trait_type_raw(grammar_checking_type));
+    }
+
     fn smart_quotes_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("smartQuotesType\0"))));
     }
 
-    // SKIPPED `setSmartQuotesType:`: (return, arg) shape not yet modelled
+    fn set_smart_quotes_type(this, smart_quotes_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSmartQuotesType:\0")), text_input_trait_type_raw(smart_quotes_type));
+    }
+
     fn smart_dashes_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("smartDashesType\0"))));
     }
 
-    // SKIPPED `setSmartDashesType:`: (return, arg) shape not yet modelled
+    fn set_smart_dashes_type(this, smart_dashes_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSmartDashesType:\0")), text_input_trait_type_raw(smart_dashes_type));
+    }
+
     fn smart_insert_delete_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("smartInsertDeleteType\0"))));
     }
 
-    // SKIPPED `setSmartInsertDeleteType:`: (return, arg) shape not yet modelled
+    fn set_smart_insert_delete_type(this, smart_insert_delete_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSmartInsertDeleteType:\0")), text_input_trait_type_raw(smart_insert_delete_type));
+    }
+
     fn text_replacement_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textReplacementType\0"))));
     }
 
-    // SKIPPED `setTextReplacementType:`: (return, arg) shape not yet modelled
+    fn set_text_replacement_type(this, text_replacement_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTextReplacementType:\0")), text_input_trait_type_raw(text_replacement_type));
+    }
+
     fn data_detection_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dataDetectionType\0"))));
     }
 
-    // SKIPPED `setDataDetectionType:`: (return, arg) shape not yet modelled
+    fn set_data_detection_type(this, data_detection_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDataDetectionType:\0")), text_input_trait_type_raw(data_detection_type));
+    }
+
     fn link_detection_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("linkDetectionType\0"))));
     }
 
-    // SKIPPED `setLinkDetectionType:`: (return, arg) shape not yet modelled
+    fn set_link_detection_type(this, link_detection_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLinkDetectionType:\0")), text_input_trait_type_raw(link_detection_type));
+    }
+
     fn text_completion_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textCompletionType\0"))));
     }
 
-    // SKIPPED `setTextCompletionType:`: (return, arg) shape not yet modelled
+    fn set_text_completion_type(this, text_completion_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTextCompletionType:\0")), text_input_trait_type_raw(text_completion_type));
+    }
+
     fn inline_prediction_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("inlinePredictionType\0"))));
     }
 
-    // SKIPPED `setInlinePredictionType:`: (return, arg) shape not yet modelled
+    fn set_inline_prediction_type(this, inline_prediction_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInlinePredictionType:\0")), text_input_trait_type_raw(inline_prediction_type));
+    }
+
     fn math_expression_completion_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mathExpressionCompletionType\0"))));
     }
 
-    // SKIPPED `setMathExpressionCompletionType:`: (return, arg) shape not yet modelled
+    fn set_math_expression_completion_type(this, math_expression_completion_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMathExpressionCompletionType:\0")), text_input_trait_type_raw(math_expression_completion_type));
+    }
+
     fn writing_tools_behavior(this) -> WritingToolsBehavior {
         return writing_tools_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("writingToolsBehavior\0"))));
     }
 
-    // SKIPPED `setWritingToolsBehavior:`: (return, arg) shape not yet modelled
+    fn set_writing_tools_behavior(this, writing_tools_behavior: WritingToolsBehavior) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setWritingToolsBehavior:\0")), writing_tools_behavior_raw(writing_tools_behavior));
+    }
+
     fn allowed_writing_tools_result_options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("allowedWritingToolsResultOptions\0")));
     }
 
-    // SKIPPED `setAllowedWritingToolsResultOptions:`: (return, arg) shape not yet modelled
+    fn set_allowed_writing_tools_result_options(this, allowed_writing_tools_result_options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setAllowedWritingToolsResultOptions:\0")), allowed_writing_tools_result_options);
+    }
+
 }
 
 // `NSTextCheckingClient` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -190,12 +232,18 @@ impl TextCheckingClient {
     // SKIPPED `annotatedSubstringForProposedRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `setAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
     // SKIPPED `addAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
-    // SKIPPED `removeAnnotation:range:`: (return, arg) shape not yet modelled
+    fn remove_annotation_range(this, annotation_name: str, range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("removeAnnotation:range:\0")), bridge::nsstring(annotation_name), range);
+    }
+
     fn replace_characters_in_range_with_annotated_string(this, range: rt::Range, annotated_string: AttributedString) {
         rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withAnnotatedString:\0")), range, annotated_string.raw());
     }
 
-    // SKIPPED `selectAndShowRange:`: (return, arg) shape not yet modelled
+    fn select_and_show_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("selectAndShowRange:\0")), range);
+    }
+
     // SKIPPED `viewForRange:firstRect:actualRange:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
     fn candidate_list_touch_bar_item(this) -> option::Option[CandidateListTouchBarItem] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("candidateListTouchBarItem\0")));

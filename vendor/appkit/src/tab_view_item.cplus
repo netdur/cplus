@@ -107,8 +107,8 @@ impl TabViewItem {
         return TabViewItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), identifier) };
     }
 
-    // SKIPPED `drawLabel:inRect:`: (return, arg) shape not yet modelled
-    // SKIPPED `sizeOfLabel:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawLabel:inRect:`: msgSend shape `void_i8_rect` not yet modelled
+    // SKIPPED `sizeOfLabel:`: msgSend shape `size_i8` not yet modelled
     fn identifier(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
         return bridge::obj_option(obj);

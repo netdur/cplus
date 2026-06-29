@@ -40,12 +40,12 @@ impl LayoutDimension {
         return LayoutConstraint::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), c));
     }
 
-    // SKIPPED `constraintEqualToAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintGreaterThanOrEqualToAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintLessThanOrEqualToAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintEqualToAnchor:multiplier:constant:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintGreaterThanOrEqualToAnchor:multiplier:constant:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintLessThanOrEqualToAnchor:multiplier:constant:`: (return, arg) shape not yet modelled
+    // SKIPPED `constraintEqualToAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintGreaterThanOrEqualToAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintLessThanOrEqualToAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintEqualToAnchor:multiplier:constant:`: msgSend shape `id_id_f64_f64` not yet modelled
+    // SKIPPED `constraintGreaterThanOrEqualToAnchor:multiplier:constant:`: msgSend shape `id_id_f64_f64` not yet modelled
+    // SKIPPED `constraintLessThanOrEqualToAnchor:multiplier:constant:`: msgSend shape `id_id_f64_f64` not yet modelled
 }
 
 // `NSLayoutAnchor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -90,9 +90,9 @@ impl LayoutXAxisAnchor {
         return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
-    // SKIPPED `constraintEqualToSystemSpacingAfterAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintGreaterThanOrEqualToSystemSpacingAfterAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintLessThanOrEqualToSystemSpacingAfterAnchor:multiplier:`: (return, arg) shape not yet modelled
+    // SKIPPED `constraintEqualToSystemSpacingAfterAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintGreaterThanOrEqualToSystemSpacingAfterAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintLessThanOrEqualToSystemSpacingAfterAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
 }
 
 // `NSLayoutYAxisAnchor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -109,8 +109,8 @@ impl LayoutYAxisAnchor {
         return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
-    // SKIPPED `constraintEqualToSystemSpacingBelowAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintGreaterThanOrEqualToSystemSpacingBelowAnchor:multiplier:`: (return, arg) shape not yet modelled
-    // SKIPPED `constraintLessThanOrEqualToSystemSpacingBelowAnchor:multiplier:`: (return, arg) shape not yet modelled
+    // SKIPPED `constraintEqualToSystemSpacingBelowAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintGreaterThanOrEqualToSystemSpacingBelowAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `constraintLessThanOrEqualToSystemSpacingBelowAnchor:multiplier:`: msgSend shape `id_id_f64` not yet modelled
 }
 

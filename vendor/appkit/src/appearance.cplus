@@ -76,7 +76,12 @@ impl Appearance {
         return option::some(Appearance { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `initWithAppearanceNamed:bundle:`: init arg shape not yet modelled
+    fn new(name: str, bundle: Bundle) -> Appearance {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAppearance\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Appearance { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithAppearanceNamed:bundle:\0")), bridge::nsstring(name), bundle.raw()) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn best_match_from_appearances_with_names(this, appearances: vec::Vec[text::Text]) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bestMatchFromAppearancesWithNames:\0")), bridge::nsarray_of_text(appearances));

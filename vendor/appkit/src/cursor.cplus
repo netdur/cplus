@@ -137,7 +137,7 @@ impl Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("rowResizeCursorInDirections:\0")), directions)) };
     }
 
-    // SKIPPED `frameResizeCursorFromPosition:inDirections:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameResizeCursorFromPosition:inDirections:`: msgSend shape `id_i64_u64` not yet modelled
     fn image(this) -> Image {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }

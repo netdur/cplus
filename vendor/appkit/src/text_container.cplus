@@ -132,7 +132,7 @@ impl TextContainer {
 
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:`: msgSend shape `rect_rect_u64_i64_id` not yet modelled
     fn text_layout_manager(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
     }
@@ -149,7 +149,10 @@ impl TextContainer {
         return line_break_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakMode\0"))));
     }
 
-    // SKIPPED `setLineBreakMode:`: (return, arg) shape not yet modelled
+    fn set_line_break_mode(this, line_break_mode: LineBreakMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineBreakMode:\0")), line_break_mode_raw(line_break_mode));
+    }
+
     fn line_fragment_padding(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("lineFragmentPadding\0")));
     }
@@ -162,7 +165,10 @@ impl TextContainer {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maximumNumberOfLines\0")));
     }
 
-    // SKIPPED `setMaximumNumberOfLines:`: (return, arg) shape not yet modelled
+    fn set_maximum_number_of_lines(this, maximum_number_of_lines: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaximumNumberOfLines:\0")), maximum_number_of_lines);
+    }
+
     fn is_simple_rectangular_text_container(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSimpleRectangularTextContainer\0"))) != (0 as i8);
     }
@@ -208,7 +214,7 @@ impl TextContainer {
 
     // SKIPPED `initWithContainerSize:`: extra init variant (one `new` per type)
     // SKIPPED `lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
-    // SKIPPED `containsPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `containsPoint:`: msgSend shape `i8_point` not yet modelled
     fn container_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("containerSize\0")));
     }

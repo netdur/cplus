@@ -188,6 +188,25 @@ fn Document_move_document_with_completion_handler_invoke(block: *u8, a0: i8) {
 }
 
 #[repr(C)]
+struct Document_move_to_u_r_l_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Document_move_to_u_r_l_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Document_move_to_u_r_l_completion_handler_block = { block as *Document_move_to_u_r_l_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct Document_lock_document_with_completion_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -258,6 +277,25 @@ struct Document_unlock_with_completion_handler_block {
 fn Document_unlock_with_completion_handler_invoke(block: *u8, a0: *u8) {
     let bl: *Document_unlock_with_completion_handler_block = { block as *Document_unlock_with_completion_handler_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Document_share_document_with_sharing_service_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i8),
+    opaque ctx: *u8,
+}
+
+fn Document_share_document_with_sharing_service_completion_handler_invoke(block: *u8, a0: i8) {
+    let bl: *Document_share_document_with_sharing_service_completion_handler_block = { block as *Document_share_document_with_sharing_service_completion_handler_block };
+    let f: fn(*u8, i8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
     return;
@@ -548,9 +586,9 @@ impl Document {
     }
 
     // SKIPPED `initWithType:error:`: extra init variant (one `new` per type)
-    // SKIPPED `canConcurrentlyReadDocumentsOfType:`: (return, arg) shape not yet modelled
+    // SKIPPED `canConcurrentlyReadDocumentsOfType:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `initWithContentsOfURL:ofType:error:`: extra init variant (one `new` per type)
-    // SKIPPED `initForURL:withContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `initForURL:withContentsOfURL:ofType:error:`: msgSend shape `id_id_id_id_id` not yet modelled
     // SKIPPED `performActivityWithSynchronousWaiting:usingBlock:`: block-method msgSend shape not modelled
     fn continue_activity_using_block(this, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
@@ -588,19 +626,33 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("revertDocumentToSaved:\0")), sender);
     }
 
-    // SKIPPED `revertToContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFromURL:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFromFileWrapper:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFromData:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeToURL:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `fileWrapperOfType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `dataOfType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `revertToContentsOfURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `readFromURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `readFromFileWrapper:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `readFromData:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `writeToURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn file_wrapper_of_type_error(this, type_name: str, out_error: *u8) -> option::Option[FileWrapper] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("fileWrapperOfType:error:\0")), bridge::nsstring(type_name), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[FileWrapper]::None;
+        }
+        return option::some(FileWrapper::from_raw(obj));
+    }
+
+    fn data_of_type_error(this, type_name: str, out_error: *u8) -> option::Option[Data] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dataOfType:error:\0")), bridge::nsstring(type_name), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
+    }
+
     fn unblock_user_interaction(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unblockUserInteraction\0")));
     }
 
-    // SKIPPED `writeSafelyToURL:ofType:forSaveOperation:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `writeSafelyToURL:ofType:forSaveOperation:error:`: msgSend shape `i8_id_id_i64_id` not yet modelled
+    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: msgSend shape `i8_id_id_i64_id_id` not yet modelled
     // SKIPPED `fileAttributesToWriteToURL:ofType:forSaveOperation:originalContentsURL:error:`: return `NSDictionary<NSString *,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn save_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveDocument:\0")), sender);
@@ -616,11 +668,11 @@ impl Document {
 
     // SKIPPED `saveDocumentWithDelegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `runModalSavePanelForSaveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `prepareSavePanel:`: (return, arg) shape not yet modelled
+    // SKIPPED `prepareSavePanel:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `saveToURL:ofType:forSaveOperation:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `canAsynchronouslyWriteToURL:ofType:forSaveOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `checkAutosavingSafetyAndReturnError:`: (return, arg) shape not yet modelled
+    // SKIPPED `canAsynchronouslyWriteToURL:ofType:forSaveOperation:`: msgSend shape `i8_id_id_i64` not yet modelled
+    // SKIPPED `checkAutosavingSafetyAndReturnError:`: msgSend shape `i8_id` not yet modelled
     fn schedule_autosaving(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("scheduleAutosaving\0")));
     }
@@ -677,7 +729,14 @@ impl Document {
         return;
     }
 
-    // SKIPPED `moveToURL:completionHandler:`: block-method msgSend shape not modelled
+    fn move_to_u_r_l_completion_handler(this, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Document_move_to_u_r_l_completion_handler_block = Document_move_to_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_move_to_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveToURL:completionHandler:\0")), url.raw(), bp);
+        return;
+    }
+
     fn lock_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockDocument:\0")), sender);
     }
@@ -723,8 +782,8 @@ impl Document {
     }
 
     // SKIPPED `runModalPageLayoutWithPrintInfo:delegate:didRunSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `preparePageLayout:`: (return, arg) shape not yet modelled
-    // SKIPPED `shouldChangePrintInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `preparePageLayout:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `shouldChangePrintInfo:`: msgSend shape `i8_id` not yet modelled
     fn print_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("printDocument:\0")), sender);
     }
@@ -736,19 +795,29 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveDocumentToPDF:\0")), sender);
     }
 
-    // SKIPPED `shareDocumentWithSharingService:completionHandler:`: block-method msgSend shape not modelled
+    fn share_document_with_sharing_service_completion_handler(this, sharing_service: SharingService, cb: fn(*u8, i8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Document_share_document_with_sharing_service_completion_handler_block = Document_share_document_with_sharing_service_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_share_document_with_sharing_service_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("shareDocumentWithSharingService:completionHandler:\0")), sharing_service.raw(), bp);
+        return;
+    }
+
     fn prepare_sharing_service_picker(this, sharing_service_picker: SharingServicePicker) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareSharingServicePicker:\0")), sharing_service_picker.raw());
     }
 
-    // SKIPPED `updateChangeCount:`: (return, arg) shape not yet modelled
+    fn update_change_count(this, change: DocumentChangeType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("updateChangeCount:\0")), document_change_type_raw(change));
+    }
+
     fn change_count_token_for_save_operation(this, save_operation: SaveOperationType) -> *u8 {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("changeCountTokenForSaveOperation:\0")), save_operation_type_raw(save_operation));
     }
 
-    // SKIPPED `updateChangeCountWithToken:forSaveOperation:`: (return, arg) shape not yet modelled
+    // SKIPPED `updateChangeCountWithToken:forSaveOperation:`: msgSend shape `void_id_i64` not yet modelled
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `presentError:`: (return, arg) shape not yet modelled
+    // SKIPPED `presentError:`: msgSend shape `i8_id` not yet modelled
     fn will_present_error(this, error: Error) -> Error {
         return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
@@ -795,7 +864,7 @@ impl Document {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `isNativeType:`: (return, arg) shape not yet modelled
+    // SKIPPED `isNativeType:`: msgSend shape `i8_id` not yet modelled
     fn writable_types_for_save_operation(this, save_operation: SaveOperationType) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("writableTypesForSaveOperation:\0")), save_operation_type_raw(save_operation));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -810,8 +879,8 @@ impl Document {
         return out;
     }
 
-    // SKIPPED `fileNameExtensionForType:saveOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `fileNameExtensionForType:saveOperation:`: msgSend shape `id_id_i64` not yet modelled
+    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
     fn relinquish_presented_item_to_reader(this, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Document_relinquish_presented_item_to_reader_block = Document_relinquish_presented_item_to_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_relinquish_presented_item_to_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -1078,7 +1147,7 @@ impl Document {
     }
 
     // SKIPPED `observedPresentedItemUbiquityAttributes`: return `API_AVAILABLE NSSet<NSURLResourceKey> *` — generic collection
-    // SKIPPED `saveToURL:ofType:forSaveOperation:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `saveToURL:ofType:forSaveOperation:error:`: msgSend shape `i8_id_id_i64_id` not yet modelled
     fn data_representation_of_type(this, type_: str) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("dataRepresentationOfType:\0")), bridge::nsstring(type_));
         if obj == { 0 as *u8 } {
@@ -1087,7 +1156,7 @@ impl Document {
         return option::some(Data::from_raw(obj));
     }
 
-    // SKIPPED `fileAttributesToWriteToFile:ofType:saveOperation:`: (return, arg) shape not yet modelled
+    // SKIPPED `fileAttributesToWriteToFile:ofType:saveOperation:`: msgSend shape `id_id_id_i64` not yet modelled
     fn file_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileName\0")));
         return bridge::to_text_option(ns);
@@ -1103,26 +1172,50 @@ impl Document {
 
     // SKIPPED `initWithContentsOfFile:ofType:`: extra init variant (one `new` per type)
     // SKIPPED `initWithContentsOfURL:ofType:`: extra init variant (one `new` per type)
-    // SKIPPED `loadDataRepresentation:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `loadFileWrapperRepresentation:ofType:`: (return, arg) shape not yet modelled
+    fn load_data_representation_of_type(this, data: Data, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("loadDataRepresentation:ofType:\0")), data.raw(), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    fn load_file_wrapper_representation_of_type(this, wrapper: FileWrapper, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("loadFileWrapperRepresentation:ofType:\0")), wrapper.raw(), bridge::nsstring(type_)) != (0 as i8);
+    }
+
     fn print_showing_print_panel(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("printShowingPrintPanel:\0")), flag as i8);
     }
 
-    // SKIPPED `readFromFile:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFromURL:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `revertToSavedFromFile:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `revertToSavedFromURL:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `runModalPageLayoutWithPrintInfo:`: (return, arg) shape not yet modelled
+    fn read_from_file_of_type(this, file_name: str, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("readFromFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    fn read_from_u_r_l_of_type(this, url: URL, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("readFromURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    fn revert_to_saved_from_file_of_type(this, file_name: str, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("revertToSavedFromFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    fn revert_to_saved_from_u_r_l_of_type(this, url: URL, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("revertToSavedFromURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    // SKIPPED `runModalPageLayoutWithPrintInfo:`: msgSend shape `i64_id` not yet modelled
     // SKIPPED `saveToFile:saveOperation:delegate:didSaveSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     fn set_file_name(this, file_name: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileName:\0")), bridge::nsstring(file_name));
     }
 
-    // SKIPPED `writeToFile:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeToFile:ofType:originalFile:saveOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeToURL:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeWithBackupToFile:ofType:saveOperation:`: (return, arg) shape not yet modelled
+    fn write_to_file_of_type(this, file_name: str, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    // SKIPPED `writeToFile:ofType:originalFile:saveOperation:`: msgSend shape `i8_id_id_id_i64` not yet modelled
+    fn write_to_u_r_l_of_type(this, url: URL, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    // SKIPPED `writeWithBackupToFile:ofType:saveOperation:`: msgSend shape `i8_id_id_i64` not yet modelled
     fn should_run_save_panel_with_accessory_view(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("shouldRunSavePanelWithAccessoryView\0"))) != (0 as i8);
     }

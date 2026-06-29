@@ -159,7 +159,10 @@ impl SearchFieldCell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("maximumRecents\0")));
     }
 
-    // SKIPPED `setMaximumRecents:`: (return, arg) shape not yet modelled
+    fn set_maximum_recents(this, maximum_recents: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaximumRecents:\0")), maximum_recents);
+    }
+
     fn recent_searches(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("recentSearches\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

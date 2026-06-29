@@ -28,7 +28,7 @@ impl TrackingSeparatorToolbarItem {
 
     fn from_raw(ptr: *u8) -> TrackingSeparatorToolbarItem { return TrackingSeparatorToolbarItem { _obj: ptr }; }
 
-    // SKIPPED `trackingSeparatorToolbarItemWithIdentifier:splitView:dividerIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `trackingSeparatorToolbarItemWithIdentifier:splitView:dividerIndex:`: msgSend shape `id_id_id_i64` not yet modelled
     fn split_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0")));
     }
@@ -41,6 +41,9 @@ impl TrackingSeparatorToolbarItem {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("dividerIndex\0")));
     }
 
-    // SKIPPED `setDividerIndex:`: (return, arg) shape not yet modelled
+    fn set_divider_index(this, divider_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDividerIndex:\0")), divider_index);
+    }
+
 }
 

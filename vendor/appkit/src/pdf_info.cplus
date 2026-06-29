@@ -89,7 +89,10 @@ impl PDFInfo {
         return paper_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
 
-    // SKIPPED `setOrientation:`: (return, arg) shape not yet modelled
+    fn set_orientation(this, orientation: PaperOrientation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setOrientation:\0")), paper_orientation_raw(orientation));
+    }
+
     fn paper_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("paperSize\0")));
     }

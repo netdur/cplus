@@ -49,10 +49,22 @@ impl ComboBoxCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteNumberOfItemsChanged\0")));
     }
 
-    // SKIPPED `scrollItemAtIndexToTop:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollItemAtIndexToVisible:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectItemAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `deselectItemAtIndex:`: (return, arg) shape not yet modelled
+    fn scroll_item_at_index_to_top(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("scrollItemAtIndexToTop:\0")), index);
+    }
+
+    fn scroll_item_at_index_to_visible(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("scrollItemAtIndexToVisible:\0")), index);
+    }
+
+    fn select_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("selectItemAtIndex:\0")), index);
+    }
+
+    fn deselect_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("deselectItemAtIndex:\0")), index);
+    }
+
     fn completed_string(this, string: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("completedString:\0")), bridge::nsstring(string));
         return bridge::to_text_option(ns);
@@ -66,12 +78,15 @@ impl ComboBoxCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithObjectValues:\0")), objects);
     }
 
-    // SKIPPED `insertItemWithObjectValue:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertItemWithObjectValue:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_item_with_object_value(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithObjectValue:\0")), object);
     }
 
-    // SKIPPED `removeItemAtIndex:`: (return, arg) shape not yet modelled
+    fn remove_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
+    }
+
     fn remove_all_items(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
@@ -84,7 +99,7 @@ impl ComboBoxCell {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemObjectValueAtIndex:\0")), index);
     }
 
-    // SKIPPED `indexOfItemWithObjectValue:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfItemWithObjectValue:`: msgSend shape `i64_id` not yet modelled
     fn has_vertical_scroller(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasVerticalScroller\0"))) != (0 as i8);
     }
@@ -113,7 +128,10 @@ impl ComboBoxCell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfVisibleItems\0")));
     }
 
-    // SKIPPED `setNumberOfVisibleItems:`: (return, arg) shape not yet modelled
+    fn set_number_of_visible_items(this, number_of_visible_items: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfVisibleItems:\0")), number_of_visible_items);
+    }
+
     fn is_button_bordered(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isButtonBordered\0"))) != (0 as i8);
     }

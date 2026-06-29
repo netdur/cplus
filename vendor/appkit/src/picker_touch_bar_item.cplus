@@ -85,7 +85,7 @@ impl PickerTouchBarItem {
 
     // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
-    // SKIPPED `setImage:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setImage:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn image_at_index(this, index: i64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageAtIndex:\0")), index);
         if obj == { 0 as *u8 } {
@@ -94,13 +94,13 @@ impl PickerTouchBarItem {
         return option::some(Image::from_raw(obj));
     }
 
-    // SKIPPED `setLabel:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setLabel:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn label_at_index(this, index: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("labelAtIndex:\0")), index);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setEnabled:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `setEnabled:atIndex:`: msgSend shape `void_i8_i64` not yet modelled
     fn is_enabled_at_index(this, index: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledAtIndex:\0")), index) != (0 as i8);
     }
@@ -109,7 +109,10 @@ impl PickerTouchBarItem {
         return picker_touch_bar_item_control_representation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlRepresentation\0"))));
     }
 
-    // SKIPPED `setControlRepresentation:`: (return, arg) shape not yet modelled
+    fn set_control_representation(this, control_representation: PickerTouchBarItemControlRepresentation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlRepresentation:\0")), picker_touch_bar_item_control_representation_raw(control_representation));
+    }
+
     fn collapsed_representation_label(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("collapsedRepresentationLabel\0")));
         return bridge::to_text(ns);
@@ -135,7 +138,10 @@ impl PickerTouchBarItem {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("selectedIndex\0")));
     }
 
-    // SKIPPED `setSelectedIndex:`: (return, arg) shape not yet modelled
+    fn set_selected_index(this, selected_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectedIndex:\0")), selected_index);
+    }
+
     fn selection_color(this) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectionColor\0")));
         if obj == { 0 as *u8 } {
@@ -152,12 +158,18 @@ impl PickerTouchBarItem {
         return picker_touch_bar_item_selection_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("selectionMode\0"))));
     }
 
-    // SKIPPED `setSelectionMode:`: (return, arg) shape not yet modelled
+    fn set_selection_mode(this, selection_mode: PickerTouchBarItemSelectionMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectionMode:\0")), picker_touch_bar_item_selection_mode_raw(selection_mode));
+    }
+
     fn number_of_options(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfOptions\0")));
     }
 
-    // SKIPPED `setNumberOfOptions:`: (return, arg) shape not yet modelled
+    fn set_number_of_options(this, number_of_options: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfOptions:\0")), number_of_options);
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

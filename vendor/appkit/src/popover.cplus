@@ -153,7 +153,7 @@ impl Popover {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: (return, arg) shape not yet modelled
+    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: msgSend shape `void_rect_id_i64` not yet modelled
     fn show_relative_to_toolbar_item(this, toolbar_item: ToolbarItem) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("showRelativeToToolbarItem:\0")), toolbar_item.raw());
     }
@@ -191,7 +191,10 @@ impl Popover {
         return popover_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("behavior\0"))));
     }
 
-    // SKIPPED `setBehavior:`: (return, arg) shape not yet modelled
+    fn set_behavior(this, behavior: PopoverBehavior) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBehavior:\0")), popover_behavior_raw(behavior));
+    }
+
     fn animates(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("animates\0"))) != (0 as i8);
     }

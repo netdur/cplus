@@ -85,13 +85,16 @@ impl LevelIndicator {
 
     fn from_raw(ptr: *u8) -> LevelIndicator { return LevelIndicator { _obj: ptr }; }
 
-    // SKIPPED `tickMarkValueAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `tickMarkValueAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `rectOfTickMarkAtIndex:`: msgSend shape `rect_i64` not yet modelled
     fn level_indicator_style(this) -> LevelIndicatorStyle {
         return level_indicator_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("levelIndicatorStyle\0"))));
     }
 
-    // SKIPPED `setLevelIndicatorStyle:`: (return, arg) shape not yet modelled
+    fn set_level_indicator_style(this, level_indicator_style: LevelIndicatorStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLevelIndicatorStyle:\0")), level_indicator_style_raw(level_indicator_style));
+    }
+
     fn is_editable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8);
     }
@@ -136,17 +139,26 @@ impl LevelIndicator {
         return tick_mark_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tickMarkPosition\0"))));
     }
 
-    // SKIPPED `setTickMarkPosition:`: (return, arg) shape not yet modelled
+    fn set_tick_mark_position(this, tick_mark_position: TickMarkPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTickMarkPosition:\0")), tick_mark_position_raw(tick_mark_position));
+    }
+
     fn number_of_tick_marks(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTickMarks\0")));
     }
 
-    // SKIPPED `setNumberOfTickMarks:`: (return, arg) shape not yet modelled
+    fn set_number_of_tick_marks(this, number_of_tick_marks: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfTickMarks:\0")), number_of_tick_marks);
+    }
+
     fn number_of_major_tick_marks(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfMajorTickMarks\0")));
     }
 
-    // SKIPPED `setNumberOfMajorTickMarks:`: (return, arg) shape not yet modelled
+    fn set_number_of_major_tick_marks(this, number_of_major_tick_marks: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfMajorTickMarks:\0")), number_of_major_tick_marks);
+    }
+
     fn fill_color(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("fillColor\0")));
     }
@@ -183,7 +195,10 @@ impl LevelIndicator {
         return level_indicator_placeholder_visibility_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("placeholderVisibility\0"))));
     }
 
-    // SKIPPED `setPlaceholderVisibility:`: (return, arg) shape not yet modelled
+    fn set_placeholder_visibility(this, placeholder_visibility: LevelIndicatorPlaceholderVisibility) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPlaceholderVisibility:\0")), level_indicator_placeholder_visibility_raw(placeholder_visibility));
+    }
+
     fn rating_image(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("ratingImage\0")));
     }

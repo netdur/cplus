@@ -66,9 +66,18 @@ impl PopUpButton {
     fn from_raw(ptr: *u8) -> PopUpButton { return PopUpButton { _obj: ptr }; }
 
     // SKIPPED `popUpButtonWithMenu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `pullDownButtonWithTitle:menu:`: (return, arg) shape not yet modelled
-    // SKIPPED `pullDownButtonWithImage:menu:`: (return, arg) shape not yet modelled
-    // SKIPPED `pullDownButtonWithTitle:image:menu:`: (return, arg) shape not yet modelled
+    fn pull_down_button_with_title_menu(title: str, menu: Menu) -> PopUpButton {
+        return PopUpButton { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:menu:\0")), bridge::nsstring(title), menu.raw())) };
+    }
+
+    fn pull_down_button_with_image_menu(image: *u8, menu: Menu) -> PopUpButton {
+        return PopUpButton { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithImage:menu:\0")), image, menu.raw())) };
+    }
+
+    fn pull_down_button_with_title_image_menu(title: str, image: *u8, menu: Menu) -> PopUpButton {
+        return PopUpButton { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:image:menu:\0")), bridge::nsstring(title), image, menu.raw())) };
+    }
+
     // SKIPPED `initWithFrame:pullsDown:`: init arg shape not yet modelled
     fn add_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:\0")), bridge::nsstring(title));
@@ -78,20 +87,23 @@ impl PopUpButton {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithTitles:\0")), bridge::nsarray_of_text(item_titles));
     }
 
-    // SKIPPED `insertItemWithTitle:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertItemWithTitle:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithTitle:\0")), bridge::nsstring(title));
     }
 
-    // SKIPPED `removeItemAtIndex:`: (return, arg) shape not yet modelled
+    fn remove_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
+    }
+
     fn remove_all_items(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    // SKIPPED `indexOfItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTitle:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTag:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithRepresentedObject:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfItem:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTitle:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTag:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `indexOfItemWithRepresentedObject:`: msgSend shape `i64_id` not yet modelled
     // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
@@ -107,7 +119,10 @@ impl PopUpButton {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectItem:\0")), item);
     }
 
-    // SKIPPED `selectItemAtIndex:`: (return, arg) shape not yet modelled
+    fn select_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("selectItemAtIndex:\0")), index);
+    }
+
     fn select_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectItemWithTitle:\0")), bridge::nsstring(title));
     }
@@ -161,7 +176,10 @@ impl PopUpButton {
         return rect_edge_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredEdge\0"))));
     }
 
-    // SKIPPED `setPreferredEdge:`: (return, arg) shape not yet modelled
+    fn set_preferred_edge(this, preferred_edge: RectEdge) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPreferredEdge:\0")), rect_edge_raw(preferred_edge));
+    }
+
     fn uses_item_from_menu(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesItemFromMenu\0"))) != (0 as i8);
     }

@@ -238,12 +238,12 @@ impl Control {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `sizeThatFits:`: (return, arg) shape not yet modelled
+    // SKIPPED `sizeThatFits:`: msgSend shape `size_size` not yet modelled
     fn size_to_fit(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
 
-    // SKIPPED `sendActionOn:`: (return, arg) shape not yet modelled
+    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
     // SKIPPED `sendAction:to:`: param `SEL _Nullable` — unmapped type `SEL`
     fn take_int_value_from(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeIntValueFrom:\0")), sender);
@@ -277,7 +277,7 @@ impl Control {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:\0")), content_frame);
     }
 
-    // SKIPPED `drawWithExpansionFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithExpansionFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);
@@ -293,7 +293,10 @@ impl Control {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
 
-    // SKIPPED `setTag:`: (return, arg) shape not yet modelled
+    fn set_tag(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTag:\0")), tag);
+    }
+
     fn ignores_multi_click(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("ignoresMultiClick\0"))) != (0 as i8);
     }
@@ -338,7 +341,10 @@ impl Control {
         return control_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlSize\0"))));
     }
 
-    // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
+    fn set_control_size(this, control_size: ControlSize) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn formatter(this) -> option::Option[Formatter] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("formatter\0")));
         if obj == { 0 as *u8 } {
@@ -389,7 +395,10 @@ impl Control {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("integerValue\0")));
     }
 
-    // SKIPPED `setIntegerValue:`: (return, arg) shape not yet modelled
+    fn set_integer_value(this, integer_value: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIntegerValue:\0")), integer_value);
+    }
+
     fn float_value(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("floatValue\0")));
     }
@@ -430,17 +439,26 @@ impl Control {
         return line_break_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakMode\0"))));
     }
 
-    // SKIPPED `setLineBreakMode:`: (return, arg) shape not yet modelled
+    fn set_line_break_mode(this, line_break_mode: LineBreakMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineBreakMode:\0")), line_break_mode_raw(line_break_mode));
+    }
+
     fn alignment(this) -> TextAlignment {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `setAlignment:`: (return, arg) shape not yet modelled
+    fn set_alignment(this, alignment: TextAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlignment:\0")), text_alignment_raw(alignment));
+    }
+
     fn base_writing_direction(this) -> WritingDirection {
         return writing_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("baseWritingDirection\0"))));
     }
 
-    // SKIPPED `setBaseWritingDirection:`: (return, arg) shape not yet modelled
+    fn set_base_writing_direction(this, base_writing_direction: WritingDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:\0")), writing_direction_raw(base_writing_direction));
+    }
+
     fn allows_expansion_tool_tips(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsExpansionToolTips\0"))) != (0 as i8);
     }
@@ -462,13 +480,13 @@ impl Control {
         rt::msg_void(this._obj, rt::sel(#str_ptr("validateEditing\0")));
     }
 
-    // SKIPPED `editWithFrame:editor:delegate:event:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectWithFrame:editor:delegate:start:length:`: (return, arg) shape not yet modelled
+    // SKIPPED `editWithFrame:editor:delegate:event:`: msgSend shape `void_rect_id_id_id` not yet modelled
+    // SKIPPED `selectWithFrame:editor:delegate:start:length:`: msgSend shape `void_rect_id_id_i64_i64` not yet modelled
     fn end_editing(this, text_obj: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditing:\0")), text_obj);
     }
 
-    // SKIPPED `setFloatingPointFormat:left:right:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFloatingPointFormat:left:right:`: msgSend shape `void_i8_u64_u64` not yet modelled
     fn selected_cell(this) -> option::Option[Cell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedCell\0")));
         if obj == { 0 as *u8 } {

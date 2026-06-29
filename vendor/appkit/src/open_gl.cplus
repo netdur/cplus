@@ -165,7 +165,12 @@ impl OpenGLContext {
 
     fn from_raw(ptr: *u8) -> OpenGLContext { return OpenGLContext { _obj: ptr }; }
 
-    // SKIPPED `initWithFormat:shareContext:`: init arg shape not yet modelled
+    fn new(format: OpenGLPixelFormat, share: OpenGLContext) -> OpenGLContext {
+        let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLContext\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLContext { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithFormat:shareContext:\0")), format.raw(), share.raw()) };
+    }
+
     // SKIPPED `initWithCGLContextObj:`: extra init variant (one `new` per type)
     fn set_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
@@ -197,8 +202,8 @@ impl OpenGLContext {
     }
 
     // SKIPPED `copyAttributesFromContext:withMask:`: param `GLbitfield` — unmapped type `GLbitfield`
-    // SKIPPED `setValues:forParameter:`: (return, arg) shape not yet modelled
-    // SKIPPED `getValues:forParameter:`: (return, arg) shape not yet modelled
+    // SKIPPED `setValues:forParameter:`: msgSend shape `void_id_i64` not yet modelled
+    // SKIPPED `getValues:forParameter:`: msgSend shape `void_id_i64` not yet modelled
     // SKIPPED `createTexture:fromView:internalFormat:`: param `GLenum` — unmapped type `GLenum`
     fn pixel_format(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0")));

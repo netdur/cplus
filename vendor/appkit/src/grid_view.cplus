@@ -121,17 +121,26 @@ impl GridCell {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("xPlacement\0"))));
     }
 
-    // SKIPPED `setXPlacement:`: (return, arg) shape not yet modelled
+    fn set_x_placement(this, x_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setXPlacement:\0")), grid_cell_placement_raw(x_placement));
+    }
+
     fn y_placement(this) -> GridCellPlacement {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("yPlacement\0"))));
     }
 
-    // SKIPPED `setYPlacement:`: (return, arg) shape not yet modelled
+    fn set_y_placement(this, y_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setYPlacement:\0")), grid_cell_placement_raw(y_placement));
+    }
+
     fn row_alignment(this) -> GridRowAlignment {
         return grid_row_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("rowAlignment\0"))));
     }
 
-    // SKIPPED `setRowAlignment:`: (return, arg) shape not yet modelled
+    fn set_row_alignment(this, row_alignment: GridRowAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRowAlignment:\0")), grid_row_alignment_raw(row_alignment));
+    }
+
     // SKIPPED `customPlacementConstraints`: return `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
     // SKIPPED `setCustomPlacementConstraints:`: param `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
 }
@@ -150,7 +159,10 @@ impl GridColumn {
         return GridCell::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index));
     }
 
-    // SKIPPED `mergeCellsInRange:`: (return, arg) shape not yet modelled
+    fn merge_cells_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("mergeCellsInRange:\0")), range);
+    }
+
     fn grid_view(this) -> option::Option[GridView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("gridView\0")));
         if obj == { 0 as *u8 } {
@@ -167,7 +179,10 @@ impl GridColumn {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("xPlacement\0"))));
     }
 
-    // SKIPPED `setXPlacement:`: (return, arg) shape not yet modelled
+    fn set_x_placement(this, x_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setXPlacement:\0")), grid_cell_placement_raw(x_placement));
+    }
+
     fn width(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("width\0")));
     }
@@ -216,7 +231,10 @@ impl GridRow {
         return GridCell::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("cellAtIndex:\0")), index));
     }
 
-    // SKIPPED `mergeCellsInRange:`: (return, arg) shape not yet modelled
+    fn merge_cells_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("mergeCellsInRange:\0")), range);
+    }
+
     fn grid_view(this) -> option::Option[GridView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("gridView\0")));
         if obj == { 0 as *u8 } {
@@ -233,12 +251,18 @@ impl GridRow {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("yPlacement\0"))));
     }
 
-    // SKIPPED `setYPlacement:`: (return, arg) shape not yet modelled
+    fn set_y_placement(this, y_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setYPlacement:\0")), grid_cell_placement_raw(y_placement));
+    }
+
     fn row_alignment(this) -> GridRowAlignment {
         return grid_row_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("rowAlignment\0"))));
     }
 
-    // SKIPPED `setRowAlignment:`: (return, arg) shape not yet modelled
+    fn set_row_alignment(this, row_alignment: GridRowAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRowAlignment:\0")), grid_row_alignment_raw(row_alignment));
+    }
+
     fn height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("height\0")));
     }
@@ -290,19 +314,19 @@ impl GridView {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `gridViewWithNumberOfColumns:rows:`: (return, arg) shape not yet modelled
+    // SKIPPED `gridViewWithNumberOfColumns:rows:`: msgSend shape `id_i64_i64` not yet modelled
     // SKIPPED `gridViewWithViews:`: param `NSArray<NSArray<NSView *> *> * _Nonnull` — generic collection
     fn row_at_index(this, index: i64) -> GridRow {
         return GridRow::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("rowAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfRow:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfRow:`: msgSend shape `i64_id` not yet modelled
     fn column_at_index(this, index: i64) -> GridColumn {
         return GridColumn::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("columnAtIndex:\0")), index));
     }
 
-    // SKIPPED `indexOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `cellAtColumnIndex:rowIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfColumn:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `cellAtColumnIndex:rowIndex:`: msgSend shape `id_i64_i64` not yet modelled
     fn cell_for_view(this, view: *u8) -> option::Option[GridCell] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("cellForView:\0")), view);
         if obj == { 0 as *u8 } {
@@ -313,13 +337,19 @@ impl GridView {
 
     // SKIPPED `addRowWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertRowAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    // SKIPPED `moveRowAtIndex:toIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeRowAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `moveRowAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    fn remove_row_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), index);
+    }
+
     // SKIPPED `addColumnWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertColumnAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    // SKIPPED `moveColumnAtIndex:toIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeColumnAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `mergeCellsInHorizontalRange:verticalRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `moveColumnAtIndex:toIndex:`: msgSend shape `void_i64_i64` not yet modelled
+    fn remove_column_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumnAtIndex:\0")), index);
+    }
+
+    // SKIPPED `mergeCellsInHorizontalRange:verticalRange:`: msgSend shape `void_range_range` not yet modelled
     fn number_of_rows(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfRows\0")));
     }
@@ -332,17 +362,26 @@ impl GridView {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("xPlacement\0"))));
     }
 
-    // SKIPPED `setXPlacement:`: (return, arg) shape not yet modelled
+    fn set_x_placement(this, x_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setXPlacement:\0")), grid_cell_placement_raw(x_placement));
+    }
+
     fn y_placement(this) -> GridCellPlacement {
         return grid_cell_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("yPlacement\0"))));
     }
 
-    // SKIPPED `setYPlacement:`: (return, arg) shape not yet modelled
+    fn set_y_placement(this, y_placement: GridCellPlacement) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setYPlacement:\0")), grid_cell_placement_raw(y_placement));
+    }
+
     fn row_alignment(this) -> GridRowAlignment {
         return grid_row_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("rowAlignment\0"))));
     }
 
-    // SKIPPED `setRowAlignment:`: (return, arg) shape not yet modelled
+    fn set_row_alignment(this, row_alignment: GridRowAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRowAlignment:\0")), grid_row_alignment_raw(row_alignment));
+    }
+
     fn row_spacing(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("rowSpacing\0")));
     }

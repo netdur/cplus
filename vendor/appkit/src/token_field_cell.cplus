@@ -60,7 +60,10 @@ impl TokenFieldCell {
         return token_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tokenStyle\0"))));
     }
 
-    // SKIPPED `setTokenStyle:`: (return, arg) shape not yet modelled
+    fn set_token_style(this, token_style: TokenStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTokenStyle:\0")), token_style_raw(token_style));
+    }
+
     fn completion_delay(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("completionDelay\0")));
     }

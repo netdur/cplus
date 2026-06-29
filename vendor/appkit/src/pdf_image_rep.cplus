@@ -42,7 +42,10 @@ impl PDFImageRep {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("currentPage\0")));
     }
 
-    // SKIPPED `setCurrentPage:`: (return, arg) shape not yet modelled
+    fn set_current_page(this, current_page: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurrentPage:\0")), current_page);
+    }
+
     fn page_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("pageCount\0")));
     }

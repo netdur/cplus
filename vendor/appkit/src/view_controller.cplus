@@ -120,7 +120,12 @@ impl ViewController {
 
     fn from_raw(ptr: *u8) -> ViewController { return ViewController { _obj: ptr }; }
 
-    // SKIPPED `initWithNibName:bundle:`: init arg shape not yet modelled
+    fn new(nib_name_or_nil: str, nib_bundle_or_nil: Bundle) -> ViewController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSViewController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ViewController { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithNibName:bundle:\0")), bridge::nsstring(nib_name_or_nil), nib_bundle_or_nil.raw()) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn load_view(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadView\0")));
@@ -226,7 +231,10 @@ impl ViewController {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setPreferredContentSize:\0")), preferred_content_size);
     }
 
-    // SKIPPED `presentViewController:animator:`: (return, arg) shape not yet modelled
+    fn present_view_controller_animator(this, view_controller: ViewController, animator: ViewControllerPresentationAnimator) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("presentViewController:animator:\0")), view_controller.raw(), animator.raw());
+    }
+
     fn dismiss_view_controller(this, view_controller: ViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("dismissViewController:\0")), view_controller.raw());
     }
@@ -248,8 +256,8 @@ impl ViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentViewControllerAsModalWindow:\0")), view_controller.raw());
     }
 
-    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:`: (return, arg) shape not yet modelled
-    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:`: (return, arg) shape not yet modelled
+    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:`: msgSend shape `void_id_rect_id_i64_i64` not yet modelled
+    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:`: msgSend shape `void_id_rect_id_i64_i64_i8` not yet modelled
     // SKIPPED `transitionFromViewController:toViewController:options:completionHandler:`: block-method msgSend shape not modelled
     fn add_child_view_controller(this, child_view_controller: ViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addChildViewController:\0")), child_view_controller.raw());
@@ -259,8 +267,11 @@ impl ViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFromParentViewController\0")));
     }
 
-    // SKIPPED `insertChildViewController:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeChildViewControllerAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertChildViewController:atIndex:`: msgSend shape `void_id_i64` not yet modelled
+    fn remove_child_view_controller_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeChildViewControllerAtIndex:\0")), index);
+    }
+
     fn preferred_content_size_did_change_for_view_controller(this, view_controller: ViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("preferredContentSizeDidChangeForViewController:\0")), view_controller.raw());
     }
@@ -334,7 +345,13 @@ impl ViewControllerPresentationAnimator {
 
     fn from_raw(ptr: *u8) -> ViewControllerPresentationAnimator { return ViewControllerPresentationAnimator { _obj: ptr }; }
 
-    // SKIPPED `animatePresentationOfViewController:fromViewController:`: (return, arg) shape not yet modelled
-    // SKIPPED `animateDismissalOfViewController:fromViewController:`: (return, arg) shape not yet modelled
+    fn animate_presentation_of_view_controller_from_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("animatePresentationOfViewController:fromViewController:\0")), view_controller.raw(), from_view_controller.raw());
+    }
+
+    fn animate_dismissal_of_view_controller_from_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("animateDismissalOfViewController:fromViewController:\0")), view_controller.raw(), from_view_controller.raw());
+    }
+
 }
 

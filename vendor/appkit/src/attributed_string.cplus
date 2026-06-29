@@ -20,8 +20,8 @@ impl AttributedString {
     // SKIPPED `initWithData:options:documentAttributes:error:`: extra init variant (one `new` per type)
     // SKIPPED `dataFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `fileWrapperFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
-    // SKIPPED `containsAttachmentsInRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `prefersRTFDInRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `containsAttachmentsInRange:`: msgSend shape `i8_range` not yet modelled
+    // SKIPPED `prefersRTFDInRange:`: msgSend shape `i8_range` not yet modelled
     // SKIPPED `initWithRTF:documentAttributes:`: extra init variant (one `new` per type)
     // SKIPPED `initWithRTFD:documentAttributes:`: extra init variant (one `new` per type)
     // SKIPPED `initWithHTML:documentAttributes:`: extra init variant (one `new` per type)
@@ -35,17 +35,17 @@ impl AttributedString {
     // SKIPPED `docFormatFromRange:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `fontAttributesInRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `rulerAttributesInRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `lineBreakBeforeIndex:withinRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `lineBreakByHyphenatingBeforeIndex:withinRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `lineBreakBeforeIndex:withinRange:`: msgSend shape `u64_u64_range` not yet modelled
+    // SKIPPED `lineBreakByHyphenatingBeforeIndex:withinRange:`: msgSend shape `u64_u64_range` not yet modelled
     fn double_click_at_index(this, location: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("doubleClickAtIndex:\0")), location);
     }
 
-    // SKIPPED `nextWordFromIndex:forward:`: (return, arg) shape not yet modelled
-    // SKIPPED `rangeOfTextBlock:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rangeOfTextTable:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rangeOfTextList:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `itemNumberInTextList:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `nextWordFromIndex:forward:`: msgSend shape `u64_u64_i8` not yet modelled
+    // SKIPPED `rangeOfTextBlock:atIndex:`: msgSend shape `range_id_u64` not yet modelled
+    // SKIPPED `rangeOfTextTable:atIndex:`: msgSend shape `range_id_u64` not yet modelled
+    // SKIPPED `rangeOfTextList:atIndex:`: msgSend shape `range_id_u64` not yet modelled
+    // SKIPPED `itemNumberInTextList:atIndex:`: msgSend shape `i64_id_u64` not yet modelled
     // SKIPPED `textTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     // SKIPPED `textUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     fn text_file_types() -> *u8 {

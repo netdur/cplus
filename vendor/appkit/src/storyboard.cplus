@@ -16,7 +16,10 @@ impl Storyboard {
 
     fn from_raw(ptr: *u8) -> Storyboard { return Storyboard { _obj: ptr }; }
 
-    // SKIPPED `storyboardWithName:bundle:`: (return, arg) shape not yet modelled
+    fn storyboard_with_name_bundle(name: str, storyboard_bundle_or_nil: *u8) -> Storyboard {
+        return Storyboard { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSStoryboard\0")), rt::sel(#str_ptr("storyboardWithName:bundle:\0")), bridge::nsstring(name), storyboard_bundle_or_nil) };
+    }
+
     fn instantiate_initial_controller(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instantiateInitialController\0")));
         return bridge::obj_option(obj);

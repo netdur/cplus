@@ -25,8 +25,8 @@ impl UserInterfaceCompressionOptions {
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithIdentifier:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCompressionOptions:`: extra init variant (one `new` per type)
-    // SKIPPED `containsOptions:`: (return, arg) shape not yet modelled
-    // SKIPPED `intersectsOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `containsOptions:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `intersectsOptions:`: msgSend shape `i8_id` not yet modelled
     fn options_by_adding_options(this, options: UserInterfaceCompressionOptions) -> UserInterfaceCompressionOptions {
         return UserInterfaceCompressionOptions::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("optionsByAddingOptions:\0")), options.raw()));
     }

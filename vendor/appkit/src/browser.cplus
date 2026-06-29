@@ -96,26 +96,26 @@ impl Browser {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `itemAtRow:inColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `itemAtRow:inColumn:`: msgSend shape `id_i64_i64` not yet modelled
     fn index_path_for_column(this, column: i64) -> *u8 {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("indexPathForColumn:\0")), column);
     }
 
-    // SKIPPED `isLeafItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `reloadDataForRowIndexes:inColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `isLeafItem:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `reloadDataForRowIndexes:inColumn:`: msgSend shape `void_id_i64` not yet modelled
     fn parent_for_items_in_column(this, column: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("parentForItemsInColumn:\0")), column);
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `scrollRowToVisible:inColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `setTitle:ofColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `scrollRowToVisible:inColumn:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `setTitle:ofColumn:`: msgSend shape `void_id_i64` not yet modelled
     fn title_of_column(this, column: i64) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("titleOfColumn:\0")), column);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setPath:`: (return, arg) shape not yet modelled
+    // SKIPPED `setPath:`: msgSend shape `i8_id` not yet modelled
     fn path(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("path\0")));
         return bridge::to_text(ns);
@@ -131,9 +131,9 @@ impl Browser {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `selectRow:inColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectedRowInColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectRowIndexes:inColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `selectRow:inColumn:`: msgSend shape `void_i64_i64` not yet modelled
+    // SKIPPED `selectedRowInColumn:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `selectRowIndexes:inColumn:`: msgSend shape `void_id_i64` not yet modelled
     fn selected_row_indexes_in_column(this, column: i64) -> option::Option[IndexSet] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("selectedRowIndexesInColumn:\0")), column);
         if obj == { 0 as *u8 } {
@@ -142,19 +142,31 @@ impl Browser {
         return option::some(IndexSet::from_raw(obj));
     }
 
-    // SKIPPED `reloadColumn:`: (return, arg) shape not yet modelled
+    fn reload_column(this, column: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("reloadColumn:\0")), column);
+    }
+
     fn validate_visible_columns(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("validateVisibleColumns\0")));
     }
 
-    // SKIPPED `scrollColumnsRightBy:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollColumnsLeftBy:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollColumnToVisible:`: (return, arg) shape not yet modelled
+    fn scroll_columns_right_by(this, shift_amount: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("scrollColumnsRightBy:\0")), shift_amount);
+    }
+
+    fn scroll_columns_left_by(this, shift_amount: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("scrollColumnsLeftBy:\0")), shift_amount);
+    }
+
+    fn scroll_column_to_visible(this, column: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("scrollColumnToVisible:\0")), column);
+    }
+
     fn add_column(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addColumn\0")));
     }
 
-    // SKIPPED `loadedCellAtRow:column:`: (return, arg) shape not yet modelled
+    // SKIPPED `loadedCellAtRow:column:`: msgSend shape `id_i64_i64` not yet modelled
     fn select_all(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
     }
@@ -175,17 +187,17 @@ impl Browser {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
 
-    // SKIPPED `titleFrameOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawTitleOfColumn:inRect:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameOfInsideOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameOfRow:inColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `getRow:column:forPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `columnWidthForColumnContentWidth:`: (return, arg) shape not yet modelled
-    // SKIPPED `columnContentWidthForColumnWidth:`: (return, arg) shape not yet modelled
-    // SKIPPED `setWidth:ofColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `widthOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `noteHeightOfRowsWithIndexesChanged:inColumn:`: (return, arg) shape not yet modelled
+    // SKIPPED `titleFrameOfColumn:`: msgSend shape `rect_i64` not yet modelled
+    // SKIPPED `drawTitleOfColumn:inRect:`: msgSend shape `void_i64_rect` not yet modelled
+    // SKIPPED `frameOfColumn:`: msgSend shape `rect_i64` not yet modelled
+    // SKIPPED `frameOfInsideOfColumn:`: msgSend shape `rect_i64` not yet modelled
+    // SKIPPED `frameOfRow:inColumn:`: msgSend shape `rect_i64_i64` not yet modelled
+    // SKIPPED `getRow:column:forPoint:`: msgSend shape `i8_id_id_point` not yet modelled
+    // SKIPPED `columnWidthForColumnContentWidth:`: msgSend shape `f64_f64` not yet modelled
+    // SKIPPED `columnContentWidthForColumnWidth:`: msgSend shape `f64_f64` not yet modelled
+    // SKIPPED `setWidth:ofColumn:`: msgSend shape `void_f64_i64` not yet modelled
+    // SKIPPED `widthOfColumn:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `noteHeightOfRowsWithIndexesChanged:inColumn:`: msgSend shape `void_id_i64` not yet modelled
     fn set_default_column_width(this, column_width: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setDefaultColumnWidth:\0")), column_width);
     }
@@ -198,10 +210,13 @@ impl Browser {
         rt::msg_void_id(rt::get_class(#str_ptr("NSBrowser\0")), rt::sel(#str_ptr("removeSavedColumnsWithAutosaveName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `canDragRowsWithIndexes:inColumn:withEvent:`: (return, arg) shape not yet modelled
+    // SKIPPED `canDragRowsWithIndexes:inColumn:withEvent:`: msgSend shape `i8_id_i64_id` not yet modelled
     // SKIPPED `draggingImageForRowsWithIndexes:inColumn:withEvent:offset:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
-    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: (return, arg) shape not yet modelled
-    // SKIPPED `editItemAtIndexPath:withEvent:select:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
+    fn edit_item_at_index_path_with_event_select(this, index_path: *u8, event: *u8, select: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("editItemAtIndexPath:withEvent:select:\0")), index_path, event, select as i8);
+    }
+
     // SKIPPED `cellClass`: return `Class _Nonnull` — unmapped type `Class`
     fn is_loaded(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isLoaded\0"))) != (0 as i8);
@@ -278,7 +293,10 @@ impl Browser {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("maxVisibleColumns\0")));
     }
 
-    // SKIPPED `setMaxVisibleColumns:`: (return, arg) shape not yet modelled
+    fn set_max_visible_columns(this, max_visible_columns: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaxVisibleColumns:\0")), max_visible_columns);
+    }
+
     fn allows_multiple_selection(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsMultipleSelection\0"))) != (0 as i8);
     }
@@ -360,7 +378,10 @@ impl Browser {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("lastColumn\0")));
     }
 
-    // SKIPPED `setLastColumn:`: (return, arg) shape not yet modelled
+    fn set_last_column(this, last_column: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLastColumn:\0")), last_column);
+    }
+
     fn number_of_visible_columns(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfVisibleColumns\0")));
     }
@@ -381,7 +402,10 @@ impl Browser {
         return browser_column_resizing_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("columnResizingType\0"))));
     }
 
-    // SKIPPED `setColumnResizingType:`: (return, arg) shape not yet modelled
+    fn set_column_resizing_type(this, column_resizing_type: BrowserColumnResizingType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setColumnResizingType:\0")), browser_column_resizing_type_raw(column_resizing_type));
+    }
+
     fn prefers_all_column_user_resizing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("prefersAllColumnUserResizing\0"))) != (0 as i8);
     }
@@ -431,7 +455,10 @@ impl Browser {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsArrowKeys\0"))) != (0 as i8);
     }
 
-    // SKIPPED `displayColumn:`: (return, arg) shape not yet modelled
+    fn display_column(this, column: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("displayColumn:\0")), column);
+    }
+
     fn display_all_columns(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("displayAllColumns\0")));
     }
@@ -446,7 +473,7 @@ impl Browser {
 
     // SKIPPED `setMatrixClass:`: param `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `matrixClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `columnOfMatrix:`: (return, arg) shape not yet modelled
+    // SKIPPED `columnOfMatrix:`: msgSend shape `i64_id` not yet modelled
     fn matrix_in_column(this, column: i64) -> option::Option[Matrix] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("matrixInColumn:\0")), column);
         if obj == { 0 as *u8 } {

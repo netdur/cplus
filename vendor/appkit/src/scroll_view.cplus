@@ -132,6 +132,20 @@ fn scroll_view_find_bar_position_from_raw(raw: i64) -> ScrollViewFindBarPosition
     return ScrollViewFindBarPosition::AboveHorizontalRuler;
 }
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_scroll_view_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_scroll_view_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
     opaque _obj: *u8,
@@ -199,8 +213,8 @@ impl ScrollView {
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
     // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: (return, arg) shape not yet modelled
-    // SKIPPED `contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: (return, arg) shape not yet modelled
+    // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: msgSend shape `size_size_i8_i8_i64` not yet modelled
+    // SKIPPED `contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: msgSend shape `size_size_i8_i8_i64` not yet modelled
     fn tile(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("tile\0")));
     }
@@ -221,8 +235,8 @@ impl ScrollView {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("magnifyToFitRect:\0")), rect);
     }
 
-    // SKIPPED `setMagnification:centeredAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `addFloatingSubview:forAxis:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMagnification:centeredAtPoint:`: msgSend shape `void_f64_point` not yet modelled
+    // SKIPPED `addFloatingSubview:forAxis:`: msgSend shape `void_id_i64` not yet modelled
     fn document_visible_rect(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("documentVisibleRect\0")));
     }
@@ -261,7 +275,10 @@ impl ScrollView {
         return border_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("borderType\0"))));
     }
 
-    // SKIPPED `setBorderType:`: (return, arg) shape not yet modelled
+    fn set_border_type(this, border_type: BorderType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderType:\0")), border_type_raw(border_type));
+    }
+
     fn background_color(this) -> Color {
         return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0"))));
     }
@@ -386,22 +403,34 @@ impl ScrollView {
         return scroller_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("scrollerStyle\0"))));
     }
 
-    // SKIPPED `setScrollerStyle:`: (return, arg) shape not yet modelled
+    fn set_scroller_style(this, scroller_style: ScrollerStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setScrollerStyle:\0")), scroller_style_raw(scroller_style));
+    }
+
     fn scroller_knob_style(this) -> ScrollerKnobStyle {
         return scroller_knob_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("scrollerKnobStyle\0"))));
     }
 
-    // SKIPPED `setScrollerKnobStyle:`: (return, arg) shape not yet modelled
+    fn set_scroller_knob_style(this, scroller_knob_style: ScrollerKnobStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setScrollerKnobStyle:\0")), scroller_knob_style_raw(scroller_knob_style));
+    }
+
     fn horizontal_scroll_elasticity(this) -> ScrollElasticity {
         return scroll_elasticity_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("horizontalScrollElasticity\0"))));
     }
 
-    // SKIPPED `setHorizontalScrollElasticity:`: (return, arg) shape not yet modelled
+    fn set_horizontal_scroll_elasticity(this, horizontal_scroll_elasticity: ScrollElasticity) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setHorizontalScrollElasticity:\0")), scroll_elasticity_raw(horizontal_scroll_elasticity));
+    }
+
     fn vertical_scroll_elasticity(this) -> ScrollElasticity {
         return scroll_elasticity_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("verticalScrollElasticity\0"))));
     }
 
-    // SKIPPED `setVerticalScrollElasticity:`: (return, arg) shape not yet modelled
+    fn set_vertical_scroll_elasticity(this, vertical_scroll_elasticity: ScrollElasticity) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVerticalScrollElasticity:\0")), scroll_elasticity_raw(vertical_scroll_elasticity));
+    }
+
     fn uses_predominant_axis_scrolling(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesPredominantAxisScrolling\0"))) != (0 as i8);
     }
@@ -450,10 +479,22 @@ impl ScrollView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutomaticallyAdjustsContentInsets:\0")), automatically_adjusts_content_insets as i8);
     }
 
-    // SKIPPED `contentInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setContentInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `scrollerInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setScrollerInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn content_insets(this) -> EdgeInsets {
+        return objc_msg_scroll_view_EdgeInsets(this._obj, rt::sel(#str_ptr("contentInsets\0")));
+    }
+
+    fn set_content_insets(this, content_insets: EdgeInsets) {
+        objc_msg_scroll_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setContentInsets:\0")), content_insets);
+    }
+
+    fn scroller_insets(this) -> EdgeInsets {
+        return objc_msg_scroll_view_EdgeInsets(this._obj, rt::sel(#str_ptr("scrollerInsets\0")));
+    }
+
+    fn set_scroller_insets(this, scroller_insets: EdgeInsets) {
+        objc_msg_scroll_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setScrollerInsets:\0")), scroller_insets);
+    }
+
     // SKIPPED `rulerViewClass`: return `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `setRulerViewClass:`: param `Class _Nullable` — unmapped type `Class`
     fn rulers_visible(this) -> bool {
@@ -508,7 +549,10 @@ impl ScrollView {
         return scroll_view_find_bar_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("findBarPosition\0"))));
     }
 
-    // SKIPPED `setFindBarPosition:`: (return, arg) shape not yet modelled
+    fn set_find_bar_position(this, find_bar_position: ScrollViewFindBarPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setFindBarPosition:\0")), scroll_view_find_bar_position_raw(find_bar_position));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

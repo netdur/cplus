@@ -16,7 +16,10 @@ impl StepperTouchBarItem {
 
     fn from_raw(ptr: *u8) -> StepperTouchBarItem { return StepperTouchBarItem { _obj: ptr }; }
 
-    // SKIPPED `stepperTouchBarItemWithIdentifier:formatter:`: (return, arg) shape not yet modelled
+    fn stepper_touch_bar_item_with_identifier_formatter(identifier: str, formatter: *u8) -> StepperTouchBarItem {
+        return StepperTouchBarItem { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSStepperTouchBarItem\0")), rt::sel(#str_ptr("stepperTouchBarItemWithIdentifier:formatter:\0")), bridge::nsstring(identifier), formatter) };
+    }
+
     // SKIPPED `stepperTouchBarItemWithIdentifier:drawingHandler:`: block method with non-void return
     fn max_value(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("maxValue\0")));

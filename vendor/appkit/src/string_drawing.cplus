@@ -37,10 +37,10 @@ impl AttributedString {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
     }
 
-    // SKIPPED `drawWithRect:options:context:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundingRectWithSize:options:context:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawWithRect:options:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundingRectWithSize:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithRect:options:context:`: msgSend shape `void_rect_u64_id` not yet modelled
+    // SKIPPED `boundingRectWithSize:options:context:`: msgSend shape `rect_size_u64_id` not yet modelled
+    // SKIPPED `drawWithRect:options:`: msgSend shape `void_rect_u64` not yet modelled
+    // SKIPPED `boundingRectWithSize:options:`: msgSend shape `rect_size_u64` not yet modelled
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

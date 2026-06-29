@@ -64,13 +64,13 @@ impl TextAttachmentCellProtocol {
 
     fn from_raw(ptr: *u8) -> TextAttachmentCellProtocol { return TextAttachmentCellProtocol { _obj: ptr }; }
 
-    // SKIPPED `drawWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn wants_to_track_mouse(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToTrackMouse\0"))) != (0 as i8);
     }
 
-    // SKIPPED `highlight:withFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: (return, arg) shape not yet modelled
+    // SKIPPED `highlight:withFrame:inView:`: msgSend shape `void_i8_rect_id` not yet modelled
+    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: msgSend shape `i8_id_rect_id_i8` not yet modelled
     fn cell_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("cellSize\0")));
     }
@@ -79,11 +79,11 @@ impl TextAttachmentCellProtocol {
         return rt::msg_point(this._obj, rt::sel(#str_ptr("cellBaselineOffset\0")));
     }
 
-    // SKIPPED `drawWithFrame:inView:characterIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawWithFrame:inView:characterIndex:layoutManager:`: (return, arg) shape not yet modelled
-    // SKIPPED `wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:`: (return, arg) shape not yet modelled
-    // SKIPPED `cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithFrame:inView:characterIndex:`: msgSend shape `void_rect_id_u64` not yet modelled
+    // SKIPPED `drawWithFrame:inView:characterIndex:layoutManager:`: msgSend shape `void_rect_id_u64_id` not yet modelled
+    // SKIPPED `wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:`: msgSend shape `i8_id_rect_id_u64` not yet modelled
+    // SKIPPED `trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:`: msgSend shape `i8_id_rect_id_u64_i8` not yet modelled
+    // SKIPPED `cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_id_rect_point_u64` not yet modelled
     fn attachment(this) -> option::Option[TextAttachment] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attachment\0")));
         if obj == { 0 as *u8 } {

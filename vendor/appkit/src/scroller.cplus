@@ -202,8 +202,8 @@ impl Scroller {
 
     fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
 
-    // SKIPPED `scrollerWidthForControlSize:scrollerStyle:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectForPart:`: (return, arg) shape not yet modelled
+    // SKIPPED `scrollerWidthForControlSize:scrollerStyle:`: msgSend shape `f64_i64_i64` not yet modelled
+    // SKIPPED `rectForPart:`: msgSend shape `rect_i64` not yet modelled
     fn check_space_for_parts(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkSpaceForParts\0")));
     }
@@ -216,7 +216,7 @@ impl Scroller {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawKnobSlotInRect:highlight:\0")), slot_rect, flag as i8);
     }
 
-    // SKIPPED `testPart:`: (return, arg) shape not yet modelled
+    // SKIPPED `testPart:`: msgSend shape `i64_point` not yet modelled
     fn track_knob(this, event: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("trackKnob:\0")), event);
     }
@@ -237,12 +237,18 @@ impl Scroller {
         return scroller_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("scrollerStyle\0"))));
     }
 
-    // SKIPPED `setScrollerStyle:`: (return, arg) shape not yet modelled
+    fn set_scroller_style(this, scroller_style: ScrollerStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setScrollerStyle:\0")), scroller_style_raw(scroller_style));
+    }
+
     fn knob_style(this) -> ScrollerKnobStyle {
         return scroller_knob_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("knobStyle\0"))));
     }
 
-    // SKIPPED `setKnobStyle:`: (return, arg) shape not yet modelled
+    fn set_knob_style(this, knob_style: ScrollerKnobStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setKnobStyle:\0")), scroller_knob_style_raw(knob_style));
+    }
+
     fn usable_parts(this) -> UsableScrollerParts {
         return usable_scroller_parts_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("usableParts\0"))));
     }
@@ -251,7 +257,10 @@ impl Scroller {
         return control_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlSize\0"))));
     }
 
-    // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
+    fn set_control_size(this, control_size: ControlSize) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn hit_part(this) -> ScrollerPart {
         return scroller_part_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("hitPart\0"))));
     }
@@ -260,12 +269,12 @@ impl Scroller {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("knobProportion\0")));
     }
 
-    // SKIPPED `scrollerWidthForControlSize:`: (return, arg) shape not yet modelled
+    // SKIPPED `scrollerWidthForControlSize:`: msgSend shape `f64_i64` not yet modelled
     fn scroller_width() -> f64 {
         return rt::msg_f64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidth\0")));
     }
 
-    // SKIPPED `setFloatValue:knobProportion:`: (return, arg) shape not yet modelled
+    // SKIPPED `setFloatValue:knobProportion:`: msgSend shape `void_f32_f64` not yet modelled
     fn highlight(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("highlight:\0")), flag as i8);
     }
@@ -278,16 +287,22 @@ impl Scroller {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawParts\0")));
     }
 
-    // SKIPPED `drawArrow:highlight:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawArrow:highlight:`: msgSend shape `void_i64_i8` not yet modelled
     fn arrows_position(this) -> ScrollArrowPosition {
         return scroll_arrow_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("arrowsPosition\0"))));
     }
 
-    // SKIPPED `setArrowsPosition:`: (return, arg) shape not yet modelled
+    fn set_arrows_position(this, arrows_position: ScrollArrowPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setArrowsPosition:\0")), scroll_arrow_position_raw(arrows_position));
+    }
+
     fn control_tint(this) -> ControlTint {
         return control_tint_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlTint\0"))));
     }
 
-    // SKIPPED `setControlTint:`: (return, arg) shape not yet modelled
+    fn set_control_tint(this, control_tint: ControlTint) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlTint:\0")), control_tint_raw(control_tint));
+    }
+
 }
 

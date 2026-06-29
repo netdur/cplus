@@ -56,18 +56,23 @@ impl Gradient {
 
     fn from_raw(ptr: *u8) -> Gradient { return Gradient { _obj: ptr }; }
 
-    // SKIPPED `initWithStartingColor:endingColor:`: init arg shape not yet modelled
+    fn new(starting_color: Color, ending_color: Color) -> Gradient {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGradient\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Gradient { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithStartingColor:endingColor:\0")), starting_color.raw(), ending_color.raw()) };
+    }
+
     // SKIPPED `initWithColors:`: extra init variant (one `new` per type)
     // SKIPPED `initWithColorsAndLocations:`: extra init variant (one `new` per type)
     // SKIPPED `initWithColors:atLocations:colorSpace:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `drawFromPoint:toPoint:options:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInRect:angle:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInBezierPath:angle:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawFromCenter:radius:toCenter:radius:options:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInRect:relativeCenterPosition:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInBezierPath:relativeCenterPosition:`: (return, arg) shape not yet modelled
-    // SKIPPED `getColor:location:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawFromPoint:toPoint:options:`: msgSend shape `void_point_point_u64` not yet modelled
+    // SKIPPED `drawInRect:angle:`: msgSend shape `void_rect_f64` not yet modelled
+    // SKIPPED `drawInBezierPath:angle:`: msgSend shape `void_id_f64` not yet modelled
+    // SKIPPED `drawFromCenter:radius:toCenter:radius:options:`: msgSend shape `void_point_f64_point_f64_u64` not yet modelled
+    // SKIPPED `drawInRect:relativeCenterPosition:`: msgSend shape `void_rect_point` not yet modelled
+    // SKIPPED `drawInBezierPath:relativeCenterPosition:`: msgSend shape `void_id_point` not yet modelled
+    // SKIPPED `getColor:location:atIndex:`: msgSend shape `void_id_id_i64` not yet modelled
     fn interpolated_color_at_location(this, location: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("interpolatedColorAtLocation:\0")), location));
     }

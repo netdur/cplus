@@ -359,8 +359,8 @@ impl TextView {
     // SKIPPED `initWithFrame:textContainer:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:`: extra init variant (one `new` per type)
-    // SKIPPED `initUsingTextLayoutManager:`: (return, arg) shape not yet modelled
-    // SKIPPED `textViewUsingTextLayoutManager:`: (return, arg) shape not yet modelled
+    // SKIPPED `initUsingTextLayoutManager:`: msgSend shape `id_i8` not yet modelled
+    // SKIPPED `textViewUsingTextLayoutManager:`: msgSend shape `id_i8` not yet modelled
     fn replace_text_container(this, new_container: TextContainer) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContainer:\0")), new_container.raw());
     }
@@ -377,8 +377,8 @@ impl TextView {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setConstrainedFrameSize:\0")), desired_size);
     }
 
-    // SKIPPED `setAlignment:range:`: (return, arg) shape not yet modelled
-    // SKIPPED `setBaseWritingDirection:range:`: (return, arg) shape not yet modelled
+    // SKIPPED `setAlignment:range:`: msgSend shape `void_i64_range` not yet modelled
+    // SKIPPED `setBaseWritingDirection:range:`: msgSend shape `void_i64_range` not yet modelled
     fn turn_off_kerning(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("turnOffKerning:\0")), sender);
     }
@@ -459,20 +459,41 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontTablePanel:\0")), sender);
     }
 
-    // SKIPPED `rulerView:didMoveMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:didRemoveMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:didAddMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:shouldMoveMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:shouldAddMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:willMoveMarker:toLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:shouldRemoveMarker:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:willAddMarker:atLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `rulerView:handleMouseDown:`: (return, arg) shape not yet modelled
+    fn ruler_view_did_move_marker(this, ruler: RulerView, marker: RulerMarker) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:didMoveMarker:\0")), ruler.raw(), marker.raw());
+    }
+
+    fn ruler_view_did_remove_marker(this, ruler: RulerView, marker: RulerMarker) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:didRemoveMarker:\0")), ruler.raw(), marker.raw());
+    }
+
+    fn ruler_view_did_add_marker(this, ruler: RulerView, marker: RulerMarker) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:didAddMarker:\0")), ruler.raw(), marker.raw());
+    }
+
+    fn ruler_view_should_move_marker(this, ruler: RulerView, marker: RulerMarker) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldMoveMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
+    }
+
+    fn ruler_view_should_add_marker(this, ruler: RulerView, marker: RulerMarker) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldAddMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
+    }
+
+    // SKIPPED `rulerView:willMoveMarker:toLocation:`: msgSend shape `f64_id_id_f64` not yet modelled
+    fn ruler_view_should_remove_marker(this, ruler: RulerView, marker: RulerMarker) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldRemoveMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
+    }
+
+    // SKIPPED `rulerView:willAddMarker:atLocation:`: msgSend shape `f64_id_id_f64` not yet modelled
+    fn ruler_view_handle_mouse_down(this, ruler: RulerView, event: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:handleMouseDown:\0")), ruler.raw(), event);
+    }
+
     fn set_needs_display_in_rect_avoid_additional_layout(this, rect: rt::Rect, flag: bool) {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setNeedsDisplayInRect:avoidAdditionalLayout:\0")), rect, flag as i8);
     }
 
-    // SKIPPED `drawInsertionPointInRect:color:turnedOn:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInsertionPointInRect:color:turnedOn:`: msgSend shape `void_rect_id_i8` not yet modelled
     fn draw_view_background_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawViewBackgroundInRect:\0")), rect);
     }
@@ -489,8 +510,11 @@ impl TextView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateDragTypeRegistration\0")));
     }
 
-    // SKIPPED `selectionRangeForProposedRange:granularity:`: (return, arg) shape not yet modelled
-    // SKIPPED `clickedOnLink:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `selectionRangeForProposedRange:granularity:`: msgSend shape `range_range_i64` not yet modelled
+    fn clicked_on_link_at_index(this, link: *u8, char_index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("clickedOnLink:atIndex:\0")), link, char_index);
+    }
+
     fn start_speaking(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("startSpeaking:\0")), sender);
     }
@@ -499,13 +523,16 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("stopSpeaking:\0")), sender);
     }
 
-    // SKIPPED `setLayoutOrientation:`: (return, arg) shape not yet modelled
+    fn set_layout_orientation(this, orientation: TextLayoutOrientation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLayoutOrientation:\0")), text_layout_orientation_raw(orientation));
+    }
+
     fn change_layout_orientation(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeLayoutOrientation:\0")), sender);
     }
 
-    // SKIPPED `characterIndexForInsertionAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `performValidatedReplacementInRange:withAttributedString:`: (return, arg) shape not yet modelled
+    // SKIPPED `characterIndexForInsertionAtPoint:`: msgSend shape `u64_point` not yet modelled
+    // SKIPPED `performValidatedReplacementInRange:withAttributedString:`: msgSend shape `i8_range_id` not yet modelled
     fn text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainer\0")));
         if obj == { 0 as *u8 } {
@@ -575,21 +602,38 @@ impl TextView {
     }
 
     // SKIPPED `completionsForPartialWordRange:indexOfSelectedItem:`: NSArray<NSString> arg shape not modelled
-    // SKIPPED `insertCompletion:forPartialWordRange:movement:isFinal:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertCompletion:forPartialWordRange:movement:isFinal:`: msgSend shape `void_id_range_i64_i8` not yet modelled
     fn range_for_user_completion(this) -> rt::Range {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("rangeForUserCompletion\0")));
     }
 
-    // SKIPPED `writeSelectionToPasteboard:type:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeSelectionToPasteboard:types:`: (return, arg) shape not yet modelled
-    // SKIPPED `preferredPasteboardTypeFromArray:restrictedToTypesFromArray:`: (return, arg) shape not yet modelled
-    // SKIPPED `readSelectionFromPasteboard:type:`: (return, arg) shape not yet modelled
-    // SKIPPED `readSelectionFromPasteboard:`: (return, arg) shape not yet modelled
+    fn write_selection_to_pasteboard_type(this, pboard: *u8, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:type:\0")), pboard, bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    fn write_selection_to_pasteboard_types(this, pboard: *u8, types: vec::Vec[text::Text]) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:types:\0")), pboard, bridge::nsarray_of_text(types)) != (0 as i8);
+    }
+
+    fn preferred_pasteboard_type_from_array_restricted_to_types_from_array(this, available_types: vec::Vec[text::Text], allowed_types: vec::Vec[text::Text]) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("preferredPasteboardTypeFromArray:restrictedToTypesFromArray:\0")), bridge::nsarray_of_text(available_types), bridge::nsarray_of_text(allowed_types));
+        return bridge::to_text_option(ns);
+    }
+
+    fn read_selection_from_pasteboard_type(this, pboard: *u8, type_: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("readSelectionFromPasteboard:type:\0")), pboard, bridge::nsstring(type_)) != (0 as i8);
+    }
+
+    // SKIPPED `readSelectionFromPasteboard:`: msgSend shape `i8_id` not yet modelled
     fn register_for_services() {
         rt::msg_void(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("registerForServices\0")));
     }
 
-    // SKIPPED `validRequestorForSendType:returnType:`: (return, arg) shape not yet modelled
+    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
+        return bridge::obj_option(obj);
+    }
+
     fn paste_as_plain_text(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("pasteAsPlainText:\0")), sender);
     }
@@ -626,9 +670,9 @@ impl TextView {
         return out;
     }
 
-    // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: (return, arg) shape not yet modelled
+    // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: msgSend shape `i8_id_size_i8` not yet modelled
     // SKIPPED `dragImageForSelectionWithEvent:origin:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
-    // SKIPPED `dragOperationForDraggingInfo:type:`: (return, arg) shape not yet modelled
+    // SKIPPED `dragOperationForDraggingInfo:type:`: msgSend shape `u64_id_id` not yet modelled
     fn clean_up_after_drag_operation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("cleanUpAfterDragOperation\0")));
     }
@@ -648,7 +692,7 @@ impl TextView {
     }
 
     // SKIPPED `setSelectedRanges:affinity:stillSelecting:`: param `NSArray<NSValue *> * _Nonnull` — generic collection
-    // SKIPPED `setSelectedRange:affinity:stillSelecting:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSelectedRange:affinity:stillSelecting:`: msgSend shape `void_range_i64_i8` not yet modelled
     fn update_insertion_point_state_and_restart_timer(this, restart_flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("updateInsertionPointStateAndRestartTimer:\0")), restart_flag as i8);
     }
@@ -661,9 +705,9 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleGrammarChecking:\0")), sender);
     }
 
-    // SKIPPED `setSpellingState:range:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSpellingState:range:`: msgSend shape `void_i64_range` not yet modelled
     // SKIPPED `shouldChangeTextInRanges:replacementStrings:`: param `NSArray<NSValue *> * _Nonnull` — generic collection
-    // SKIPPED `shouldChangeTextInRange:replacementString:`: (return, arg) shape not yet modelled
+    // SKIPPED `shouldChangeTextInRange:replacementString:`: msgSend shape `i8_range_id` not yet modelled
     fn did_change_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("didChangeText\0")));
     }
@@ -672,8 +716,14 @@ impl TextView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("breakUndoCoalescing\0")));
     }
 
-    // SKIPPED `showFindIndicatorForRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setSelectedRange:`: (return, arg) shape not yet modelled
+    fn show_find_indicator_for_range(this, char_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("showFindIndicatorForRange:\0")), char_range);
+    }
+
+    fn set_selected_range(this, char_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("setSelectedRange:\0")), char_range);
+    }
+
     // SKIPPED `selectedRanges`: NSArray return needs a single NSRange arg
     // SKIPPED `setSelectedRanges:`: param `NSArray<NSValue *> * _Nonnull` — generic collection
     fn selection_affinity(this) -> SelectionAffinity {
@@ -684,7 +734,10 @@ impl TextView {
         return selection_granularity_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("selectionGranularity\0"))));
     }
 
-    // SKIPPED `setSelectionGranularity:`: (return, arg) shape not yet modelled
+    fn set_selection_granularity(this, selection_granularity: SelectionGranularity) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectionGranularity:\0")), selection_granularity_raw(selection_granularity));
+    }
+
     // SKIPPED `selectedTextAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `setSelectedTextAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn insertion_point_color(this) -> *u8 {
@@ -907,12 +960,18 @@ impl TextView {
         return writing_tools_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("writingToolsBehavior\0"))));
     }
 
-    // SKIPPED `setWritingToolsBehavior:`: (return, arg) shape not yet modelled
+    fn set_writing_tools_behavior(this, writing_tools_behavior: WritingToolsBehavior) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setWritingToolsBehavior:\0")), writing_tools_behavior_raw(writing_tools_behavior));
+    }
+
     fn allowed_writing_tools_result_options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("allowedWritingToolsResultOptions\0")));
     }
 
-    // SKIPPED `setAllowedWritingToolsResultOptions:`: (return, arg) shape not yet modelled
+    fn set_allowed_writing_tools_result_options(this, allowed_writing_tools_result_options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setAllowedWritingToolsResultOptions:\0")), allowed_writing_tools_result_options);
+    }
+
     fn smart_delete_range_for_proposed_range(this, proposed_char_range: rt::Range) -> rt::Range {
         return rt::msg_range_range(this._obj, rt::sel(#str_ptr("smartDeleteRangeForProposedRange:\0")), proposed_char_range);
     }
@@ -921,9 +980,9 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleSmartInsertDelete:\0")), sender);
     }
 
-    // SKIPPED `smartInsertForString:replacingRange:beforeString:afterString:`: (return, arg) shape not yet modelled
-    // SKIPPED `smartInsertBeforeStringForString:replacingRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `smartInsertAfterStringForString:replacingRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `smartInsertForString:replacingRange:beforeString:afterString:`: msgSend shape `void_id_range_id_id` not yet modelled
+    // SKIPPED `smartInsertBeforeStringForString:replacingRange:`: msgSend shape `id_id_range` not yet modelled
+    // SKIPPED `smartInsertAfterStringForString:replacingRange:`: msgSend shape `id_id_range` not yet modelled
     fn toggle_automatic_quote_substitution(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleAutomaticQuoteSubstitution:\0")), sender);
     }
@@ -1048,12 +1107,18 @@ impl TextView {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("inlinePredictionType\0"))));
     }
 
-    // SKIPPED `setInlinePredictionType:`: (return, arg) shape not yet modelled
+    fn set_inline_prediction_type(this, inline_prediction_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInlinePredictionType:\0")), text_input_trait_type_raw(inline_prediction_type));
+    }
+
     fn math_expression_completion_type(this) -> TextInputTraitType {
         return text_input_trait_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mathExpressionCompletionType\0"))));
     }
 
-    // SKIPPED `setMathExpressionCompletionType:`: (return, arg) shape not yet modelled
+    fn set_math_expression_completion_type(this, math_expression_completion_type: TextInputTraitType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMathExpressionCompletionType:\0")), text_input_trait_type_raw(math_expression_completion_type));
+    }
+
     fn toggle_quick_look_preview_panel(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleQuickLookPreviewPanel:\0")), sender);
     }
@@ -1119,7 +1184,7 @@ impl TextView {
         return rt::msg_id(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("scrollablePlainDocumentContentTextView\0")));
     }
 
-    // SKIPPED `drawTextHighlightBackgroundForTextRange:origin:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawTextHighlightBackgroundForTextRange:origin:`: msgSend shape `void_id_point` not yet modelled
     fn highlight(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("highlight:\0")), sender);
     }

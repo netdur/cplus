@@ -188,6 +188,9 @@ impl ScrubberImageItemView {
         return image_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageAlignment\0"))));
     }
 
-    // SKIPPED `setImageAlignment:`: (return, arg) shape not yet modelled
+    fn set_image_alignment(this, image_alignment: ImageAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageAlignment:\0")), image_alignment_raw(image_alignment));
+    }
+
 }
 

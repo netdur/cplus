@@ -177,7 +177,10 @@ impl StatusItem {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("behavior\0")));
     }
 
-    // SKIPPED `setBehavior:`: (return, arg) shape not yet modelled
+    fn set_behavior(this, behavior: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBehavior:\0")), behavior);
+    }
+
     fn is_visible(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVisible\0"))) != (0 as i8);
     }
@@ -195,7 +198,7 @@ impl StatusItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAutosaveName:\0")), bridge::nsstring(autosave_name));
     }
 
-    // SKIPPED `sendActionOn:`: (return, arg) shape not yet modelled
+    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
     fn draw_status_bar_background_in_rect_with_highlight(this, rect: rt::Rect, highlight: bool) {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawStatusBarBackgroundInRect:withHighlight:\0")), rect, highlight as i8);
     }

@@ -80,9 +80,12 @@ impl TextInputClient {
 
     fn from_raw(ptr: *u8) -> TextInputClient { return TextInputClient { _obj: ptr }; }
 
-    // SKIPPED `insertText:replacementRange:`: (return, arg) shape not yet modelled
+    fn insert_text_replacement_range(this, string: *u8, replacement_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("insertText:replacementRange:\0")), string, replacement_range);
+    }
+
     // SKIPPED `doCommandBySelector:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `setMarkedText:selectedRange:replacementRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `setMarkedText:selectedRange:replacementRange:`: msgSend shape `void_id_range_range` not yet modelled
     fn unmark_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unmarkText\0")));
     }
@@ -115,23 +118,26 @@ impl TextInputClient {
     }
 
     // SKIPPED `firstRectForCharacterRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `characterIndexForPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `characterIndexForPoint:`: msgSend shape `u64_point` not yet modelled
     fn attributed_string(this) -> AttributedString {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }
 
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `baselineDeltaForCharacterAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: msgSend shape `f64_point` not yet modelled
+    // SKIPPED `baselineDeltaForCharacterAtIndex:`: msgSend shape `f64_u64` not yet modelled
     fn window_level(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowLevel\0")));
     }
 
-    // SKIPPED `drawsVerticallyForCharacterAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawsVerticallyForCharacterAtIndex:`: msgSend shape `i8_u64` not yet modelled
     fn preferred_text_accessory_placement(this) -> TextCursorAccessoryPlacement {
         return text_cursor_accessory_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredTextAccessoryPlacement\0"))));
     }
 
-    // SKIPPED `insertAdaptiveImageGlyph:replacementRange:`: (return, arg) shape not yet modelled
+    fn insert_adaptive_image_glyph_replacement_range(this, adaptive_image_glyph: AdaptiveImageGlyph, replacement_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("insertAdaptiveImageGlyph:replacementRange:\0")), adaptive_image_glyph.raw(), replacement_range);
+    }
+
     fn union_rect_in_visible_selected_range(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("unionRectInVisibleSelectedRange\0")));
     }

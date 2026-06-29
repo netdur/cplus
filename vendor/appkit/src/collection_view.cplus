@@ -77,10 +77,17 @@ impl CollectionView {
         return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `layoutAttributesForSupplementaryElementOfKind:atIndexPath:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameForItemAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `frameForItemAtIndex:withNumberOfItems:`: (return, arg) shape not yet modelled
-    // SKIPPED `numberOfItemsInSection:`: (return, arg) shape not yet modelled
+    fn layout_attributes_for_supplementary_element_of_kind_at_index_path(this, kind: str, index_path: *u8) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForSupplementaryElementOfKind:atIndexPath:\0")), bridge::nsstring(kind), index_path);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
+    }
+
+    // SKIPPED `frameForItemAtIndex:`: msgSend shape `rect_u64` not yet modelled
+    // SKIPPED `frameForItemAtIndex:withNumberOfItems:`: msgSend shape `rect_u64_u64` not yet modelled
+    // SKIPPED `numberOfItemsInSection:`: msgSend shape `i64_i64` not yet modelled
     // SKIPPED `selectItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `deselectItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     fn select_all(this, sender: *u8) {
@@ -92,11 +99,20 @@ impl CollectionView {
     }
 
     // SKIPPED `registerClass:forItemWithIdentifier:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `registerNib:forItemWithIdentifier:`: (return, arg) shape not yet modelled
+    fn register_nib_for_item_with_identifier(this, nib: Nib, identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemWithIdentifier:\0")), nib.raw(), bridge::nsstring(identifier));
+    }
+
     // SKIPPED `registerClass:forSupplementaryViewOfKind:withIdentifier:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `registerNib:forSupplementaryViewOfKind:withIdentifier:`: (return, arg) shape not yet modelled
-    // SKIPPED `makeItemWithIdentifier:forIndexPath:`: (return, arg) shape not yet modelled
-    // SKIPPED `makeSupplementaryViewOfKind:withIdentifier:forIndexPath:`: (return, arg) shape not yet modelled
+    // SKIPPED `registerNib:forSupplementaryViewOfKind:withIdentifier:`: msgSend shape `void_id_id_id` not yet modelled
+    fn make_item_with_identifier_for_index_path(this, identifier: str, index_path: *u8) -> CollectionViewItem {
+        return CollectionViewItem::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeItemWithIdentifier:forIndexPath:\0")), bridge::nsstring(identifier), index_path));
+    }
+
+    fn make_supplementary_view_of_kind_with_identifier_for_index_path(this, element_kind: str, identifier: str, index_path: *u8) -> *u8 {
+        return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeSupplementaryViewOfKind:withIdentifier:forIndexPath:\0")), bridge::nsstring(element_kind), bridge::nsstring(identifier), index_path);
+    }
+
     fn item_at_index(this, index: u64) -> option::Option[CollectionViewItem] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
         if obj == { 0 as *u8 } {
@@ -120,7 +136,7 @@ impl CollectionView {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `indexPathForItemAtPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexPathForItemAtPoint:`: msgSend shape `id_point` not yet modelled
     // SKIPPED `supplementaryViewForElementKind:atIndexPath:`: return `NSView<NSCollectionViewElement> * _Nullable` — generic collection
     // SKIPPED `visibleSupplementaryViewsOfKind:`: return `NSArray<NSView<NSCollectionViewElement> *> * _Nonnull` — generic collection
     // SKIPPED `indexPathsForVisibleSupplementaryElementsOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
@@ -136,18 +152,21 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadSections:\0")), sections.raw());
     }
 
-    // SKIPPED `moveSection:toSection:`: (return, arg) shape not yet modelled
+    // SKIPPED `moveSection:toSection:`: msgSend shape `void_i64_i64` not yet modelled
     // SKIPPED `insertItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `deleteItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `reloadItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `moveItemAtIndexPath:toIndexPath:`: (return, arg) shape not yet modelled
+    fn move_item_at_index_path_to_index_path(this, index_path: *u8, new_index_path: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveItemAtIndexPath:toIndexPath:\0")), index_path, new_index_path);
+    }
+
     // SKIPPED `performBatchUpdates:completionHandler:`: params after the block not modelled
     fn toggle_section_collapse(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleSectionCollapse:\0")), sender);
     }
 
     // SKIPPED `scrollToItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: (return, arg) shape not yet modelled
+    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
     // SKIPPED `draggingImageForItemsAtIndexPaths:withEvent:offset:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `draggingImageForItemsAtIndexes:withEvent:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
     // SKIPPED `dataSource`: return `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection
@@ -249,12 +268,18 @@ impl CollectionView {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxNumberOfRows\0")));
     }
 
-    // SKIPPED `setMaxNumberOfRows:`: (return, arg) shape not yet modelled
+    fn set_max_number_of_rows(this, max_number_of_rows: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxNumberOfRows:\0")), max_number_of_rows);
+    }
+
     fn max_number_of_columns(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxNumberOfColumns\0")));
     }
 
-    // SKIPPED `setMaxNumberOfColumns:`: (return, arg) shape not yet modelled
+    fn set_max_number_of_columns(this, max_number_of_columns: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxNumberOfColumns:\0")), max_number_of_columns);
+    }
+
     fn min_item_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("minItemSize\0")));
     }
@@ -411,7 +436,10 @@ impl CollectionViewItem {
         return collection_view_item_highlight_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("highlightState\0"))));
     }
 
-    // SKIPPED `setHighlightState:`: (return, arg) shape not yet modelled
+    fn set_highlight_state(this, highlight_state: CollectionViewItemHighlightState) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setHighlightState:\0")), collection_view_item_highlight_state_raw(highlight_state));
+    }
+
     fn image_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0")));
     }
@@ -741,8 +769,14 @@ impl CollectionViewElement {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("applyLayoutAttributes:\0")), layout_attributes.raw());
     }
 
-    // SKIPPED `willTransitionFromLayout:toLayout:`: (return, arg) shape not yet modelled
-    // SKIPPED `didTransitionFromLayout:toLayout:`: (return, arg) shape not yet modelled
+    fn will_transition_from_layout_to_layout(this, old_layout: CollectionViewLayout, new_layout: CollectionViewLayout) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("willTransitionFromLayout:toLayout:\0")), old_layout.raw(), new_layout.raw());
+    }
+
+    fn did_transition_from_layout_to_layout(this, old_layout: CollectionViewLayout, new_layout: CollectionViewLayout) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("didTransitionFromLayout:toLayout:\0")), old_layout.raw(), new_layout.raw());
+    }
+
     fn preferred_layout_attributes_fitting_attributes(this, layout_attributes: CollectionViewLayoutAttributes) -> CollectionViewLayoutAttributes {
         return CollectionViewLayoutAttributes::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("preferredLayoutAttributesFittingAttributes:\0")), layout_attributes.raw()));
     }

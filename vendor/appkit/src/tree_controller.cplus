@@ -64,7 +64,10 @@ impl TreeController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertChild:\0")), sender);
     }
 
-    // SKIPPED `insertObject:atArrangedObjectIndexPath:`: (return, arg) shape not yet modelled
+    fn insert_object_at_arranged_object_index_path(this, object: *u8, index_path: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndexPath:\0")), object, index_path);
+    }
+
     // SKIPPED `insertObjects:atArrangedObjectIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     fn remove_object_at_arranged_object_index_path(this, index_path: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeObjectAtArrangedObjectIndexPath:\0")), index_path);
@@ -72,10 +75,13 @@ impl TreeController {
 
     // SKIPPED `removeObjectsAtArrangedObjectIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `setSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `setSelectionIndexPath:`: (return, arg) shape not yet modelled
+    // SKIPPED `setSelectionIndexPath:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `addSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `removeSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `moveNode:toIndexPath:`: (return, arg) shape not yet modelled
+    fn move_node_to_index_path(this, node: TreeNode, index_path: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveNode:toIndexPath:\0")), node.raw(), index_path);
+    }
+
     // SKIPPED `moveNodes:toIndexPath:`: param `NSArray<NSTreeNode *> * _Nonnull` — generic collection
     fn children_key_path_for_node(this, node: TreeNode) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("childrenKeyPathForNode:\0")), node.raw());

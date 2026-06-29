@@ -20,7 +20,10 @@ impl PressGestureRecognizer {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }
 
-    // SKIPPED `setButtonMask:`: (return, arg) shape not yet modelled
+    fn set_button_mask(this, button_mask: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setButtonMask:\0")), button_mask);
+    }
+
     fn minimum_press_duration(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("minimumPressDuration\0")));
     }
@@ -41,6 +44,9 @@ impl PressGestureRecognizer {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTouchesRequired\0")));
     }
 
-    // SKIPPED `setNumberOfTouchesRequired:`: (return, arg) shape not yet modelled
+    fn set_number_of_touches_required(this, number_of_touches_required: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfTouchesRequired:\0")), number_of_touches_required);
+    }
+
 }
 

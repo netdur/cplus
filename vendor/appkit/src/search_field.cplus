@@ -77,7 +77,10 @@ impl SearchField {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("maximumRecents\0")));
     }
 
-    // SKIPPED `setMaximumRecents:`: (return, arg) shape not yet modelled
+    fn set_maximum_recents(this, maximum_recents: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaximumRecents:\0")), maximum_recents);
+    }
+
     fn sends_search_string_immediately(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendsSearchStringImmediately\0"))) != (0 as i8);
     }
@@ -88,9 +91,9 @@ impl SearchField {
 
     // SKIPPED `delegate`: return `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
     // SKIPPED `setDelegate:`: param `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
-    // SKIPPED `rectForSearchTextWhenCentered:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectForSearchButtonWhenCentered:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectForCancelButtonWhenCentered:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectForSearchTextWhenCentered:`: msgSend shape `rect_i8` not yet modelled
+    // SKIPPED `rectForSearchButtonWhenCentered:`: msgSend shape `rect_i8` not yet modelled
+    // SKIPPED `rectForCancelButtonWhenCentered:`: msgSend shape `rect_i8` not yet modelled
     fn centers_placeholder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("centersPlaceholder\0"))) != (0 as i8);
     }

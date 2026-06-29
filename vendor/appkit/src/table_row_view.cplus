@@ -122,7 +122,10 @@ impl TableRowView {
         return table_view_selection_highlight_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("selectionHighlightStyle\0"))));
     }
 
-    // SKIPPED `setSelectionHighlightStyle:`: (return, arg) shape not yet modelled
+    fn set_selection_highlight_style(this, selection_highlight_style: TableViewSelectionHighlightStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")), table_view_selection_highlight_style_raw(selection_highlight_style));
+    }
+
     fn is_emphasized(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEmphasized\0"))) != (0 as i8);
     }
@@ -183,7 +186,10 @@ impl TableRowView {
         return table_view_dragging_destination_feedback_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingDestinationFeedbackStyle\0"))));
     }
 
-    // SKIPPED `setDraggingDestinationFeedbackStyle:`: (return, arg) shape not yet modelled
+    fn set_dragging_destination_feedback_style(this, dragging_destination_feedback_style: TableViewDraggingDestinationFeedbackStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDraggingDestinationFeedbackStyle:\0")), table_view_dragging_destination_feedback_style_raw(dragging_destination_feedback_style));
+    }
+
     fn indentation_for_drop_operation(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("indentationForDropOperation\0")));
     }

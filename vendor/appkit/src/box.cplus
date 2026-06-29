@@ -118,12 +118,18 @@ impl Box {
         return box_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("boxType\0"))));
     }
 
-    // SKIPPED `setBoxType:`: (return, arg) shape not yet modelled
+    fn set_box_type(this, box_type: BoxType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBoxType:\0")), box_type_raw(box_type));
+    }
+
     fn title_position(this) -> TitlePosition {
         return title_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("titlePosition\0"))));
     }
 
-    // SKIPPED `setTitlePosition:`: (return, arg) shape not yet modelled
+    fn set_title_position(this, title_position: TitlePosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitlePosition:\0")), title_position_raw(title_position));
+    }
+
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);
@@ -218,6 +224,9 @@ impl Box {
         return border_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("borderType\0"))));
     }
 
-    // SKIPPED `setBorderType:`: (return, arg) shape not yet modelled
+    fn set_border_type(this, border_type: BorderType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderType:\0")), border_type_raw(border_type));
+    }
+
 }
 

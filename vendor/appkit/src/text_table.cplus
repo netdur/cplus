@@ -163,19 +163,25 @@ impl TextTable {
 
     fn from_raw(ptr: *u8) -> TextTable { return TextTable { _obj: ptr }; }
 
-    // SKIPPED `rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundsRectForBlock:contentRect:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:`: msgSend shape `rect_id_point_rect_id_range` not yet modelled
+    // SKIPPED `boundsRectForBlock:contentRect:inRect:textContainer:characterRange:`: msgSend shape `rect_id_rect_rect_id_range` not yet modelled
+    // SKIPPED `drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:`: msgSend shape `void_id_rect_id_range_id` not yet modelled
     fn number_of_columns(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("numberOfColumns\0")));
     }
 
-    // SKIPPED `setNumberOfColumns:`: (return, arg) shape not yet modelled
+    fn set_number_of_columns(this, number_of_columns: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setNumberOfColumns:\0")), number_of_columns);
+    }
+
     fn layout_algorithm(this) -> TextTableLayoutAlgorithm {
         return text_table_layout_algorithm_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("layoutAlgorithm\0"))));
     }
 
-    // SKIPPED `setLayoutAlgorithm:`: (return, arg) shape not yet modelled
+    fn set_layout_algorithm(this, layout_algorithm: TextTableLayoutAlgorithm) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLayoutAlgorithm:\0")), text_table_layout_algorithm_raw(layout_algorithm));
+    }
+
     fn collapses_borders(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("collapsesBorders\0"))) != (0 as i8);
     }
@@ -234,15 +240,15 @@ impl TextBlock {
         return TextBlock { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `setValue:type:forDimension:`: (return, arg) shape not yet modelled
-    // SKIPPED `valueForDimension:`: (return, arg) shape not yet modelled
-    // SKIPPED `valueTypeForDimension:`: (return, arg) shape not yet modelled
-    // SKIPPED `setContentWidth:type:`: (return, arg) shape not yet modelled
-    // SKIPPED `setWidth:type:forLayer:edge:`: (return, arg) shape not yet modelled
-    // SKIPPED `setWidth:type:forLayer:`: (return, arg) shape not yet modelled
-    // SKIPPED `widthForLayer:edge:`: (return, arg) shape not yet modelled
-    // SKIPPED `widthValueTypeForLayer:edge:`: (return, arg) shape not yet modelled
-    // SKIPPED `setBorderColor:forEdge:`: (return, arg) shape not yet modelled
+    // SKIPPED `setValue:type:forDimension:`: msgSend shape `void_f64_i64_i64` not yet modelled
+    // SKIPPED `valueForDimension:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `valueTypeForDimension:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `setContentWidth:type:`: msgSend shape `void_f64_i64` not yet modelled
+    // SKIPPED `setWidth:type:forLayer:edge:`: msgSend shape `void_f64_i64_i64_i64` not yet modelled
+    // SKIPPED `setWidth:type:forLayer:`: msgSend shape `void_f64_i64_i64` not yet modelled
+    // SKIPPED `widthForLayer:edge:`: msgSend shape `f64_i64_i64` not yet modelled
+    // SKIPPED `widthValueTypeForLayer:edge:`: msgSend shape `i64_i64_i64` not yet modelled
+    // SKIPPED `setBorderColor:forEdge:`: msgSend shape `void_id_i64` not yet modelled
     fn set_border_color(this, color: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBorderColor:\0")), color);
     }
@@ -252,9 +258,9 @@ impl TextBlock {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `rectForLayoutAtPoint:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundsRectForContentRect:inRect:textContainer:characterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawBackgroundWithFrame:inView:characterRange:layoutManager:`: (return, arg) shape not yet modelled
+    // SKIPPED `rectForLayoutAtPoint:inRect:textContainer:characterRange:`: msgSend shape `rect_point_rect_id_range` not yet modelled
+    // SKIPPED `boundsRectForContentRect:inRect:textContainer:characterRange:`: msgSend shape `rect_rect_rect_id_range` not yet modelled
+    // SKIPPED `drawBackgroundWithFrame:inView:characterRange:layoutManager:`: msgSend shape `void_rect_id_range_id` not yet modelled
     fn content_width(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("contentWidth\0")));
     }
@@ -267,7 +273,10 @@ impl TextBlock {
         return text_block_vertical_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("verticalAlignment\0"))));
     }
 
-    // SKIPPED `setVerticalAlignment:`: (return, arg) shape not yet modelled
+    fn set_vertical_alignment(this, vertical_alignment: TextBlockVerticalAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVerticalAlignment:\0")), text_block_vertical_alignment_raw(vertical_alignment));
+    }
+
     fn background_color(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
         return bridge::obj_option(obj);

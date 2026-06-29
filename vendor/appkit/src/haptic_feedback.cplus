@@ -74,6 +74,6 @@ impl HapticFeedbackPerformer {
 
     fn from_raw(ptr: *u8) -> HapticFeedbackPerformer { return HapticFeedbackPerformer { _obj: ptr }; }
 
-    // SKIPPED `performFeedbackPattern:performanceTime:`: (return, arg) shape not yet modelled
+    // SKIPPED `performFeedbackPattern:performanceTime:`: msgSend shape `void_i64_i64` not yet modelled
 }
 

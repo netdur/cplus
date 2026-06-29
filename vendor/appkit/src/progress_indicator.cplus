@@ -113,7 +113,10 @@ impl ProgressIndicator {
         return control_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlSize\0"))));
     }
 
-    // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
+    fn set_control_size(this, control_size: ControlSize) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn double_value(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("doubleValue\0")));
     }
@@ -158,7 +161,10 @@ impl ProgressIndicator {
         return progress_indicator_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("style\0"))));
     }
 
-    // SKIPPED `setStyle:`: (return, arg) shape not yet modelled
+    fn set_style(this, style: ProgressIndicatorStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setStyle:\0")), progress_indicator_style_raw(style));
+    }
+
     fn is_displayed_when_stopped(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDisplayedWhenStopped\0"))) != (0 as i8);
     }
@@ -191,6 +197,9 @@ impl ProgressIndicator {
         return control_tint_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlTint\0"))));
     }
 
-    // SKIPPED `setControlTint:`: (return, arg) shape not yet modelled
+    fn set_control_tint(this, control_tint: ControlTint) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlTint:\0")), control_tint_raw(control_tint));
+    }
+
 }
 

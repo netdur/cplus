@@ -142,17 +142,20 @@ impl PrintOperation {
 
     fn from_raw(ptr: *u8) -> PrintOperation { return PrintOperation { _obj: ptr }; }
 
-    // SKIPPED `printOperationWithView:printInfo:`: (return, arg) shape not yet modelled
-    // SKIPPED `PDFOperationWithView:insideRect:toData:printInfo:`: (return, arg) shape not yet modelled
-    // SKIPPED `PDFOperationWithView:insideRect:toPath:printInfo:`: (return, arg) shape not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toData:printInfo:`: (return, arg) shape not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toPath:printInfo:`: (return, arg) shape not yet modelled
+    fn print_operation_with_view_print_info(view: View, print_info: PrintInfo) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:printInfo:\0")), view.raw(), print_info.raw()) };
+    }
+
+    // SKIPPED `PDFOperationWithView:insideRect:toData:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
+    // SKIPPED `PDFOperationWithView:insideRect:toPath:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toData:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toPath:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
     fn print_operation_with_view(view: View) -> PrintOperation {
         return PrintOperation { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:\0")), view.raw()) };
     }
 
-    // SKIPPED `PDFOperationWithView:insideRect:toData:`: (return, arg) shape not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toData:`: (return, arg) shape not yet modelled
+    // SKIPPED `PDFOperationWithView:insideRect:toData:`: msgSend shape `id_id_rect_id` not yet modelled
+    // SKIPPED `EPSOperationWithView:insideRect:toData:`: msgSend shape `id_id_rect_id` not yet modelled
     // SKIPPED `runOperationModalForWindow:delegate:didRunSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     fn run_operation(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("runOperation\0"))) != (0 as i8);
@@ -250,7 +253,10 @@ impl PrintOperation {
         return printing_page_order_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pageOrder\0"))));
     }
 
-    // SKIPPED `setPageOrder:`: (return, arg) shape not yet modelled
+    fn set_page_order(this, page_order: PrintingPageOrder) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPageOrder:\0")), printing_page_order_raw(page_order));
+    }
+
     fn view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
         if obj == { 0 as *u8 } {

@@ -315,18 +315,21 @@ impl Workspace {
 
     fn from_raw(ptr: *u8) -> Workspace { return Workspace { _obj: ptr }; }
 
-    // SKIPPED `openURL:`: (return, arg) shape not yet modelled
+    // SKIPPED `openURL:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `openURL:configuration:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
     // SKIPPED `openApplicationAtURL:configuration:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `selectFile:inFileViewerRootedAtPath:`: (return, arg) shape not yet modelled
+    fn select_file_in_file_viewer_rooted_at_path(this, full_path: str, root_full_path: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("selectFile:inFileViewerRootedAtPath:\0")), bridge::nsstring(full_path), bridge::nsstring(root_full_path)) != (0 as i8);
+    }
+
     // SKIPPED `activateFileViewerSelectingURLs:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
-    // SKIPPED `showSearchResultsForQueryString:`: (return, arg) shape not yet modelled
+    // SKIPPED `showSearchResultsForQueryString:`: msgSend shape `i8_id` not yet modelled
     fn note_file_system_changed(this, path: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteFileSystemChanged:\0")), bridge::nsstring(path));
     }
 
-    // SKIPPED `isFilePackageAtPath:`: (return, arg) shape not yet modelled
+    // SKIPPED `isFilePackageAtPath:`: msgSend shape `i8_id` not yet modelled
     fn icon_for_file(this, full_path: str) -> Image {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFile:\0")), bridge::nsstring(full_path)));
     }
@@ -343,13 +346,16 @@ impl Workspace {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForContentType:\0")), content_type.raw()));
     }
 
-    // SKIPPED `setIcon:forFile:options:`: (return, arg) shape not yet modelled
+    // SKIPPED `setIcon:forFile:options:`: msgSend shape `i8_id_id_u64` not yet modelled
     // SKIPPED `recycleURLs:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
     // SKIPPED `duplicateURLs:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
-    // SKIPPED `getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:`: (return, arg) shape not yet modelled
-    // SKIPPED `unmountAndEjectDeviceAtPath:`: (return, arg) shape not yet modelled
-    // SKIPPED `unmountAndEjectDeviceAtURL:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `extendPowerOffBy:`: (return, arg) shape not yet modelled
+    // SKIPPED `getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:`: msgSend shape `i8_id_id_id_id_id_id` not yet modelled
+    // SKIPPED `unmountAndEjectDeviceAtPath:`: msgSend shape `i8_id` not yet modelled
+    fn unmount_and_eject_device_at_u_r_l_error(this, url: URL, error: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("unmountAndEjectDeviceAtURL:error:\0")), url.raw(), error) != (0 as i8);
+    }
+
+    // SKIPPED `extendPowerOffBy:`: msgSend shape `i64_i64` not yet modelled
     fn hide_other_applications(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("hideOtherApplications\0")));
     }
@@ -414,14 +420,17 @@ impl Workspace {
 
     // SKIPPED `desktopImageOptionsForScreen:`: return `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `requestAuthorizationOfType:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `openFile:`: (return, arg) shape not yet modelled
-    // SKIPPED `openFile:withApplication:`: (return, arg) shape not yet modelled
-    // SKIPPED `openFile:withApplication:andDeactivate:`: (return, arg) shape not yet modelled
-    // SKIPPED `launchApplication:`: (return, arg) shape not yet modelled
+    // SKIPPED `openFile:`: msgSend shape `i8_id` not yet modelled
+    fn open_file_with_application(this, full_path: str, app_name: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("openFile:withApplication:\0")), bridge::nsstring(full_path), bridge::nsstring(app_name)) != (0 as i8);
+    }
+
+    // SKIPPED `openFile:withApplication:andDeactivate:`: msgSend shape `i8_id_id_i8` not yet modelled
+    // SKIPPED `launchApplication:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `launchApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `openURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
-    // SKIPPED `launchApplication:showIcon:autolaunch:`: (return, arg) shape not yet modelled
+    // SKIPPED `launchApplication:showIcon:autolaunch:`: msgSend shape `i8_id_i8_i8` not yet modelled
     fn full_path_for_application(this, app_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fullPathForApplication:\0")), bridge::nsstring(app_name));
         return bridge::to_text_option(ns);
@@ -432,9 +441,9 @@ impl Workspace {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:`: (return, arg) shape not yet modelled
+    // SKIPPED `launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:`: msgSend shape `i8_id_u64_id_id` not yet modelled
     // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
-    // SKIPPED `openTempFile:`: (return, arg) shape not yet modelled
+    // SKIPPED `openTempFile:`: msgSend shape `i8_id` not yet modelled
     fn find_applications(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("findApplications\0")));
     }
@@ -443,7 +452,7 @@ impl Workspace {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteUserDefaultsChanged\0")));
     }
 
-    // SKIPPED `slideImage:from:to:`: (return, arg) shape not yet modelled
+    // SKIPPED `slideImage:from:to:`: msgSend shape `void_id_point_point` not yet modelled
     fn check_for_removable_media(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkForRemovableMedia\0")));
     }
@@ -482,14 +491,18 @@ impl Workspace {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `openFile:fromImage:at:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `performFileOperation:source:destination:files:tag:`: (return, arg) shape not yet modelled
-    // SKIPPED `getInfoForFile:application:type:`: (return, arg) shape not yet modelled
+    // SKIPPED `openFile:fromImage:at:inView:`: msgSend shape `i8_id_id_point_id` not yet modelled
+    // SKIPPED `performFileOperation:source:destination:files:tag:`: msgSend shape `i8_id_id_id_id_id` not yet modelled
+    // SKIPPED `getInfoForFile:application:type:`: msgSend shape `i8_id_id_id` not yet modelled
     fn icon_for_file_type(this, file_type: str) -> Image {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFileType:\0")), bridge::nsstring(file_type)));
     }
 
-    // SKIPPED `typeOfFile:error:`: (return, arg) shape not yet modelled
+    fn type_of_file_error(this, absolute_file_path: str, out_error: *u8) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeOfFile:error:\0")), bridge::nsstring(absolute_file_path), out_error);
+        return bridge::to_text_option(ns);
+    }
+
     fn localized_description_for_type(this, type_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("localizedDescriptionForType:\0")), bridge::nsstring(type_name));
         return bridge::to_text_option(ns);
@@ -500,8 +513,14 @@ impl Workspace {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `filenameExtension:isValidForType:`: (return, arg) shape not yet modelled
-    // SKIPPED `type:conformsToType:`: (return, arg) shape not yet modelled
+    fn filename_extension_is_valid_for_type(this, filename_extension: str, type_name: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("filenameExtension:isValidForType:\0")), bridge::nsstring(filename_extension), bridge::nsstring(type_name)) != (0 as i8);
+    }
+
+    fn type_conforms_to_type(this, first_type_name: str, second_type_name: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("type:conformsToType:\0")), bridge::nsstring(first_type_name), bridge::nsstring(second_type_name)) != (0 as i8);
+    }
+
 }
 
 // `NSWorkspaceAuthorization` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

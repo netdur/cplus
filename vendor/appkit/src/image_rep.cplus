@@ -184,8 +184,8 @@ impl ImageRep {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("draw\0"))) != (0 as i8);
     }
 
-    // SKIPPED `drawAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawAtPoint:`: msgSend shape `i8_point` not yet modelled
+    // SKIPPED `drawInRect:`: msgSend shape `i8_rect` not yet modelled
     // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `registerImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
     // SKIPPED `unregisterImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
@@ -193,7 +193,7 @@ impl ImageRep {
     // SKIPPED `imageRepClassForPasteboardType:`: return `Class _Nullable` — unmapped type `Class`
     // SKIPPED `imageRepClassForType:`: return `Class _Nullable` — unmapped type `Class`
     // SKIPPED `imageRepClassForData:`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `canInitWithData:`: (return, arg) shape not yet modelled
+    // SKIPPED `canInitWithData:`: msgSend shape `i8_id` not yet modelled
     fn image_unfiltered_file_types() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageUnfilteredFileTypes\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -250,7 +250,7 @@ impl ImageRep {
         return out;
     }
 
-    // SKIPPED `canInitWithPasteboard:`: (return, arg) shape not yet modelled
+    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `imageRepsWithContentsOfFile:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
     fn image_rep_with_contents_of_file(filename: str) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfFile:\0")), bridge::nsstring(filename));
@@ -316,22 +316,34 @@ impl ImageRep {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("bitsPerSample\0")));
     }
 
-    // SKIPPED `setBitsPerSample:`: (return, arg) shape not yet modelled
+    fn set_bits_per_sample(this, bits_per_sample: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBitsPerSample:\0")), bits_per_sample);
+    }
+
     fn pixels_wide(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelsWide\0")));
     }
 
-    // SKIPPED `setPixelsWide:`: (return, arg) shape not yet modelled
+    fn set_pixels_wide(this, pixels_wide: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPixelsWide:\0")), pixels_wide);
+    }
+
     fn pixels_high(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("pixelsHigh\0")));
     }
 
-    // SKIPPED `setPixelsHigh:`: (return, arg) shape not yet modelled
+    fn set_pixels_high(this, pixels_high: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPixelsHigh:\0")), pixels_high);
+    }
+
     fn layout_direction(this) -> ImageLayoutDirection {
         return image_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("layoutDirection\0"))));
     }
 
-    // SKIPPED `setLayoutDirection:`: (return, arg) shape not yet modelled
+    fn set_layout_direction(this, layout_direction: ImageLayoutDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLayoutDirection:\0")), image_layout_direction_raw(layout_direction));
+    }
+
     // SKIPPED `registeredImageRepClasses`: return `NSArray<Class> * _Nonnull` — generic collection
     // SKIPPED `imageUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     // SKIPPED `imageTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection

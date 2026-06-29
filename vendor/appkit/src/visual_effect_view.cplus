@@ -160,7 +160,10 @@ impl VisualEffectView {
         return visual_effect_material_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("material\0"))));
     }
 
-    // SKIPPED `setMaterial:`: (return, arg) shape not yet modelled
+    fn set_material(this, material: VisualEffectMaterial) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMaterial:\0")), visual_effect_material_raw(material));
+    }
+
     fn interior_background_style(this) -> BackgroundStyle {
         return background_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("interiorBackgroundStyle\0"))));
     }
@@ -169,12 +172,18 @@ impl VisualEffectView {
         return visual_effect_blending_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("blendingMode\0"))));
     }
 
-    // SKIPPED `setBlendingMode:`: (return, arg) shape not yet modelled
+    fn set_blending_mode(this, blending_mode: VisualEffectBlendingMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBlendingMode:\0")), visual_effect_blending_mode_raw(blending_mode));
+    }
+
     fn state(this) -> VisualEffectState {
         return visual_effect_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0"))));
     }
 
-    // SKIPPED `setState:`: (return, arg) shape not yet modelled
+    fn set_state(this, state: VisualEffectState) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setState:\0")), visual_effect_state_raw(state));
+    }
+
     fn mask_image(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("maskImage\0")));
         return bridge::obj_option(obj);

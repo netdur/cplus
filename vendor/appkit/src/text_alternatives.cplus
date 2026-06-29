@@ -29,7 +29,12 @@ impl TextAlternatives {
 
     fn from_raw(ptr: *u8) -> TextAlternatives { return TextAlternatives { _obj: ptr }; }
 
-    // SKIPPED `initWithPrimaryString:alternativeStrings:`: init arg shape not yet modelled
+    fn new(primary_string: str, alternative_strings: vec::Vec[text::Text]) -> TextAlternatives {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextAlternatives\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextAlternatives { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithPrimaryString:alternativeStrings:\0")), bridge::nsstring(primary_string), bridge::nsarray_of_text(alternative_strings)) };
+    }
+
     fn note_selected_alternative_string(this, alternative_string: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteSelectedAlternativeString:\0")), bridge::nsstring(alternative_string));
     }

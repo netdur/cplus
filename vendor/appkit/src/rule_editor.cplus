@@ -148,18 +148,21 @@ impl RuleEditor {
         return rt::msg_id_i64(this._obj, rt::sel(#str_ptr("displayValuesForRow:\0")), row);
     }
 
-    // SKIPPED `rowForDisplayValue:`: (return, arg) shape not yet modelled
-    // SKIPPED `rowTypeForRow:`: (return, arg) shape not yet modelled
-    // SKIPPED `parentRowForRow:`: (return, arg) shape not yet modelled
+    // SKIPPED `rowForDisplayValue:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `rowTypeForRow:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `parentRowForRow:`: msgSend shape `i64_i64` not yet modelled
     fn add_row(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRow:\0")), sender);
     }
 
-    // SKIPPED `insertRowAtIndex:withType:asSubrowOfRow:animate:`: (return, arg) shape not yet modelled
-    // SKIPPED `setCriteria:andDisplayValues:forRowAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeRowAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeRowsAtIndexes:includeSubrows:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectRowIndexes:byExtendingSelection:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertRowAtIndex:withType:asSubrowOfRow:animate:`: msgSend shape `void_i64_i64_i64_i8` not yet modelled
+    // SKIPPED `setCriteria:andDisplayValues:forRowAtIndex:`: msgSend shape `void_id_id_i64` not yet modelled
+    fn remove_row_at_index(this, row_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), row_index);
+    }
+
+    // SKIPPED `removeRowsAtIndexes:includeSubrows:`: msgSend shape `void_id_i8` not yet modelled
+    // SKIPPED `selectRowIndexes:byExtendingSelection:`: msgSend shape `void_id_i8` not yet modelled
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -200,7 +203,10 @@ impl RuleEditor {
         return rule_editor_nesting_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("nestingMode\0"))));
     }
 
-    // SKIPPED `setNestingMode:`: (return, arg) shape not yet modelled
+    fn set_nesting_mode(this, nesting_mode: RuleEditorNestingMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNestingMode:\0")), rule_editor_nesting_mode_raw(nesting_mode));
+    }
+
     fn row_height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("rowHeight\0")));
     }

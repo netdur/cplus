@@ -131,16 +131,30 @@ impl Color {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `colorWithColorSpace:components:count:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithSRGBRed:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithGenericGamma22White:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithDisplayP3Red:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithWhite:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithRed:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithHue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithColorSpace:hue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithCatalogName:colorName:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorNamed:bundle:`: (return, arg) shape not yet modelled
+    // SKIPPED `colorWithColorSpace:components:count:`: msgSend shape `id_id_id_i64` not yet modelled
+    // SKIPPED `colorWithSRGBRed:green:blue:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithGenericGamma22White:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    // SKIPPED `colorWithDisplayP3Red:green:blue:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    // SKIPPED `colorWithRed:green:blue:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithHue:saturation:brightness:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithColorSpace:hue:saturation:brightness:alpha:`: msgSend shape `id_id_f64_f64_f64_f64` not yet modelled
+    fn color_with_catalog_name_color_name(list_name: str, color_name: str) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCatalogName:colorName:\0")), bridge::nsstring(list_name), bridge::nsstring(color_name));
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color { _obj: rt::retain(obj) });
+    }
+
+    fn color_named_bundle(name: str, bundle: *u8) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorNamed:bundle:\0")), bridge::nsstring(name), bundle);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color { _obj: rt::retain(obj) });
+    }
+
     fn color_named(name: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorNamed:\0")), bridge::nsstring(name));
         if obj == { 0 as *u8 } {
@@ -150,13 +164,13 @@ impl Color {
     }
 
     // SKIPPED `colorWithName:dynamicProvider:`: block method with non-void return
-    // SKIPPED `colorWithDeviceWhite:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithDeviceRed:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithDeviceHue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithDeviceCyan:magenta:yellow:black:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithCalibratedWhite:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithCalibratedRed:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithCalibratedHue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
+    // SKIPPED `colorWithDeviceWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    // SKIPPED `colorWithDeviceRed:green:blue:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithDeviceHue:saturation:brightness:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithDeviceCyan:magenta:yellow:black:alpha:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithCalibratedWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    // SKIPPED `colorWithCalibratedRed:green:blue:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithCalibratedHue:saturation:brightness:alpha:`: msgSend shape `id_f64_f64_f64_f64` not yet modelled
     fn color_with_pattern_image(image: Image) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithPatternImage:\0")), image.raw())) };
     }
@@ -177,8 +191,8 @@ impl Color {
         return option::some(Color::from_raw(obj));
     }
 
-    // SKIPPED `colorWithRed:green:blue:alpha:exposure:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorWithRed:green:blue:alpha:linearExposure:`: (return, arg) shape not yet modelled
+    // SKIPPED `colorWithRed:green:blue:alpha:exposure:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
+    // SKIPPED `colorWithRed:green:blue:alpha:linearExposure:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
     fn color_by_applying_content_headroom(this, content_headroom: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorByApplyingContentHeadroom:\0")), content_headroom));
     }
@@ -219,15 +233,18 @@ impl Color {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setStroke\0")));
     }
 
-    // SKIPPED `blendedColorWithFraction:ofColor:`: (return, arg) shape not yet modelled
+    // SKIPPED `blendedColorWithFraction:ofColor:`: msgSend shape `id_f64_id` not yet modelled
     fn color_with_alpha_component(this, alpha: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha));
     }
 
-    // SKIPPED `getRed:green:blue:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `getHue:saturation:brightness:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `getWhite:alpha:`: (return, arg) shape not yet modelled
-    // SKIPPED `getCyan:magenta:yellow:black:alpha:`: (return, arg) shape not yet modelled
+    // SKIPPED `getRed:green:blue:alpha:`: msgSend shape `void_id_id_id_id` not yet modelled
+    // SKIPPED `getHue:saturation:brightness:alpha:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn get_white_alpha(this, white: *u8, alpha: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getWhite:alpha:\0")), white, alpha);
+    }
+
+    // SKIPPED `getCyan:magenta:yellow:black:alpha:`: msgSend shape `void_id_id_id_id_id` not yet modelled
     fn get_components(this, components: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getComponents:\0")), components);
     }

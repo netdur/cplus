@@ -127,12 +127,15 @@ impl ColorPickingDefault {
 
     fn from_raw(ptr: *u8) -> ColorPickingDefault { return ColorPickingDefault { _obj: ptr }; }
 
-    // SKIPPED `initWithPickerMask:colorPanel:`: (return, arg) shape not yet modelled
+    // SKIPPED `initWithPickerMask:colorPanel:`: msgSend shape `id_u64_id` not yet modelled
     fn provide_new_button_image(this) -> Image {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("provideNewButtonImage\0"))));
     }
 
-    // SKIPPED `insertNewButtonImage:in:`: (return, arg) shape not yet modelled
+    fn insert_new_button_image_in(this, new_button_image: Image, button_cell: ButtonCell) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image.raw(), button_cell.raw());
+    }
+
     fn view_size_changed(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewSizeChanged:\0")), sender);
     }
@@ -149,7 +152,10 @@ impl ColorPickingDefault {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("detachColorList:\0")), color_list.raw());
     }
 
-    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn set_mode(this, mode: ColorPanelMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMode:\0")), color_panel_mode_raw(mode));
+    }
+
     fn button_tool_tip(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("buttonToolTip\0")));
         return bridge::to_text(ns);
@@ -179,7 +185,7 @@ impl ColorPickingCustom {
         return color_panel_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("currentMode\0"))));
     }
 
-    // SKIPPED `provideNewView:`: (return, arg) shape not yet modelled
+    // SKIPPED `provideNewView:`: msgSend shape `id_i8` not yet modelled
     fn set_color(this, new_color: Color) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), new_color.raw());
     }

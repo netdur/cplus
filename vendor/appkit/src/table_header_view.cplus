@@ -64,8 +64,8 @@ impl TableHeaderView {
 
     fn from_raw(ptr: *u8) -> TableHeaderView { return TableHeaderView { _obj: ptr }; }
 
-    // SKIPPED `headerRectOfColumn:`: (return, arg) shape not yet modelled
-    // SKIPPED `columnAtPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `headerRectOfColumn:`: msgSend shape `rect_i64` not yet modelled
+    // SKIPPED `columnAtPoint:`: msgSend shape `i64_point` not yet modelled
     fn table_view(this) -> option::Option[TableView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tableView\0")));
         if obj == { 0 as *u8 } {

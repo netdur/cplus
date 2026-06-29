@@ -40,7 +40,10 @@ impl HelpManager {
 
     fn from_raw(ptr: *u8) -> HelpManager { return HelpManager { _obj: ptr }; }
 
-    // SKIPPED `setContextHelp:forObject:`: (return, arg) shape not yet modelled
+    fn set_context_help_for_object(this, attr_string: AttributedString, object: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setContextHelp:forObject:\0")), attr_string.raw(), object);
+    }
+
     fn remove_context_help_for_object(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeContextHelpForObject:\0")), object);
     }
@@ -53,10 +56,16 @@ impl HelpManager {
         return option::some(AttributedString::from_raw(obj));
     }
 
-    // SKIPPED `showContextHelpForObject:locationHint:`: (return, arg) shape not yet modelled
-    // SKIPPED `openHelpAnchor:inBook:`: (return, arg) shape not yet modelled
-    // SKIPPED `findString:inBook:`: (return, arg) shape not yet modelled
-    // SKIPPED `registerBooksInBundle:`: (return, arg) shape not yet modelled
+    // SKIPPED `showContextHelpForObject:locationHint:`: msgSend shape `i8_id_point` not yet modelled
+    fn open_help_anchor_in_book(this, anchor: str, book: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("openHelpAnchor:inBook:\0")), bridge::nsstring(anchor), bridge::nsstring(book));
+    }
+
+    fn find_string_in_book(this, query: str, book: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("findString:inBook:\0")), bridge::nsstring(query), bridge::nsstring(book));
+    }
+
+    // SKIPPED `registerBooksInBundle:`: msgSend shape `i8_id` not yet modelled
     fn shared_help_manager() -> HelpManager {
         return HelpManager { _obj: rt::msg_id(rt::get_class(#str_ptr("NSHelpManager\0")), rt::sel(#str_ptr("sharedHelpManager\0"))) };
     }

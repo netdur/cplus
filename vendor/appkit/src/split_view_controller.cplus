@@ -20,7 +20,7 @@ impl SplitViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSplitViewItem:\0")), split_view_item);
     }
 
-    // SKIPPED `insertSplitViewItem:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertSplitViewItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_split_view_item(this, split_view_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeSplitViewItem:\0")), split_view_item);
     }
@@ -30,16 +30,19 @@ impl SplitViewController {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
     fn view_did_load(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidLoad\0")));
     }
 
-    // SKIPPED `splitView:canCollapseSubview:`: (return, arg) shape not yet modelled
-    // SKIPPED `splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `splitView:shouldHideDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: (return, arg) shape not yet modelled
+    fn split_view_can_collapse_subview(this, split_view: *u8, subview: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("splitView:canCollapseSubview:\0")), split_view, subview) != (0 as i8);
+    }
+
+    // SKIPPED `splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:`: msgSend shape `i8_id_id_i64` not yet modelled
+    // SKIPPED `splitView:shouldHideDividerAtIndex:`: msgSend shape `i8_id_i64` not yet modelled
+    // SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: msgSend shape `rect_id_rect_rect_i64` not yet modelled
+    // SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: msgSend shape `rect_id_i64` not yet modelled
     fn split_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0")));
     }

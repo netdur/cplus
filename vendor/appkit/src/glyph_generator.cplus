@@ -16,7 +16,7 @@ impl GlyphGenerator {
 
     fn from_raw(ptr: *u8) -> GlyphGenerator { return GlyphGenerator { _obj: ptr }; }
 
-    // SKIPPED `generateGlyphsForGlyphStorage:desiredNumberOfCharacters:glyphIndex:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `generateGlyphsForGlyphStorage:desiredNumberOfCharacters:glyphIndex:characterIndex:`: msgSend shape `void_id_u64_id_id` not yet modelled
     fn shared_glyph_generator() -> GlyphGenerator {
         return GlyphGenerator { _obj: rt::msg_id(rt::get_class(#str_ptr("NSGlyphGenerator\0")), rt::sel(#str_ptr("sharedGlyphGenerator\0"))) };
     }
@@ -33,8 +33,11 @@ impl GlyphStorage {
 
     fn from_raw(ptr: *u8) -> GlyphStorage { return GlyphStorage { _obj: ptr }; }
 
-    // SKIPPED `insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: (return, arg) shape not yet modelled
+    fn insert_glyphs_length_for_starting_glyph_at_index_character_index(this, glyphs: *u8, length: u64, glyph_index: u64, char_index: u64) {
+        rt::msg_void_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:\0")), glyphs, length, glyph_index, char_index);
+    }
+
+    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: msgSend shape `void_i64_i64_u64` not yet modelled
     fn attributed_string(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }

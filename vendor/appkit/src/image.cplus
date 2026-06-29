@@ -248,6 +248,20 @@ fn image_resizing_mode_from_raw(raw: i64) -> ImageResizingMode {
     return ImageResizingMode::Tile;
 }
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_image_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_image_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
     opaque _obj: *u8,
@@ -308,7 +322,7 @@ impl ImageSymbolConfiguration {
 
     // SKIPPED `configurationWithPointSize:weight:scale:`: param `NSFontWeight` — unmapped type `NSFontWeight`
     // SKIPPED `configurationWithPointSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `configurationWithTextStyle:scale:`: (return, arg) shape not yet modelled
+    // SKIPPED `configurationWithTextStyle:scale:`: msgSend shape `id_id_i64` not yet modelled
     fn configuration_with_text_style(style: str) -> ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithTextStyle:\0")), bridge::nsstring(style)) };
     }
@@ -366,10 +380,17 @@ impl Image {
         return option::some(Image { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `imageWithSystemSymbolName:accessibilityDescription:`: (return, arg) shape not yet modelled
-    // SKIPPED `imageWithSystemSymbolName:variableValue:accessibilityDescription:`: (return, arg) shape not yet modelled
-    // SKIPPED `imageWithSymbolName:variableValue:`: (return, arg) shape not yet modelled
-    // SKIPPED `imageWithSymbolName:bundle:variableValue:`: (return, arg) shape not yet modelled
+    fn image_with_system_symbol_name_accessibility_description(name: str, description: str) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSystemSymbolName:accessibilityDescription:\0")), bridge::nsstring(name), bridge::nsstring(description));
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image { _obj: rt::retain(obj) });
+    }
+
+    // SKIPPED `imageWithSystemSymbolName:variableValue:accessibilityDescription:`: msgSend shape `id_id_f64_id` not yet modelled
+    // SKIPPED `imageWithSymbolName:variableValue:`: msgSend shape `id_id_f64` not yet modelled
+    // SKIPPED `imageWithSymbolName:bundle:variableValue:`: msgSend shape `id_id_id_f64` not yet modelled
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithData:`: extra init variant (one `new` per type)
@@ -386,16 +407,16 @@ impl Image {
     // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
     // SKIPPED `initWithDataIgnoringOrientation:`: extra init variant (one `new` per type)
     // SKIPPED `imageWithSize:flipped:drawingHandler:`: block method with non-void return
-    // SKIPPED `setName:`: (return, arg) shape not yet modelled
+    // SKIPPED `setName:`: msgSend shape `i8_id` not yet modelled
     fn name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `drawAtPoint:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawInRect:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawAtPoint:fromRect:operation:fraction:`: msgSend shape `void_point_rect_i64_f64` not yet modelled
+    // SKIPPED `drawInRect:fromRect:operation:fraction:`: msgSend shape `void_rect_rect_i64_f64` not yet modelled
     // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawRepresentation:inRect:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawRepresentation:inRect:`: msgSend shape `i8_id_rect` not yet modelled
     fn draw_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
     }
@@ -404,7 +425,7 @@ impl Image {
         rt::msg_void(this._obj, rt::sel(#str_ptr("recache\0")));
     }
 
-    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: (return, arg) shape not yet modelled
+    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: msgSend shape `id_i64_f32` not yet modelled
     // SKIPPED `addRepresentations:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
     fn add_representation(this, image_rep: ImageRep) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRepresentation:\0")), image_rep.raw());
@@ -414,12 +435,12 @@ impl Image {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeRepresentation:\0")), image_rep.raw());
     }
 
-    // SKIPPED `canInitWithPasteboard:`: (return, arg) shape not yet modelled
+    // SKIPPED `canInitWithPasteboard:`: msgSend shape `i8_id` not yet modelled
     // SKIPPED `initWithCGImage:size:`: extra init variant (one `new` per type)
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `recommendedLayerContentsScale:`: (return, arg) shape not yet modelled
+    // SKIPPED `recommendedLayerContentsScale:`: msgSend shape `f64_f64` not yet modelled
     fn layer_contents_for_contents_scale(this, layer_contents_scale: f64) -> *u8 {
         return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("layerContentsForContentsScale:\0")), layer_contents_scale);
     }
@@ -509,7 +530,10 @@ impl Image {
         return image_cache_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("cacheMode\0"))));
     }
 
-    // SKIPPED `setCacheMode:`: (return, arg) shape not yet modelled
+    fn set_cache_mode(this, cache_mode: ImageCacheMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCacheMode:\0")), image_cache_mode_raw(cache_mode));
+    }
+
     fn alignment_rect(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("alignmentRect\0")));
     }
@@ -534,13 +558,22 @@ impl Image {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessibilityDescription:\0")), accessibility_description);
     }
 
-    // SKIPPED `capInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setCapInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn cap_insets(this) -> EdgeInsets {
+        return objc_msg_image_EdgeInsets(this._obj, rt::sel(#str_ptr("capInsets\0")));
+    }
+
+    fn set_cap_insets(this, cap_insets: EdgeInsets) {
+        objc_msg_image_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setCapInsets:\0")), cap_insets);
+    }
+
     fn resizing_mode(this) -> ImageResizingMode {
         return image_resizing_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("resizingMode\0"))));
     }
 
-    // SKIPPED `setResizingMode:`: (return, arg) shape not yet modelled
+    fn set_resizing_mode(this, resizing_mode: ImageResizingMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setResizingMode:\0")), image_resizing_mode_raw(resizing_mode));
+    }
+
     fn symbol_configuration(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("symbolConfiguration\0")));
     }
@@ -666,12 +699,12 @@ impl Image {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("cacheDepthMatchesImageDepth\0"))) != (0 as i8);
     }
 
-    // SKIPPED `dissolveToPoint:fraction:`: (return, arg) shape not yet modelled
-    // SKIPPED `dissolveToPoint:fromRect:fraction:`: (return, arg) shape not yet modelled
-    // SKIPPED `compositeToPoint:operation:`: (return, arg) shape not yet modelled
-    // SKIPPED `compositeToPoint:fromRect:operation:`: (return, arg) shape not yet modelled
-    // SKIPPED `compositeToPoint:operation:fraction:`: (return, arg) shape not yet modelled
-    // SKIPPED `compositeToPoint:fromRect:operation:fraction:`: (return, arg) shape not yet modelled
+    // SKIPPED `dissolveToPoint:fraction:`: msgSend shape `void_point_f64` not yet modelled
+    // SKIPPED `dissolveToPoint:fromRect:fraction:`: msgSend shape `void_point_rect_f64` not yet modelled
+    // SKIPPED `compositeToPoint:operation:`: msgSend shape `void_point_i64` not yet modelled
+    // SKIPPED `compositeToPoint:fromRect:operation:`: msgSend shape `void_point_rect_i64` not yet modelled
+    // SKIPPED `compositeToPoint:operation:fraction:`: msgSend shape `void_point_i64_f64` not yet modelled
+    // SKIPPED `compositeToPoint:fromRect:operation:fraction:`: msgSend shape `void_point_rect_i64_f64` not yet modelled
     fn lock_focus_on_representation(this, image_representation: ImageRep) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockFocusOnRepresentation:\0")), image_representation.raw());
     }

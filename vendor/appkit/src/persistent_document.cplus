@@ -79,9 +79,9 @@ impl PersistentDocument {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `readFromURL:ofType:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `revertToContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: msgSend shape `i8_id_id_i64_id_id` not yet modelled
+    // SKIPPED `readFromURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
+    // SKIPPED `revertToContentsOfURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
     fn managed_object_context(this) -> option::Option[ManagedObjectContext] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("managedObjectContext\0")));
         if obj == { 0 as *u8 } {
@@ -102,6 +102,6 @@ impl PersistentDocument {
         return option::some(ManagedObjectModel::from_raw(obj));
     }
 
-    // SKIPPED `configurePersistentStoreCoordinatorForURL:ofType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `configurePersistentStoreCoordinatorForURL:ofType:error:`: msgSend shape `i8_id_id_id` not yet modelled
 }
 

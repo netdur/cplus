@@ -58,8 +58,8 @@ impl SliderCell {
 
     fn from_raw(ptr: *u8) -> SliderCell { return SliderCell { _obj: ptr }; }
 
-    // SKIPPED `knobRectFlipped:`: (return, arg) shape not yet modelled
-    // SKIPPED `barRectFlipped:`: (return, arg) shape not yet modelled
+    // SKIPPED `knobRectFlipped:`: msgSend shape `rect_i8` not yet modelled
+    // SKIPPED `barRectFlipped:`: msgSend shape `rect_i8` not yet modelled
     fn draw_knob(this, knob_rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawKnob:\0")), knob_rect);
     }
@@ -101,7 +101,10 @@ impl SliderCell {
         return slider_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sliderType\0"))));
     }
 
-    // SKIPPED `setSliderType:`: (return, arg) shape not yet modelled
+    fn set_slider_type(this, slider_type: SliderType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSliderType:\0")), slider_type_raw(slider_type));
+    }
+
     fn is_vertical(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVertical\0"))) != (0 as i8);
     }
@@ -118,10 +121,10 @@ impl SliderCell {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("knobThickness\0")));
     }
 
-    // SKIPPED `tickMarkValueAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectOfTickMarkAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfTickMarkAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `closestTickMarkValueToValue:`: (return, arg) shape not yet modelled
+    // SKIPPED `tickMarkValueAtIndex:`: msgSend shape `f64_i64` not yet modelled
+    // SKIPPED `rectOfTickMarkAtIndex:`: msgSend shape `rect_i64` not yet modelled
+    // SKIPPED `indexOfTickMarkAtPoint:`: msgSend shape `i64_point` not yet modelled
+    // SKIPPED `closestTickMarkValueToValue:`: msgSend shape `f64_f64` not yet modelled
     fn draw_tick_marks(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawTickMarks\0")));
     }
@@ -130,12 +133,18 @@ impl SliderCell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTickMarks\0")));
     }
 
-    // SKIPPED `setNumberOfTickMarks:`: (return, arg) shape not yet modelled
+    fn set_number_of_tick_marks(this, number_of_tick_marks: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfTickMarks:\0")), number_of_tick_marks);
+    }
+
     fn tick_mark_position(this) -> TickMarkPosition {
         return tick_mark_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tickMarkPosition\0"))));
     }
 
-    // SKIPPED `setTickMarkPosition:`: (return, arg) shape not yet modelled
+    fn set_tick_mark_position(this, tick_mark_position: TickMarkPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTickMarkPosition:\0")), tick_mark_position_raw(tick_mark_position));
+    }
+
     fn allows_tick_mark_values_only(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsTickMarkValuesOnly\0"))) != (0 as i8);
     }

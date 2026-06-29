@@ -146,9 +146,9 @@ impl TextContentStorage {
         return option::some(TextElement::from_raw(obj));
     }
 
-    // SKIPPED `locationFromLocation:withOffset:`: (return, arg) shape not yet modelled
-    // SKIPPED `offsetFromLocation:toLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: (return, arg) shape not yet modelled
+    // SKIPPED `locationFromLocation:withOffset:`: msgSend shape `id_id_i64` not yet modelled
+    // SKIPPED `offsetFromLocation:toLocation:`: msgSend shape `i64_id_id` not yet modelled
+    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: msgSend shape `id_id_i8` not yet modelled
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -219,7 +219,10 @@ impl TextContentManager {
         return;
     }
 
-    // SKIPPED `recordEditActionInRange:newTextRange:`: (return, arg) shape not yet modelled
+    fn record_edit_action_in_range_new_text_range(this, original_text_range: TextRange, new_text_range: TextRange) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("recordEditActionInRange:newTextRange:\0")), original_text_range.raw(), new_text_range.raw());
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -311,9 +314,9 @@ impl TextElementProvider {
         return;
     }
 
-    // SKIPPED `locationFromLocation:withOffset:`: (return, arg) shape not yet modelled
-    // SKIPPED `offsetFromLocation:toLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: (return, arg) shape not yet modelled
+    // SKIPPED `locationFromLocation:withOffset:`: msgSend shape `id_id_i64` not yet modelled
+    // SKIPPED `offsetFromLocation:toLocation:`: msgSend shape `i64_id_id` not yet modelled
+    // SKIPPED `adjustedRangeFromRange:forEditingTextSelection:`: msgSend shape `id_id_i8` not yet modelled
     fn document_range(this) -> TextRange {
         return TextRange::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("documentRange\0"))));
     }

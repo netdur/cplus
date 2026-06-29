@@ -5,6 +5,28 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+
+// `NSHapticFeedbackPerformanceTime` (NS_ENUM)
+enum HapticFeedbackPerformanceTime {
+    Default,
+    Now,
+    DrawCompleted,
+}
+
+fn haptic_feedback_performance_time_raw(v: HapticFeedbackPerformanceTime) -> i64 {
+    return match v {
+        HapticFeedbackPerformanceTime::Default => { 0 as i64 },
+        HapticFeedbackPerformanceTime::Now => { 1 as i64 },
+        HapticFeedbackPerformanceTime::DrawCompleted => { 2 as i64 },
+    };
+}
+
+fn haptic_feedback_performance_time_from_raw(raw: i64) -> HapticFeedbackPerformanceTime {
+    if raw == (1 as i64) { return HapticFeedbackPerformanceTime::Now; }
+    if raw == (2 as i64) { return HapticFeedbackPerformanceTime::DrawCompleted; }
+    return HapticFeedbackPerformanceTime::Default;
+}
 
 // `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
 const event_mask_left_mouse_down: u64 = 2 as u64;
@@ -85,10 +107,10 @@ impl AlignmentFeedbackFilter {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateWithPanRecognizer:\0")), pan_recognizer.raw());
     }
 
-    // SKIPPED `alignmentFeedbackTokenForMovementInView:previousPoint:alignedPoint:defaultPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `alignmentFeedbackTokenForHorizontalMovementInView:previousX:alignedX:defaultX:`: (return, arg) shape not yet modelled
-    // SKIPPED `alignmentFeedbackTokenForVerticalMovementInView:previousY:alignedY:defaultY:`: (return, arg) shape not yet modelled
-    // SKIPPED `performFeedback:performanceTime:`: param `NSArray<id<NSAlignmentFeedbackToken>> * _Nonnull` — generic collection
+    // SKIPPED `alignmentFeedbackTokenForMovementInView:previousPoint:alignedPoint:defaultPoint:`: msgSend shape `id_id_point_point_point` not yet modelled
+    // SKIPPED `alignmentFeedbackTokenForHorizontalMovementInView:previousX:alignedX:defaultX:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
+    // SKIPPED `alignmentFeedbackTokenForVerticalMovementInView:previousY:alignedY:defaultY:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
+    // SKIPPED `performFeedback:performanceTime:`: msgSend shape `void_id_i64` not yet modelled
     fn input_event_mask() -> u64 {
         return rt::msg_u64(rt::get_class(#str_ptr("NSAlignmentFeedbackFilter\0")), rt::sel(#str_ptr("inputEventMask\0")));
     }

@@ -64,7 +64,10 @@ impl TextInsertionIndicator {
         return text_insertion_indicator_display_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("displayMode\0"))));
     }
 
-    // SKIPPED `setDisplayMode:`: (return, arg) shape not yet modelled
+    fn set_display_mode(this, display_mode: TextInsertionIndicatorDisplayMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDisplayMode:\0")), text_insertion_indicator_display_mode_raw(display_mode));
+    }
+
     fn color(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("color\0")));
     }
@@ -77,7 +80,10 @@ impl TextInsertionIndicator {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("automaticModeOptions\0")));
     }
 
-    // SKIPPED `setAutomaticModeOptions:`: (return, arg) shape not yet modelled
+    fn set_automatic_mode_options(this, automatic_mode_options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setAutomaticModeOptions:\0")), automatic_mode_options);
+    }
+
     // SKIPPED `effectsViewInserter`: return `void (^ _Nullable)(NSView * _Nonnull)` — block
     fn set_effects_view_inserter(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };

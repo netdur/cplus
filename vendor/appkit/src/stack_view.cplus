@@ -154,6 +154,20 @@ fn stack_view_gravity_from_raw(raw: i64) -> StackViewGravity {
     return StackViewGravity::Top;
 }
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_stack_view_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_stack_view_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+
 // `NSView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct View {
     opaque _obj: *u8,
@@ -177,13 +191,13 @@ impl StackView {
     fn from_raw(ptr: *u8) -> StackView { return StackView { _obj: ptr }; }
 
     // SKIPPED `stackViewWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    // SKIPPED `setCustomSpacing:afterView:`: (return, arg) shape not yet modelled
-    // SKIPPED `customSpacingAfterView:`: (return, arg) shape not yet modelled
+    // SKIPPED `setCustomSpacing:afterView:`: msgSend shape `void_f64_id` not yet modelled
+    // SKIPPED `customSpacingAfterView:`: msgSend shape `f64_id` not yet modelled
     fn add_arranged_subview(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view.raw());
     }
 
-    // SKIPPED `insertArrangedSubview:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertArrangedSubview:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_arranged_subview(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
@@ -207,19 +221,34 @@ impl StackView {
         return user_interface_layout_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
 
-    // SKIPPED `setOrientation:`: (return, arg) shape not yet modelled
+    fn set_orientation(this, orientation: UserInterfaceLayoutOrientation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setOrientation:\0")), user_interface_layout_orientation_raw(orientation));
+    }
+
     fn alignment(this) -> LayoutAttribute {
         return layout_attribute_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `setAlignment:`: (return, arg) shape not yet modelled
-    // SKIPPED `edgeInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
-    // SKIPPED `setEdgeInsets:`: param `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn set_alignment(this, alignment: LayoutAttribute) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlignment:\0")), layout_attribute_raw(alignment));
+    }
+
+    fn edge_insets(this) -> EdgeInsets {
+        return objc_msg_stack_view_EdgeInsets(this._obj, rt::sel(#str_ptr("edgeInsets\0")));
+    }
+
+    fn set_edge_insets(this, edge_insets: EdgeInsets) {
+        objc_msg_stack_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setEdgeInsets:\0")), edge_insets);
+    }
+
     fn distribution(this) -> StackViewDistribution {
         return stack_view_distribution_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("distribution\0"))));
     }
 
-    // SKIPPED `setDistribution:`: (return, arg) shape not yet modelled
+    fn set_distribution(this, distribution: StackViewDistribution) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDistribution:\0")), stack_view_distribution_raw(distribution));
+    }
+
     fn spacing(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("spacing\0")));
     }
@@ -238,8 +267,8 @@ impl StackView {
 
     // SKIPPED `arrangedSubviews`: return `API_AVAILABLE NSArray<__kindof NSView *> *` — generic collection
     // SKIPPED `detachedViews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
-    // SKIPPED `addView:inGravity:`: (return, arg) shape not yet modelled
-    // SKIPPED `insertView:atIndex:inGravity:`: (return, arg) shape not yet modelled
+    // SKIPPED `addView:inGravity:`: msgSend shape `void_id_i64` not yet modelled
+    // SKIPPED `insertView:atIndex:inGravity:`: msgSend shape `void_id_u64_i64` not yet modelled
     fn remove_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view.raw());
     }

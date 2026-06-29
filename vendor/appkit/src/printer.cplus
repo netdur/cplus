@@ -66,7 +66,7 @@ impl Printer {
         return option::some(Printer { _obj: obj });
     }
 
-    // SKIPPED `pageSizeForPaper:`: (return, arg) shape not yet modelled
+    // SKIPPED `pageSizeForPaper:`: msgSend shape `size_id` not yet modelled
     fn printer_names() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPrinter\0")), rt::sel(#str_ptr("printerNames\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -110,16 +110,30 @@ impl Printer {
     }
 
     // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `statusForTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `isKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `booleanForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `floatForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `intForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `rectForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `sizeForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `stringForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `stringListForKey:inTable:`: (return, arg) shape not yet modelled
-    // SKIPPED `imageRectForPaper:`: (return, arg) shape not yet modelled
+    // SKIPPED `statusForTable:`: msgSend shape `i64_id` not yet modelled
+    fn is_key_in_table(this, key: str, table: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("isKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
+    }
+
+    fn boolean_for_key_in_table(this, key: str, table: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("booleanForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
+    }
+
+    // SKIPPED `floatForKey:inTable:`: msgSend shape `f32_id_id` not yet modelled
+    // SKIPPED `intForKey:inTable:`: msgSend shape `i32_id_id` not yet modelled
+    // SKIPPED `rectForKey:inTable:`: msgSend shape `rect_id_id` not yet modelled
+    // SKIPPED `sizeForKey:inTable:`: msgSend shape `size_id_id` not yet modelled
+    fn string_for_key_in_table(this, key: str, table: str) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+        return bridge::to_text_option(ns);
+    }
+
+    fn string_list_for_key_in_table(this, key: str, table: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringListForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+        return bridge::obj_option(obj);
+    }
+
+    // SKIPPED `imageRectForPaper:`: msgSend shape `rect_id` not yet modelled
     fn accepts_binary(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsBinary\0"))) != (0 as i8);
     }
@@ -128,12 +142,12 @@ impl Printer {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isColor\0"))) != (0 as i8);
     }
 
-    // SKIPPED `isFontAvailable:`: (return, arg) shape not yet modelled
+    // SKIPPED `isFontAvailable:`: msgSend shape `i8_id` not yet modelled
     fn is_output_stack_in_reverse_order(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isOutputStackInReverseOrder\0"))) != (0 as i8);
     }
 
-    // SKIPPED `printerWithName:domain:includeUnavailable:`: (return, arg) shape not yet modelled
+    // SKIPPED `printerWithName:domain:includeUnavailable:`: msgSend shape `id_id_id_i8` not yet modelled
     fn domain(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("domain\0")));
         return bridge::to_text(ns);

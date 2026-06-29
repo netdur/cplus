@@ -17,7 +17,12 @@ impl StoryboardSegue {
     fn from_raw(ptr: *u8) -> StoryboardSegue { return StoryboardSegue { _obj: ptr }; }
 
     // SKIPPED `segueWithIdentifier:source:destination:performHandler:`: block method with non-void return
-    // SKIPPED `initWithIdentifier:source:destination:`: init arg shape not yet modelled
+    fn new(identifier: str, source_controller: *u8, destination_controller: *u8) -> StoryboardSegue {
+        let cls: *u8 = rt::get_class(#str_ptr("NSStoryboardSegue\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return StoryboardSegue { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:source:destination:\0")), bridge::nsstring(identifier), source_controller, destination_controller) };
+    }
+
     fn perform(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("perform\0")));
     }
@@ -50,8 +55,17 @@ impl SeguePerforming {
 
     fn from_raw(ptr: *u8) -> SeguePerforming { return SeguePerforming { _obj: ptr }; }
 
-    // SKIPPED `prepareForSegue:sender:`: (return, arg) shape not yet modelled
-    // SKIPPED `performSegueWithIdentifier:sender:`: (return, arg) shape not yet modelled
-    // SKIPPED `shouldPerformSegueWithIdentifier:sender:`: (return, arg) shape not yet modelled
+    fn prepare_for_segue_sender(this, segue: StoryboardSegue, sender: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("prepareForSegue:sender:\0")), segue.raw(), sender);
+    }
+
+    fn perform_segue_with_identifier_sender(this, identifier: str, sender: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performSegueWithIdentifier:sender:\0")), bridge::nsstring(identifier), sender);
+    }
+
+    fn should_perform_segue_with_identifier_sender(this, identifier: str, sender: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("shouldPerformSegueWithIdentifier:sender:\0")), bridge::nsstring(identifier), sender) != (0 as i8);
+    }
+
 }
 

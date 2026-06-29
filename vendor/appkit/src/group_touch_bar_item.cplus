@@ -61,7 +61,10 @@ impl GroupTouchBarItem {
         return user_interface_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("groupUserInterfaceLayoutDirection\0"))));
     }
 
-    // SKIPPED `setGroupUserInterfaceLayoutDirection:`: (return, arg) shape not yet modelled
+    fn set_group_user_interface_layout_direction(this, group_user_interface_layout_direction: UserInterfaceLayoutDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setGroupUserInterfaceLayoutDirection:\0")), user_interface_layout_direction_raw(group_user_interface_layout_direction));
+    }
+
     fn prefers_equal_widths(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("prefersEqualWidths\0"))) != (0 as i8);
     }

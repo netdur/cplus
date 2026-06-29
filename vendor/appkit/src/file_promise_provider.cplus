@@ -29,7 +29,12 @@ impl FilePromiseProvider {
 
     fn from_raw(ptr: *u8) -> FilePromiseProvider { return FilePromiseProvider { _obj: ptr }; }
 
-    // SKIPPED `initWithFileType:delegate:`: init arg shape not yet modelled
+    fn new(file_type: str, delegate: *u8) -> FilePromiseProvider {
+        let cls: *u8 = rt::get_class(#str_ptr("NSFilePromiseProvider\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return FilePromiseProvider { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithFileType:delegate:\0")), bridge::nsstring(file_type), delegate) };
+    }
+
     // SKIPPED `init`: extra init variant (one `new` per type)
     fn file_type(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileType\0")));

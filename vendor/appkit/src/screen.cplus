@@ -69,6 +69,18 @@ fn window_depth_from_raw(raw: i64) -> WindowDepth {
     return WindowDepth::TwentyfourBitRGB;
 }
 
+// `NSEdgeInsets` — by-value C struct.
+#[repr(C)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_screen_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
+
 // `CADisplayLink` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct CADisplayLink {
     opaque _obj: *u8,
@@ -169,7 +181,10 @@ impl Screen {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("localizedName\0")));
     }
 
-    // SKIPPED `safeAreaInsets`: return `NSEdgeInsets` — unmapped type `NSEdgeInsets`
+    fn safe_area_insets(this) -> EdgeInsets {
+        return objc_msg_screen_EdgeInsets(this._obj, rt::sel(#str_ptr("safeAreaInsets\0")));
+    }
+
     fn auxiliary_top_left_area(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("auxiliaryTopLeftArea\0")));
     }

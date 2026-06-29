@@ -98,7 +98,10 @@ impl TitlebarAccessoryViewController {
         return layout_attribute_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("layoutAttribute\0"))));
     }
 
-    // SKIPPED `setLayoutAttribute:`: (return, arg) shape not yet modelled
+    fn set_layout_attribute(this, layout_attribute: LayoutAttribute) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLayoutAttribute:\0")), layout_attribute_raw(layout_attribute));
+    }
+
     fn full_screen_min_height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("fullScreenMinHeight\0")));
     }

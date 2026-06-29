@@ -82,7 +82,10 @@ impl TableViewDiffableDataSource {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("defaultRowAnimation\0")));
     }
 
-    // SKIPPED `setDefaultRowAnimation:`: (return, arg) shape not yet modelled
+    fn set_default_row_animation(this, default_row_animation: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setDefaultRowAnimation:\0")), default_row_animation);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

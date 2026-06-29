@@ -16,9 +16,14 @@ impl CollectionViewTransitionLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewTransitionLayout { return CollectionViewTransitionLayout { _obj: ptr }; }
 
-    // SKIPPED `initWithCurrentLayout:nextLayout:`: init arg shape not yet modelled
-    // SKIPPED `updateValue:forAnimatedKey:`: (return, arg) shape not yet modelled
-    // SKIPPED `valueForAnimatedKey:`: (return, arg) shape not yet modelled
+    fn new(current_layout: *u8, new_layout: *u8) -> CollectionViewTransitionLayout {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCollectionViewTransitionLayout\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return CollectionViewTransitionLayout { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithCurrentLayout:nextLayout:\0")), current_layout, new_layout) };
+    }
+
+    // SKIPPED `updateValue:forAnimatedKey:`: msgSend shape `void_f64_id` not yet modelled
+    // SKIPPED `valueForAnimatedKey:`: msgSend shape `f64_id` not yet modelled
     fn transition_progress(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("transitionProgress\0")));
     }

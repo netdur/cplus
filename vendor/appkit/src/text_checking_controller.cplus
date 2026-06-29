@@ -28,13 +28,22 @@ impl TextCheckingController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidate\0")));
     }
 
-    // SKIPPED `didChangeTextInRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `insertedTextInRange:`: (return, arg) shape not yet modelled
+    fn did_change_text_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("didChangeTextInRange:\0")), range);
+    }
+
+    fn inserted_text_in_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("insertedTextInRange:\0")), range);
+    }
+
     fn did_change_selected_range(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("didChangeSelectedRange\0")));
     }
 
-    // SKIPPED `considerTextCheckingForRange:`: (return, arg) shape not yet modelled
+    fn consider_text_checking_for_range(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("considerTextCheckingForRange:\0")), range);
+    }
+
     // SKIPPED `checkTextInRange:types:options:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
     fn check_text_in_selection(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("checkTextInSelection:\0")), sender);
@@ -91,7 +100,10 @@ impl TextCheckingController {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("spellCheckerDocumentTag\0")));
     }
 
-    // SKIPPED `setSpellCheckerDocumentTag:`: (return, arg) shape not yet modelled
+    fn set_spell_checker_document_tag(this, spell_checker_document_tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSpellCheckerDocumentTag:\0")), spell_checker_document_tag);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

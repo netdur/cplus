@@ -90,9 +90,15 @@ impl ColorPanel {
 
     fn from_raw(ptr: *u8) -> ColorPanel { return ColorPanel { _obj: ptr }; }
 
-    // SKIPPED `dragColor:withEvent:fromView:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPickerMask:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPickerMode:`: (return, arg) shape not yet modelled
+    // SKIPPED `dragColor:withEvent:fromView:`: msgSend shape `i8_id_id_id` not yet modelled
+    fn set_picker_mask(mask: u64) {
+        rt::msg_void_u64(rt::get_class(#str_ptr("NSColorPanel\0")), rt::sel(#str_ptr("setPickerMask:\0")), mask);
+    }
+
+    fn set_picker_mode(mode: ColorPanelMode) {
+        rt::msg_void_i64(rt::get_class(#str_ptr("NSColorPanel\0")), rt::sel(#str_ptr("setPickerMode:\0")), color_panel_mode_raw(mode));
+    }
+
     // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn set_target(this, target: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
@@ -143,7 +149,10 @@ impl ColorPanel {
         return color_panel_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mode\0"))));
     }
 
-    // SKIPPED `setMode:`: (return, arg) shape not yet modelled
+    fn set_mode(this, mode: ColorPanelMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMode:\0")), color_panel_mode_raw(mode));
+    }
+
     fn color(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("color\0")));
     }

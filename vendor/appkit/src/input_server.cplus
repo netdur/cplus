@@ -16,7 +16,12 @@ impl InputServer {
 
     fn from_raw(ptr: *u8) -> InputServer { return InputServer { _obj: ptr }; }
 
-    // SKIPPED `initWithDelegate:name:`: init arg shape not yet modelled
+    fn new(delegate: *u8, name: str) -> InputServer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSInputServer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return InputServer { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithDelegate:name:\0")), delegate, bridge::nsstring(name)) };
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -32,7 +37,10 @@ impl InputServiceProvider {
 
     fn from_raw(ptr: *u8) -> InputServiceProvider { return InputServiceProvider { _obj: ptr }; }
 
-    // SKIPPED `insertText:client:`: (return, arg) shape not yet modelled
+    fn insert_text_client(this, string: *u8, sender: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertText:client:\0")), string, sender);
+    }
+
     // SKIPPED `doCommandBySelector:client:`: param `SEL _Null_unspecified` — unmapped type `SEL`
     fn marked_text_abandoned(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("markedTextAbandoned:\0")), sender);
@@ -78,8 +86,8 @@ impl InputServiceProvider {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientDisabled:\0")), sender);
     }
 
-    // SKIPPED `activeConversationWillChange:fromOldConversation:`: (return, arg) shape not yet modelled
-    // SKIPPED `activeConversationChanged:toNewConversation:`: (return, arg) shape not yet modelled
+    // SKIPPED `activeConversationWillChange:fromOldConversation:`: msgSend shape `void_id_i64` not yet modelled
+    // SKIPPED `activeConversationChanged:toNewConversation:`: msgSend shape `void_id_i64` not yet modelled
 }
 
 // `NSInputServerMouseTracker` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -92,8 +100,8 @@ impl InputServerMouseTracker {
 
     fn from_raw(ptr: *u8) -> InputServerMouseTracker { return InputServerMouseTracker { _obj: ptr }; }
 
-    // SKIPPED `mouseDownOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
-    // SKIPPED `mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
-    // SKIPPED `mouseUpOnCharacterIndex:atCoordinate:withModifier:client:`: (return, arg) shape not yet modelled
+    // SKIPPED `mouseDownOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `i8_u64_point_u64_id` not yet modelled
+    // SKIPPED `mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `i8_u64_point_u64_id` not yet modelled
+    // SKIPPED `mouseUpOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `void_u64_point_u64_id` not yet modelled
 }
 

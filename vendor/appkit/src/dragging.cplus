@@ -257,7 +257,10 @@ impl DraggingInfo {
         return dragging_formation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingFormation\0"))));
     }
 
-    // SKIPPED `setDraggingFormation:`: (return, arg) shape not yet modelled
+    fn set_dragging_formation(this, dragging_formation: DraggingFormation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDraggingFormation:\0")), dragging_formation_raw(dragging_formation));
+    }
+
     fn animates_to_destination(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("animatesToDestination\0"))) != (0 as i8);
     }
@@ -270,7 +273,10 @@ impl DraggingInfo {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfValidItemsForDrop\0")));
     }
 
-    // SKIPPED `setNumberOfValidItemsForDrop:`: (return, arg) shape not yet modelled
+    fn set_number_of_valid_items_for_drop(this, number_of_valid_items_for_drop: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setNumberOfValidItemsForDrop:\0")), number_of_valid_items_for_drop);
+    }
+
     fn spring_loading_highlight(this) -> SpringLoadingHighlight {
         return spring_loading_highlight_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("springLoadingHighlight\0"))));
     }
@@ -287,14 +293,14 @@ impl DraggingDestination {
 
     fn from_raw(ptr: *u8) -> DraggingDestination { return DraggingDestination { _obj: ptr }; }
 
-    // SKIPPED `draggingEntered:`: (return, arg) shape not yet modelled
-    // SKIPPED `draggingUpdated:`: (return, arg) shape not yet modelled
+    // SKIPPED `draggingEntered:`: msgSend shape `u64_id` not yet modelled
+    // SKIPPED `draggingUpdated:`: msgSend shape `u64_id` not yet modelled
     fn dragging_exited(this, sender: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("draggingExited:\0")), sender.raw());
     }
 
-    // SKIPPED `prepareForDragOperation:`: (return, arg) shape not yet modelled
-    // SKIPPED `performDragOperation:`: (return, arg) shape not yet modelled
+    // SKIPPED `prepareForDragOperation:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `performDragOperation:`: msgSend shape `i8_id` not yet modelled
     fn conclude_drag_operation(this, sender: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("concludeDragOperation:\0")), sender.raw());
     }
@@ -323,11 +329,11 @@ impl DraggingSource {
 
     fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
 
-    // SKIPPED `draggingSession:sourceOperationMaskForDraggingContext:`: (return, arg) shape not yet modelled
-    // SKIPPED `draggingSession:willBeginAtPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `draggingSession:movedToPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `draggingSession:endedAtPoint:operation:`: (return, arg) shape not yet modelled
-    // SKIPPED `ignoreModifierKeysForDraggingSession:`: (return, arg) shape not yet modelled
+    // SKIPPED `draggingSession:sourceOperationMaskForDraggingContext:`: msgSend shape `u64_id_i64` not yet modelled
+    // SKIPPED `draggingSession:willBeginAtPoint:`: msgSend shape `void_id_point` not yet modelled
+    // SKIPPED `draggingSession:movedToPoint:`: msgSend shape `void_id_point` not yet modelled
+    // SKIPPED `draggingSession:endedAtPoint:operation:`: msgSend shape `void_id_point_u64` not yet modelled
+    // SKIPPED `ignoreModifierKeysForDraggingSession:`: msgSend shape `i8_id` not yet modelled
 }
 
 // `NSSpringLoadingDestination` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -340,13 +346,13 @@ impl SpringLoadingDestination {
 
     fn from_raw(ptr: *u8) -> SpringLoadingDestination { return SpringLoadingDestination { _obj: ptr }; }
 
-    // SKIPPED `springLoadingActivated:draggingInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `springLoadingActivated:draggingInfo:`: msgSend shape `void_i8_id` not yet modelled
     fn spring_loading_highlight_changed(this, dragging_info: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("springLoadingHighlightChanged:\0")), dragging_info.raw());
     }
 
-    // SKIPPED `springLoadingEntered:`: (return, arg) shape not yet modelled
-    // SKIPPED `springLoadingUpdated:`: (return, arg) shape not yet modelled
+    // SKIPPED `springLoadingEntered:`: msgSend shape `u64_id` not yet modelled
+    // SKIPPED `springLoadingUpdated:`: msgSend shape `u64_id` not yet modelled
     fn spring_loading_exited(this, dragging_info: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("springLoadingExited:\0")), dragging_info.raw());
     }

@@ -100,7 +100,10 @@ impl PageController {
         return page_controller_transition_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transitionStyle\0"))));
     }
 
-    // SKIPPED `setTransitionStyle:`: (return, arg) shape not yet modelled
+    fn set_transition_style(this, transition_style: PageControllerTransitionStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTransitionStyle:\0")), page_controller_transition_style_raw(transition_style));
+    }
+
     fn arranged_objects(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("arrangedObjects\0")));
     }
@@ -113,7 +116,10 @@ impl PageController {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("selectedIndex\0")));
     }
 
-    // SKIPPED `setSelectedIndex:`: (return, arg) shape not yet modelled
+    fn set_selected_index(this, selected_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectedIndex:\0")), selected_index);
+    }
+
 }
 
 // `NSPageControllerDelegate` delegate protocol -> runtime class-synthesis helper.

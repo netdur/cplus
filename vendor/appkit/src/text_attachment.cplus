@@ -166,7 +166,12 @@ impl TextAttachment {
 
     fn from_raw(ptr: *u8) -> TextAttachment { return TextAttachment { _obj: ptr }; }
 
-    // SKIPPED `initWithData:ofType:`: init arg shape not yet modelled
+    fn new(content_data: *u8, uti: str) -> TextAttachment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextAttachment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextAttachment { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithData:ofType:\0")), content_data, bridge::nsstring(uti)) };
+    }
+
     // SKIPPED `initWithFileWrapper:`: extra init variant (one `new` per type)
     // SKIPPED `textAttachmentViewProviderClassForFileType:`: return `Class _Nullable` — unmapped type `Class`
     // SKIPPED `registerTextAttachmentViewProviderClass:forFileType:`: param `Class _Nonnull` — unmapped type `Class`
@@ -283,7 +288,14 @@ impl TextAttachmentLayout {
 
     // SKIPPED `imageForBounds:attributes:location:textContainer:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    // SKIPPED `viewProviderForParentView:location:textContainer:`: (return, arg) shape not yet modelled
+    fn view_provider_for_parent_view_location_text_container(this, parent_view: View, location: TextLocation, text_container: TextContainer) -> option::Option[TextAttachmentViewProvider] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("viewProviderForParentView:location:textContainer:\0")), parent_view.raw(), location.raw(), text_container.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[TextAttachmentViewProvider]::None;
+        }
+        return option::some(TextAttachmentViewProvider::from_raw(obj));
+    }
+
 }
 
 // `NSTextAttachmentContainer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -296,7 +308,7 @@ impl TextAttachmentContainer {
 
     fn from_raw(ptr: *u8) -> TextAttachmentContainer { return TextAttachmentContainer { _obj: ptr }; }
 
-    // SKIPPED `imageForBounds:textContainer:characterIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `imageForBounds:textContainer:characterIndex:`: msgSend shape `id_rect_id_u64` not yet modelled
+    // SKIPPED `attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_id_rect_point_u64` not yet modelled
 }
 

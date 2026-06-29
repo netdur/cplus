@@ -16,7 +16,7 @@ impl TableHeaderCell {
 
     fn from_raw(ptr: *u8) -> TableHeaderCell { return TableHeaderCell { _obj: ptr }; }
 
-    // SKIPPED `drawSortIndicatorWithFrame:inView:ascending:priority:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawSortIndicatorWithFrame:inView:ascending:priority:`: msgSend shape `void_rect_id_i8_i64` not yet modelled
     fn sort_indicator_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("sortIndicatorRectForBounds:\0")), rect);
     }

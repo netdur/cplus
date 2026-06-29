@@ -178,12 +178,18 @@ impl BitmapImageRep {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getBitmapDataPlanes:\0")), data);
     }
 
-    // SKIPPED `getCompression:factor:`: (return, arg) shape not yet modelled
-    // SKIPPED `setCompression:factor:`: (return, arg) shape not yet modelled
-    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: (return, arg) shape not yet modelled
+    fn get_compression_factor(this, compression: *u8, factor: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getCompression:factor:\0")), compression, factor);
+    }
+
+    // SKIPPED `setCompression:factor:`: msgSend shape `void_i64_f32` not yet modelled
+    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: msgSend shape `id_i64_f32` not yet modelled
     // SKIPPED `TIFFRepresentationOfImageRepsInArray:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
     // SKIPPED `TIFFRepresentationOfImageRepsInArray:usingCompression:factor:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
-    // SKIPPED `getTIFFCompressionTypes:count:`: (return, arg) shape not yet modelled
+    fn get_t_i_f_f_compression_types_count(list: *u8, num_types: *u8) {
+        rt::msg_void_id_id(rt::get_class(#str_ptr("NSBitmapImageRep\0")), rt::sel(#str_ptr("getTIFFCompressionTypes:count:\0")), list, num_types);
+    }
+
     fn localized_name_for_t_i_f_f_compression_type(compression: TIFFCompression) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSBitmapImageRep\0")), rt::sel(#str_ptr("localizedNameForTIFFCompressionType:\0")), t_i_f_f_compression_raw(compression));
         return bridge::to_text_option(ns);
@@ -193,17 +199,17 @@ impl BitmapImageRep {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("canBeCompressedUsing:\0")), t_i_f_f_compression_raw(compression)) != (0 as i8);
     }
 
-    // SKIPPED `colorizeByMappingGray:toColor:blackMapping:whiteMapping:`: (return, arg) shape not yet modelled
+    // SKIPPED `colorizeByMappingGray:toColor:blackMapping:whiteMapping:`: msgSend shape `void_f64_id_id_id` not yet modelled
     fn init_for_incremental_load(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("initForIncrementalLoad\0")));
     }
 
-    // SKIPPED `incrementalLoadFromData:complete:`: (return, arg) shape not yet modelled
-    // SKIPPED `setColor:atX:y:`: (return, arg) shape not yet modelled
-    // SKIPPED `colorAtX:y:`: (return, arg) shape not yet modelled
-    // SKIPPED `getPixel:atX:y:`: (return, arg) shape not yet modelled
-    // SKIPPED `setPixel:atX:y:`: (return, arg) shape not yet modelled
-    // SKIPPED `bitmapImageRepByConvertingToColorSpace:renderingIntent:`: (return, arg) shape not yet modelled
+    // SKIPPED `incrementalLoadFromData:complete:`: msgSend shape `i64_id_i8` not yet modelled
+    // SKIPPED `setColor:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
+    // SKIPPED `colorAtX:y:`: msgSend shape `id_i64_i64` not yet modelled
+    // SKIPPED `getPixel:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
+    // SKIPPED `setPixel:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
+    // SKIPPED `bitmapImageRepByConvertingToColorSpace:renderingIntent:`: msgSend shape `id_id_i64` not yet modelled
     fn bitmap_image_rep_by_retagging_with_color_space(this, new_space: ColorSpace) -> option::Option[BitmapImageRep] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bitmapImageRepByRetaggingWithColorSpace:\0")), new_space.raw());
         if obj == { 0 as *u8 } {
@@ -256,7 +262,10 @@ impl BitmapImageRep {
 
     // SKIPPED `representationOfImageRepsInArray:usingType:properties:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
     // SKIPPED `representationUsingType:properties:`: param `NSDictionary<NSBitmapImageRepPropertyKey,id> * _Nonnull` — generic collection
-    // SKIPPED `setProperty:withValue:`: (return, arg) shape not yet modelled
+    fn set_property_with_value(this, property: str, value: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setProperty:withValue:\0")), bridge::nsstring(property), value);
+    }
+
     fn value_for_property(this, property: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("valueForProperty:\0")), bridge::nsstring(property));
         return bridge::obj_option(obj);

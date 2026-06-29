@@ -86,7 +86,7 @@ impl PopUpButtonCell {
 
     fn from_raw(ptr: *u8) -> PopUpButtonCell { return PopUpButtonCell { _obj: ptr }; }
 
-    // SKIPPED `initTextCell:pullsDown:`: (return, arg) shape not yet modelled
+    // SKIPPED `initTextCell:pullsDown:`: msgSend shape `id_id_i8` not yet modelled
     fn new(coder: *u8) -> PopUpButtonCell {
         let cls: *u8 = rt::get_class(#str_ptr("NSPopUpButtonCell\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -101,20 +101,23 @@ impl PopUpButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithTitles:\0")), bridge::nsarray_of_text(item_titles));
     }
 
-    // SKIPPED `insertItemWithTitle:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertItemWithTitle:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItemWithTitle:\0")), bridge::nsstring(title));
     }
 
-    // SKIPPED `removeItemAtIndex:`: (return, arg) shape not yet modelled
+    fn remove_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
+    }
+
     fn remove_all_items(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    // SKIPPED `indexOfItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTitle:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithTag:`: (return, arg) shape not yet modelled
-    // SKIPPED `indexOfItemWithRepresentedObject:`: (return, arg) shape not yet modelled
+    // SKIPPED `indexOfItem:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTitle:`: msgSend shape `i64_id` not yet modelled
+    // SKIPPED `indexOfItemWithTag:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `indexOfItemWithRepresentedObject:`: msgSend shape `i64_id` not yet modelled
     // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
@@ -130,7 +133,10 @@ impl PopUpButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectItem:\0")), item);
     }
 
-    // SKIPPED `selectItemAtIndex:`: (return, arg) shape not yet modelled
+    fn select_item_at_index(this, index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("selectItemAtIndex:\0")), index);
+    }
+
     fn select_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectItemWithTitle:\0")), bridge::nsstring(title));
     }
@@ -152,12 +158,12 @@ impl PopUpButtonCell {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `attachPopUpWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `attachPopUpWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn dismiss_pop_up(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("dismissPopUp\0")));
     }
 
-    // SKIPPED `performClickWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `performClickWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
         if obj == { 0 as *u8 } {
@@ -190,7 +196,10 @@ impl PopUpButtonCell {
         return rect_edge_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredEdge\0"))));
     }
 
-    // SKIPPED `setPreferredEdge:`: (return, arg) shape not yet modelled
+    fn set_preferred_edge(this, preferred_edge: RectEdge) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPreferredEdge:\0")), rect_edge_raw(preferred_edge));
+    }
+
     fn uses_item_from_menu(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesItemFromMenu\0"))) != (0 as i8);
     }
@@ -249,7 +258,10 @@ impl PopUpButtonCell {
         return pop_up_arrow_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("arrowPosition\0"))));
     }
 
-    // SKIPPED `setArrowPosition:`: (return, arg) shape not yet modelled
+    fn set_arrow_position(this, arrow_position: PopUpArrowPosition) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setArrowPosition:\0")), pop_up_arrow_position_raw(arrow_position));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

@@ -491,8 +491,8 @@ impl Cell {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `sendActionOn:`: (return, arg) shape not yet modelled
-    // SKIPPED `compare:`: (return, arg) shape not yet modelled
+    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
+    // SKIPPED `compare:`: msgSend shape `i64_id` not yet modelled
     fn take_int_value_from(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeIntValueFrom:\0")), sender);
     }
@@ -517,8 +517,8 @@ impl Cell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeIntegerValueFrom:\0")), sender);
     }
 
-    // SKIPPED `cellAttribute:`: (return, arg) shape not yet modelled
-    // SKIPPED `setCellAttribute:to:`: (return, arg) shape not yet modelled
+    // SKIPPED `cellAttribute:`: msgSend shape `i64_i64` not yet modelled
+    // SKIPPED `setCellAttribute:to:`: msgSend shape `void_i64_i64` not yet modelled
     fn image_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("imageRectForBounds:\0")), rect);
     }
@@ -532,8 +532,8 @@ impl Cell {
     }
 
     // SKIPPED `_bulletStringForString:bulletCharacter:`: param `unichar` — unmapped type `unichar`
-    // SKIPPED `cellSizeForBounds:`: (return, arg) shape not yet modelled
-    // SKIPPED `highlightColorWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `cellSizeForBounds:`: msgSend shape `size_rect` not yet modelled
+    // SKIPPED `highlightColorWithFrame:inView:`: msgSend shape `id_rect_id` not yet modelled
     fn calc_draw_info(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("calcDrawInfo:\0")), rect);
     }
@@ -542,22 +542,25 @@ impl Cell {
         return Text::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("setUpFieldEditorAttributes:\0")), text_obj.raw()));
     }
 
-    // SKIPPED `drawInteriorWithFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawWithFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `highlight:withFrame:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `getPeriodicDelay:interval:`: (return, arg) shape not yet modelled
-    // SKIPPED `startTrackingAt:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `continueTracking:at:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `stopTracking:at:inView:mouseIsUp:`: (return, arg) shape not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: (return, arg) shape not yet modelled
-    // SKIPPED `editWithFrame:inView:editor:delegate:event:`: (return, arg) shape not yet modelled
-    // SKIPPED `selectWithFrame:inView:editor:delegate:start:length:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawInteriorWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    // SKIPPED `drawWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
+    // SKIPPED `highlight:withFrame:inView:`: msgSend shape `void_i8_rect_id` not yet modelled
+    fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
+    }
+
+    // SKIPPED `startTrackingAt:inView:`: msgSend shape `i8_point_id` not yet modelled
+    // SKIPPED `continueTracking:at:inView:`: msgSend shape `i8_point_point_id` not yet modelled
+    // SKIPPED `stopTracking:at:inView:mouseIsUp:`: msgSend shape `void_point_point_id_i8` not yet modelled
+    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: msgSend shape `i8_id_rect_id_i8` not yet modelled
+    // SKIPPED `editWithFrame:inView:editor:delegate:event:`: msgSend shape `void_rect_id_id_id_id` not yet modelled
+    // SKIPPED `selectWithFrame:inView:editor:delegate:start:length:`: msgSend shape `void_rect_id_id_id_i64_i64` not yet modelled
     fn end_editing(this, text_obj: Text) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditing:\0")), text_obj.raw());
     }
 
-    // SKIPPED `resetCursorRect:inView:`: (return, arg) shape not yet modelled
-    // SKIPPED `menuForEvent:inRect:ofView:`: (return, arg) shape not yet modelled
+    // SKIPPED `resetCursorRect:inView:`: msgSend shape `void_rect_id` not yet modelled
+    // SKIPPED `menuForEvent:inRect:ofView:`: msgSend shape `id_id_rect_id` not yet modelled
     fn field_editor_for_view(this, control_view: View) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fieldEditorForView:\0")), control_view.raw());
         if obj == { 0 as *u8 } {
@@ -587,7 +590,10 @@ impl Cell {
         return cell_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }
 
-    // SKIPPED `setType:`: (return, arg) shape not yet modelled
+    fn set_type(this, type_: CellType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setType:\0")), cell_type_raw(type_));
+    }
+
     // SKIPPED `state`: return `NSControlStateValue` — unmapped type `NSControlStateValue`
     // SKIPPED `setState:`: param `NSControlStateValue` — unmapped type `NSControlStateValue`
     fn target(this) -> option::Option[*u8] {
@@ -605,7 +611,10 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
 
-    // SKIPPED `setTag:`: (return, arg) shape not yet modelled
+    fn set_tag(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTag:\0")), tag);
+    }
+
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);
@@ -687,7 +696,10 @@ impl Cell {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `setAlignment:`: (return, arg) shape not yet modelled
+    fn set_alignment(this, alignment: TextAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlignment:\0")), text_alignment_raw(alignment));
+    }
+
     fn wraps(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wraps\0"))) != (0 as i8);
     }
@@ -775,7 +787,10 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("integerValue\0")));
     }
 
-    // SKIPPED `setIntegerValue:`: (return, arg) shape not yet modelled
+    fn set_integer_value(this, integer_value: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIntegerValue:\0")), integer_value);
+    }
+
     fn image(this) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
         if obj == { 0 as *u8 } {
@@ -792,7 +807,10 @@ impl Cell {
         return control_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlSize\0"))));
     }
 
-    // SKIPPED `setControlSize:`: (return, arg) shape not yet modelled
+    fn set_control_size(this, control_size: ControlSize) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlSize:\0")), control_size_raw(control_size));
+    }
+
     fn represented_object(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("representedObject\0")));
         return bridge::obj_option(obj);
@@ -842,12 +860,18 @@ impl Cell {
         return writing_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("baseWritingDirection\0"))));
     }
 
-    // SKIPPED `setBaseWritingDirection:`: (return, arg) shape not yet modelled
+    fn set_base_writing_direction(this, base_writing_direction: WritingDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:\0")), writing_direction_raw(base_writing_direction));
+    }
+
     fn line_break_mode(this) -> LineBreakMode {
         return line_break_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakMode\0"))));
     }
 
-    // SKIPPED `setLineBreakMode:`: (return, arg) shape not yet modelled
+    fn set_line_break_mode(this, line_break_mode: LineBreakMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineBreakMode:\0")), line_break_mode_raw(line_break_mode));
+    }
+
     fn allows_undo(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsUndo\0"))) != (0 as i8);
     }
@@ -868,7 +892,10 @@ impl Cell {
         return user_interface_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("userInterfaceLayoutDirection\0"))));
     }
 
-    // SKIPPED `setUserInterfaceLayoutDirection:`: (return, arg) shape not yet modelled
+    fn set_user_interface_layout_direction(this, user_interface_layout_direction: UserInterfaceLayoutDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), user_interface_layout_direction_raw(user_interface_layout_direction));
+    }
+
     fn uses_single_line_mode(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesSingleLineMode\0"))) != (0 as i8);
     }
@@ -881,7 +908,7 @@ impl Cell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performClick:\0")), sender);
     }
 
-    // SKIPPED `drawFocusRingMaskWithFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawFocusRingMaskWithFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn focus_ring_mask_bounds_for_frame_in_view(this, cell_frame: rt::Rect, control_view: View) -> rt::Rect {
         return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("focusRingMaskBoundsForFrame:inView:\0")), cell_frame, control_view.raw());
     }
@@ -910,7 +937,10 @@ impl Cell {
         return focus_ring_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("focusRingType\0"))));
     }
 
-    // SKIPPED `setFocusRingType:`: (return, arg) shape not yet modelled
+    fn set_focus_ring_type(this, focus_ring_type: FocusRingType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setFocusRingType:\0")), focus_ring_type_raw(focus_ring_type));
+    }
+
     fn default_focus_ring_type() -> FocusRingType {
         return focus_ring_type_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSCell\0")), rt::sel(#str_ptr("defaultFocusRingType\0"))));
     }
@@ -959,17 +989,20 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("nextState\0")));
     }
 
-    // SKIPPED `hitTestForEvent:inRect:ofView:`: (return, arg) shape not yet modelled
+    // SKIPPED `hitTestForEvent:inRect:ofView:`: msgSend shape `u64_id_rect_id` not yet modelled
     fn expansion_frame_with_frame_in_view(this, cell_frame: rt::Rect, view: View) -> rt::Rect {
         return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:inView:\0")), cell_frame, view.raw());
     }
 
-    // SKIPPED `drawWithExpansionFrame:inView:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawWithExpansionFrame:inView:`: msgSend shape `void_rect_id` not yet modelled
     fn background_style(this) -> BackgroundStyle {
         return background_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("backgroundStyle\0"))));
     }
 
-    // SKIPPED `setBackgroundStyle:`: (return, arg) shape not yet modelled
+    fn set_background_style(this, background_style: BackgroundStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBackgroundStyle:\0")), background_style_raw(background_style));
+    }
+
     fn interior_background_style(this) -> BackgroundStyle {
         return background_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("interiorBackgroundStyle\0"))));
     }
@@ -978,10 +1011,16 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("entryType\0")));
     }
 
-    // SKIPPED `setEntryType:`: (return, arg) shape not yet modelled
-    // SKIPPED `isEntryAcceptable:`: (return, arg) shape not yet modelled
-    // SKIPPED `setFloatingPointFormat:left:right:`: (return, arg) shape not yet modelled
-    // SKIPPED `setMnemonicLocation:`: (return, arg) shape not yet modelled
+    fn set_entry_type(this, type_: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setEntryType:\0")), type_);
+    }
+
+    // SKIPPED `isEntryAcceptable:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `setFloatingPointFormat:left:right:`: msgSend shape `void_i8_u64_u64` not yet modelled
+    fn set_mnemonic_location(this, location: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMnemonicLocation:\0")), location);
+    }
+
     fn mnemonic_location(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("mnemonicLocation\0")));
     }
@@ -999,7 +1038,10 @@ impl Cell {
         return control_tint_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlTint\0"))));
     }
 
-    // SKIPPED `setControlTint:`: (return, arg) shape not yet modelled
+    fn set_control_tint(this, control_tint: ControlTint) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlTint:\0")), control_tint_raw(control_tint));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

@@ -131,16 +131,25 @@ impl ImageCell {
         return image_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageAlignment\0"))));
     }
 
-    // SKIPPED `setImageAlignment:`: (return, arg) shape not yet modelled
+    fn set_image_alignment(this, image_alignment: ImageAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageAlignment:\0")), image_alignment_raw(image_alignment));
+    }
+
     fn image_scaling(this) -> ImageScaling {
         return image_scaling_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageScaling\0"))));
     }
 
-    // SKIPPED `setImageScaling:`: (return, arg) shape not yet modelled
+    fn set_image_scaling(this, image_scaling: ImageScaling) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageScaling:\0")), image_scaling_raw(image_scaling));
+    }
+
     fn image_frame_style(this) -> ImageFrameStyle {
         return image_frame_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("imageFrameStyle\0"))));
     }
 
-    // SKIPPED `setImageFrameStyle:`: (return, arg) shape not yet modelled
+    fn set_image_frame_style(this, image_frame_style: ImageFrameStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageFrameStyle:\0")), image_frame_style_raw(image_frame_style));
+    }
+
 }
 

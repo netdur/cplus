@@ -56,8 +56,11 @@ impl ColorList {
     }
 
     // SKIPPED `initWithName:fromFile:`: extra init variant (one `new` per type)
-    // SKIPPED `setColor:forKey:`: (return, arg) shape not yet modelled
-    // SKIPPED `insertColor:key:atIndex:`: (return, arg) shape not yet modelled
+    fn set_color_for_key(this, color: Color, key: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setColor:forKey:\0")), color.raw(), bridge::nsstring(key));
+    }
+
+    // SKIPPED `insertColor:key:atIndex:`: msgSend shape `void_id_id_u64` not yet modelled
     fn remove_color_with_key(this, key: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeColorWithKey:\0")), bridge::nsstring(key));
     }
@@ -70,8 +73,11 @@ impl ColorList {
         return option::some(Color::from_raw(obj));
     }
 
-    // SKIPPED `writeToURL:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `writeToFile:`: (return, arg) shape not yet modelled
+    fn write_to_u_r_l_error(this, url: *u8, err_ptr: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:error:\0")), url, err_ptr) != (0 as i8);
+    }
+
+    // SKIPPED `writeToFile:`: msgSend shape `i8_id` not yet modelled
     fn remove_file(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFile\0")));
     }

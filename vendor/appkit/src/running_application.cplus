@@ -97,8 +97,8 @@ impl RunningApplication {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("unhide\0"))) != (0 as i8);
     }
 
-    // SKIPPED `activateFromApplication:options:`: (return, arg) shape not yet modelled
-    // SKIPPED `activateWithOptions:`: (return, arg) shape not yet modelled
+    // SKIPPED `activateFromApplication:options:`: msgSend shape `i8_id_u64` not yet modelled
+    // SKIPPED `activateWithOptions:`: msgSend shape `i8_u64` not yet modelled
     fn terminate(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("terminate\0"))) != (0 as i8);
     }

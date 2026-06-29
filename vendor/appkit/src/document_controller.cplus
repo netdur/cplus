@@ -155,14 +155,21 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("newDocument:\0")), sender);
     }
 
-    // SKIPPED `openUntitledDocumentAndDisplay:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `makeUntitledDocumentOfType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `openUntitledDocumentAndDisplay:error:`: msgSend shape `id_i8_id` not yet modelled
+    fn make_untitled_document_of_type_error(this, type_name: str, out_error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeUntitledDocumentOfType:error:\0")), bridge::nsstring(type_name), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
+    }
+
     fn open_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("openDocument:\0")), sender);
     }
 
     // SKIPPED `URLsFromRunningOpenPanel`: return `NSArray<NSURL *> * _Nullable` — generic collection
-    // SKIPPED `runModalOpenPanel:forTypes:`: (return, arg) shape not yet modelled
+    // SKIPPED `runModalOpenPanel:forTypes:`: msgSend shape `i64_id_id` not yet modelled
     fn begin_open_panel_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: DocumentController_begin_open_panel_with_completion_handler_block = DocumentController_begin_open_panel_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -173,22 +180,29 @@ impl DocumentController {
 
     // SKIPPED `beginOpenPanel:forTypes:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `openDocumentWithContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `makeDocumentWithContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
+    fn make_document_with_contents_of_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
+    }
+
     // SKIPPED `reopenDocumentForURL:withContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `makeDocumentForURL:withContentsOfURL:ofType:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `makeDocumentForURL:withContentsOfURL:ofType:error:`: msgSend shape `id_id_id_id_id` not yet modelled
     fn save_all_documents(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveAllDocuments:\0")), sender);
     }
 
     // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: msgSend shape `id_id_i8_id_id` not yet modelled
     fn standard_share_menu_item(this) -> MenuItem {
         return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
     // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `presentError:`: (return, arg) shape not yet modelled
+    // SKIPPED `presentError:`: msgSend shape `i8_id` not yet modelled
     fn will_present_error(this, error: Error) -> Error {
         return Error::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("willPresentError:\0")), error.raw()));
     }
@@ -205,14 +219,18 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocumentURL:\0")), url.raw());
     }
 
-    // SKIPPED `typeForContentsOfURL:error:`: (return, arg) shape not yet modelled
+    fn type_for_contents_of_u_r_l_error(this, url: URL, out_error: *u8) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeForContentsOfURL:error:\0")), url.raw(), out_error);
+        return bridge::to_text_option(ns);
+    }
+
     // SKIPPED `documentClassForType:`: return `Class _Nullable` — unmapped type `Class`
     fn display_name_for_type(this, type_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("displayNameForType:\0")), bridge::nsstring(type_name));
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `validateUserInterfaceItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `validateUserInterfaceItem:`: msgSend shape `i8_id` not yet modelled
     fn shared_document_controller() -> DocumentController {
         return DocumentController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSDocumentController\0")), rt::sel(#str_ptr("sharedDocumentController\0")))) };
     }
@@ -271,8 +289,8 @@ impl DocumentController {
         return out;
     }
 
-    // SKIPPED `openDocumentWithContentsOfURL:display:error:`: (return, arg) shape not yet modelled
-    // SKIPPED `reopenDocumentForURL:withContentsOfURL:error:`: (return, arg) shape not yet modelled
+    // SKIPPED `openDocumentWithContentsOfURL:display:error:`: msgSend shape `id_id_i8_id` not yet modelled
+    // SKIPPED `reopenDocumentForURL:withContentsOfURL:error:`: msgSend shape `i8_id_id_id` not yet modelled
     fn file_extensions_from_type(this, type_name: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fileExtensionsFromType:\0")), bridge::nsstring(type_name));
         return bridge::obj_option(obj);
@@ -293,16 +311,24 @@ impl DocumentController {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `makeDocumentWithContentsOfFile:ofType:`: (return, arg) shape not yet modelled
-    // SKIPPED `makeDocumentWithContentsOfURL:ofType:`: (return, arg) shape not yet modelled
+    fn make_document_with_contents_of_file_of_type(this, file_name: str, type_: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_));
+        return bridge::obj_option(obj);
+    }
+
+    fn make_document_with_contents_of_u_r_l_of_type(this, url: URL, type_: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:\0")), url.raw(), bridge::nsstring(type_));
+        return bridge::obj_option(obj);
+    }
+
     fn make_untitled_document_of_type(this, type_: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("makeUntitledDocumentOfType:\0")), bridge::nsstring(type_));
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `openDocumentWithContentsOfFile:display:`: (return, arg) shape not yet modelled
-    // SKIPPED `openDocumentWithContentsOfURL:display:`: (return, arg) shape not yet modelled
-    // SKIPPED `openUntitledDocumentOfType:display:`: (return, arg) shape not yet modelled
+    // SKIPPED `openDocumentWithContentsOfFile:display:`: msgSend shape `id_id_i8` not yet modelled
+    // SKIPPED `openDocumentWithContentsOfURL:display:`: msgSend shape `id_id_i8` not yet modelled
+    // SKIPPED `openUntitledDocumentOfType:display:`: msgSend shape `id_id_i8` not yet modelled
     fn set_should_create_u_i(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShouldCreateUI:\0")), flag as i8);
     }

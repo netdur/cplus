@@ -394,8 +394,11 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
 
-    // SKIPPED `requestUserAttention:`: (return, arg) shape not yet modelled
-    // SKIPPED `cancelUserAttentionRequest:`: (return, arg) shape not yet modelled
+    // SKIPPED `requestUserAttention:`: msgSend shape `i64_i64` not yet modelled
+    fn cancel_user_attention_request(this, request: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("cancelUserAttentionRequest:\0")), request);
+    }
+
     // SKIPPED `enumerateWindowsWithOptions:usingBlock:`: block-method msgSend shape not modelled
     fn prevent_window_ordering(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("preventWindowOrdering\0")));
@@ -426,7 +429,10 @@ impl Application {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("replyToApplicationShouldTerminate:\0")), should_terminate as i8);
     }
 
-    // SKIPPED `replyToOpenOrPrint:`: (return, arg) shape not yet modelled
+    fn reply_to_open_or_print(this, reply: ApplicationDelegateReply) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("replyToOpenOrPrint:\0")), application_delegate_reply_raw(reply));
+    }
+
     fn order_front_character_palette(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontCharacterPalette:\0")), sender);
     }
@@ -518,7 +524,10 @@ impl Application {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("presentationOptions\0")));
     }
 
-    // SKIPPED `setPresentationOptions:`: (return, arg) shape not yet modelled
+    fn set_presentation_options(this, presentation_options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPresentationOptions:\0")), presentation_options);
+    }
+
     fn current_system_presentation_options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("currentSystemPresentationOptions\0")));
     }
@@ -547,9 +556,9 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event);
     }
 
-    // SKIPPED `postEvent:atStart:`: (return, arg) shape not yet modelled
-    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: (return, arg) shape not yet modelled
-    // SKIPPED `discardEventsMatchingMask:beforeEvent:`: (return, arg) shape not yet modelled
+    // SKIPPED `postEvent:atStart:`: msgSend shape `void_id_i8` not yet modelled
+    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
+    // SKIPPED `discardEventsMatchingMask:beforeEvent:`: msgSend shape `void_u64_id` not yet modelled
     fn current_event(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("currentEvent\0")));
         return bridge::obj_option(obj);
@@ -559,7 +568,11 @@ impl Application {
     // SKIPPED `targetForAction:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `targetForAction:to:from:`: param `SEL _Nonnull` — unmapped type `SEL`
     // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `validRequestorForSendType:returnType:`: (return, arg) shape not yet modelled
+    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
+        return bridge::obj_option(obj);
+    }
+
     fn arrange_in_front(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("arrangeInFront:\0")), sender);
     }
@@ -568,8 +581,14 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeWindowsItem:\0")), win.raw());
     }
 
-    // SKIPPED `addWindowsItem:title:filename:`: (return, arg) shape not yet modelled
-    // SKIPPED `changeWindowsItem:title:filename:`: (return, arg) shape not yet modelled
+    fn add_windows_item_title_filename(this, win: Window, string: str, is_filename: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("addWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(string), is_filename as i8);
+    }
+
+    fn change_windows_item_title_filename(this, win: Window, string: str, is_filename: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("changeWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(string), is_filename as i8);
+    }
+
     fn update_windows_item(this, win: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateWindowsItem:\0")), win.raw());
     }
@@ -591,7 +610,10 @@ impl Application {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFullKeyboardAccessEnabled\0"))) != (0 as i8);
     }
 
-    // SKIPPED `registerServicesMenuSendTypes:returnTypes:`: (return, arg) shape not yet modelled
+    fn register_services_menu_send_types_return_types(this, send_types: vec::Vec[text::Text], return_types: vec::Vec[text::Text]) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerServicesMenuSendTypes:returnTypes:\0")), bridge::nsarray_of_text(send_types), bridge::nsarray_of_text(return_types));
+    }
+
     fn services_menu(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("servicesMenu\0")));
         return bridge::obj_option(obj);
@@ -635,7 +657,10 @@ impl Application {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unregisterForRemoteNotifications\0")));
     }
 
-    // SKIPPED `registerForRemoteNotificationTypes:`: (return, arg) shape not yet modelled
+    fn register_for_remote_notification_types(this, types: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("registerForRemoteNotificationTypes:\0")), types);
+    }
+
     fn is_registered_for_remote_notifications(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isRegisteredForRemoteNotifications\0"))) != (0 as i8);
     }
@@ -644,15 +669,18 @@ impl Application {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("enabledRemoteNotificationTypes\0")));
     }
 
-    // SKIPPED `runModalForWindow:relativeToWindow:`: (return, arg) shape not yet modelled
+    // SKIPPED `runModalForWindow:relativeToWindow:`: msgSend shape `i64_id_id` not yet modelled
     // SKIPPED `beginModalSessionForWindow:relativeToWindow:`: return `NSModalSession _Nonnull` — unmapped type `NSModalSession`
-    // SKIPPED `application:printFiles:`: (return, arg) shape not yet modelled
+    fn application_print_files(this, sender: Application, filenames: vec::Vec[text::Text]) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("application:printFiles:\0")), sender.raw(), bridge::nsarray_of_text(filenames));
+    }
+
     // SKIPPED `beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
     fn end_sheet(this, sheet: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet.raw());
     }
 
-    // SKIPPED `endSheet:returnCode:`: (return, arg) shape not yet modelled
+    // SKIPPED `endSheet:returnCode:`: msgSend shape `void_id_i64` not yet modelled
     // SKIPPED `makeWindowsPerform:inOrder:`: param `SEL _Nonnull` — unmapped type `SEL`
     fn context(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("context\0")));
@@ -1293,7 +1321,10 @@ impl ServicesMenuRequestor {
 
     fn from_raw(ptr: *u8) -> ServicesMenuRequestor { return ServicesMenuRequestor { _obj: ptr }; }
 
-    // SKIPPED `writeSelectionToPasteboard:types:`: (return, arg) shape not yet modelled
-    // SKIPPED `readSelectionFromPasteboard:`: (return, arg) shape not yet modelled
+    fn write_selection_to_pasteboard_types(this, pboard: Pasteboard, types: vec::Vec[text::Text]) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:types:\0")), pboard.raw(), bridge::nsarray_of_text(types)) != (0 as i8);
+    }
+
+    // SKIPPED `readSelectionFromPasteboard:`: msgSend shape `i8_id` not yet modelled
 }
 

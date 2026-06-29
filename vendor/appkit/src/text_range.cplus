@@ -37,17 +37,19 @@ impl TextRange {
 
     fn from_raw(ptr: *u8) -> TextRange { return TextRange { _obj: ptr }; }
 
-    // SKIPPED `initWithLocation:endLocation:`: init arg shape not yet modelled
-    // SKIPPED `initWithLocation:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
-    fn new() -> TextRange {
-        return TextRange { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTextRange\0")), rt::sel(#str_ptr("new\0")))) };
+    fn new(location: TextLocation, end_location: TextLocation) -> TextRange {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextRange\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextRange { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithLocation:endLocation:\0")), location.raw(), end_location.raw()) };
     }
 
-    // SKIPPED `isEqualToTextRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `containsLocation:`: (return, arg) shape not yet modelled
-    // SKIPPED `containsRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `intersectsWithTextRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `initWithLocation:`: extra init variant (one `new` per type)
+    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `new`: method `new` already defined
+    // SKIPPED `isEqualToTextRange:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `containsLocation:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `containsRange:`: msgSend shape `i8_id` not yet modelled
+    // SKIPPED `intersectsWithTextRange:`: msgSend shape `i8_id` not yet modelled
     fn text_range_by_intersecting_with_text_range(this, text_range: TextRange) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("textRangeByIntersectingWithTextRange:\0")), text_range.raw());
     }
@@ -83,6 +85,6 @@ impl TextLocation {
 
     fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
 
-    // SKIPPED `compare:`: (return, arg) shape not yet modelled
+    // SKIPPED `compare:`: msgSend shape `i64_id` not yet modelled
 }
 

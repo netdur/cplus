@@ -155,7 +155,10 @@ impl ToolbarItem {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
 
-    // SKIPPED `setTag:`: (return, arg) shape not yet modelled
+    fn set_tag(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTag:\0")), tag);
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);
@@ -216,7 +219,10 @@ impl ToolbarItem {
         return toolbar_item_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("style\0"))));
     }
 
-    // SKIPPED `setStyle:`: (return, arg) shape not yet modelled
+    fn set_style(this, style: ToolbarItemStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setStyle:\0")), toolbar_item_style_raw(style));
+    }
+
     fn is_navigational(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isNavigational\0"))) != (0 as i8);
     }
@@ -298,7 +304,7 @@ impl ToolbarItemValidation {
 
     fn from_raw(ptr: *u8) -> ToolbarItemValidation { return ToolbarItemValidation { _obj: ptr }; }
 
-    // SKIPPED `validateToolbarItem:`: (return, arg) shape not yet modelled
+    // SKIPPED `validateToolbarItem:`: msgSend shape `i8_id` not yet modelled
 }
 
 // `NSCloudSharingValidation` (ObjC protocol). Non-owning handle; `opaque`, no drop.

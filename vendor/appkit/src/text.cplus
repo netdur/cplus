@@ -130,11 +130,20 @@ impl Text {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `writeRTFDToFile:atomically:`: (return, arg) shape not yet modelled
-    // SKIPPED `readRTFDFromFile:`: (return, arg) shape not yet modelled
-    // SKIPPED `scrollRangeToVisible:`: (return, arg) shape not yet modelled
-    // SKIPPED `setTextColor:range:`: (return, arg) shape not yet modelled
-    // SKIPPED `setFont:range:`: (return, arg) shape not yet modelled
+    // SKIPPED `writeRTFDToFile:atomically:`: msgSend shape `i8_id_i8` not yet modelled
+    // SKIPPED `readRTFDFromFile:`: msgSend shape `i8_id` not yet modelled
+    fn scroll_range_to_visible(this, range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("scrollRangeToVisible:\0")), range);
+    }
+
+    fn set_text_color_range(this, color: Color, range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setTextColor:range:\0")), color.raw(), range);
+    }
+
+    fn set_font_range(this, font: Font, range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setFont:range:\0")), font.raw(), range);
+    }
+
     fn size_to_fit(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
@@ -313,7 +322,10 @@ impl Text {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("selectedRange\0")));
     }
 
-    // SKIPPED `setSelectedRange:`: (return, arg) shape not yet modelled
+    fn set_selected_range(this, selected_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("setSelectedRange:\0")), selected_range);
+    }
+
     fn font(this) -> option::Option[Font] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("font\0")));
         if obj == { 0 as *u8 } {
@@ -342,12 +354,18 @@ impl Text {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `setAlignment:`: (return, arg) shape not yet modelled
+    fn set_alignment(this, alignment: TextAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlignment:\0")), text_alignment_raw(alignment));
+    }
+
     fn base_writing_direction(this) -> WritingDirection {
         return writing_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("baseWritingDirection\0"))));
     }
 
-    // SKIPPED `setBaseWritingDirection:`: (return, arg) shape not yet modelled
+    fn set_base_writing_direction(this, base_writing_direction: WritingDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:\0")), writing_direction_raw(base_writing_direction));
+    }
+
     fn max_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("maxSize\0")));
     }

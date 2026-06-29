@@ -8,6 +8,25 @@ import "stdlib/option" as option;
 import "objc/synthesis" as synth;
 
 #[repr(C)]
+struct SavePanel_begin_sheet_modal_for_window_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn SavePanel_begin_sheet_modal_for_window_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *SavePanel_begin_sheet_modal_for_window_completion_handler_block = { block as *SavePanel_begin_sheet_modal_for_window_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct SavePanel_begin_with_completion_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -148,7 +167,14 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancel:\0")), sender);
     }
 
-    // SKIPPED `beginSheetModalForWindow:completionHandler:`: block-method msgSend shape not modelled
+    fn begin_sheet_modal_for_window_completion_handler(this, window: *u8, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SavePanel_begin_sheet_modal_for_window_completion_handler_block = SavePanel_begin_sheet_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_sheet_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), window, bp);
+        return;
+    }
+
     fn begin_with_completion_handler(this, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: SavePanel_begin_with_completion_handler_block = SavePanel_begin_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -352,7 +378,7 @@ impl SavePanel {
     }
 
     // SKIPPED `beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `runModalForDirectory:file:`: (return, arg) shape not yet modelled
+    // SKIPPED `runModalForDirectory:file:`: msgSend shape `i64_id_id` not yet modelled
     fn select_text(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }

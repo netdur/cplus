@@ -130,7 +130,7 @@ impl BezierPath {
         return BezierPath { _obj: rt::msg_id_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("bezierPathWithOvalInRect:\0")), rect) };
     }
 
-    // SKIPPED `bezierPathWithRoundedRect:xRadius:yRadius:`: (return, arg) shape not yet modelled
+    // SKIPPED `bezierPathWithRoundedRect:xRadius:yRadius:`: msgSend shape `id_rect_f64_f64` not yet modelled
     // SKIPPED `bezierPathWithCGPath:`: param `CGPathRef _Nonnull` — unmapped type `CGPathRef`
     fn fill_rect(rect: rt::Rect) {
         rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("fillRect:\0")), rect);
@@ -144,8 +144,8 @@ impl BezierPath {
         rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("clipRect:\0")), rect);
     }
 
-    // SKIPPED `strokeLineFromPoint:toPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawPackedGlyphs:atPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `strokeLineFromPoint:toPoint:`: msgSend shape `void_point_point` not yet modelled
+    // SKIPPED `drawPackedGlyphs:atPoint:`: msgSend shape `void_id_point` not yet modelled
     fn move_to_point(this, point: rt::Point) {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("moveToPoint:\0")), point);
     }
@@ -154,8 +154,8 @@ impl BezierPath {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("lineToPoint:\0")), point);
     }
 
-    // SKIPPED `curveToPoint:controlPoint1:controlPoint2:`: (return, arg) shape not yet modelled
-    // SKIPPED `curveToPoint:controlPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `curveToPoint:controlPoint1:controlPoint2:`: msgSend shape `void_point_point_point` not yet modelled
+    // SKIPPED `curveToPoint:controlPoint:`: msgSend shape `void_point_point` not yet modelled
     fn close_path(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("closePath\0")));
     }
@@ -172,10 +172,10 @@ impl BezierPath {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("relativeLineToPoint:\0")), point);
     }
 
-    // SKIPPED `relativeCurveToPoint:controlPoint1:controlPoint2:`: (return, arg) shape not yet modelled
-    // SKIPPED `relativeCurveToPoint:controlPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `getLineDash:count:phase:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLineDash:count:phase:`: (return, arg) shape not yet modelled
+    // SKIPPED `relativeCurveToPoint:controlPoint1:controlPoint2:`: msgSend shape `void_point_point_point` not yet modelled
+    // SKIPPED `relativeCurveToPoint:controlPoint:`: msgSend shape `void_point_point` not yet modelled
+    // SKIPPED `getLineDash:count:phase:`: msgSend shape `void_id_id_id` not yet modelled
+    // SKIPPED `setLineDash:count:phase:`: msgSend shape `void_id_i64_f64` not yet modelled
     fn stroke(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stroke\0")));
     }
@@ -197,7 +197,7 @@ impl BezierPath {
     }
 
     // SKIPPED `elementAtIndex:associatedPoints:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
-    // SKIPPED `elementAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `elementAtIndex:`: msgSend shape `i64_i64` not yet modelled
     // SKIPPED `setAssociatedPoints:atIndex:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
     fn append_bezier_path(this, path: BezierPath) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendBezierPath:\0")), path.raw());
@@ -212,13 +212,13 @@ impl BezierPath {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
 
-    // SKIPPED `appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:clockwise:`: (return, arg) shape not yet modelled
-    // SKIPPED `appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:`: (return, arg) shape not yet modelled
-    // SKIPPED `appendBezierPathWithArcFromPoint:toPoint:radius:`: (return, arg) shape not yet modelled
+    // SKIPPED `appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:clockwise:`: msgSend shape `void_point_f64_f64_f64_i8` not yet modelled
+    // SKIPPED `appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:`: msgSend shape `void_point_f64_f64_f64` not yet modelled
+    // SKIPPED `appendBezierPathWithArcFromPoint:toPoint:radius:`: msgSend shape `void_point_point_f64` not yet modelled
     // SKIPPED `appendBezierPathWithCGGlyph:inFont:`: param `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `appendBezierPathWithCGGlyphs:count:inFont:`: (return, arg) shape not yet modelled
-    // SKIPPED `appendBezierPathWithRoundedRect:xRadius:yRadius:`: (return, arg) shape not yet modelled
-    // SKIPPED `containsPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `appendBezierPathWithCGGlyphs:count:inFont:`: msgSend shape `void_id_i64_id` not yet modelled
+    // SKIPPED `appendBezierPathWithRoundedRect:xRadius:yRadius:`: msgSend shape `void_rect_f64_f64` not yet modelled
+    // SKIPPED `containsPoint:`: msgSend shape `i8_point` not yet modelled
     // SKIPPED `CGPath`: return `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
     // SKIPPED `setCGPath:`: param `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
     fn default_miter_limit() -> f64 {
@@ -241,17 +241,26 @@ impl BezierPath {
         return winding_rule_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("defaultWindingRule\0"))));
     }
 
-    // SKIPPED `setDefaultWindingRule:`: (return, arg) shape not yet modelled
+    fn set_default_winding_rule(default_winding_rule: WindingRule) {
+        rt::msg_void_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("setDefaultWindingRule:\0")), winding_rule_raw(default_winding_rule));
+    }
+
     fn default_line_cap_style() -> LineCapStyle {
         return line_cap_style_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("defaultLineCapStyle\0"))));
     }
 
-    // SKIPPED `setDefaultLineCapStyle:`: (return, arg) shape not yet modelled
+    fn set_default_line_cap_style(default_line_cap_style: LineCapStyle) {
+        rt::msg_void_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("setDefaultLineCapStyle:\0")), line_cap_style_raw(default_line_cap_style));
+    }
+
     fn default_line_join_style() -> LineJoinStyle {
         return line_join_style_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("defaultLineJoinStyle\0"))));
     }
 
-    // SKIPPED `setDefaultLineJoinStyle:`: (return, arg) shape not yet modelled
+    fn set_default_line_join_style(default_line_join_style: LineJoinStyle) {
+        rt::msg_void_i64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("setDefaultLineJoinStyle:\0")), line_join_style_raw(default_line_join_style));
+    }
+
     fn default_line_width() -> f64 {
         return rt::msg_f64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("defaultLineWidth\0")));
     }
@@ -272,17 +281,26 @@ impl BezierPath {
         return line_cap_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineCapStyle\0"))));
     }
 
-    // SKIPPED `setLineCapStyle:`: (return, arg) shape not yet modelled
+    fn set_line_cap_style(this, line_cap_style: LineCapStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineCapStyle:\0")), line_cap_style_raw(line_cap_style));
+    }
+
     fn line_join_style(this) -> LineJoinStyle {
         return line_join_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineJoinStyle\0"))));
     }
 
-    // SKIPPED `setLineJoinStyle:`: (return, arg) shape not yet modelled
+    fn set_line_join_style(this, line_join_style: LineJoinStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineJoinStyle:\0")), line_join_style_raw(line_join_style));
+    }
+
     fn winding_rule(this) -> WindingRule {
         return winding_rule_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("windingRule\0"))));
     }
 
-    // SKIPPED `setWindingRule:`: (return, arg) shape not yet modelled
+    fn set_winding_rule(this, winding_rule: WindingRule) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setWindingRule:\0")), winding_rule_raw(winding_rule));
+    }
+
     fn miter_limit(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("miterLimit\0")));
     }
@@ -336,7 +354,7 @@ impl BezierPath {
     }
 
     // SKIPPED `appendBezierPathWithGlyph:inFont:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `appendBezierPathWithGlyphs:count:inFont:`: (return, arg) shape not yet modelled
+    // SKIPPED `appendBezierPathWithGlyphs:count:inFont:`: msgSend shape `void_id_i64_id` not yet modelled
     fn append_bezier_path_with_packed_glyphs(this, packed_glyphs: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithPackedGlyphs:\0")), packed_glyphs);
     }

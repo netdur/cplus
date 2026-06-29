@@ -170,7 +170,7 @@ impl ParagraphStyle {
 
     fn from_raw(ptr: *u8) -> ParagraphStyle { return ParagraphStyle { _obj: ptr }; }
 
-    // SKIPPED `defaultWritingDirectionForLanguage:`: (return, arg) shape not yet modelled
+    // SKIPPED `defaultWritingDirectionForLanguage:`: msgSend shape `i64_id` not yet modelled
     fn default_paragraph_style() -> ParagraphStyle {
         return ParagraphStyle { _obj: rt::msg_id(rt::get_class(#str_ptr("NSParagraphStyle\0")), rt::sel(#str_ptr("defaultParagraphStyle\0"))) };
     }
@@ -322,7 +322,10 @@ impl MutableParagraphStyle {
         return line_break_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("lineBreakMode\0"))));
     }
 
-    // SKIPPED `setLineBreakMode:`: (return, arg) shape not yet modelled
+    fn set_line_break_mode(this, line_break_mode: LineBreakMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLineBreakMode:\0")), line_break_mode_raw(line_break_mode));
+    }
+
     fn minimum_line_height(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("minimumLineHeight\0")));
     }
@@ -343,7 +346,10 @@ impl MutableParagraphStyle {
         return writing_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("baseWritingDirection\0"))));
     }
 
-    // SKIPPED `setBaseWritingDirection:`: (return, arg) shape not yet modelled
+    fn set_base_writing_direction(this, base_writing_direction: WritingDirection) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:\0")), writing_direction_raw(base_writing_direction));
+    }
+
     fn line_height_multiple(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("lineHeightMultiple\0")));
     }
@@ -398,14 +404,20 @@ impl MutableParagraphStyle {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("lineBreakStrategy\0")));
     }
 
-    // SKIPPED `setLineBreakStrategy:`: (return, arg) shape not yet modelled
+    fn set_line_break_strategy(this, line_break_strategy: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setLineBreakStrategy:\0")), line_break_strategy);
+    }
+
     // SKIPPED `textLists`: return `NSArray<NSTextList *> * _Nonnull` — generic collection
     // SKIPPED `setTextLists:`: param `NSArray<NSTextList *> * _Nonnull` — generic collection
     fn alignment(this) -> TextAlignment {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `setAlignment:`: (return, arg) shape not yet modelled
+    fn set_alignment(this, alignment: TextAlignment) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setAlignment:\0")), text_alignment_raw(alignment));
+    }
+
     fn tightening_factor_for_truncation(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("tighteningFactorForTruncation\0")));
     }
@@ -420,7 +432,10 @@ impl MutableParagraphStyle {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("headerLevel\0")));
     }
 
-    // SKIPPED `setHeaderLevel:`: (return, arg) shape not yet modelled
+    fn set_header_level(this, header_level: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setHeaderLevel:\0")), header_level);
+    }
+
 }
 
 // `NSTextBlock` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

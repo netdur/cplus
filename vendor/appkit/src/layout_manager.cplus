@@ -262,8 +262,14 @@ impl LayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTextContainer:\0")), container.raw());
     }
 
-    // SKIPPED `insertTextContainer:atIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `removeTextContainerAtIndex:`: (return, arg) shape not yet modelled
+    fn insert_text_container_at_index(this, container: TextContainer, index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertTextContainer:atIndex:\0")), container.raw(), index);
+    }
+
+    fn remove_text_container_at_index(this, index: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("removeTextContainerAtIndex:\0")), index);
+    }
+
     fn text_container_changed_geometry(this, container: TextContainer) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedGeometry:\0")), container.raw());
     }
@@ -274,34 +280,58 @@ impl LayoutManager {
 
     // SKIPPED `invalidateGlyphsForCharacterRange:changeInLength:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `invalidateLayoutForCharacterRange:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `invalidateDisplayForCharacterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `invalidateDisplayForGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `ensureGlyphsForCharacterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `ensureGlyphsForGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `ensureLayoutForCharacterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `ensureLayoutForGlyphRange:`: (return, arg) shape not yet modelled
+    fn invalidate_display_for_character_range(this, char_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateDisplayForCharacterRange:\0")), char_range);
+    }
+
+    fn invalidate_display_for_glyph_range(this, glyph_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateDisplayForGlyphRange:\0")), glyph_range);
+    }
+
+    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: msgSend shape `void_id_u64_range_i64_range` not yet modelled
+    fn ensure_glyphs_for_character_range(this, char_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureGlyphsForCharacterRange:\0")), char_range);
+    }
+
+    fn ensure_glyphs_for_glyph_range(this, glyph_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureGlyphsForGlyphRange:\0")), glyph_range);
+    }
+
+    fn ensure_layout_for_character_range(this, char_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureLayoutForCharacterRange:\0")), char_range);
+    }
+
+    fn ensure_layout_for_glyph_range(this, glyph_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureLayoutForGlyphRange:\0")), glyph_range);
+    }
+
     fn ensure_layout_for_text_container(this, container: TextContainer) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("ensureLayoutForTextContainer:\0")), container.raw());
     }
 
-    // SKIPPED `ensureLayoutForBoundingRect:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `setGlyphs:properties:characterIndexes:font:forGlyphRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `ensureLayoutForBoundingRect:inTextContainer:`: msgSend shape `void_rect_id` not yet modelled
+    // SKIPPED `setGlyphs:properties:characterIndexes:font:forGlyphRange:`: msgSend shape `void_id_id_id_id_range` not yet modelled
     // SKIPPED `CGGlyphAtIndex:isValidIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `CGGlyphAtIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `isValidGlyphIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `propertyForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `characterIndexForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `glyphIndexForCharacterAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:`: (return, arg) shape not yet modelled
-    // SKIPPED `setTextContainer:forGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:`: (return, arg) shape not yet modelled
-    // SKIPPED `setExtraLineFragmentRect:usedRect:textContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLocation:forStartOfGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setNotShownAttribute:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setDrawsOutsideLineFragment:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setAttachmentSize:forGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `getFirstUnlaidCharacterIndex:glyphIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `isValidGlyphIndex:`: msgSend shape `i8_u64` not yet modelled
+    // SKIPPED `propertyForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
+    // SKIPPED `characterIndexForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
+    // SKIPPED `glyphIndexForCharacterAtIndex:`: msgSend shape `u64_u64` not yet modelled
+    // SKIPPED `getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:`: msgSend shape `u64_range_id_id_id_id` not yet modelled
+    fn set_text_container_for_glyph_range(this, container: TextContainer, glyph_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setTextContainer:forGlyphRange:\0")), container.raw(), glyph_range);
+    }
+
+    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:`: msgSend shape `void_rect_range_rect` not yet modelled
+    // SKIPPED `setExtraLineFragmentRect:usedRect:textContainer:`: msgSend shape `void_rect_rect_id` not yet modelled
+    // SKIPPED `setLocation:forStartOfGlyphRange:`: msgSend shape `void_point_range` not yet modelled
+    // SKIPPED `setNotShownAttribute:forGlyphAtIndex:`: msgSend shape `void_i8_u64` not yet modelled
+    // SKIPPED `setDrawsOutsideLineFragment:forGlyphAtIndex:`: msgSend shape `void_i8_u64` not yet modelled
+    // SKIPPED `setAttachmentSize:forGlyphRange:`: msgSend shape `void_size_range` not yet modelled
+    fn get_first_unlaid_character_index_glyph_index(this, char_index: *u8, glyph_index: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getFirstUnlaidCharacterIndex:glyphIndex:\0")), char_index, glyph_index);
+    }
+
     fn first_unlaid_character_index(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("firstUnlaidCharacterIndex\0")));
     }
@@ -312,34 +342,34 @@ impl LayoutManager {
 
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `usedRectForTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `usedRectForTextContainer:`: msgSend shape `rect_id` not yet modelled
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `locationForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `notShownAttributeForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawsOutsideLineFragmentForGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `attachmentSizeForGlyphAtIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `locationForGlyphAtIndex:`: msgSend shape `point_u64` not yet modelled
+    // SKIPPED `notShownAttributeForGlyphAtIndex:`: msgSend shape `i8_u64` not yet modelled
+    // SKIPPED `drawsOutsideLineFragmentForGlyphAtIndex:`: msgSend shape `i8_u64` not yet modelled
+    // SKIPPED `attachmentSizeForGlyphAtIndex:`: msgSend shape `size_u64` not yet modelled
     fn truncated_glyph_range_in_line_fragment_for_glyph_at_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("truncatedGlyphRangeInLineFragmentForGlyphAtIndex:\0")), glyph_index);
     }
 
     // SKIPPED `glyphRangeForCharacterRange:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `characterRangeForGlyphRange:actualGlyphRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `glyphRangeForTextContainer:`: (return, arg) shape not yet modelled
+    // SKIPPED `glyphRangeForTextContainer:`: msgSend shape `range_id` not yet modelled
     fn range_of_nominally_spaced_glyphs_containing_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("rangeOfNominallySpacedGlyphsContainingIndex:\0")), glyph_index);
     }
 
-    // SKIPPED `boundingRectForGlyphRange:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `glyphRangeForBoundingRect:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:`: (return, arg) shape not yet modelled
-    // SKIPPED `glyphIndexForPoint:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:inTextContainer:`: (return, arg) shape not yet modelled
-    // SKIPPED `characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:`: (return, arg) shape not yet modelled
-    // SKIPPED `getLineFragmentInsertionPointsForCharacterAtIndex:alternatePositions:inDisplayOrder:positions:characterIndexes:`: (return, arg) shape not yet modelled
+    // SKIPPED `boundingRectForGlyphRange:inTextContainer:`: msgSend shape `rect_range_id` not yet modelled
+    // SKIPPED `glyphRangeForBoundingRect:inTextContainer:`: msgSend shape `range_rect_id` not yet modelled
+    // SKIPPED `glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:`: msgSend shape `range_rect_id` not yet modelled
+    // SKIPPED `glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:`: msgSend shape `u64_point_id_id` not yet modelled
+    // SKIPPED `glyphIndexForPoint:inTextContainer:`: msgSend shape `u64_point_id` not yet modelled
+    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:inTextContainer:`: msgSend shape `f64_point_id` not yet modelled
+    // SKIPPED `characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:`: msgSend shape `u64_point_id_id` not yet modelled
+    // SKIPPED `getLineFragmentInsertionPointsForCharacterAtIndex:alternatePositions:inDisplayOrder:positions:characterIndexes:`: msgSend shape `u64_u64_i8_i8_id_id` not yet modelled
     fn enumerate_line_fragments_for_glyph_range_using_block(this, glyph_range: rt::Range, cb: fn(*u8, i64, i64, *u8, rt::Range, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_block = LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -349,31 +379,37 @@ impl LayoutManager {
     }
 
     // SKIPPED `enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `drawBackgroundForGlyphRange:atPoint:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawGlyphsForGlyphRange:atPoint:`: (return, arg) shape not yet modelled
+    // SKIPPED `drawBackgroundForGlyphRange:atPoint:`: msgSend shape `void_range_point` not yet modelled
+    // SKIPPED `drawGlyphsForGlyphRange:atPoint:`: msgSend shape `void_range_point` not yet modelled
     // SKIPPED `showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:`: param `CGAffineTransform` — unmapped type `CGAffineTransform`
-    // SKIPPED `fillBackgroundRectArray:count:forCharacterRange:color:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
-    // SKIPPED `underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
-    // SKIPPED `drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
-    // SKIPPED `strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: (return, arg) shape not yet modelled
-    // SKIPPED `showAttachmentCell:inRect:characterIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setLayoutRect:forTextBlock:glyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setBoundsRect:forTextBlock:glyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `layoutRectForTextBlock:glyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `boundsRectForTextBlock:glyphRange:`: (return, arg) shape not yet modelled
+    // SKIPPED `fillBackgroundRectArray:count:forCharacterRange:color:`: msgSend shape `void_id_u64_range_id` not yet modelled
+    // SKIPPED `drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_f64_rect_range_point` not yet modelled
+    // SKIPPED `underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_rect_range_point` not yet modelled
+    // SKIPPED `drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_f64_rect_range_point` not yet modelled
+    // SKIPPED `strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_rect_range_point` not yet modelled
+    // SKIPPED `showAttachmentCell:inRect:characterIndex:`: msgSend shape `void_id_rect_u64` not yet modelled
+    // SKIPPED `setLayoutRect:forTextBlock:glyphRange:`: msgSend shape `void_rect_id_range` not yet modelled
+    // SKIPPED `setBoundsRect:forTextBlock:glyphRange:`: msgSend shape `void_rect_id_range` not yet modelled
+    // SKIPPED `layoutRectForTextBlock:glyphRange:`: msgSend shape `rect_id_range` not yet modelled
+    // SKIPPED `boundsRectForTextBlock:glyphRange:`: msgSend shape `rect_id_range` not yet modelled
     // SKIPPED `layoutRectForTextBlock:atIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `boundsRectForTextBlock:atIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `temporaryAttributesAtCharacterIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `setTemporaryAttributes:forCharacterRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     // SKIPPED `addTemporaryAttributes:forCharacterRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    // SKIPPED `removeTemporaryAttribute:forCharacterRange:`: (return, arg) shape not yet modelled
+    fn remove_temporary_attribute_for_character_range(this, attr_name: str, char_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("removeTemporaryAttribute:forCharacterRange:\0")), bridge::nsstring(attr_name), char_range);
+    }
+
     // SKIPPED `temporaryAttribute:atCharacterIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `temporaryAttribute:atCharacterIndex:longestEffectiveRange:inRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `temporaryAttributesAtCharacterIndex:longestEffectiveRange:inRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `addTemporaryAttribute:value:forCharacterRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `defaultLineHeightForFont:`: (return, arg) shape not yet modelled
-    // SKIPPED `defaultBaselineOffsetForFont:`: (return, arg) shape not yet modelled
+    fn add_temporary_attribute_value_for_character_range(this, attr_name: str, value: *u8, char_range: rt::Range) {
+        rt::msg_void_id_id_range(this._obj, rt::sel(#str_ptr("addTemporaryAttribute:value:forCharacterRange:\0")), bridge::nsstring(attr_name), value, char_range);
+    }
+
+    // SKIPPED `defaultLineHeightForFont:`: msgSend shape `f64_id` not yet modelled
+    // SKIPPED `defaultBaselineOffsetForFont:`: msgSend shape `f64_id` not yet modelled
     fn text_storage(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textStorage\0")));
         return bridge::obj_option(obj);
@@ -457,7 +493,10 @@ impl LayoutManager {
         return image_scaling_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("defaultAttachmentScaling\0"))));
     }
 
-    // SKIPPED `setDefaultAttachmentScaling:`: (return, arg) shape not yet modelled
+    fn set_default_attachment_scaling(this, default_attachment_scaling: ImageScaling) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDefaultAttachmentScaling:\0")), image_scaling_raw(default_attachment_scaling));
+    }
+
     fn typesetter(this) -> Typesetter {
         return Typesetter::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("typesetter\0"))));
     }
@@ -470,7 +509,10 @@ impl LayoutManager {
         return typesetter_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("typesetterBehavior\0"))));
     }
 
-    // SKIPPED `setTypesetterBehavior:`: (return, arg) shape not yet modelled
+    fn set_typesetter_behavior(this, typesetter_behavior: TypesetterBehavior) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTypesetterBehavior:\0")), typesetter_behavior_raw(typesetter_behavior));
+    }
+
     fn number_of_glyphs(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("numberOfGlyphs\0")));
     }
@@ -492,8 +534,8 @@ impl LayoutManager {
     }
 
     // SKIPPED `rulerMarkersForTextView:paragraphStyle:ruler:`: return `NSArray<NSRulerMarker *> * _Nonnull` — generic collection
-    // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: (return, arg) shape not yet modelled
-    // SKIPPED `layoutManagerOwnsFirstResponderInWindow:`: (return, arg) shape not yet modelled
+    // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: msgSend shape `id_id_id_id_i8` not yet modelled
+    // SKIPPED `layoutManagerOwnsFirstResponderInWindow:`: msgSend shape `i8_id` not yet modelled
     fn first_text_view(this) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("firstTextView\0")));
         if obj == { 0 as *u8 } {
@@ -518,21 +560,33 @@ impl LayoutManager {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("substituteFontForFont:\0")), original_font);
     }
 
-    // SKIPPED `insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:`: (return, arg) shape not yet modelled
+    fn insert_glyphs_length_for_starting_glyph_at_index_character_index(this, glyphs: *u8, length: u64, glyph_index: u64, char_index: u64) {
+        rt::msg_void_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:\0")), glyphs, length, glyph_index, char_index);
+    }
+
     // SKIPPED `insertGlyph:atGlyphIndex:characterIndex:`: param `NSGlyph` — unmapped type `NSGlyph`
     // SKIPPED `replaceGlyphAtIndex:withGlyph:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `deleteGlyphsInRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `setCharacterIndex:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `invalidateGlyphsOnLayoutInvalidationForGlyphRange:`: (return, arg) shape not yet modelled
-    // SKIPPED `intAttribute:forGlyphAtIndex:`: (return, arg) shape not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:`: (return, arg) shape not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:bidiLevels:`: (return, arg) shape not yet modelled
-    // SKIPPED `getGlyphs:range:`: (return, arg) shape not yet modelled
+    fn delete_glyphs_in_range(this, glyph_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("deleteGlyphsInRange:\0")), glyph_range);
+    }
+
+    fn set_character_index_for_glyph_at_index(this, char_index: u64, glyph_index: u64) {
+        rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setCharacterIndex:forGlyphAtIndex:\0")), char_index, glyph_index);
+    }
+
+    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: msgSend shape `void_i64_i64_u64` not yet modelled
+    fn invalidate_glyphs_on_layout_invalidation_for_glyph_range(this, glyph_range: rt::Range) {
+        rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateGlyphsOnLayoutInvalidationForGlyphRange:\0")), glyph_range);
+    }
+
+    // SKIPPED `intAttribute:forGlyphAtIndex:`: msgSend shape `i64_i64_u64` not yet modelled
+    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:`: msgSend shape `u64_range_id_id_id_id` not yet modelled
+    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:bidiLevels:`: msgSend shape `u64_range_id_id_id_id_id` not yet modelled
+    // SKIPPED `getGlyphs:range:`: msgSend shape `u64_id_range` not yet modelled
     // SKIPPED `invalidateLayoutForCharacterRange:isSoft:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `textStorage:edited:range:changeInLength:invalidatedRange:`: param `NSTextStorageEditedOptions` — unmapped type `NSTextStorageEditedOptions`
     // SKIPPED `setLocations:startingGlyphIndexes:count:forGlyphRange:`: param `NSPointArray _Nonnull` — unmapped type `NSPointArray`
-    // SKIPPED `showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:`: (return, arg) shape not yet modelled
+    // SKIPPED `showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:`: msgSend shape `void_id_u64_range_point_id_id_size` not yet modelled
     // SKIPPED `showCGGlyphs:positions:count:font:matrix:attributes:inContext:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn uses_screen_fonts(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesScreenFonts\0"))) != (0 as i8);

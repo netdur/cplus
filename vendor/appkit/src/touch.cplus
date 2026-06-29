@@ -80,8 +80,8 @@ impl Touch {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("deviceSize\0")));
     }
 
-    // SKIPPED `locationInView:`: (return, arg) shape not yet modelled
-    // SKIPPED `previousLocationInView:`: (return, arg) shape not yet modelled
+    // SKIPPED `locationInView:`: msgSend shape `point_id` not yet modelled
+    // SKIPPED `previousLocationInView:`: msgSend shape `point_id` not yet modelled
     fn type_(this) -> TouchType {
         return touch_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }

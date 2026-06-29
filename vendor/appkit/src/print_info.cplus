@@ -140,7 +140,10 @@ impl PrintInfo {
         return paper_orientation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("orientation\0"))));
     }
 
-    // SKIPPED `setOrientation:`: (return, arg) shape not yet modelled
+    fn set_orientation(this, orientation: PaperOrientation) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setOrientation:\0")), paper_orientation_raw(orientation));
+    }
+
     fn scaling_factor(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("scalingFactor\0")));
     }
@@ -201,12 +204,18 @@ impl PrintInfo {
         return printing_pagination_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("horizontalPagination\0"))));
     }
 
-    // SKIPPED `setHorizontalPagination:`: (return, arg) shape not yet modelled
+    fn set_horizontal_pagination(this, horizontal_pagination: PrintingPaginationMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setHorizontalPagination:\0")), printing_pagination_mode_raw(horizontal_pagination));
+    }
+
     fn vertical_pagination(this) -> PrintingPaginationMode {
         return printing_pagination_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("verticalPagination\0"))));
     }
 
-    // SKIPPED `setVerticalPagination:`: (return, arg) shape not yet modelled
+    fn set_vertical_pagination(this, vertical_pagination: PrintingPaginationMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVerticalPagination:\0")), printing_pagination_mode_raw(vertical_pagination));
+    }
+
     fn job_disposition(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("jobDisposition\0")));
         return bridge::to_text(ns);
@@ -254,7 +263,7 @@ impl PrintInfo {
         rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setDefaultPrinter:\0")), printer.raw());
     }
 
-    // SKIPPED `sizeForPaperName:`: (return, arg) shape not yet modelled
+    // SKIPPED `sizeForPaperName:`: msgSend shape `size_id` not yet modelled
     fn drop(ref this) {
         rt::release(this._obj);
     }

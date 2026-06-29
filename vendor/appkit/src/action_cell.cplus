@@ -31,6 +31,9 @@ impl ActionCell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
 
-    // SKIPPED `setTag:`: (return, arg) shape not yet modelled
+    fn set_tag(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTag:\0")), tag);
+    }
+
 }
 

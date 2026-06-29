@@ -56,7 +56,7 @@ impl TabViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item);
     }
 
-    // SKIPPED `insertTabViewItem:atIndex:`: (return, arg) shape not yet modelled
+    // SKIPPED `insertTabViewItem:atIndex:`: msgSend shape `void_id_i64` not yet modelled
     fn remove_tab_view_item(this, tab_view_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item);
     }
@@ -70,10 +70,19 @@ impl TabViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidLoad\0")));
     }
 
-    // SKIPPED `tabView:willSelectTabViewItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `tabView:didSelectTabViewItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `tabView:shouldSelectTabViewItem:`: (return, arg) shape not yet modelled
-    // SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: (return, arg) shape not yet modelled
+    fn tab_view_will_select_tab_view_item(this, tab_view: *u8, tab_view_item: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("tabView:willSelectTabViewItem:\0")), tab_view, tab_view_item);
+    }
+
+    fn tab_view_did_select_tab_view_item(this, tab_view: *u8, tab_view_item: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("tabView:didSelectTabViewItem:\0")), tab_view, tab_view_item);
+    }
+
+    fn tab_view_should_select_tab_view_item(this, tab_view: *u8, tab_view_item: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tabView:shouldSelectTabViewItem:\0")), tab_view, tab_view_item) != (0 as i8);
+    }
+
+    // SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: msgSend shape `id_id_id_i8` not yet modelled
     fn toolbar_default_item_identifiers(this, toolbar: *u8) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), toolbar);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -120,7 +129,10 @@ impl TabViewController {
         return tab_view_controller_tab_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabStyle\0"))));
     }
 
-    // SKIPPED `setTabStyle:`: (return, arg) shape not yet modelled
+    fn set_tab_style(this, tab_style: TabViewControllerTabStyle) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabStyle:\0")), tab_view_controller_tab_style_raw(tab_style));
+    }
+
     fn tab_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("tabView\0")));
     }
@@ -133,7 +145,10 @@ impl TabViewController {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("transitionOptions\0")));
     }
 
-    // SKIPPED `setTransitionOptions:`: (return, arg) shape not yet modelled
+    fn set_transition_options(this, transition_options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTransitionOptions:\0")), transition_options);
+    }
+
     fn can_propagate_selected_child_view_controller_title(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("canPropagateSelectedChildViewControllerTitle\0"))) != (0 as i8);
     }
@@ -148,6 +163,9 @@ impl TabViewController {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("selectedTabViewItemIndex\0")));
     }
 
-    // SKIPPED `setSelectedTabViewItemIndex:`: (return, arg) shape not yet modelled
+    fn set_selected_tab_view_item_index(this, selected_tab_view_item_index: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectedTabViewItemIndex:\0")), selected_tab_view_item_index);
+    }
+
 }
 

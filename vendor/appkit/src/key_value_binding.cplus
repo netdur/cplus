@@ -96,7 +96,7 @@ impl Editor {
     }
 
     // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `commitEditingAndReturnError:`: (return, arg) shape not yet modelled
+    // SKIPPED `commitEditingAndReturnError:`: msgSend shape `i8_id` not yet modelled
 }
 
 // `NSEditorRegistration` (ObjC protocol). Non-owning handle; `opaque`, no drop.

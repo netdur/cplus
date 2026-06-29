@@ -115,7 +115,7 @@ impl PrintPanel {
 
     // SKIPPED `beginSheetUsingPrintInfo:onWindow:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `runModalWithPrintInfo:`: (return, arg) shape not yet modelled
+    // SKIPPED `runModalWithPrintInfo:`: msgSend shape `i64_id` not yet modelled
     fn run_modal(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
@@ -125,7 +125,10 @@ impl PrintPanel {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
-    // SKIPPED `setOptions:`: (return, arg) shape not yet modelled
+    fn set_options(this, options: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setOptions:\0")), options);
+    }
+
     // SKIPPED `helpAnchor`: return `API_AVAILABLE NSHelpAnchorName` — unmapped type `API_AVAILABLE NSHelpAnchorName`
     // SKIPPED `setHelpAnchor:`: param `API_AVAILABLE NSHelpAnchorName` — unmapped type `API_AVAILABLE NSHelpAnchorName`
     fn job_style_hint(this) -> option::Option[text::Text] {
