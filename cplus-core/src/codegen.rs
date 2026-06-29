@@ -12540,7 +12540,27 @@ impl<'a> FnState<'a> {
                 // non-musttail sret call.
             }
             let slot = self.alloca_anon(ret.clone());
-            let mut head = format!("ptr {slot}");
+            // The sret result slot MUST carry the `sret(<ty>)` attribute at the
+            // call site, not a bare `ptr`. On AArch64 the indirect-result pointer
+            // is passed in x8, NOT x0 — without the attribute LLVM treats it as an
+            // ordinary pointer argument, places it in x0, and shifts every real
+            // argument down one register. For an `objc_msgSend` shim that means
+            // the receiver lands one register too high and libobjc reads the
+            // caller's stack slot as the `Class` pointer → `Attempt to use unknown
+            // class 0x…` → EXC_BAD_ACCESS. The generic `declare ptr @objc_msgSend(
+            // ptr, ptr)` (emitted once whenever any selector is present) carries no
+            // sret attribute of its own and pre-empts the shim's properly-typed
+            // import declaration, so the call site is the ONLY place that can
+            // establish x8 passing. clang emits the same call-site `sret(...)`. The
+            // indirect (fn-pointer) and musttail sret paths already attribute the
+            // slot; this is the direct-call companion that had been left bare.
+            let (sret_sz, sret_al) =
+                static_layout(&ret, self.types).expect("sret return type has layout");
+            let sret_inner = self.lty(&ret);
+            let mut head = format!(
+                "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} {}",
+                sret_inner, sret_sz, sret_al, slot
+            );
             if !arg_str.is_empty() {
                 head.push_str(", ");
                 head.push_str(&arg_str);
@@ -21266,6 +21286,45 @@ mod tests {
         assert!(
             ptr_count >= 3,
             "expected at least 3 ptr args (recv + sel + forwarded); got line:\n{call_line}"
+        );
+    }
+
+    #[test]
+    fn objc_msgsend_sret_return_attributes_call_slot() {
+        // Regression: an `objc_msgSend` shim returning a >16-byte struct (sret
+        // on AArch64) MUST carry the `sret(<ty>)` attribute on the result-slot
+        // argument at the *call site*. The generic `declare ptr @objc_msgSend(
+        // ptr, ptr)` (pre-emitted whenever a selector is present) has no sret
+        // attribute of its own and pre-empts the shim's typed import declare, so
+        // the call site is the only place that can pin the slot to x8. A bare
+        // `ptr %slot` put the buffer in x0, shifting the receiver out of x0 →
+        // libobjc read a stack address as a Class → EXC_BAD_ACCESS at runtime.
+        let src = "struct Size { w: u64, h: u64, d: u64 }\n\
+                   #[link_name = \"objc_msgSend\"]\n\
+                   extern fn objc_msg_size(recv: *u8, sel: *u8) -> Size;\n\
+                   fn main() -> i32 {\n\
+                       let obj: *u8 = 0 as *u8;\n\
+                       let sel: *u8 = #selector(\"maxThreadsPerThreadgroup\");\n\
+                       let s: Size = objc_msg_size(obj, sel);\n\
+                       return s.w as i32;\n\
+                   }";
+        let ir = gen_src_mono(src);
+        let call_idx = ir
+            .find("call void @objc_msgSend(")
+            .unwrap_or_else(|| panic!("missing sret msgSend call; IR:\n{ir}"));
+        let call_line = &ir[call_idx..call_idx + ir[call_idx..].find('\n').unwrap()];
+        // The first argument must be the sret result slot, attributed so LLVM
+        // passes it in x8 (not x0).
+        assert!(
+            call_line.contains("sret(%Size)"),
+            "sret msgSend call must attribute the result slot with sret(...) so it \
+             lands in x8, not x0; got line:\n{call_line}"
+        );
+        // The receiver pointer must still be present as a following argument
+        // (3 `ptr` operands total: sret slot + recv + sel).
+        assert!(
+            call_line.matches("ptr").count() >= 3,
+            "expected sret slot + recv + sel operands; got line:\n{call_line}"
         );
     }
 
