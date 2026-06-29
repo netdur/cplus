@@ -2376,6 +2376,24 @@ fn i_o_compression_method_from_raw(raw: i64) -> IOCompressionMethod {
     return IOCompressionMethod::Zlib;
 }
 
+// `MTLSparseTextureRegionAlignmentMode` (NS_ENUM)
+enum SparseTextureRegionAlignmentMode {
+    Outward,
+    Inward,
+}
+
+fn sparse_texture_region_alignment_mode_raw(v: SparseTextureRegionAlignmentMode) -> i64 {
+    return match v {
+        SparseTextureRegionAlignmentMode::Outward => { 0 as i64 },
+        SparseTextureRegionAlignmentMode::Inward => { 1 as i64 },
+    };
+}
+
+fn sparse_texture_region_alignment_mode_from_raw(raw: i64) -> SparseTextureRegionAlignmentMode {
+    if raw == (1 as i64) { return SparseTextureRegionAlignmentMode::Inward; }
+    return SparseTextureRegionAlignmentMode::Outward;
+}
+
 // `MTLCounterSamplingPoint` (NS_ENUM)
 enum CounterSamplingPoint {
     AtStageBoundary,
@@ -2631,6 +2649,12 @@ const intersection_function_signature_user_data: u64 = 512 as u64;
 const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_none: u64 = 0 as u64;
 const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_suspending: u64 = 1 as u64;
 const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_resuming: u64 = 2 as u64;
+
+// `MTLBlitOption` (NS_OPTIONS) — bitfield; combine with `|`.
+const blit_option_none: u64 = 0 as u64;
+const blit_option_depth_from_depth_stencil: u64 = 1 as u64;
+const blit_option_stencil_from_depth_stencil: u64 = 2 as u64;
+const blit_option_row_linear_p_v_r_t_c: u64 = 4 as u64;
 
 // `MTLCullMode` (NS_ENUM)
 enum CullMode {
@@ -2900,6 +2924,152 @@ fn i_o_status_from_raw(raw: i64) -> IOStatus {
     if raw == (3 as i64) { return IOStatus::Complete; }
     return IOStatus::Pending;
 }
+
+// `MTLAccelerationStructureSizes` — by-value C struct.
+#[repr(C)]
+struct AccelerationStructureSizes {
+    accelerationStructureSize: u64,
+    buildScratchBufferSize: u64,
+    refitScratchBufferSize: u64,
+}
+
+// `MTLClearColor` — by-value C struct.
+#[repr(C)]
+struct ClearColor {
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
+}
+
+// `MTLOrigin` — by-value C struct.
+#[repr(C)]
+struct Origin {
+    x: u64,
+    y: u64,
+    z: u64,
+}
+
+// `MTLRegion` — by-value C struct.
+#[repr(C)]
+struct Region {
+    origin: Origin,
+    size: Size,
+}
+
+// `MTLScissorRect` — by-value C struct.
+#[repr(C)]
+struct ScissorRect {
+    x: u64,
+    y: u64,
+    width: u64,
+    height: u64,
+}
+
+// `MTLSize` — by-value C struct.
+#[repr(C)]
+struct Size {
+    width: u64,
+    height: u64,
+    depth: u64,
+}
+
+// `MTLSizeAndAlign` — by-value C struct.
+#[repr(C)]
+struct SizeAndAlign {
+    size: u64,
+    align: u64,
+}
+
+// `MTLViewport` — by-value C struct.
+#[repr(C)]
+struct Viewport {
+    originX: f64,
+    originY: f64,
+    width: f64,
+    height: f64,
+    znear: f64,
+    zfar: f64,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_AccelerationStructureSizes_id(recv: *u8, sel: *u8, a0: *u8) -> AccelerationStructureSizes;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_ClearColor(recv: *u8, sel: *u8) -> ClearColor;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_Size(recv: *u8, sel: *u8) -> Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_SizeAndAlign(recv: *u8, sel: *u8) -> SizeAndAlign;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_SizeAndAlign_id(recv: *u8, sel: *u8, a0: *u8) -> SizeAndAlign;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_SizeAndAlign_u64(recv: *u8, sel: *u8, a0: u64) -> SizeAndAlign;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_SizeAndAlign_u64_u64(recv: *u8, sel: *u8, a0: u64, a1: u64) -> SizeAndAlign;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_Size_i64_i64_u64(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: u64) -> Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_Size_i64_i64_u64_i64(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: u64, a3: i64) -> Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_Size_u64(recv: *u8, sel: *u8, a0: u64) -> Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_Size(recv: *u8, sel: *u8, a0: Size) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_Size_id(recv: *u8, sel: *u8, a0: Size, a1: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_Size_u64_id(recv: *u8, sel: *u8, a0: Size, a1: u64, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_Size(recv: *u8, sel: *u8, a0: Size) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_ClearColor(recv: *u8, sel: *u8, a0: ClearColor);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Region(recv: *u8, sel: *u8, a0: Region);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Region_u64_id_u64(recv: *u8, sel: *u8, a0: Region, a1: u64, a2: *u8, a3: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Region_u64_u64_id_u64_u64(recv: *u8, sel: *u8, a0: Region, a1: u64, a2: u64, a3: *u8, a4: u64, a5: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_ScissorRect(recv: *u8, sel: *u8, a0: ScissorRect);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Size(recv: *u8, sel: *u8, a0: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Size_Size(recv: *u8, sel: *u8, a0: Size, a1: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Size_Size_Size(recv: *u8, sel: *u8, a0: Size, a1: Size, a2: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_Viewport(recv: *u8, sel: *u8, a0: Viewport);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_Region_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_Region_u64_u64_i8_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64, a4: i8, a5: *u8, a6: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_Size_i64_u64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: Size, a3: i64, a4: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_Size_u64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: Size, a3: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_Region_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: Region, a3: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_Size(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_Size_Size(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: Size, a3: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_Origin(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: Origin, a4: Size, a5: *u8, a6: u64, a7: u64, a8: Origin);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: Origin, a4: Size, a5: *u8, a6: u64, a7: u64, a8: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: Origin, a4: Size, a5: *u8, a6: u64, a7: u64, a8: u64, a9: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_Region_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: Region, a4: u64, a5: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_Size_u64_u64_Origin_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: Size, a4: u64, a5: u64, a6: Origin, a7: *u8, a8: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: u64, a4: Size, a5: *u8, a6: u64, a7: u64, a8: Origin);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin_u64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: u64, a4: Size, a5: *u8, a6: u64, a7: u64, a8: Origin, a9: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_Size(recv: *u8, sel: *u8, a0: u64, a1: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_Size_Size(recv: *u8, sel: *u8, a0: u64, a1: Size, a2: Size);
 
 #[repr(C)]
 struct Library_new_function_with_descriptor_completion_handler_block {
@@ -3466,8 +3636,14 @@ impl CompileOptions {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerThreadgroup:\0")), max_total_threads_per_threadgroup);
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_threadgroup(this, required_threads_per_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerThreadgroup:\0")), required_threads_per_threadgroup);
+    }
+
     fn enable_logging(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("enableLogging\0"))) != (0 as i8);
     }
@@ -3942,8 +4118,14 @@ impl MTL4ComputePipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerThreadgroup:\0")), max_total_threads_per_threadgroup);
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_threadgroup(this, required_threads_per_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerThreadgroup:\0")), required_threads_per_threadgroup);
+    }
+
     fn support_binary_linking(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supportBinaryLinking\0"))) != (0 as i8);
     }
@@ -4276,8 +4458,14 @@ impl RasterizationRateLayerDescriptor {
 
     // SKIPPED `initWithSampleCount:`: extra init variant (one `new` per type)
     // SKIPPED `initWithSampleCount:horizontal:vertical:`: extra init variant (one `new` per type)
-    // SKIPPED `sampleCount`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `maxSampleCount`: return `MTLSize` — unmapped type `MTLSize`
+    fn sample_count(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("sampleCount\0")));
+    }
+
+    fn max_sample_count(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("maxSampleCount\0")));
+    }
+
     fn horizontal_sample_storage(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("horizontalSampleStorage\0")));
     }
@@ -4294,7 +4482,10 @@ impl RasterizationRateLayerDescriptor {
         return RasterizationRateSampleArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertical\0"))));
     }
 
-    // SKIPPED `setSampleCount:`: param `MTLSize` — unmapped type `MTLSize`
+    fn set_sample_count(this, sample_count: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setSampleCount:\0")), sample_count);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -4310,9 +4501,18 @@ impl RasterizationRateMapDescriptor {
 
     fn from_raw(ptr: *u8) -> RasterizationRateMapDescriptor { return RasterizationRateMapDescriptor { _obj: ptr }; }
 
-    // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:layer:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `rasterizationRateMapDescriptorWithScreenSize:layerCount:layers:`: param `MTLSize` — unmapped type `MTLSize`
+    fn rasterization_rate_map_descriptor_with_screen_size(screen_size: Size) -> RasterizationRateMapDescriptor {
+        return RasterizationRateMapDescriptor { _obj: objc_msg_id_Size(rt::get_class(#str_ptr("MTLRasterizationRateMapDescriptor\0")), rt::sel(#str_ptr("rasterizationRateMapDescriptorWithScreenSize:\0")), screen_size) };
+    }
+
+    fn rasterization_rate_map_descriptor_with_screen_size_layer(screen_size: Size, layer: RasterizationRateLayerDescriptor) -> RasterizationRateMapDescriptor {
+        return RasterizationRateMapDescriptor { _obj: objc_msg_id_Size_id(rt::get_class(#str_ptr("MTLRasterizationRateMapDescriptor\0")), rt::sel(#str_ptr("rasterizationRateMapDescriptorWithScreenSize:layer:\0")), screen_size, layer.raw()) };
+    }
+
+    fn rasterization_rate_map_descriptor_with_screen_size_layer_count_layers(screen_size: Size, layer_count: u64, layers: *u8) -> RasterizationRateMapDescriptor {
+        return RasterizationRateMapDescriptor { _obj: objc_msg_id_Size_u64_id(rt::get_class(#str_ptr("MTLRasterizationRateMapDescriptor\0")), rt::sel(#str_ptr("rasterizationRateMapDescriptorWithScreenSize:layerCount:layers:\0")), screen_size, layer_count, layers) };
+    }
+
     fn layer_at_index(this, layer_index: u64) -> option::Option[RasterizationRateLayerDescriptor] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("layerAtIndex:\0")), layer_index);
         if obj == { 0 as *u8 } {
@@ -4329,8 +4529,14 @@ impl RasterizationRateMapDescriptor {
         return RasterizationRateLayerArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layers\0"))));
     }
 
-    // SKIPPED `screenSize`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setScreenSize:`: param `MTLSize` — unmapped type `MTLSize`
+    fn screen_size(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("screenSize\0")));
+    }
+
+    fn set_screen_size(this, screen_size: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setScreenSize:\0")), screen_size);
+    }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -4469,8 +4675,14 @@ impl TileRenderPipelineDescriptor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setShaderValidation:\0")), shader_validation_raw(shader_validation));
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_threadgroup(this, required_threads_per_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerThreadgroup:\0")), required_threads_per_threadgroup);
+    }
+
 }
 
 // `MTLTilePipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -4718,10 +4930,22 @@ impl MeshRenderPipelineDescriptor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setShaderValidation:\0")), shader_validation_raw(shader_validation));
     }
 
-    // SKIPPED `requiredThreadsPerObjectThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerObjectThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `requiredThreadsPerMeshThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_object_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerObjectThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_object_threadgroup(this, required_threads_per_object_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerObjectThreadgroup:\0")), required_threads_per_object_threadgroup);
+    }
+
+    fn required_threads_per_mesh_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerMeshThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_mesh_threadgroup(this, required_threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerMeshThreadgroup:\0")), required_threads_per_mesh_threadgroup);
+    }
+
 }
 
 // `MTLSamplerDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -5664,8 +5888,14 @@ impl ComputePipelineDescriptor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setShaderValidation:\0")), shader_validation_raw(shader_validation));
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_threadgroup(this, required_threads_per_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerThreadgroup:\0")), required_threads_per_threadgroup);
+    }
+
 }
 
 // `MTLCommandQueueDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -6634,8 +6864,14 @@ impl RenderPassColorAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPassColorAttachmentDescriptor { return RenderPassColorAttachmentDescriptor { _obj: ptr }; }
 
-    // SKIPPED `clearColor`: return `MTLClearColor` — unmapped type `MTLClearColor`
-    // SKIPPED `setClearColor:`: param `MTLClearColor` — unmapped type `MTLClearColor`
+    fn clear_color(this) -> ClearColor {
+        return objc_msg_ClearColor(this._obj, rt::sel(#str_ptr("clearColor\0")));
+    }
+
+    fn set_clear_color(this, clear_color: ClearColor) {
+        objc_msg_void_ClearColor(this._obj, rt::sel(#str_ptr("setClearColor:\0")), clear_color);
+    }
+
 }
 
 // `MTLRenderPassDepthAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -8339,8 +8575,14 @@ impl MTL4TileRenderPipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerThreadgroup:\0")), max_total_threads_per_threadgroup);
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_threadgroup(this, required_threads_per_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerThreadgroup:\0")), required_threads_per_threadgroup);
+    }
+
     fn static_linking_descriptor(this) -> MTL4StaticLinkingDescriptor {
         return MTL4StaticLinkingDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("staticLinkingDescriptor\0"))));
     }
@@ -8425,10 +8667,22 @@ impl MTL4MeshRenderPipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerMeshThreadgroup:\0")), max_total_threads_per_mesh_threadgroup);
     }
 
-    // SKIPPED `requiredThreadsPerObjectThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerObjectThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `requiredThreadsPerMeshThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `setRequiredThreadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_object_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerObjectThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_object_threadgroup(this, required_threads_per_object_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerObjectThreadgroup:\0")), required_threads_per_object_threadgroup);
+    }
+
+    fn required_threads_per_mesh_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerMeshThreadgroup\0")));
+    }
+
+    fn set_required_threads_per_mesh_threadgroup(this, required_threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("setRequiredThreadsPerMeshThreadgroup:\0")), required_threads_per_mesh_threadgroup);
+    }
+
     fn object_threadgroup_size_is_multiple_of_thread_execution_width(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("objectThreadgroupSizeIsMultipleOfThreadExecutionWidth\0"))) != (0 as i8);
     }
@@ -8653,8 +8907,14 @@ impl Device {
         return option::some(CommandQueue::from_raw(obj));
     }
 
-    // SKIPPED `heapTextureSizeAndAlignWithDescriptor:`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
-    // SKIPPED `heapBufferSizeAndAlignWithLength:options:`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
+    fn heap_texture_size_and_align_with_descriptor(this, desc: TextureDescriptor) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign_id(this._obj, rt::sel(#str_ptr("heapTextureSizeAndAlignWithDescriptor:\0")), desc.raw());
+    }
+
+    fn heap_buffer_size_and_align_with_length_options(this, length: u64, options: u64) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign_u64_u64(this._obj, rt::sel(#str_ptr("heapBufferSizeAndAlignWithLength:options:\0")), length, options);
+    }
+
     fn new_heap_with_descriptor(this, descriptor: HeapDescriptor) -> option::Option[Heap] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newHeapWithDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {
@@ -8876,14 +9136,26 @@ impl Device {
     }
 
     // SKIPPED `newIOFileHandleWithURL:compressionMethod:error:`: msgSend shape `id_id_i64_id` not yet modelled
-    // SKIPPED `sparseTileSizeWithTextureType:pixelFormat:sampleCount:`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `convertSparsePixelRegions:toTileRegions:withTileSize:alignmentMode:numRegions:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `convertSparseTileRegions:toPixelRegions:withTileSize:numRegions:`: param `MTLSize` — unmapped type `MTLSize`
+    fn sparse_tile_size_with_texture_type_pixel_format_sample_count(this, texture_type: TextureType, pixel_format: PixelFormat, sample_count: u64) -> Size {
+        return objc_msg_Size_i64_i64_u64(this._obj, rt::sel(#str_ptr("sparseTileSizeWithTextureType:pixelFormat:sampleCount:\0")), texture_type_raw(texture_type), pixel_format_raw(pixel_format), sample_count);
+    }
+
+    fn convert_sparse_pixel_regions_to_tile_regions_with_tile_size_alignment_mode_num_regions(this, pixel_regions: *u8, tile_regions: *u8, tile_size: Size, mode: SparseTextureRegionAlignmentMode, num_regions: u64) {
+        objc_msg_void_id_id_Size_i64_u64(this._obj, rt::sel(#str_ptr("convertSparsePixelRegions:toTileRegions:withTileSize:alignmentMode:numRegions:\0")), pixel_regions, tile_regions, tile_size, sparse_texture_region_alignment_mode_raw(mode), num_regions);
+    }
+
+    fn convert_sparse_tile_regions_to_pixel_regions_with_tile_size_num_regions(this, tile_regions: *u8, pixel_regions: *u8, tile_size: Size, num_regions: u64) {
+        objc_msg_void_id_id_Size_u64(this._obj, rt::sel(#str_ptr("convertSparseTileRegions:toPixelRegions:withTileSize:numRegions:\0")), tile_regions, pixel_regions, tile_size, num_regions);
+    }
+
     fn sparse_tile_size_in_bytes_for_sparse_page_size(this, sparse_page_size: SparsePageSize) -> u64 {
         return rt::msg_u64_i64(this._obj, rt::sel(#str_ptr("sparseTileSizeInBytesForSparsePageSize:\0")), sparse_page_size_raw(sparse_page_size));
     }
 
-    // SKIPPED `sparseTileSizeWithTextureType:pixelFormat:sampleCount:sparsePageSize:`: return `MTLSize` — unmapped type `MTLSize`
+    fn sparse_tile_size_with_texture_type_pixel_format_sample_count_sparse_page_size(this, texture_type: TextureType, pixel_format: PixelFormat, sample_count: u64, sparse_page_size: SparsePageSize) -> Size {
+        return objc_msg_Size_i64_i64_u64_i64(this._obj, rt::sel(#str_ptr("sparseTileSizeWithTextureType:pixelFormat:sampleCount:sparsePageSize:\0")), texture_type_raw(texture_type), pixel_format_raw(pixel_format), sample_count, sparse_page_size_raw(sparse_page_size));
+    }
+
     fn new_counter_sample_buffer_with_descriptor_error(this, descriptor: CounterSampleBufferDescriptor, error: *u8) -> option::Option[CounterSampleBuffer] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newCounterSampleBufferWithDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -8929,7 +9201,10 @@ impl Device {
         return option::some(BinaryArchive::from_raw(obj));
     }
 
-    // SKIPPED `accelerationStructureSizesWithDescriptor:`: return `MTLAccelerationStructureSizes` — unmapped type `MTLAccelerationStructureSizes`
+    fn acceleration_structure_sizes_with_descriptor(this, descriptor: AccelerationStructureDescriptor) -> AccelerationStructureSizes {
+        return objc_msg_AccelerationStructureSizes_id(this._obj, rt::sel(#str_ptr("accelerationStructureSizesWithDescriptor:\0")), descriptor.raw());
+    }
+
     fn new_acceleration_structure_with_size(this, size: u64) -> option::Option[AccelerationStructure] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("newAccelerationStructureWithSize:\0")), size);
         if obj == { 0 as *u8 } {
@@ -8946,8 +9221,14 @@ impl Device {
         return option::some(AccelerationStructure::from_raw(obj));
     }
 
-    // SKIPPED `heapAccelerationStructureSizeAndAlignWithSize:`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
-    // SKIPPED `heapAccelerationStructureSizeAndAlignWithDescriptor:`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
+    fn heap_acceleration_structure_size_and_align_with_size(this, size: u64) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign_u64(this._obj, rt::sel(#str_ptr("heapAccelerationStructureSizeAndAlignWithSize:\0")), size);
+    }
+
+    fn heap_acceleration_structure_size_and_align_with_descriptor(this, descriptor: AccelerationStructureDescriptor) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign_id(this._obj, rt::sel(#str_ptr("heapAccelerationStructureSizeAndAlignWithDescriptor:\0")), descriptor.raw());
+    }
+
     fn new_residency_set_with_descriptor_error(this, desc: ResidencySetDescriptor, error: *u8) -> option::Option[ResidencySet] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newResidencySetWithDescriptor:error:\0")), desc.raw(), error);
         if obj == { 0 as *u8 } {
@@ -8956,7 +9237,10 @@ impl Device {
         return option::some(ResidencySet::from_raw(obj));
     }
 
-    // SKIPPED `tensorSizeAndAlignWithDescriptor:`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
+    fn tensor_size_and_align_with_descriptor(this, descriptor: TensorDescriptor) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign_id(this._obj, rt::sel(#str_ptr("tensorSizeAndAlignWithDescriptor:\0")), descriptor.raw());
+    }
+
     fn new_tensor_with_descriptor_error(this, descriptor: TensorDescriptor, error: *u8) -> option::Option[Tensor] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newTensorWithDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -9087,7 +9371,10 @@ impl Device {
         return Architecture::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("architecture\0"))));
     }
 
-    // SKIPPED `maxThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
+    fn max_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("maxThreadsPerThreadgroup\0")));
+    }
+
     fn is_low_power(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isLowPower\0"))) != (0 as i8);
     }
@@ -9539,10 +9826,22 @@ impl Texture {
 
     fn from_raw(ptr: *u8) -> Texture { return Texture { _obj: ptr }; }
 
-    // SKIPPED `getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:`: param `MTLRegion` — unmapped type `MTLRegion`
-    // SKIPPED `replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:`: param `MTLRegion` — unmapped type `MTLRegion`
-    // SKIPPED `getBytes:bytesPerRow:fromRegion:mipmapLevel:`: param `MTLRegion` — unmapped type `MTLRegion`
-    // SKIPPED `replaceRegion:mipmapLevel:withBytes:bytesPerRow:`: param `MTLRegion` — unmapped type `MTLRegion`
+    fn get_bytes_bytes_per_row_bytes_per_image_from_region_mipmap_level_slice(this, pixel_bytes: *u8, bytes_per_row: u64, bytes_per_image: u64, region: Region, level: u64, slice: u64) {
+        objc_msg_void_id_u64_u64_Region_u64_u64(this._obj, rt::sel(#str_ptr("getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:\0")), pixel_bytes, bytes_per_row, bytes_per_image, region, level, slice);
+    }
+
+    fn replace_region_mipmap_level_slice_with_bytes_bytes_per_row_bytes_per_image(this, region: Region, level: u64, slice: u64, pixel_bytes: *u8, bytes_per_row: u64, bytes_per_image: u64) {
+        objc_msg_void_Region_u64_u64_id_u64_u64(this._obj, rt::sel(#str_ptr("replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:\0")), region, level, slice, pixel_bytes, bytes_per_row, bytes_per_image);
+    }
+
+    fn get_bytes_bytes_per_row_from_region_mipmap_level(this, pixel_bytes: *u8, bytes_per_row: u64, region: Region, level: u64) {
+        objc_msg_void_id_u64_Region_u64(this._obj, rt::sel(#str_ptr("getBytes:bytesPerRow:fromRegion:mipmapLevel:\0")), pixel_bytes, bytes_per_row, region, level);
+    }
+
+    fn replace_region_mipmap_level_with_bytes_bytes_per_row(this, region: Region, level: u64, pixel_bytes: *u8, bytes_per_row: u64) {
+        objc_msg_void_Region_u64_id_u64(this._obj, rt::sel(#str_ptr("replaceRegion:mipmapLevel:withBytes:bytesPerRow:\0")), region, level, pixel_bytes, bytes_per_row);
+    }
+
     fn new_texture_view_with_pixel_format(this, pixel_format: PixelFormat) -> option::Option[Texture] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("newTextureViewWithPixelFormat:\0")), pixel_format_raw(pixel_format));
         if obj == { 0 as *u8 } {
@@ -9979,7 +10278,10 @@ impl RenderPipelineState {
         return MTL4PipelineDescriptor::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("newRenderPipelineDescriptorForSpecialization\0"))));
     }
 
-    // SKIPPED `imageblockMemoryLengthForDimensions:`: param `MTLSize` — unmapped type `MTLSize`
+    fn imageblock_memory_length_for_dimensions(this, imageblock_dimensions: Size) -> u64 {
+        return objc_msg_u64_Size(this._obj, rt::sel(#str_ptr("imageblockMemoryLengthForDimensions:\0")), imageblock_dimensions);
+    }
+
     fn function_handle_with_function_stage(this, function: Function, stage: u64) -> option::Option[FunctionHandle] {
         let obj: *u8 = rt::msg_id_id_u64(this._obj, rt::sel(#str_ptr("functionHandleWithFunction:stage:\0")), function.raw(), stage);
         if obj == { 0 as *u8 } {
@@ -10073,9 +10375,18 @@ impl RenderPipelineState {
         return shader_validation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("shaderValidation\0"))));
     }
 
-    // SKIPPED `requiredThreadsPerTileThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `requiredThreadsPerObjectThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `requiredThreadsPerMeshThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_tile_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerTileThreadgroup\0")));
+    }
+
+    fn required_threads_per_object_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerObjectThreadgroup\0")));
+    }
+
+    fn required_threads_per_mesh_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerMeshThreadgroup\0")));
+    }
+
 }
 
 // `MTLComputePipelineState` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -10105,7 +10416,10 @@ impl ComputePipelineState {
     }
 
     // SKIPPED `newComputePipelineStateWithBinaryFunctions:error:`: param `NSArray<id<MTL4BinaryFunction>> * _Nonnull` — generic collection
-    // SKIPPED `imageblockMemoryLengthForDimensions:`: param `MTLSize` — unmapped type `MTLSize`
+    fn imageblock_memory_length_for_dimensions(this, imageblock_dimensions: Size) -> u64 {
+        return objc_msg_u64_Size(this._obj, rt::sel(#str_ptr("imageblockMemoryLengthForDimensions:\0")), imageblock_dimensions);
+    }
+
     fn function_handle_with_function(this, function: Function) -> option::Option[FunctionHandle] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("functionHandleWithFunction:\0")), function.raw());
         if obj == { 0 as *u8 } {
@@ -10172,7 +10486,10 @@ impl ComputePipelineState {
         return shader_validation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("shaderValidation\0"))));
     }
 
-    // SKIPPED `requiredThreadsPerThreadgroup`: return `MTLSize` — unmapped type `MTLSize`
+    fn required_threads_per_threadgroup(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("requiredThreadsPerThreadgroup\0")));
+    }
+
 }
 
 // `MTLArgumentEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -10842,7 +11159,10 @@ impl RasterizationRateMap {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("copyParameterDataToBuffer:offset:\0")), buffer.raw(), offset);
     }
 
-    // SKIPPED `physicalSizeForLayer:`: return `MTLSize` — unmapped type `MTLSize`
+    fn physical_size_for_layer(this, layer_index: u64) -> Size {
+        return objc_msg_Size_u64(this._obj, rt::sel(#str_ptr("physicalSizeForLayer:\0")), layer_index);
+    }
+
     // SKIPPED `mapScreenToPhysicalCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
     // SKIPPED `mapPhysicalToScreenCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
     fn device(this) -> Device {
@@ -10854,13 +11174,22 @@ impl RasterizationRateMap {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `screenSize`: return `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `physicalGranularity`: return `MTLSize` — unmapped type `MTLSize`
+    fn screen_size(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("screenSize\0")));
+    }
+
+    fn physical_granularity(this) -> Size {
+        return objc_msg_Size(this._obj, rt::sel(#str_ptr("physicalGranularity\0")));
+    }
+
     fn layer_count(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("layerCount\0")));
     }
 
-    // SKIPPED `parameterBufferSizeAndAlign`: return `MTLSizeAndAlign` — unmapped type `MTLSizeAndAlign`
+    fn parameter_buffer_size_and_align(this) -> SizeAndAlign {
+        return objc_msg_SizeAndAlign(this._obj, rt::sel(#str_ptr("parameterBufferSizeAndAlign\0")));
+    }
+
 }
 
 // `MTLIndirectRenderCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -11496,7 +11825,10 @@ impl ResourceStateCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("waitForFence:\0")), fence.raw());
     }
 
-    // SKIPPED `moveTextureMappingsFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLOrigin` — unmapped type `MTLOrigin`
+    fn move_texture_mappings_from_texture_source_slice_source_level_source_origin_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("moveTextureMappingsFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
+    }
+
 }
 
 // `MTLBlitCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -11517,11 +11849,26 @@ impl BlitCommandEncoder {
         rt::msg_void_id_u64_u64(this._obj, rt::sel(#str_ptr("synchronizeTexture:slice:level:\0")), texture.raw(), slice, level);
     }
 
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLOrigin` — unmapped type `MTLOrigin`
-    // SKIPPED `copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:options:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:`: param `MTLOrigin` — unmapped type `MTLOrigin`
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:`: param `MTLOrigin` — unmapped type `MTLOrigin`
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
+    }
+
+    fn copy_from_buffer_source_offset_source_bytes_per_row_source_bytes_per_image_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_buffer: Buffer, source_offset: u64, source_bytes_per_row: u64, source_bytes_per_image: u64, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
+        objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_buffer.raw(), source_offset, source_bytes_per_row, source_bytes_per_image, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
+    }
+
+    fn copy_from_buffer_source_offset_source_bytes_per_row_source_bytes_per_image_source_size_to_texture_destination_slice_destination_level_destination_origin_options(this, source_buffer: Buffer, source_offset: u64, source_bytes_per_row: u64, source_bytes_per_image: u64, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin, options: u64) {
+        objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin_u64(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:options:\0")), source_buffer.raw(), source_offset, source_bytes_per_row, source_bytes_per_image, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin, options);
+    }
+
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_buffer_destination_offset_destination_bytes_per_row_destination_bytes_per_image(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_buffer: Buffer, destination_offset: u64, destination_bytes_per_row: u64, destination_bytes_per_image: u64) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_buffer.raw(), destination_offset, destination_bytes_per_row, destination_bytes_per_image);
+    }
+
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_buffer_destination_offset_destination_bytes_per_row_destination_bytes_per_image_options(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_buffer: Buffer, destination_offset: u64, destination_bytes_per_row: u64, destination_bytes_per_image: u64, options: u64) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_buffer.raw(), destination_offset, destination_bytes_per_row, destination_bytes_per_image, options);
+    }
+
     fn generate_mipmaps_for_texture(this, texture: Texture) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("generateMipmapsForTexture:\0")), texture.raw());
     }
@@ -11541,8 +11888,14 @@ impl BlitCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("waitForFence:\0")), fence.raw());
     }
 
-    // SKIPPED `getTextureAccessCounters:region:mipLevel:slice:resetCounters:countersBuffer:countersBufferOffset:`: param `MTLRegion` — unmapped type `MTLRegion`
-    // SKIPPED `resetTextureAccessCounters:region:mipLevel:slice:`: param `MTLRegion` — unmapped type `MTLRegion`
+    fn get_texture_access_counters_region_mip_level_slice_reset_counters_counters_buffer_counters_buffer_offset(this, texture: Texture, region: Region, mip_level: u64, slice: u64, reset_counters: bool, counters_buffer: Buffer, counters_buffer_offset: u64) {
+        objc_msg_void_id_Region_u64_u64_i8_id_u64(this._obj, rt::sel(#str_ptr("getTextureAccessCounters:region:mipLevel:slice:resetCounters:countersBuffer:countersBufferOffset:\0")), texture.raw(), region, mip_level, slice, reset_counters as i8, counters_buffer.raw(), counters_buffer_offset);
+    }
+
+    fn reset_texture_access_counters_region_mip_level_slice(this, texture: Texture, region: Region, mip_level: u64, slice: u64) {
+        objc_msg_void_id_Region_u64_u64(this._obj, rt::sel(#str_ptr("resetTextureAccessCounters:region:mipLevel:slice:\0")), texture.raw(), region, mip_level, slice);
+    }
+
     fn optimize_contents_for_g_p_u_access(this, texture: Texture) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("optimizeContentsForGPUAccess:\0")), texture.raw());
     }
@@ -11660,7 +12013,10 @@ impl RenderCommandEncoder {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setVertexAccelerationStructure:atBufferIndex:\0")), acceleration_structure.raw(), buffer_index);
     }
 
-    // SKIPPED `setViewport:`: param `MTLViewport` — unmapped type `MTLViewport`
+    fn set_viewport(this, viewport: Viewport) {
+        objc_msg_void_Viewport(this._obj, rt::sel(#str_ptr("setViewport:\0")), viewport);
+    }
+
     fn set_viewports_count(this, viewports: *u8, count: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setViewports:count:\0")), viewports, count);
     }
@@ -11683,7 +12039,10 @@ impl RenderCommandEncoder {
     }
 
     // SKIPPED `setDepthTestMinBound:maxBound:`: msgSend shape `void_f32_f32` not yet modelled
-    // SKIPPED `setScissorRect:`: param `MTLScissorRect` — unmapped type `MTLScissorRect`
+    fn set_scissor_rect(this, rect: ScissorRect) {
+        objc_msg_void_ScissorRect(this._obj, rt::sel(#str_ptr("setScissorRect:\0")), rect);
+    }
+
     fn set_scissor_rects_count(this, scissor_rects: *u8, count: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setScissorRects:count:\0")), scissor_rects, count);
     }
@@ -11865,9 +12224,18 @@ impl RenderCommandEncoder {
         rt::msg_void_id_id_id_range(this._obj, rt::sel(#str_ptr("setMeshSamplerStates:lodMinClamps:lodMaxClamps:withRange:\0")), samplers, lod_min_clamps, lod_max_clamps, range);
     }
 
-    // SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `drawMeshThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn draw_mesh_threadgroups_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threadgroups_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threadgroups_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn draw_mesh_threads_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threads_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threads_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn draw_mesh_threadgroups_with_indirect_buffer_indirect_buffer_offset_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, indirect_buffer: Buffer, indirect_buffer_offset: u64, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_id_u64_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), indirect_buffer.raw(), indirect_buffer_offset, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
     // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:`: msgSend shape `void_i64_u64_u64_u64` not yet modelled
     // SKIPPED `drawPrimitives:vertexStart:vertexCount:`: msgSend shape `void_i64_u64_u64` not yet modelled
     // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:`: msgSend shape `void_i64_u64_i64_id_u64_u64` not yet modelled
@@ -11957,7 +12325,10 @@ impl RenderCommandEncoder {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setTileAccelerationStructure:atBufferIndex:\0")), acceleration_structure.raw(), buffer_index);
     }
 
-    // SKIPPED `dispatchThreadsPerTile:`: param `MTLSize` — unmapped type `MTLSize`
+    fn dispatch_threads_per_tile(this, threads_per_tile: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("dispatchThreadsPerTile:\0")), threads_per_tile);
+    }
+
     fn set_threadgroup_memory_length_offset_at_index(this, length: u64, offset: u64, index: u64) {
         rt::msg_void_u64_u64_u64(this._obj, rt::sel(#str_ptr("setThreadgroupMemoryLength:offset:atIndex:\0")), length, offset, index);
     }
@@ -12161,14 +12532,26 @@ impl ComputeCommandEncoder {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setImageblockWidth:height:\0")), width, height);
     }
 
-    // SKIPPED `setStageInRegion:`: param `MTLRegion` — unmapped type `MTLRegion`
+    fn set_stage_in_region(this, region: Region) {
+        objc_msg_void_Region(this._obj, rt::sel(#str_ptr("setStageInRegion:\0")), region);
+    }
+
     fn set_stage_in_region_with_indirect_buffer_indirect_buffer_offset(this, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setStageInRegionWithIndirectBuffer:indirectBufferOffset:\0")), indirect_buffer.raw(), indirect_buffer_offset);
     }
 
-    // SKIPPED `dispatchThreadgroups:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `dispatchThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `dispatchThreads:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn dispatch_threadgroups_threads_per_threadgroup(this, threadgroups_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), threadgroups_per_grid, threads_per_threadgroup);
+    }
+
+    fn dispatch_threadgroups_with_indirect_buffer_indirect_buffer_offset_threads_per_threadgroup(this, indirect_buffer: Buffer, indirect_buffer_offset: u64, threads_per_threadgroup: Size) {
+        objc_msg_void_id_u64_Size(this._obj, rt::sel(#str_ptr("dispatchThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerThreadgroup:\0")), indirect_buffer.raw(), indirect_buffer_offset, threads_per_threadgroup);
+    }
+
+    fn dispatch_threads_threads_per_threadgroup(this, threads_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("dispatchThreads:threadsPerThreadgroup:\0")), threads_per_grid, threads_per_threadgroup);
+    }
+
     fn update_fence(this, fence: Fence) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence.raw());
     }
@@ -12630,7 +13013,10 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRenderPipelineState:\0")), pipeline_state.raw());
     }
 
-    // SKIPPED `setViewport:`: param `MTLViewport` — unmapped type `MTLViewport`
+    fn set_viewport(this, viewport: Viewport) {
+        objc_msg_void_Viewport(this._obj, rt::sel(#str_ptr("setViewport:\0")), viewport);
+    }
+
     fn set_viewports_count(this, viewports: *u8, count: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setViewports:count:\0")), viewports, count);
     }
@@ -12649,7 +13035,10 @@ impl MTL4RenderCommandEncoder {
     }
 
     // SKIPPED `setDepthTestMinBound:maxBound:`: msgSend shape `void_f32_f32` not yet modelled
-    // SKIPPED `setScissorRect:`: param `MTLScissorRect` — unmapped type `MTLScissorRect`
+    fn set_scissor_rect(this, rect: ScissorRect) {
+        objc_msg_void_ScissorRect(this._obj, rt::sel(#str_ptr("setScissorRect:\0")), rect);
+    }
+
     fn set_scissor_rects_count(this, scissor_rects: *u8, count: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setScissorRects:count:\0")), scissor_rects, count);
     }
@@ -12707,10 +13096,22 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setObjectThreadgroupMemoryLength:atIndex:\0")), length, index);
     }
 
-    // SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `drawMeshThreadgroupsWithIndirectBuffer:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `dispatchThreadsPerTile:`: param `MTLSize` — unmapped type `MTLSize`
+    fn draw_mesh_threadgroups_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threadgroups_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threadgroups_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn draw_mesh_threads_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threads_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threads_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn draw_mesh_threadgroups_with_indirect_buffer_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, indirect_buffer: u64, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_u64_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroupsWithIndirectBuffer:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), indirect_buffer, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn dispatch_threads_per_tile(this, threads_per_tile: Size) {
+        objc_msg_void_Size(this._obj, rt::sel(#str_ptr("dispatchThreadsPerTile:\0")), threads_per_tile);
+    }
+
     fn set_threadgroup_memory_length_offset_at_index(this, length: u64, offset: u64, index: u64) {
         rt::msg_void_u64_u64_u64(this._obj, rt::sel(#str_ptr("setThreadgroupMemoryLength:offset:atIndex:\0")), length, offset, index);
     }
@@ -12760,9 +13161,18 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setImageblockWidth:height:\0")), width, height);
     }
 
-    // SKIPPED `dispatchThreads:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `dispatchThreadgroups:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `dispatchThreadgroupsWithIndirectBuffer:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn dispatch_threads_threads_per_threadgroup(this, threads_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("dispatchThreads:threadsPerThreadgroup:\0")), threads_per_grid, threads_per_threadgroup);
+    }
+
+    fn dispatch_threadgroups_threads_per_threadgroup(this, threadgroups_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), threadgroups_per_grid, threads_per_threadgroup);
+    }
+
+    fn dispatch_threadgroups_with_indirect_buffer_threads_per_threadgroup(this, indirect_buffer: u64, threads_per_threadgroup: Size) {
+        objc_msg_void_u64_Size(this._obj, rt::sel(#str_ptr("dispatchThreadgroupsWithIndirectBuffer:threadsPerThreadgroup:\0")), indirect_buffer, threads_per_threadgroup);
+    }
+
     fn dispatch_threads_with_indirect_buffer(this, indirect_buffer: u64) {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("dispatchThreadsWithIndirectBuffer:\0")), indirect_buffer);
     }
@@ -12780,12 +13190,27 @@ impl MTL4ComputeCommandEncoder {
     }
 
     // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:`: msgSend shape `void_id_u64_u64_id_u64_u64_u64_u64` not yet modelled
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLOrigin` — unmapped type `MTLOrigin`
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:`: param `MTLOrigin` — unmapped type `MTLOrigin`
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:`: param `MTLOrigin` — unmapped type `MTLOrigin`
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
+    }
+
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_buffer_destination_offset_destination_bytes_per_row_destination_bytes_per_image(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_buffer: Buffer, destination_offset: u64, destination_bytes_per_row: u64, destination_bytes_per_image: u64) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_buffer.raw(), destination_offset, destination_bytes_per_row, destination_bytes_per_image);
+    }
+
+    fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_buffer_destination_offset_destination_bytes_per_row_destination_bytes_per_image_options(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_buffer: Buffer, destination_offset: u64, destination_bytes_per_row: u64, destination_bytes_per_image: u64, options: u64) {
+        objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_buffer.raw(), destination_offset, destination_bytes_per_row, destination_bytes_per_image, options);
+    }
+
     // SKIPPED `copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:`: msgSend shape `void_id_u64_id_u64_u64` not yet modelled
-    // SKIPPED `copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:options:`: param `MTLSize` — unmapped type `MTLSize`
+    fn copy_from_buffer_source_offset_source_bytes_per_row_source_bytes_per_image_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_buffer: Buffer, source_offset: u64, source_bytes_per_row: u64, source_bytes_per_image: u64, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
+        objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_buffer.raw(), source_offset, source_bytes_per_row, source_bytes_per_image, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
+    }
+
+    fn copy_from_buffer_source_offset_source_bytes_per_row_source_bytes_per_image_source_size_to_texture_destination_slice_destination_level_destination_origin_options(this, source_buffer: Buffer, source_offset: u64, source_bytes_per_row: u64, source_bytes_per_image: u64, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin, options: u64) {
+        objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin_u64(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:options:\0")), source_buffer.raw(), source_offset, source_bytes_per_row, source_bytes_per_image, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin, options);
+    }
+
     // SKIPPED `copyFromTensor:sourceOrigin:sourceDimensions:toTensor:destinationOrigin:destinationDimensions:`: msgSend shape `void_id_id_id_id_id_id` not yet modelled
     fn generate_mipmaps_for_texture(this, texture: Texture) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("generateMipmapsForTexture:\0")), texture.raw());
@@ -12976,8 +13401,14 @@ impl IndirectRenderCommand {
         rt::msg_void_id_u64_u64(this._obj, rt::sel(#str_ptr("setMeshBuffer:offset:atIndex:\0")), buffer.raw(), offset, index);
     }
 
-    // SKIPPED `drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn draw_mesh_threadgroups_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threadgroups_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroups:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threadgroups_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
+    fn draw_mesh_threads_threads_per_object_threadgroup_threads_per_mesh_threadgroup(this, threads_per_grid: Size, threads_per_object_threadgroup: Size, threads_per_mesh_threadgroup: Size) {
+        objc_msg_void_Size_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreads:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), threads_per_grid, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
+    }
+
     fn set_barrier(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setBarrier\0")));
     }
@@ -13038,8 +13469,14 @@ impl IndirectComputeCommand {
         rt::msg_void_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("setKernelBuffer:offset:attributeStride:atIndex:\0")), buffer.raw(), offset, stride, index);
     }
 
-    // SKIPPED `concurrentDispatchThreadgroups:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
-    // SKIPPED `concurrentDispatchThreads:threadsPerThreadgroup:`: param `MTLSize` — unmapped type `MTLSize`
+    fn concurrent_dispatch_threadgroups_threads_per_threadgroup(this, threadgroups_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("concurrentDispatchThreadgroups:threadsPerThreadgroup:\0")), threadgroups_per_grid, threads_per_threadgroup);
+    }
+
+    fn concurrent_dispatch_threads_threads_per_threadgroup(this, threads_per_grid: Size, threads_per_threadgroup: Size) {
+        objc_msg_void_Size_Size(this._obj, rt::sel(#str_ptr("concurrentDispatchThreads:threadsPerThreadgroup:\0")), threads_per_grid, threads_per_threadgroup);
+    }
+
     fn set_barrier(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setBarrier\0")));
     }
@@ -13060,7 +13497,10 @@ impl IndirectComputeCommand {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setThreadgroupMemoryLength:atIndex:\0")), length, index);
     }
 
-    // SKIPPED `setStageInRegion:`: param `MTLRegion` — unmapped type `MTLRegion`
+    fn set_stage_in_region(this, region: Region) {
+        objc_msg_void_Region(this._obj, rt::sel(#str_ptr("setStageInRegion:\0")), region);
+    }
+
 }
 
 // `MTLFunctionLogDebugLocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -13167,7 +13607,10 @@ impl IOCommandBuffer {
     // SKIPPED `addCompletedHandler:`: param `MTLIOCommandBufferHandler _Nonnull` — unmapped type `MTLIOCommandBufferHandler`
     // SKIPPED `loadBytes:size:sourceHandle:sourceHandleOffset:`: msgSend shape `void_id_u64_id_u64` not yet modelled
     // SKIPPED `loadBuffer:offset:size:sourceHandle:sourceHandleOffset:`: msgSend shape `void_id_u64_u64_id_u64` not yet modelled
-    // SKIPPED `loadTexture:slice:level:size:sourceBytesPerRow:sourceBytesPerImage:destinationOrigin:sourceHandle:sourceHandleOffset:`: param `MTLSize` — unmapped type `MTLSize`
+    fn load_texture_slice_level_size_source_bytes_per_row_source_bytes_per_image_destination_origin_source_handle_source_handle_offset(this, texture: Texture, slice: u64, level: u64, size: Size, source_bytes_per_row: u64, source_bytes_per_image: u64, destination_origin: Origin, source_handle: IOFileHandle, source_handle_offset: u64) {
+        objc_msg_void_id_u64_u64_Size_u64_u64_Origin_id_u64(this._obj, rt::sel(#str_ptr("loadTexture:slice:level:size:sourceBytesPerRow:sourceBytesPerImage:destinationOrigin:sourceHandle:sourceHandleOffset:\0")), texture.raw(), slice, level, size, source_bytes_per_row, source_bytes_per_image, destination_origin, source_handle.raw(), source_handle_offset);
+    }
+
     fn copy_status_to_buffer_offset(this, buffer: Buffer, offset: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("copyStatusToBuffer:offset:\0")), buffer.raw(), offset);
     }

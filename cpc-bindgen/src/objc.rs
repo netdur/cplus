@@ -59,6 +59,14 @@ pub struct ObjcEmitter {
     // drop). An `NSArray<id<P>>` may be bridged to a `Vec[P]` only for these,
     // since a Vec of owning wrappers would over-release +0-borrowed elements.
     protocol_types: HashSet<String>,
+    // By-value C structs (`typedef struct { … } MTLSize;`): ObjC name -> ordered
+    // (field, C+ type). `used_value_structs` are the ones actually referenced (so
+    // only those get a `#[repr(C)]` definition). `used_struct_shapes` are the
+    // distinct (ret, arg) msgSend signatures involving a struct, each emitted as a
+    // module-local `objc_msgSend` shim (these aren't in the shared rt:: zoo).
+    value_structs: HashMap<String, Vec<(String, String)>>,
+    used_value_structs: HashSet<String>,
+    used_struct_shapes: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -118,6 +126,7 @@ enum Ret {
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
     ObjectArray(String), // NSArray<id<P>> -> Vec[P]; only non-owning protocol elems
+    Struct(String), // a by-value C struct (MTLSize) returned by value (sret)
     TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
     Unsupported(String),
 }
@@ -144,6 +153,7 @@ enum Arg {
     Rect(String),  // NSRect / CGRect — rt::Rect HFA
     Point(String), // NSPoint / CGPoint — rt::Point HFA
     Size(String),  // NSSize / CGSize — rt::Size HFA
+    Struct(String, String), // (C+ struct type, arg expr) — by-value C struct (MTLSize)
     Unsupported(String),
 }
 
@@ -168,6 +178,9 @@ impl ObjcEmitter {
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
             protocol_types: HashSet::new(),
+            value_structs: HashMap::new(),
+            used_value_structs: HashSet::new(),
+            used_struct_shapes: HashSet::new(),
         }
     }
 
@@ -210,20 +223,30 @@ impl ObjcEmitter {
             Some(a) => a,
             None => return self.preamble(),
         };
-        // Pass 1: typedefs (name -> underlying) and NS_ENUM declarations.
+        // Pass 1: typedefs (name -> underlying), NS_ENUMs, and by-value struct
+        // layouts. clang emits the anonymous `RecordDecl` immediately before the
+        // `TypedefDecl` that names it (`typedef struct { … } MTLSize;`).
+        let mut prev_record: Option<&serde_json::Value> = None;
         for decl in inner {
-            match decl.get("kind").and_then(|v| v.as_str()) {
+            let kind = decl.get("kind").and_then(|v| v.as_str());
+            match kind {
                 Some("TypedefDecl") => {
                     if let (Some(name), Some(under)) = (
                         decl.get("name").and_then(|v| v.as_str()),
                         decl.get("type").and_then(|t| t.get("qualType")).and_then(|v| v.as_str()),
                     ) {
                         self.typedefs.insert(name.to_string(), under.to_string());
+                        if under.starts_with("struct ") {
+                            if let Some(rec) = prev_record {
+                                self.collect_value_struct(name, rec);
+                            }
+                        }
                     }
                 }
                 Some("EnumDecl") => self.collect_enum(decl),
                 _ => {}
             }
+            prev_record = if kind == Some("RecordDecl") { Some(decl) } else { None };
         }
         // Pass 2: collect home-header interfaces + the categories that extend
         // them (Foundation puts much of NSScanner/NSString/... in categories),
@@ -350,9 +373,57 @@ impl ObjcEmitter {
                 out.push_str(&self.render_enum(&info));
             }
         }
+        out.push_str(&self.render_value_structs());
+        out.push_str(&self.render_struct_shims());
         out.push_str(&self.block_helpers);
         out.push_str(&self.body);
         out
+    }
+
+    /// `#[repr(C)]` definitions for the by-value structs actually used, in a
+    /// deterministic order (sorted) so regeneration is byte-stable.
+    fn render_value_structs(&self) -> String {
+        let mut names: Vec<&String> = self.used_value_structs.iter().collect();
+        names.sort();
+        let mut s = String::new();
+        for objc_name in names {
+            let Some(fields) = self.value_structs.get(objc_name) else { continue };
+            let ty = self.cplus_type_name(objc_name);
+            s.push_str(&format!("// `{objc_name}` — by-value C struct.\n#[repr(C)]\nstruct {ty} {{\n"));
+            for (f, t) in fields {
+                s.push_str(&format!("    {f}: {t},\n"));
+            }
+            s.push_str("}\n\n");
+        }
+        s
+    }
+
+    /// Module-local `objc_msgSend` shims for the by-value-struct call shapes used.
+    /// The struct types ride registers/indirect per the platform ABI (verified
+    /// against clang for the 24-byte case); cpc lowers the by-value extern the same.
+    fn render_struct_shims(&self) -> String {
+        let mut shapes: Vec<&String> = self.used_struct_shapes.iter().collect();
+        shapes.sort();
+        let mut s = String::new();
+        for suffix in shapes {
+            let parts: Vec<&str> = suffix.split('_').collect();
+            let mut params = String::from("recv: *u8, sel: *u8");
+            for (i, t) in parts[1..].iter().enumerate() {
+                params.push_str(&format!(", a{i}: {}", tag_to_type(t)));
+            }
+            let ret = if parts[0] == "void" {
+                String::new()
+            } else {
+                format!(" -> {}", tag_to_type(parts[0]))
+            };
+            s.push_str(&format!(
+                "#[link_name = \"objc_msgSend\"]\nextern fn objc_msg_{suffix}({params}){ret};\n"
+            ));
+        }
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s
     }
 
     fn preamble(&self) -> String {
@@ -425,6 +496,77 @@ impl ObjcEmitter {
                 is_options,
             },
         );
+    }
+
+    /// Record a `typedef struct {…} Name;` field layout (the anonymous record
+    /// `rec` holds the fields). Only kept when every field maps to a C+ type (a
+    /// scalar or an already-collected value struct), so the repr(C) is emittable.
+    fn collect_value_struct(&mut self, name: &str, rec: &serde_json::Value) {
+        let mut fields: Vec<(String, String)> = Vec::new();
+        for f in rec.get("inner").and_then(|v| v.as_array()).into_iter().flatten() {
+            if f.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
+                continue;
+            }
+            let fname = f.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let fqt = f.get("type").and_then(|t| t.get("qualType")).and_then(|v| v.as_str()).unwrap_or("");
+            match self.struct_field_type(fqt) {
+                Some(ty) if !fname.is_empty() => fields.push((crate::sanitize_ident(fname), ty)),
+                _ => return, // an unmappable field — don't record (method stays skipped)
+            }
+        }
+        if !fields.is_empty() {
+            self.value_structs.insert(name.to_string(), fields);
+        }
+    }
+
+    /// A value-struct field's C+ type: a scalar, or a nested value struct (which
+    /// the header always declares before the struct that contains it).
+    fn struct_field_type(&self, fqt: &str) -> Option<String> {
+        let t = fqt.trim();
+        let mapped = match t {
+            "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => "u64",
+            "NSInteger" | "long" | "long long" | "int64_t" => "i64",
+            "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64",
+            "float" => "f32",
+            "int" | "int32_t" => "i32",
+            "unsigned int" | "unsigned" | "uint32_t" => "u32",
+            "BOOL" | "_Bool" | "bool" => "bool",
+            "uint16_t" | "unsigned short" => "u16",
+            "int16_t" | "short" => "i16",
+            "uint8_t" | "unsigned char" => "u8",
+            "int8_t" | "signed char" => "i8",
+            _ => "",
+        };
+        if !mapped.is_empty() {
+            return Some(mapped.to_string());
+        }
+        if self.value_structs.contains_key(t) {
+            return Some(self.cplus_type_name(t));
+        }
+        None
+    }
+
+    /// Mark a value struct (and, transitively, its struct-typed fields) as used,
+    /// so its repr(C) definition is emitted.
+    fn mark_value_struct_used(&mut self, objc_name: &str) {
+        if !self.used_value_structs.insert(objc_name.to_string()) {
+            return;
+        }
+        let nested: Vec<String> = self
+            .value_structs
+            .get(objc_name)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(|(_, ty)| {
+                        self.value_structs.keys().find(|k| self.cplus_type_name(k) == *ty).cloned()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for n in nested {
+            self.mark_value_struct_used(&n);
+        }
     }
 
     fn render_enum(&self, e: &EnumInfo) -> String {
@@ -1163,6 +1305,7 @@ impl ObjcEmitter {
         let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
         let (ret_spelling, body_line) = match &ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
+            Ret::Struct(n) => (format!(" -> {n}"), format!("        return {send};\n")),
             Ret::Bool => (" -> bool".into(), format!("        return {send} != (0 as i8);\n")),
             Ret::Object(None) => (" -> *u8".into(), format!("        return {send};\n")),
             Ret::Object(Some(n)) => (
@@ -1397,16 +1540,23 @@ impl ObjcEmitter {
     /// ABI signature, so the name is derived mechanically and works for any
     /// arity (the vendor/objc shim must exist; it's added per signature). For
     /// enum returns the raw integer call is produced (caller wraps in from_raw).
-    fn send_expr(&self, recv: &str, sel: &str, ret: &Ret, args: &[Arg]) -> Option<String> {
+    fn send_expr(&mut self, recv: &str, sel: &str, ret: &Ret, args: &[Arg]) -> Option<String> {
         let suffix = msg_shape(ret, args)?;
-        // The runtime provides a fixed set of msgSend ABI shapes; only emit a
-        // call when its shape exists, otherwise SKIP (keeps output compilable).
-        // Grow this in lockstep with vendor/objc/src/runtime.cplus.
-        if !msg_shape_is_known(&suffix) {
+        // A by-value-struct shape uses a module-local `objc_msg_*` shim (emitted
+        // alongside the struct); everything else uses the shared rt:: zoo, which
+        // only models a fixed set of shapes (others SKIP to stay compilable).
+        let prefix = if msg_shape_has_struct(&suffix) {
+            // Record it here (not in the caller) so every path — factory/init/
+            // collection helpers included — gets its shim emitted.
+            self.used_struct_shapes.insert(suffix.clone());
+            "objc_msg_"
+        } else if msg_shape_is_known(&suffix) {
+            "rt::msg_"
+        } else {
             return None;
-        }
+        };
         let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
-        let mut call = format!("rt::msg_{suffix}({recv}, {sl}");
+        let mut call = format!("{prefix}{suffix}({recv}, {sl}");
         for a in args {
             call.push_str(&format!(", {}", arg_expr(a)?));
         }
@@ -1515,6 +1665,11 @@ impl ObjcEmitter {
             let typed = self.typed_object(base_ty);
             return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
         }
+        // A by-value C struct (MTLSize) returned by value.
+        if self.value_structs.contains_key(base_ty) {
+            self.mark_value_struct_used(base_ty);
+            return Ret::Struct(self.cplus_type_name(base_ty));
+        }
         Ret::Unsupported(format!("unmapped type `{base_ty}`"))
     }
 
@@ -1587,6 +1742,11 @@ impl ObjcEmitter {
             }
             return Arg::Id(pname.to_string());
         }
+        // A by-value C struct (MTLSize) passed by value.
+        if self.value_structs.contains_key(base_ty) {
+            self.mark_value_struct_used(base_ty);
+            return Arg::Struct(self.cplus_type_name(base_ty), pname.to_string());
+        }
         Arg::Unsupported(format!("unmapped type `{base_ty}`"))
     }
 
@@ -1635,6 +1795,9 @@ impl ObjcEmitter {
             "int" | "int32_t" => "i32".to_string(),
             "unsigned int" | "unsigned" | "uint32_t" => "u32".to_string(),
             "float" => "f32".to_string(),
+            // A by-value C struct (after the explicit scalar typedefs above, so
+            // single-integer wrappers like MTLResourceID stay u64, matching map_arg).
+            _ if self.value_structs.contains_key(b) => self.cplus_type_name(b),
             _ => "*u8".to_string(),
         }
     }
@@ -1748,45 +1911,76 @@ fn array_element(ty: &str) -> Option<String> {
 /// value type with no shim tag (NSArray/NSDictionary/Unsupported). Shared by
 /// `send_expr` (to pick the shim) and the skip diagnostic (to name the gap).
 fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
-    let ret_tag = match ret {
-        Ret::Void => "void",
-        Ret::Object(_) | Ret::ObjectOption(_) | Ret::Text { .. } => "id",
-        Ret::Bool => "i8",
-        Ret::ScalarI64 | Ret::EnumTy(_) => "i64",
-        Ret::ScalarU64 => "u64",
-        Ret::ScalarF64 => "f64",
-        Ret::ScalarI32 => "i32",
-        Ret::ScalarU32 => "u32",
-        Ret::ScalarF32 => "f32",
-        Ret::Range => "range",
-        Ret::Rect => "rect",
-        Ret::Point => "point",
-        Ret::Size => "size",
+    // Scalar/geometry tags are lowercase; a by-value struct contributes its C+
+    // type name (PascalCase) so the two can never collide (`size` vs `Size`).
+    let ret_tag: String = match ret {
+        Ret::Void => "void".into(),
+        Ret::Object(_) | Ret::ObjectOption(_) | Ret::Text { .. } => "id".into(),
+        Ret::Bool => "i8".into(),
+        Ret::ScalarI64 | Ret::EnumTy(_) => "i64".into(),
+        Ret::ScalarU64 => "u64".into(),
+        Ret::ScalarF64 => "f64".into(),
+        Ret::ScalarI32 => "i32".into(),
+        Ret::ScalarU32 => "u32".into(),
+        Ret::ScalarF32 => "f32".into(),
+        Ret::Range => "range".into(),
+        Ret::Rect => "rect".into(),
+        Ret::Point => "point".into(),
+        Ret::Size => "size".into(),
+        Ret::Struct(name) => name.clone(),
         Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
     };
-    let mut tags: Vec<&str> = vec![ret_tag];
+    let mut tags: Vec<String> = vec![ret_tag];
     for a in args {
         tags.push(arg_tag(a)?);
     }
     Some(tags.join("_"))
 }
 
-fn arg_tag(a: &Arg) -> Option<&'static str> {
+fn arg_tag(a: &Arg) -> Option<String> {
     Some(match a {
-        Arg::Id(_) => "id",
-        Arg::Bool(_) => "i8",
-        Arg::ScalarI64(_) => "i64",
-        Arg::ScalarU64(_) => "u64",
-        Arg::ScalarF64(_) => "f64",
-        Arg::ScalarI32(_) => "i32",
-        Arg::ScalarU32(_) => "u32",
-        Arg::ScalarF32(_) => "f32",
-        Arg::Range(_) => "range",
-        Arg::Rect(_) => "rect",
-        Arg::Point(_) => "point",
-        Arg::Size(_) => "size",
+        Arg::Id(_) => "id".into(),
+        Arg::Bool(_) => "i8".into(),
+        Arg::ScalarI64(_) => "i64".into(),
+        Arg::ScalarU64(_) => "u64".into(),
+        Arg::ScalarF64(_) => "f64".into(),
+        Arg::ScalarI32(_) => "i32".into(),
+        Arg::ScalarU32(_) => "u32".into(),
+        Arg::ScalarF32(_) => "f32".into(),
+        Arg::Range(_) => "range".into(),
+        Arg::Rect(_) => "rect".into(),
+        Arg::Point(_) => "point".into(),
+        Arg::Size(_) => "size".into(),
+        Arg::Struct(name, _) => name.clone(),
         Arg::Unsupported(_) => return None,
     })
+}
+
+/// True if a shape involves a by-value struct (a PascalCase tag) — those use a
+/// module-local `objc_msg_*` shim, not the shared rt:: zoo.
+fn msg_shape_has_struct(suffix: &str) -> bool {
+    suffix.split('_').any(|t| t.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// A shape tag -> its C+ type, for generating a shim's extern signature. A
+/// PascalCase tag is a by-value struct name (used verbatim).
+fn tag_to_type(tag: &str) -> String {
+    match tag {
+        "id" => "*u8",
+        "i64" => "i64",
+        "u64" => "u64",
+        "i8" => "i8",
+        "i32" => "i32",
+        "u32" => "u32",
+        "f32" => "f32",
+        "f64" => "f64",
+        "range" => "rt::Range",
+        "rect" => "rt::Rect",
+        "point" => "rt::Point",
+        "size" => "rt::Size",
+        other => other, // a by-value struct name (PascalCase)
+    }
+    .to_string()
 }
 
 /// The wire expression for an argument (raw int / bridged NSString / `bool as i8`).
@@ -1803,7 +1997,8 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::Range(e)
         | Arg::Rect(e)
         | Arg::Point(e)
-        | Arg::Size(e) => e.clone(),
+        | Arg::Size(e)
+        | Arg::Struct(_, e) => e.clone(),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -1978,7 +2173,7 @@ mod tests {
 
     #[test]
     fn send_expr_emits_32bit_msgsend_shapes() {
-        let e = emitter();
+        let mut e = emitter();
         // `int` getter -> rt::msg_i32
         let g = e
             .send_expr("this._obj", "scale", &Ret::ScalarI32, &[])
@@ -2185,6 +2380,36 @@ mod tests {
         assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
+    }
+
+    #[test]
+    fn by_value_struct_emits_repr_c_and_a_local_msgsend_shim() {
+        // `typedef struct {…} MTLSize;` used by value -> a #[repr(C)] struct plus a
+        // module-local objc_msgSend shim (PascalCase tag, never the rt:: zoo).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "RecordDecl", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "FieldDecl", "name": "width", "type": { "qualType": "NSUInteger" } },
+                    { "kind": "FieldDecl", "name": "height", "type": { "qualType": "NSUInteger" } },
+                    { "kind": "FieldDecl", "name": "depth", "type": { "qualType": "NSUInteger" } } ] },
+                { "kind": "TypedefDecl", "name": "MTLSize", "loc": { "file": "test.h" },
+                  "type": { "qualType": "struct MTLSize" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "size", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "MTLSize" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "setSize:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "size", "type": { "qualType": "MTLSize" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("#[repr(C)]\nstruct Size {\n    width: u64,\n    height: u64,\n    depth: u64,\n}"), "repr(C):\n{out}");
+        assert!(out.contains("fn size(this) -> Size"), "sret return:\n{out}");
+        assert!(out.contains("fn set_size(this, size: Size)"), "by-value arg:\n{out}");
+        // Module-local shims (objc_msg_*, not rt::msg_*), with the by-value struct typed.
+        assert!(out.contains("extern fn objc_msg_Size(recv: *u8, sel: *u8) -> Size;"), "sret shim:\n{out}");
+        assert!(out.contains("extern fn objc_msg_void_Size(recv: *u8, sel: *u8, a0: Size);"), "arg shim:\n{out}");
+        assert!(out.contains("objc_msg_void_Size(this._obj"), "uses local shim:\n{out}");
     }
 
     #[test]
