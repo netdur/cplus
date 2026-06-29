@@ -3323,7 +3323,19 @@ impl FunctionDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setOptions:\0")), options);
     }
 
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
 }
 
@@ -3400,7 +3412,19 @@ impl CompileOptions {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInstallName:\0")), bridge::nsstring(install_name));
     }
 
-    // SKIPPED `libraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
+    fn libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("libraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
     fn preserve_invariance(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("preserveInvariance\0"))) != (0 as i8);
@@ -4085,9 +4109,33 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxCallStackDepth:\0")), max_call_stack_depth);
     }
 
-    // SKIPPED `binaryLinkedFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn binary_linked_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryLinkedFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryLinkedFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
-    // SKIPPED `preloadedLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
 }
 
@@ -4166,7 +4214,19 @@ impl MTL4CompilerTaskOptions {
 
     fn from_raw(ptr: *u8) -> MTL4CompilerTaskOptions { return MTL4CompilerTaskOptions { _obj: ptr }; }
 
-    // SKIPPED `lookupArchives`: return `NSArray<id<MTL4Archive>> * _Nullable` — generic collection
+    fn lookup_archives(this) -> vec::Vec[MTL4Archive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("lookupArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4Archive] = vec::Vec[MTL4Archive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4Archive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setLookupArchives:`: param `NSArray<id<MTL4Archive>> * _Nullable` — generic collection
 }
 
@@ -4349,9 +4409,33 @@ impl TileRenderPipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerThreadgroup:\0")), max_total_threads_per_threadgroup);
     }
 
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
-    // SKIPPED `preloadedLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
     fn linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("linkedFunctions\0"))));
@@ -4588,7 +4672,19 @@ impl MeshRenderPipelineDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSupportIndirectCommandBuffers:\0")), support_indirect_command_buffers as i8);
     }
 
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
     fn object_linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("objectLinkedFunctions\0"))));
@@ -5121,11 +5217,47 @@ impl RenderPipelineDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSupportIndirectCommandBuffers:\0")), support_indirect_command_buffers as i8);
     }
 
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
-    // SKIPPED `vertexPreloadedLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn vertex_preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexPreloadedLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setVertexPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
-    // SKIPPED `fragmentPreloadedLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn fragment_preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentPreloadedLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFragmentPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
     fn vertex_linked_functions(this) -> LinkedFunctions {
         return LinkedFunctions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertexLinkedFunctions\0"))));
@@ -5454,11 +5586,47 @@ impl ComputePipelineDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSupportIndirectCommandBuffers:\0")), support_indirect_command_buffers as i8);
     }
 
-    // SKIPPED `insertLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
+    fn insert_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("insertLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setInsertLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nullable` — generic collection
-    // SKIPPED `preloadedLibraries`: return `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
+    fn preloaded_libraries(this) -> vec::Vec[DynamicLibrary] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preloadedLibraries\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DynamicLibrary] = vec::Vec[DynamicLibrary]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DynamicLibrary::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setPreloadedLibraries:`: param `NSArray<id<MTLDynamicLibrary>> * _Nonnull` — generic collection
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nullable` — generic collection
     fn linked_functions(this) -> option::Option[LinkedFunctions] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("linkedFunctions\0")));
@@ -5882,9 +6050,33 @@ impl StitchedLibraryDescriptor {
 
     // SKIPPED `functionGraphs`: return `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
     // SKIPPED `setFunctionGraphs:`: param `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
-    // SKIPPED `functions`: return `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
+    fn functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFunctions:`: param `NSArray<id<MTLFunction>> * _Nonnull` — generic collection
-    // SKIPPED `binaryArchives`: return `NSArray<id<MTLBinaryArchive>> * _Nonnull` — generic collection
+    fn binary_archives(this) -> vec::Vec[BinaryArchive] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryArchives\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BinaryArchive] = vec::Vec[BinaryArchive]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BinaryArchive::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryArchives:`: param `NSArray<id<MTLBinaryArchive>> * _Nonnull` — generic collection
     fn options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
@@ -6992,13 +7184,49 @@ impl LinkedFunctions {
         return LinkedFunctions { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLLinkedFunctions\0")), rt::sel(#str_ptr("linkedFunctions\0"))) };
     }
 
-    // SKIPPED `functions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
-    // SKIPPED `binaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn binary_functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("binaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
     // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — NSDictionary value `NSArray<id<MTLFunction>> *` not modelled (NSString / NSNumber only)
     // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — generic collection
-    // SKIPPED `privateFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn private_functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("privateFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setPrivateFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
 }
 
@@ -7053,11 +7281,47 @@ impl RenderPipelineFunctionsDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPipelineFunctionsDescriptor { return RenderPipelineFunctionsDescriptor { _obj: ptr }; }
 
-    // SKIPPED `vertexAdditionalBinaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn vertex_additional_binary_functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setVertexAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
-    // SKIPPED `fragmentAdditionalBinaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn fragment_additional_binary_functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFragmentAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
-    // SKIPPED `tileAdditionalBinaryFunctions`: return `NSArray<id<MTLFunction>> * _Nullable` — generic collection
+    fn tile_additional_binary_functions(this) -> vec::Vec[Function] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Function] = vec::Vec[Function]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Function::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setTileAdditionalBinaryFunctions:`: param `NSArray<id<MTLFunction>> * _Nullable` — generic collection
 }
 
@@ -7075,15 +7339,75 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
 
-    // SKIPPED `vertexAdditionalBinaryFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn vertex_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setVertexAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
-    // SKIPPED `fragmentAdditionalBinaryFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn fragment_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFragmentAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
-    // SKIPPED `tileAdditionalBinaryFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn tile_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setTileAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
-    // SKIPPED `objectAdditionalBinaryFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn object_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setObjectAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
-    // SKIPPED `meshAdditionalBinaryFunctions`: return `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
+    fn mesh_additional_binary_functions(this) -> vec::Vec[MTL4BinaryFunction] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("meshAdditionalBinaryFunctions\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4BinaryFunction] = vec::Vec[MTL4BinaryFunction]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4BinaryFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setMeshAdditionalBinaryFunctions:`: param `NSArray<id<MTL4BinaryFunction>> * _Nullable` — generic collection
 }
 
@@ -7612,7 +7936,19 @@ impl FunctionStitchingFunctionNode {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `arguments`: return `NSArray<id<MTLFunctionStitchingNode>> * _Nonnull` — generic collection
+    fn arguments(this) -> vec::Vec[FunctionStitchingNode] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("arguments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FunctionStitchingNode] = vec::Vec[FunctionStitchingNode]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FunctionStitchingNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setArguments:`: param `NSArray<id<MTLFunctionStitchingNode>> * _Nonnull` — generic collection
     // SKIPPED `controlDependencies`: return `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     // SKIPPED `setControlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
@@ -7655,7 +7991,19 @@ impl FunctionStitchingGraph {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOutputNode:\0")), output_node.raw());
     }
 
-    // SKIPPED `attributes`: return `NSArray<id<MTLFunctionStitchingAttribute>> * _Nonnull` — generic collection
+    fn attributes(this) -> vec::Vec[FunctionStitchingAttribute] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FunctionStitchingAttribute] = vec::Vec[FunctionStitchingAttribute]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FunctionStitchingAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setAttributes:`: param `NSArray<id<MTLFunctionStitchingAttribute>> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);
@@ -8852,7 +9200,19 @@ impl Device {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxBufferLength\0")));
     }
 
-    // SKIPPED `counterSets`: return `NSArray<id<MTLCounterSet>> * _Nullable` — generic collection
+    fn counter_sets(this) -> vec::Vec[CounterSet] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("counterSets\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CounterSet] = vec::Vec[CounterSet]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CounterSet::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn supports_dynamic_libraries(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supportsDynamicLibraries\0"))) != (0 as i8);
     }
@@ -9976,7 +10336,19 @@ impl CounterSet {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `counters`: return `NSArray<id<MTLCounter>> * _Nonnull` — generic collection
+    fn counters(this) -> vec::Vec[Counter] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("counters\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Counter] = vec::Vec[Counter]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Counter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `MTLCounterSampleBuffer` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -10793,7 +11165,19 @@ impl ResidencySet {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocatedSize\0")));
     }
 
-    // SKIPPED `allAllocations`: return `NSArray<id<MTLAllocation>> * _Nonnull` — generic collection
+    fn all_allocations(this) -> vec::Vec[Allocation] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allAllocations\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Allocation] = vec::Vec[Allocation]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Allocation::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn allocation_count(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocationCount\0")));
     }

@@ -55,6 +55,10 @@ pub struct ObjcEmitter {
     // Kept separate from `seen_types` so the class/protocol disambiguator is not
     // tricked into renaming a type against its own pre-registration.
     known_types: HashSet<String>,
+    // Wrapper names that are ObjC protocols — always non-owning (`opaque`, no
+    // drop). An `NSArray<id<P>>` may be bridged to a `Vec[P]` only for these,
+    // since a Vec of owning wrappers would over-release +0-borrowed elements.
+    protocol_types: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -113,6 +117,7 @@ enum Ret {
     Size,  // NSSize / CGSize — rt::Size HFA
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
+    ObjectArray(String), // NSArray<id<P>> -> Vec[P]; only non-owning protocol elems
     TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
     Unsupported(String),
 }
@@ -162,6 +167,7 @@ impl ObjcEmitter {
             seen_methods: HashSet::new(),
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
+            protocol_types: HashSet::new(),
         }
     }
 
@@ -313,7 +319,9 @@ impl ObjcEmitter {
         for proto in &deduped_protocols {
             let pname = proto.get("name").and_then(|n| n.as_str()).unwrap_or("");
             if !(pname.ends_with("Delegate") || pname.ends_with("DataSource")) {
-                self.known_types.insert(self.cplus_type_name(pname));
+                let ty = self.cplus_type_name(pname);
+                self.known_types.insert(ty.clone());
+                self.protocol_types.insert(ty);
             }
         }
         for itf in &deduped {
@@ -1076,6 +1084,32 @@ impl ObjcEmitter {
             return;
         }
 
+        if let Ret::ObjectArray(elem_ty) = &ret {
+            let array_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_vec = true;
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
+                 \x20       let arr: *u8 = {array_call};\n\
+                 \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: vec::Vec[{elem_ty}] = vec::Vec[{elem_ty}]::with_capacity(n as usize);\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           out.append({elem_ty}::from_raw(rt::msg_id_u64(arr, at_sel, i)));\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
         if let Ret::TextMap(val) = ret {
             let dict_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
                 Some(s) => s,
@@ -1164,7 +1198,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => unreachable!(),
+            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => unreachable!(),
         };
 
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{body_line}    }}\n\n"));
@@ -1403,6 +1437,15 @@ impl ObjcEmitter {
         }
         if self.is_string_array(base_ty) {
             return Ret::TextArray;
+        }
+        // `NSArray<id<P>> *` whose element is a non-owning protocol wrapper ->
+        // `Vec[P]`. (Class-element arrays may be owning, so they stay skipped.)
+        if let Some(elem) = array_element(base_ty) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.protocol_types.contains(&w) {
+                    return Ret::ObjectArray(w);
+                }
+            }
         }
         if self.is_nsstring(base_ty) {
             return Ret::Text { nullable };
@@ -1691,6 +1734,15 @@ fn base(p: &str) -> String {
     std::path::Path::new(p).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
 }
 
+/// The element spelling of an `NSArray<ELEM> *` (`NSArray<id<MTLBuffer>> *` ->
+/// `id<MTLBuffer>`), or None when `ty` is not a single-parameter NSArray.
+fn array_element(ty: &str) -> Option<String> {
+    let t = ty.trim();
+    let rest = t.strip_prefix("NSArray<")?;
+    let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"))?;
+    Some(elem.trim().to_string())
+}
+
 /// The msgSend ABI shape `<ret>[_<arg>...]` for a (return, args) pair — the key
 /// into the runtime's typed `objc_msgSend` shims. None when a return or arg is a
 /// value type with no shim tag (NSArray/NSDictionary/Unsupported). Shared by
@@ -1710,7 +1762,7 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::Rect => "rect",
         Ret::Point => "point",
         Ret::Size => "size",
-        Ret::ValueArray | Ret::TextArray | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
     };
     let mut tags: Vec<&str> = vec![ret_tag];
     for a in args {
@@ -2133,6 +2185,28 @@ mod tests {
         assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_of_protocol_becomes_a_typed_vec() {
+        // NSArray<id<P>> (P a non-owning protocol) -> Vec[P], wrapping each element.
+        // A class-element array stays skipped (its wrapper may be owning -> a Vec
+        // of owning wrappers would over-release +0-borrowed elements).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLBuffer", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "buffers", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<id<MTLBuffer>> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "descriptors", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<MTLThing *> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn buffers(this) -> vec::Vec[Buffer]"), "typed vec:\n{out}");
+        assert!(out.contains("out.append(Buffer::from_raw("), "element wrap:\n{out}");
+        // Class-element array isn't typed (MTLThing wrapper could be owning) -> skipped.
+        assert!(out.contains("// SKIPPED `descriptors`"), "class array not skipped:\n{out}");
     }
 
     #[test]
