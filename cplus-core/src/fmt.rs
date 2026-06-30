@@ -182,7 +182,22 @@ impl<'a> Printer<'a> {
         } else {
             // Normal same-line spacing.
             let prev = self.prev_kind.as_ref().expect("started but no prev_kind");
-            if needs_space_between_ctx(self.prev_prev_kind.as_ref(), prev, &tok.kind) {
+            // `|` is bitwise-or (spaced) EXCEPT the two delimiters of an
+            // `else |Pat|` complement pattern, which hug the pattern. Decide from
+            // the pipe's neighbours: `idx` when the pipe is `curr`, `idx - 1` when
+            // it's `prev` (same-line, so `prev` is the immediately preceding token).
+            let space = if matches!(tok.kind, TokenKind::Pipe)
+                && matches!(pipe_role(all, idx), PipeRole::PatternClose)
+            {
+                false // `…)|` — tight before the closing delimiter
+            } else if matches!(prev, TokenKind::Pipe)
+                && matches!(pipe_role(all, idx - 1), PipeRole::PatternOpen)
+            {
+                false // `|Pat` — tight after the opening delimiter
+            } else {
+                needs_space_between_ctx(self.prev_prev_kind.as_ref(), prev, &tok.kind)
+            };
+            if space {
                 self.out.push(' ');
             }
         }
@@ -496,20 +511,10 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
         return false;
     }
 
-    // `|` is used only as the complement-pattern delimiter in `guard let
-    // ... else |Pat| { ... }` (no bitwise-or in any in-tree sample as of
-    // slice 4D.1). Tight against the pattern's content (identifier or
-    // close-bracket of a payload tuple), spaced against the surrounding
-    // syntactic frame (`else` keyword on the open side, `{` block on the
-    // close side). Revisit if a real bitwise-or sample appears.
-    if matches!(curr, Pipe) {
-        let tight_prev = matches!(prev, Ident(_) | RParen | RBracket | SelfLower | SelfUpper);
-        return !tight_prev;
-    }
-    if matches!(prev, Pipe) {
-        let tight_curr = matches!(curr, Ident(_) | Underscore | SelfLower | SelfUpper);
-        return !tight_curr;
-    }
+    // `|` (Pipe) gets normal binary-op spacing via `is_binary_op` below — it's
+    // the bitwise-or operator. The one exception, the `else |Pat|` complement
+    // pattern, is handled by `pipe_role` at the emit site (the two pattern pipes
+    // are forced tight there), so by the time a Pipe reaches here it is bitwise.
 
     // `:` in `name: T` — no space before, one after.
     if matches!(curr, Colon) {
@@ -592,6 +597,34 @@ fn is_unary_prefix(t: &TokenKind) -> bool {
     false
 }
 
+/// The role a `|` token plays, decided from its non-trivia neighbours. The two
+/// delimiters of an `else |Pat|` complement pattern stay tight against the
+/// pattern; every other `|` is bitwise-or and gets normal binary spacing.
+enum PipeRole {
+    /// Opening delimiter of `else |Pat|` (previous non-trivia token is `else`).
+    PatternOpen,
+    /// Closing delimiter of `else |Pat|` (next non-trivia token is `{`).
+    PatternClose,
+    /// Ordinary bitwise-or (`a | b`, NS_OPTIONS composition).
+    Bitwise,
+}
+
+/// Classify the `|` at `idx`. Opening is detected before closing so a pipe right
+/// after `else` is always treated as the pattern opener.
+fn pipe_role(all: &[Token], idx: usize) -> PipeRole {
+    use TokenKind::*;
+    let is_trivia = |k: &TokenKind| matches!(k, LineComment(_) | BlockComment(_));
+    let prev = all[..idx].iter().rev().map(|t| &t.kind).find(|k| !is_trivia(k));
+    if matches!(prev, Some(Else)) {
+        return PipeRole::PatternOpen;
+    }
+    let next = all[idx + 1..].iter().map(|t| &t.kind).find(|k| !is_trivia(k));
+    if matches!(next, Some(LBrace)) {
+        return PipeRole::PatternClose;
+    }
+    PipeRole::Bitwise
+}
+
 fn is_binary_op(t: &TokenKind) -> bool {
     use TokenKind::*;
     matches!(
@@ -612,6 +645,7 @@ fn is_binary_op(t: &TokenKind) -> bool {
             | AmpAmp
             | PipePipe
             | Amp
+            | Pipe
             | Caret
             | Shl
             | Shr
@@ -631,8 +665,11 @@ fn is_binary_op(t: &TokenKind) -> bool {
             | As
             | In
     )
+    // `Pipe` is the bitwise-or operator (`a | b`, NS_OPTIONS composition) and
+    // gets normal binary spacing here. Its other role — the `else |Pat|`
+    // complement-pattern delimiter — is kept tight by `pipe_role` at the emit
+    // site, which overrides the spacing for those two specific pipes.
     // Excluded here (handled separately):
-    //   `Pipe` — complement-pattern delimiter; tight on both sides.
     //   `DotDot`, `DotDotEq` — range operators; tight on both sides.
 }
 
@@ -661,6 +698,26 @@ mod tests {
     fn normalizes_operator_spacing() {
         let out = fmt("fn f() -> i32 { return 1+2 ; }\n");
         assert!(out.contains("return 1 + 2;"), "got: {out}");
+    }
+
+    #[test]
+    fn bitwise_or_is_spaced() {
+        // `|` is bitwise-or here; it must be spaced like any binary operator,
+        // both inline and across a hand-wrapped continuation (NS_OPTIONS style).
+        let out = fmt("fn f(a: u64, b: u64) -> u64 { return a|b; }\n");
+        assert!(out.contains("return a | b;"), "inline bitwise-or:\n{out}");
+        let wrapped = fmt("fn f() -> u64 {\n    let x: u64 = mask_a\n        | mask_b\n        | mask_c;\n    return x;\n}\n");
+        assert!(wrapped.contains("| mask_b") && wrapped.contains("| mask_c"), "wrapped bitwise-or keeps space:\n{wrapped}");
+        assert!(!wrapped.contains("|mask"), "no glued pipe:\n{wrapped}");
+    }
+
+    #[test]
+    fn complement_pattern_pipes_stay_tight() {
+        // The `else |Pat|` complement-pattern delimiters hug the pattern, even
+        // though bitwise `|` is now spaced. `pipe_role` keeps these two tight.
+        let src = "fn f() -> i32 {\n    guard let R::Ok(v) = run() else |R::Err(e)| {\n        return e;\n    }\n    return v;\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("else |R::Err(e)| {"), "complement pattern stays tight:\n{out}");
     }
 
     #[test]
