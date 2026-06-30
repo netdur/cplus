@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextList` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextList {
@@ -46,7 +47,19 @@ impl TextListElement {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }
 
-    // SKIPPED `childElements`: return `NSArray<NSTextListElement *> * _Nonnull` — generic collection
+    fn child_elements(this) -> vec::Vec[TextListElement] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("childElements\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextListElement] = vec::Vec[TextListElement]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextListElement::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn parent_element(this) -> option::Option[TextListElement] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentElement\0")));
         if obj == { 0 as *u8 } {

@@ -6494,7 +6494,19 @@ impl StitchedLibraryDescriptor {
 
     fn from_raw(ptr: *u8) -> StitchedLibraryDescriptor { return StitchedLibraryDescriptor { _obj: ptr }; }
 
-    // SKIPPED `functionGraphs`: return `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
+    fn function_graphs(this) -> vec::Vec[FunctionStitchingGraph] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionGraphs\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FunctionStitchingGraph] = vec::Vec[FunctionStitchingGraph]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FunctionStitchingGraph::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setFunctionGraphs:`: param `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
     fn functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functions\0")));
@@ -8598,7 +8610,19 @@ impl FunctionStitchingFunctionNode {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setArguments:\0")), arr_arguments);
     }
 
-    // SKIPPED `controlDependencies`: return `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    fn control_dependencies(this) -> vec::Vec[FunctionStitchingFunctionNode] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("controlDependencies\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FunctionStitchingFunctionNode] = vec::Vec[FunctionStitchingFunctionNode]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FunctionStitchingFunctionNode::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setControlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);
@@ -8625,7 +8649,19 @@ impl FunctionStitchingGraph {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionName:\0")), bridge::nsstring(function_name));
     }
 
-    // SKIPPED `nodes`: return `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    fn nodes(this) -> vec::Vec[FunctionStitchingFunctionNode] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nodes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FunctionStitchingFunctionNode] = vec::Vec[FunctionStitchingFunctionNode]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FunctionStitchingFunctionNode::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setNodes:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
     fn output_node(this) -> option::Option[FunctionStitchingFunctionNode] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("outputNode\0")));

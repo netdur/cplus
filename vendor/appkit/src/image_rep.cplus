@@ -257,7 +257,19 @@ impl ImageRep {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard.raw()) != (0 as i8);
     }
 
-    // SKIPPED `imageRepsWithContentsOfFile:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
+    fn image_reps_with_contents_of_file(filename: str) -> vec::Vec[ImageRep] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepsWithContentsOfFile:\0")), bridge::nsstring(filename));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ImageRep] = vec::Vec[ImageRep]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ImageRep::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn image_rep_with_contents_of_file(filename: str) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfFile:\0")), bridge::nsstring(filename));
         if obj == { 0 as *u8 } {
@@ -266,7 +278,19 @@ impl ImageRep {
         return option::some(ImageRep { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `imageRepsWithContentsOfURL:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
+    fn image_reps_with_contents_of_u_r_l(url: URL) -> vec::Vec[ImageRep] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepsWithContentsOfURL:\0")), url.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ImageRep] = vec::Vec[ImageRep]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ImageRep::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn image_rep_with_contents_of_u_r_l(url: URL) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithContentsOfURL:\0")), url.raw());
         if obj == { 0 as *u8 } {
@@ -275,7 +299,19 @@ impl ImageRep {
         return option::some(ImageRep { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `imageRepsWithPasteboard:`: return `NSArray<NSImageRep *> * _Nullable` — generic collection
+    fn image_reps_with_pasteboard(pasteboard: Pasteboard) -> vec::Vec[ImageRep] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepsWithPasteboard:\0")), pasteboard.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ImageRep] = vec::Vec[ImageRep]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ImageRep::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn image_rep_with_pasteboard(pasteboard: Pasteboard) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepWithPasteboard:\0")), pasteboard.raw());
         if obj == { 0 as *u8 } {

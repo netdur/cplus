@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSCollectionLayoutSectionOrthogonalScrollingBehavior` (NS_ENUM)
 enum CollectionLayoutSectionOrthogonalScrollingBehavior {
@@ -184,7 +185,19 @@ impl CollectionLayoutSection {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setOrthogonalScrollingBehavior:\0")), collection_layout_section_orthogonal_scrolling_behavior_raw(orthogonal_scrolling_behavior));
     }
 
-    // SKIPPED `boundarySupplementaryItems`: return `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
+    fn boundary_supplementary_items(this) -> vec::Vec[CollectionLayoutBoundarySupplementaryItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("boundarySupplementaryItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutBoundarySupplementaryItem] = vec::Vec[CollectionLayoutBoundarySupplementaryItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBoundarySupplementaryItems:`: param `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
     fn supplementaries_follow_content_insets(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supplementariesFollowContentInsets\0"))) != (0 as i8);
@@ -196,7 +209,19 @@ impl CollectionLayoutSection {
 
     // SKIPPED `visibleItemsInvalidationHandler`: return `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
     // SKIPPED `setVisibleItemsInvalidationHandler:`: param `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
-    // SKIPPED `decorationItems`: return `NSArray<NSCollectionLayoutDecorationItem *> * _Nonnull` — generic collection
+    fn decoration_items(this) -> vec::Vec[CollectionLayoutDecorationItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("decorationItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutDecorationItem] = vec::Vec[CollectionLayoutDecorationItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutDecorationItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setDecorationItems:`: param `NSArray<NSCollectionLayoutDecorationItem *> * _Nonnull` — generic collection
     fn drop(ref this) {
         rt::release(this._obj);
@@ -230,7 +255,19 @@ impl CollectionLayoutGroup {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `supplementaryItems`: return `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
+    fn supplementary_items(this) -> vec::Vec[CollectionLayoutSupplementaryItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("supplementaryItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutSupplementaryItem] = vec::Vec[CollectionLayoutSupplementaryItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutSupplementaryItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setSupplementaryItems:`: param `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
     fn inter_item_spacing(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("interItemSpacing\0")));
@@ -244,7 +281,19 @@ impl CollectionLayoutGroup {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInterItemSpacing:\0")), inter_item_spacing.raw());
     }
 
-    // SKIPPED `subitems`: return `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
+    fn subitems(this) -> vec::Vec[CollectionLayoutItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("subitems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutItem] = vec::Vec[CollectionLayoutItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -296,7 +345,19 @@ impl CollectionLayoutItem {
         return CollectionLayoutSize::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layoutSize\0"))));
     }
 
-    // SKIPPED `supplementaryItems`: return `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
+    fn supplementary_items(this) -> vec::Vec[CollectionLayoutSupplementaryItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("supplementaryItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutSupplementaryItem] = vec::Vec[CollectionLayoutSupplementaryItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutSupplementaryItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -700,7 +761,19 @@ impl CollectionViewCompositionalLayoutConfiguration {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setInterSectionSpacing:\0")), inter_section_spacing);
     }
 
-    // SKIPPED `boundarySupplementaryItems`: return `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
+    fn boundary_supplementary_items(this) -> vec::Vec[CollectionLayoutBoundarySupplementaryItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("boundarySupplementaryItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionLayoutBoundarySupplementaryItem] = vec::Vec[CollectionLayoutBoundarySupplementaryItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionLayoutBoundarySupplementaryItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setBoundarySupplementaryItems:`: param `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
 }
 

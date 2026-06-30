@@ -231,7 +231,19 @@ impl ParagraphStyle {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesDefaultHyphenation\0"))) != (0 as i8);
     }
 
-    // SKIPPED `tabStops`: return `NSArray<NSTextTab *> * _Nonnull` — generic collection
+    fn tab_stops(this) -> vec::Vec[TextTab] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabStops\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextTab] = vec::Vec[TextTab]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextTab::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn default_tab_interval(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("defaultTabInterval\0")));
     }
@@ -398,7 +410,19 @@ impl MutableParagraphStyle {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setUsesDefaultHyphenation:\0")), uses_default_hyphenation as i8);
     }
 
-    // SKIPPED `tabStops`: return `NSArray<NSTextTab *> * _Nonnull` — generic collection
+    fn tab_stops(this) -> vec::Vec[TextTab] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabStops\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextTab] = vec::Vec[TextTab]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextTab::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setTabStops:`: param `NSArray<NSTextTab *> * _Nullable` — generic collection
     fn default_tab_interval(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("defaultTabInterval\0")));

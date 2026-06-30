@@ -99,7 +99,19 @@ impl TreeNode {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isLeaf\0"))) != (0 as i8);
     }
 
-    // SKIPPED `childNodes`: return `NSArray<NSTreeNode *> * _Nullable` — generic collection
+    fn child_nodes(this) -> vec::Vec[TreeNode] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("childNodes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TreeNode] = vec::Vec[TreeNode]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TreeNode::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `mutableChildNodes`: return `NSMutableArray<NSTreeNode *> * _Nonnull` — generic collection
     fn parent_node(this) -> option::Option[TreeNode] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentNode\0")));

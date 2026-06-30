@@ -85,7 +85,19 @@ impl ColorList {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFile\0")));
     }
 
-    // SKIPPED `availableColorLists`: return `NSArray<NSColorList *> * _Nonnull` — generic collection
+    fn available_color_lists() -> vec::Vec[ColorList] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSColorList\0")), rt::sel(#str_ptr("availableColorLists\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ColorList] = vec::Vec[ColorList]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ColorList::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text_option(ns);
