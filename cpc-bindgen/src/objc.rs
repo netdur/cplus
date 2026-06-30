@@ -1740,6 +1740,11 @@ impl ObjcEmitter {
                 // Bare `id` carries no type -> untyped handle.
                 return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) };
             }
+            // `SEL` (selector) and `Class` are ObjC pointer types with no C+ wrapper.
+            // ABI-identical to a raw pointer; the runtime already trades selectors as
+            // `rt::sel(...) -> *u8` and classes as `rt::get_class(...) -> *u8`, so a
+            // bare `*u8` handle is the natural, consistent binding.
+            "SEL" | "Class" => return Ret::Object(None),
             // CGFloat / NSTimeInterval / CFTimeInterval are `double` on 64-bit Apple.
             "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => return Ret::ScalarF64,
             // 32-bit scalars ride their own msgSend widths (vendor/objc shims).
@@ -1843,7 +1848,10 @@ impl ObjcEmitter {
             "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t"
             | "MTLGPUAddress" | "MTLResourceID" => return Arg::ScalarU64(pname.to_string()),
             "BOOL" | "_Bool" | "bool" => return Arg::Bool(pname.to_string()),
-            "id" => return Arg::Id(pname.to_string()),
+            // `SEL`/`Class`: raw ObjC pointer types (no wrapper). Pass the handle
+            // through verbatim — callers supply `rt::sel(...)` / `rt::get_class(...)`,
+            // both already `*u8`. Mirrors the `id` untyped-handle arg.
+            "id" | "SEL" | "Class" => return Arg::Id(pname.to_string()),
             "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => {
                 return Arg::ScalarF64(pname.to_string())
             }
@@ -2770,6 +2778,32 @@ mod tests {
             "block combo must skip:\n{out}");
         // And no dangling `arr_items` reference leaked into emitted code.
         assert!(!out.contains("arr_items"), "no undefined array local emitted:\n{out}");
+    }
+
+    #[test]
+    fn sel_and_class_bind_as_raw_pointers() {
+        // `SEL` and `Class` are ObjC pointer types with no wrapper; they bind as
+        // raw `*u8` handles (callers pass `rt::sel(...)` / `rt::get_class(...)`),
+        // not SKIPPED. A BOOL-returning SEL predicate uses the i8_id shim.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "respondsToSelector:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "BOOL" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "aSelector", "type": { "qualType": "SEL" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "isKindOfClass:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "BOOL" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "aClass", "type": { "qualType": "Class" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "class", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "Class" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn responds_to_selector(this, a_selector: *u8) -> bool"), "SEL param:\n{out}");
+        assert!(out.contains("fn is_kind_of_class(this, a_class: *u8) -> bool"), "Class param:\n{out}");
+        assert!(out.contains("-> *u8"), "Class return is a raw handle:\n{out}");
+        assert!(!out.contains("unmapped type `SEL`") && !out.contains("unmapped type `Class`"),
+            "SEL/Class must not be skipped:\n{out}");
     }
 
     #[test]
