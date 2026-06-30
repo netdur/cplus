@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 // `NSTextSelectionNavigationDirection` (NS_ENUM)
@@ -69,6 +70,11 @@ fn text_selection_navigation_destination_from_raw(raw: i64) -> TextSelectionNavi
     if raw == (6 as i64) { return TextSelectionNavigationDestination::Document; }
     return TextSelectionNavigationDestination::Character;
 }
+
+// `NSTextSelectionNavigationModifier` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_selection_navigation_modifier_extend: u64 = 1 as u64;
+const text_selection_navigation_modifier_visual: u64 = 2 as u64;
+const text_selection_navigation_modifier_multiple: u64 = 4 as u64;
 
 // `NSTextSelectionGranularity` (NS_ENUM)
 enum TextSelectionGranularity {
@@ -174,7 +180,7 @@ impl TextSelectionNavigation {
     }
 
     // SKIPPED `destinationSelectionForTextSelection:direction:destination:extending:confined:`: msgSend shape `id_id_i64_i64_i8_i8` not yet modelled
-    // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
+    // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: NSArray<id> param with a collection return not modelled
     // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: msgSend shape `id_i64_id` not yet modelled
     // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: msgSend shape `id_i64_point_id` not yet modelled
     fn resolved_insertion_location_for_text_selection_writing_direction(this, text_selection: TextSelection, writing_direction: TextSelectionNavigationWritingDirection) -> option::Option[TextLocation] {
@@ -185,7 +191,7 @@ impl TextSelectionNavigation {
         return option::some(TextLocation::from_raw(obj));
     }
 
-    // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: return `NSArray<NSTextRange *> * _Nonnull` — generic collection
+    // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: NSArray arg shape not modelled
     fn text_selection_data_source(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionDataSource\0")));
         return bridge::obj_option(obj);

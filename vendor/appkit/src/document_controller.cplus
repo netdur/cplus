@@ -168,7 +168,19 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("openDocument:\0")), sender);
     }
 
-    // SKIPPED `URLsFromRunningOpenPanel`: return `NSArray<NSURL *> * _Nullable` — generic collection
+    fn u_r_ls_from_running_open_panel(this) -> vec::Vec[URL] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URLsFromRunningOpenPanel\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn run_modal_open_panel_for_types(this, open_panel: OpenPanel, types: vec::Vec[text::Text]) -> i64 {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalOpenPanel:forTypes:\0")), open_panel.raw(), bridge::nsarray_of_text(types));
     }
@@ -278,7 +290,19 @@ impl DocumentController {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maximumRecentDocumentCount\0")));
     }
 
-    // SKIPPED `recentDocumentURLs`: return `NSArray<NSURL *> * _Nonnull` — generic collection
+    fn recent_document_u_r_ls(this) -> vec::Vec[URL] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("recentDocumentURLs\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn default_type(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("defaultType\0")));
         return bridge::to_text_option(ns);

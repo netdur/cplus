@@ -346,7 +346,21 @@ impl ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithHierarchicalColor:\0")), hierarchical_color.raw()) };
     }
 
-    // SKIPPED `configurationWithPaletteColors:`: param `NSArray<NSColor *> * _Nonnull` — generic collection
+    fn configuration_with_palette_colors(palette_colors: vec::Vec[Color]) -> *u8 {
+        let arr_palette_colors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_palette_colors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_palette_colors: usize = palette_colors.count();
+        var i_palette_colors: usize = 0 as usize;
+        while i_palette_colors < n_palette_colors {
+            match palette_colors.at(i_palette_colors) {
+                option::Option[Color]::Some(e_palette_colors) => { rt::msg_void_id(arr_palette_colors, add_sel_palette_colors, e_palette_colors.raw()); }
+                option::Option[Color]::None => {}
+            }
+            i_palette_colors = i_palette_colors +% (1 as usize);
+        }
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithPaletteColors:\0")), arr_palette_colors);
+    }
+
     fn configuration_preferring_multicolor() -> ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationPreferringMulticolor\0"))) };
     }
@@ -439,7 +453,21 @@ impl Image {
     }
 
     // SKIPPED `TIFFRepresentationUsingCompression:factor:`: msgSend shape `id_i64_f32` not yet modelled
-    // SKIPPED `addRepresentations:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
+    fn add_representations(this, image_reps: vec::Vec[ImageRep]) {
+        let arr_image_reps: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_image_reps: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_image_reps: usize = image_reps.count();
+        var i_image_reps: usize = 0 as usize;
+        while i_image_reps < n_image_reps {
+            match image_reps.at(i_image_reps) {
+                option::Option[ImageRep]::Some(e_image_reps) => { rt::msg_void_id(arr_image_reps, add_sel_image_reps, e_image_reps.raw()); }
+                option::Option[ImageRep]::None => {}
+            }
+            i_image_reps = i_image_reps +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRepresentations:\0")), arr_image_reps);
+    }
+
     fn add_representation(this, image_rep: ImageRep) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRepresentation:\0")), image_rep.raw());
     }
@@ -526,7 +554,19 @@ impl Image {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `representations`: return `NSArray<NSImageRep *> * _Nonnull` — generic collection
+    fn representations(this) -> vec::Vec[ImageRep] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("representations\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ImageRep] = vec::Vec[ImageRep]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ImageRep::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn is_valid(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isValid\0"))) != (0 as i8);
     }

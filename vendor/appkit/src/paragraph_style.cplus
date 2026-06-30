@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextAlignment` (NS_ENUM)
 enum TextAlignment {
@@ -235,7 +236,19 @@ impl ParagraphStyle {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("defaultTabInterval\0")));
     }
 
-    // SKIPPED `textLists`: return `NSArray<NSTextList *> * _Nonnull` — generic collection
+    fn text_lists(this) -> vec::Vec[TextList] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textLists\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextList] = vec::Vec[TextList]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn allows_default_tightening_for_truncation(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsDefaultTighteningForTruncation\0"))) != (0 as i8);
     }
@@ -411,8 +424,34 @@ impl MutableParagraphStyle {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setLineBreakStrategy:\0")), line_break_strategy);
     }
 
-    // SKIPPED `textLists`: return `NSArray<NSTextList *> * _Nonnull` — generic collection
-    // SKIPPED `setTextLists:`: param `NSArray<NSTextList *> * _Nonnull` — generic collection
+    fn text_lists(this) -> vec::Vec[TextList] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textLists\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextList] = vec::Vec[TextList]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextList::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_text_lists(this, text_lists: vec::Vec[TextList]) {
+        let arr_text_lists: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_lists: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_lists: usize = text_lists.count();
+        var i_text_lists: usize = 0 as usize;
+        while i_text_lists < n_text_lists {
+            match text_lists.at(i_text_lists) {
+                option::Option[TextList]::Some(e_text_lists) => { rt::msg_void_id(arr_text_lists, add_sel_text_lists, e_text_lists.raw()); }
+                option::Option[TextList]::None => {}
+            }
+            i_text_lists = i_text_lists +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextLists:\0")), arr_text_lists);
+    }
+
     fn alignment(this) -> TextAlignment {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }

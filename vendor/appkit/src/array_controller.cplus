@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSIndexSet` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct IndexSet {
@@ -153,8 +154,34 @@ impl ArrayController {
     }
 
     // SKIPPED `automaticRearrangementKeyPaths`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `sortDescriptors`: return `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
-    // SKIPPED `setSortDescriptors:`: param `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
+    fn sort_descriptors(this) -> vec::Vec[SortDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sortDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[SortDescriptor] = vec::Vec[SortDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_sort_descriptors(this, sort_descriptors: vec::Vec[SortDescriptor]) {
+        let arr_sort_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_sort_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_sort_descriptors: usize = sort_descriptors.count();
+        var i_sort_descriptors: usize = 0 as usize;
+        while i_sort_descriptors < n_sort_descriptors {
+            match sort_descriptors.at(i_sort_descriptors) {
+                option::Option[SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, e_sort_descriptors.raw()); }
+                option::Option[SortDescriptor]::None => {}
+            }
+            i_sort_descriptors = i_sort_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSortDescriptors:\0")), arr_sort_descriptors);
+    }
+
     fn filter_predicate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("filterPredicate\0")));
         return bridge::obj_option(obj);

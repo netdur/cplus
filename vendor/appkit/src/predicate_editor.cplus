@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Array {
@@ -40,7 +41,33 @@ impl PredicateEditor {
 
     fn from_raw(ptr: *u8) -> PredicateEditor { return PredicateEditor { _obj: ptr }; }
 
-    // SKIPPED `rowTemplates`: return `NSArray<NSPredicateEditorRowTemplate *> * _Nonnull` — generic collection
-    // SKIPPED `setRowTemplates:`: param `NSArray<NSPredicateEditorRowTemplate *> * _Nonnull` — generic collection
+    fn row_templates(this) -> vec::Vec[PredicateEditorRowTemplate] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rowTemplates\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[PredicateEditorRowTemplate] = vec::Vec[PredicateEditorRowTemplate]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(PredicateEditorRowTemplate::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_row_templates(this, row_templates: vec::Vec[PredicateEditorRowTemplate]) {
+        let arr_row_templates: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_row_templates: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_row_templates: usize = row_templates.count();
+        var i_row_templates: usize = 0 as usize;
+        while i_row_templates < n_row_templates {
+            match row_templates.at(i_row_templates) {
+                option::Option[PredicateEditorRowTemplate]::Some(e_row_templates) => { rt::msg_void_id(arr_row_templates, add_sel_row_templates, e_row_templates.raw()); }
+                option::Option[PredicateEditorRowTemplate]::None => {}
+            }
+            i_row_templates = i_row_templates +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRowTemplates:\0")), arr_row_templates);
+    }
+
 }
 

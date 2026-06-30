@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSCollectionElementCategory` (NS_ENUM)
 enum CollectionElementCategory {
@@ -349,7 +350,21 @@ impl CollectionViewLayout {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("collectionViewContentSize\0")));
     }
 
-    // SKIPPED `prepareForCollectionViewUpdates:`: param `NSArray<NSCollectionViewUpdateItem *> * _Nonnull` — generic collection
+    fn prepare_for_collection_view_updates(this, update_items: vec::Vec[CollectionViewUpdateItem]) {
+        let arr_update_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_update_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_update_items: usize = update_items.count();
+        var i_update_items: usize = 0 as usize;
+        while i_update_items < n_update_items {
+            match update_items.at(i_update_items) {
+                option::Option[CollectionViewUpdateItem]::Some(e_update_items) => { rt::msg_void_id(arr_update_items, add_sel_update_items, e_update_items.raw()); }
+                option::Option[CollectionViewUpdateItem]::None => {}
+            }
+            i_update_items = i_update_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("prepareForCollectionViewUpdates:\0")), arr_update_items);
+    }
+
     fn finalize_collection_view_updates(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("finalizeCollectionViewUpdates\0")));
     }

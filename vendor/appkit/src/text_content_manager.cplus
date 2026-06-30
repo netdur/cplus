@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 #[repr(C)]
 struct TextContentManager_synchronize_text_layout_managers_block {
@@ -227,7 +228,19 @@ impl TextContentManager {
         return;
     }
 
-    // SKIPPED `textElementsForRange:`: return `NSArray<NSTextElement *> * _Nonnull` — generic collection
+    fn text_elements_for_range(this, range: TextRange) -> vec::Vec[TextElement] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("textElementsForRange:\0")), range.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextElement] = vec::Vec[TextElement]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextElement::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn perform_editing_transaction_using_block(this, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: TextContentManager_perform_editing_transaction_using_block_block = TextContentManager_perform_editing_transaction_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextContentManager_perform_editing_transaction_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -249,7 +262,19 @@ impl TextContentManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    // SKIPPED `textLayoutManagers`: return `NSArray<NSTextLayoutManager *> * _Nonnull` — generic collection
+    fn text_layout_managers(this) -> vec::Vec[TextLayoutManager] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManagers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextLayoutManager] = vec::Vec[TextLayoutManager]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextLayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn primary_text_layout_manager(this) -> option::Option[TextLayoutManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("primaryTextLayoutManager\0")));
         if obj == { 0 as *u8 } {
@@ -322,7 +347,21 @@ impl TextElementProvider {
     fn from_raw(ptr: *u8) -> TextElementProvider { return TextElementProvider { _obj: ptr }; }
 
     // SKIPPED `enumerateTextElementsFromLocation:options:usingBlock:`: block method with non-void return
-    // SKIPPED `replaceContentsInRange:withTextElements:`: param `NSArray<NSTextElement *> * _Nullable` — generic collection
+    fn replace_contents_in_range_with_text_elements(this, range: TextRange, text_elements: vec::Vec[TextElement]) {
+        let arr_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_elements: usize = text_elements.count();
+        var i_text_elements: usize = 0 as usize;
+        while i_text_elements < n_text_elements {
+            match text_elements.at(i_text_elements) {
+                option::Option[TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, e_text_elements.raw()); }
+                option::Option[TextElement]::None => {}
+            }
+            i_text_elements = i_text_elements +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_text_elements);
+    }
+
     fn synchronize_to_backing_store(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: TextElementProvider_synchronize_to_backing_store_block = TextElementProvider_synchronize_to_backing_store_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_synchronize_to_backing_store_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };

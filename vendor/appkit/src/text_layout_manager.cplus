@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextLayoutManagerSegmentType` (NS_ENUM)
 enum TextLayoutManagerSegmentType {
@@ -191,7 +192,21 @@ impl TextLayoutManager {
 
     // SKIPPED `renderingAttributesForLink:atLocation:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `enumerateTextSegmentsInRange:type:options:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `replaceContentsInRange:withTextElements:`: param `NSArray<NSTextElement *> * _Nonnull` — generic collection
+    fn replace_contents_in_range_with_text_elements(this, range: TextRange, text_elements: vec::Vec[TextElement]) {
+        let arr_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_elements: usize = text_elements.count();
+        var i_text_elements: usize = 0 as usize;
+        while i_text_elements < n_text_elements {
+            match text_elements.at(i_text_elements) {
+                option::Option[TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, e_text_elements.raw()); }
+                option::Option[TextElement]::None => {}
+            }
+            i_text_elements = i_text_elements +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_text_elements);
+    }
+
     fn replace_contents_in_range_with_attributed_string(this, range: TextRange, attributed_string: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withAttributedString:\0")), range.raw(), attributed_string);
     }
@@ -274,8 +289,34 @@ impl TextLayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayoutQueue:\0")), layout_queue);
     }
 
-    // SKIPPED `textSelections`: return `NSArray<NSTextSelection *> * _Nonnull` — generic collection
-    // SKIPPED `setTextSelections:`: param `NSArray<NSTextSelection *> * _Nonnull` — generic collection
+    fn text_selections(this) -> vec::Vec[TextSelection] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelections\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextSelection] = vec::Vec[TextSelection]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextSelection::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_text_selections(this, text_selections: vec::Vec[TextSelection]) {
+        let arr_text_selections: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_selections: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_selections: usize = text_selections.count();
+        var i_text_selections: usize = 0 as usize;
+        while i_text_selections < n_text_selections {
+            match text_selections.at(i_text_selections) {
+                option::Option[TextSelection]::Some(e_text_selections) => { rt::msg_void_id(arr_text_selections, add_sel_text_selections, e_text_selections.raw()); }
+                option::Option[TextSelection]::None => {}
+            }
+            i_text_selections = i_text_selections +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextSelections:\0")), arr_text_selections);
+    }
+
     fn text_selection_navigation(this) -> TextSelectionNavigation {
         return TextSelectionNavigation::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionNavigation\0"))));
     }

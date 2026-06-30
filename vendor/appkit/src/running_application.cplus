@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSApplicationActivationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const application_activation_options_n_s_application_activate_all_windows: u64 = 1 as u64;
@@ -110,7 +111,19 @@ impl RunningApplication {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("forceTerminate\0"))) != (0 as i8);
     }
 
-    // SKIPPED `runningApplicationsWithBundleIdentifier:`: return `NSArray<NSRunningApplication *> * _Nonnull` — generic collection
+    fn running_applications_with_bundle_identifier(bundle_identifier: str) -> vec::Vec[RunningApplication] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("runningApplicationsWithBundleIdentifier:\0")), bridge::nsstring(bundle_identifier));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[RunningApplication] = vec::Vec[RunningApplication]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(RunningApplication::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `runningApplicationWithProcessIdentifier:`: param `pid_t` — unmapped type `pid_t`
     fn terminate_automatically_terminable_applications() {
         rt::msg_void(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("terminateAutomaticallyTerminableApplications\0")));

@@ -34,7 +34,21 @@ impl FontCollection {
 
     fn from_raw(ptr: *u8) -> FontCollection { return FontCollection { _obj: ptr }; }
 
-    // SKIPPED `fontCollectionWithDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
+    fn font_collection_with_descriptors(query_descriptors: vec::Vec[FontDescriptor]) -> FontCollection {
+        let arr_query_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_query_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_query_descriptors: usize = query_descriptors.count();
+        var i_query_descriptors: usize = 0 as usize;
+        while i_query_descriptors < n_query_descriptors {
+            match query_descriptors.at(i_query_descriptors) {
+                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_query_descriptors = i_query_descriptors +% (1 as usize);
+        }
+        return FontCollection::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithDescriptors:\0")), arr_query_descriptors));
+    }
+
     fn font_collection_with_locale(locale: *u8) -> option::Option[FontCollection] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithLocale:\0")), locale);
         if obj == { 0 as *u8 } {
@@ -63,7 +77,19 @@ impl FontCollection {
     }
 
     // SKIPPED `matchingDescriptorsWithOptions:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
-    // SKIPPED `matchingDescriptorsForFamily:`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
+    fn matching_descriptors_for_family(this, family: str) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingDescriptorsForFamily:\0")), bridge::nsstring(family));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `matchingDescriptorsForFamily:options:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
     fn font_collection_with_all_available_descriptors() -> FontCollection {
         return FontCollection { _obj: rt::msg_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithAllAvailableDescriptors\0"))) };
@@ -83,9 +109,45 @@ impl FontCollection {
         return out;
     }
 
-    // SKIPPED `queryDescriptors`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `exclusionDescriptors`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `matchingDescriptors`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
+    fn query_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("queryDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn exclusion_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("exclusionDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn matching_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("matchingDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSMutableFontCollection` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -98,7 +160,21 @@ impl MutableFontCollection {
 
     fn from_raw(ptr: *u8) -> MutableFontCollection { return MutableFontCollection { _obj: ptr }; }
 
-    // SKIPPED `fontCollectionWithDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
+    fn font_collection_with_descriptors(query_descriptors: vec::Vec[FontDescriptor]) -> MutableFontCollection {
+        let arr_query_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_query_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_query_descriptors: usize = query_descriptors.count();
+        var i_query_descriptors: usize = 0 as usize;
+        while i_query_descriptors < n_query_descriptors {
+            match query_descriptors.at(i_query_descriptors) {
+                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_query_descriptors = i_query_descriptors +% (1 as usize);
+        }
+        return MutableFontCollection::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("NSMutableFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithDescriptors:\0")), arr_query_descriptors));
+    }
+
     fn font_collection_with_locale(locale: *u8) -> MutableFontCollection {
         return MutableFontCollection { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSMutableFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithLocale:\0")), locale) };
     }
@@ -119,15 +195,95 @@ impl MutableFontCollection {
         return option::some(MutableFontCollection { _obj: obj });
     }
 
-    // SKIPPED `addQueryForDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
-    // SKIPPED `removeQueryForDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
+    fn add_query_for_descriptors(this, descriptors: vec::Vec[FontDescriptor]) {
+        let arr_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_descriptors: usize = descriptors.count();
+        var i_descriptors: usize = 0 as usize;
+        while i_descriptors < n_descriptors {
+            match descriptors.at(i_descriptors) {
+                option::Option[FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, e_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_descriptors = i_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addQueryForDescriptors:\0")), arr_descriptors);
+    }
+
+    fn remove_query_for_descriptors(this, descriptors: vec::Vec[FontDescriptor]) {
+        let arr_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_descriptors: usize = descriptors.count();
+        var i_descriptors: usize = 0 as usize;
+        while i_descriptors < n_descriptors {
+            match descriptors.at(i_descriptors) {
+                option::Option[FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, e_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_descriptors = i_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeQueryForDescriptors:\0")), arr_descriptors);
+    }
+
     fn font_collection_with_all_available_descriptors() -> MutableFontCollection {
         return MutableFontCollection { _obj: rt::msg_id(rt::get_class(#str_ptr("NSMutableFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithAllAvailableDescriptors\0"))) };
     }
 
-    // SKIPPED `queryDescriptors`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `setQueryDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `exclusionDescriptors`: return `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `setExclusionDescriptors:`: param `NSArray<NSFontDescriptor *> * _Nullable` — generic collection
+    fn query_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("queryDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_query_descriptors(this, query_descriptors: vec::Vec[FontDescriptor]) {
+        let arr_query_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_query_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_query_descriptors: usize = query_descriptors.count();
+        var i_query_descriptors: usize = 0 as usize;
+        while i_query_descriptors < n_query_descriptors {
+            match query_descriptors.at(i_query_descriptors) {
+                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_query_descriptors = i_query_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setQueryDescriptors:\0")), arr_query_descriptors);
+    }
+
+    fn exclusion_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("exclusionDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_exclusion_descriptors(this, exclusion_descriptors: vec::Vec[FontDescriptor]) {
+        let arr_exclusion_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_exclusion_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_exclusion_descriptors: usize = exclusion_descriptors.count();
+        var i_exclusion_descriptors: usize = 0 as usize;
+        while i_exclusion_descriptors < n_exclusion_descriptors {
+            match exclusion_descriptors.at(i_exclusion_descriptors) {
+                option::Option[FontDescriptor]::Some(e_exclusion_descriptors) => { rt::msg_void_id(arr_exclusion_descriptors, add_sel_exclusion_descriptors, e_exclusion_descriptors.raw()); }
+                option::Option[FontDescriptor]::None => {}
+            }
+            i_exclusion_descriptors = i_exclusion_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setExclusionDescriptors:\0")), arr_exclusion_descriptors);
+    }
+
 }
 

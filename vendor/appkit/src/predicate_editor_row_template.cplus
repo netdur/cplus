@@ -139,13 +139,51 @@ impl PredicateEditorRowTemplate {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPredicate:\0")), predicate.raw());
     }
 
-    // SKIPPED `predicateWithSubpredicates:`: param `NSArray<NSPredicate *> * _Nullable` — generic collection
-    // SKIPPED `displayableSubpredicatesOfPredicate:`: return `NSArray<NSPredicate *> * _Nullable` — generic collection
+    fn predicate_with_subpredicates(this, subpredicates: vec::Vec[Predicate]) -> Predicate {
+        let arr_subpredicates: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_subpredicates: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_subpredicates: usize = subpredicates.count();
+        var i_subpredicates: usize = 0 as usize;
+        while i_subpredicates < n_subpredicates {
+            match subpredicates.at(i_subpredicates) {
+                option::Option[Predicate]::Some(e_subpredicates) => { rt::msg_void_id(arr_subpredicates, add_sel_subpredicates, e_subpredicates.raw()); }
+                option::Option[Predicate]::None => {}
+            }
+            i_subpredicates = i_subpredicates +% (1 as usize);
+        }
+        return Predicate::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("predicateWithSubpredicates:\0")), arr_subpredicates));
+    }
+
+    fn displayable_subpredicates_of_predicate(this, predicate: Predicate) -> vec::Vec[Predicate] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("displayableSubpredicatesOfPredicate:\0")), predicate.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Predicate] = vec::Vec[Predicate]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Predicate::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `initWithLeftExpressions:rightExpressions:modifier:operators:options:`: param `NSArray<NSExpression *> * _Nonnull` — generic collection
     // SKIPPED `initWithLeftExpressions:rightExpressionAttributeType:modifier:operators:options:`: extra init variant (one `new` per type)
     // SKIPPED `initWithCompoundTypes:`: extra init variant (one `new` per type)
     // SKIPPED `templatesWithAttributeKeyPaths:inEntityDescription:`: return `NSArray<NSPredicateEditorRowTemplate *> * _Nonnull` — generic collection
-    // SKIPPED `templateViews`: return `NSArray<NSView *> * _Nonnull` — generic collection
+    fn template_views(this) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("templateViews\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `leftExpressions`: return `NSArray<NSExpression *> * _Nullable` — generic collection
     // SKIPPED `rightExpressions`: return `NSArray<NSExpression *> * _Nullable` — generic collection
     fn right_expression_attribute_type(this) -> AttributeType {

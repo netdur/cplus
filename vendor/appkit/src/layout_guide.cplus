@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSLayoutConstraintOrientation` (NS_ENUM)
 enum LayoutConstraintOrientation {
@@ -82,7 +83,19 @@ impl LayoutGuide {
 
     fn from_raw(ptr: *u8) -> LayoutGuide { return LayoutGuide { _obj: ptr }; }
 
-    // SKIPPED `constraintsAffectingLayoutForOrientation:`: return `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
+    fn constraints_affecting_layout_for_orientation(this, orientation: LayoutConstraintOrientation) -> vec::Vec[LayoutConstraint] {
+        let arr: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("constraintsAffectingLayoutForOrientation:\0")), layout_constraint_orientation_raw(orientation));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[LayoutConstraint] = vec::Vec[LayoutConstraint]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn frame(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("frame\0")));
     }

@@ -587,7 +587,7 @@ impl Cell {
         return option::some(TextView::from_raw(obj));
     }
 
-    // SKIPPED `draggingImageComponentsWithFrame:inView:`: return `NSArray<NSDraggingImageComponent *> * _Nonnull` — generic collection
+    // SKIPPED `draggingImageComponentsWithFrame:inView:`: NSArray arg shape not modelled
     fn prefers_tracking_until_mouse_up() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSCell\0")), rt::sel(#str_ptr("prefersTrackingUntilMouseUp\0"))) != (0 as i8);
     }

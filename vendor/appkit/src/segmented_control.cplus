@@ -372,6 +372,6 @@ impl SegmentedControl {
     }
 
     // SKIPPED `segmentedControlWithLabels:trackingMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
+    // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
 }
 

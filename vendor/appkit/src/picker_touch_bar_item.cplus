@@ -84,7 +84,7 @@ impl PickerTouchBarItem {
     fn from_raw(ptr: *u8) -> PickerTouchBarItem { return PickerTouchBarItem { _obj: ptr }; }
 
     // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
+    // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
     fn set_image_at_index(this, image: Image, index: i64) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:atIndex:\0")), image.raw(), index);
     }

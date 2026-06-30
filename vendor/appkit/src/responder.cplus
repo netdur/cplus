@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSEventGestureAxis` (NS_ENUM)
 enum EventGestureAxis {
@@ -259,7 +260,21 @@ impl Responder {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("resignFirstResponder\0"))) != (0 as i8);
     }
 
-    // SKIPPED `interpretKeyEvents:`: param `NSArray<NSEvent *> * _Nonnull` — generic collection
+    fn interpret_key_events(this, event_array: vec::Vec[Event]) {
+        let arr_event_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_event_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_event_array: usize = event_array.count();
+        var i_event_array: usize = 0 as usize;
+        while i_event_array < n_event_array {
+            match event_array.at(i_event_array) {
+                option::Option[Event]::Some(e_event_array) => { rt::msg_void_id(arr_event_array, add_sel_event_array, e_event_array.raw()); }
+                option::Option[Event]::None => {}
+            }
+            i_event_array = i_event_array +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("interpretKeyEvents:\0")), arr_event_array);
+    }
+
     fn flush_buffered_key_events(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushBufferedKeyEvents\0")));
     }

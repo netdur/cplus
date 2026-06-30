@@ -5,6 +5,25 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+
+// `NSTextSelectionAffinity` (NS_ENUM)
+enum TextSelectionAffinity {
+    Upstream,
+    Downstream,
+}
+
+fn text_selection_affinity_raw(v: TextSelectionAffinity) -> i64 {
+    return match v {
+        TextSelectionAffinity::Upstream => { 0 as i64 },
+        TextSelectionAffinity::Downstream => { 1 as i64 },
+    };
+}
+
+fn text_selection_affinity_from_raw(raw: i64) -> TextSelectionAffinity {
+    if raw == (1 as i64) { return TextSelectionAffinity::Downstream; }
+    return TextSelectionAffinity::Upstream;
+}
 
 // `NSTextSelectionGranularity` (NS_ENUM)
 enum TextSelectionGranularity {
@@ -33,24 +52,6 @@ fn text_selection_granularity_from_raw(raw: i64) -> TextSelectionGranularity {
     return TextSelectionGranularity::Character;
 }
 
-// `NSTextSelectionAffinity` (NS_ENUM)
-enum TextSelectionAffinity {
-    Upstream,
-    Downstream,
-}
-
-fn text_selection_affinity_raw(v: TextSelectionAffinity) -> i64 {
-    return match v {
-        TextSelectionAffinity::Upstream => { 0 as i64 },
-        TextSelectionAffinity::Downstream => { 1 as i64 },
-    };
-}
-
-fn text_selection_affinity_from_raw(raw: i64) -> TextSelectionAffinity {
-    if raw == (1 as i64) { return TextSelectionAffinity::Downstream; }
-    return TextSelectionAffinity::Upstream;
-}
-
 // `NSTextRange` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextRange {
     opaque _obj: *u8,
@@ -73,13 +74,39 @@ impl TextSelection {
 
     fn from_raw(ptr: *u8) -> TextSelection { return TextSelection { _obj: ptr }; }
 
-    // SKIPPED `initWithRanges:affinity:granularity:`: param `NSArray<NSTextRange *> * _Nonnull` — generic collection
+    // SKIPPED `initWithRanges:affinity:granularity:`: init with an NSArray<id> param not modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithRange:affinity:granularity:`: extra init variant (one `new` per type)
     // SKIPPED `initWithLocation:affinity:`: extra init variant (one `new` per type)
     // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `textSelectionWithTextRanges:`: param `NSArray<NSTextRange *> * _Nonnull` — generic collection
-    // SKIPPED `textRanges`: return `NSArray<NSTextRange *> * _Nonnull` — generic collection
+    fn text_selection_with_text_ranges(this, text_ranges: vec::Vec[TextRange]) -> TextSelection {
+        let arr_text_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_ranges: usize = text_ranges.count();
+        var i_text_ranges: usize = 0 as usize;
+        while i_text_ranges < n_text_ranges {
+            match text_ranges.at(i_text_ranges) {
+                option::Option[TextRange]::Some(e_text_ranges) => { rt::msg_void_id(arr_text_ranges, add_sel_text_ranges, e_text_ranges.raw()); }
+                option::Option[TextRange]::None => {}
+            }
+            i_text_ranges = i_text_ranges +% (1 as usize);
+        }
+        return TextSelection::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("textSelectionWithTextRanges:\0")), arr_text_ranges));
+    }
+
+    fn text_ranges(this) -> vec::Vec[TextRange] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textRanges\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextRange] = vec::Vec[TextRange]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextRange::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn granularity(this) -> TextSelectionGranularity {
         return text_selection_granularity_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("granularity\0"))));
     }

@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 // `NSTextStorageEditActions` (NS_OPTIONS) — bitfield; combine with `|`.
@@ -431,7 +432,19 @@ impl LayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextStorage:\0")), text_storage);
     }
 
-    // SKIPPED `textContainers`: return `NSArray<NSTextContainer *> * _Nonnull` — generic collection
+    fn text_containers(this) -> vec::Vec[TextContainer] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextContainer] = vec::Vec[TextContainer]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextContainer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -545,7 +558,19 @@ impl LayoutManager {
         return option::some(TextContainer::from_raw(obj));
     }
 
-    // SKIPPED `rulerMarkersForTextView:paragraphStyle:ruler:`: return `NSArray<NSRulerMarker *> * _Nonnull` — generic collection
+    fn ruler_markers_for_text_view_paragraph_style_ruler(this, view: TextView, style: *u8, ruler: RulerView) -> vec::Vec[RulerMarker] {
+        let arr: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("rulerMarkersForTextView:paragraphStyle:ruler:\0")), view.raw(), style, ruler.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[RulerMarker] = vec::Vec[RulerMarker]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(RulerMarker::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: msgSend shape `id_id_id_id_i8` not yet modelled
     fn layout_manager_owns_first_responder_in_window(this, window: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("layoutManagerOwnsFirstResponderInWindow:\0")), window) != (0 as i8);

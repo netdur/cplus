@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSGridCellPlacement` (NS_ENUM)
 enum GridCellPlacement {
@@ -141,8 +142,34 @@ impl GridCell {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRowAlignment:\0")), grid_row_alignment_raw(row_alignment));
     }
 
-    // SKIPPED `customPlacementConstraints`: return `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
-    // SKIPPED `setCustomPlacementConstraints:`: param `NSArray<NSLayoutConstraint *> * _Nonnull` — generic collection
+    fn custom_placement_constraints(this) -> vec::Vec[LayoutConstraint] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("customPlacementConstraints\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[LayoutConstraint] = vec::Vec[LayoutConstraint]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_custom_placement_constraints(this, custom_placement_constraints: vec::Vec[LayoutConstraint]) {
+        let arr_custom_placement_constraints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_custom_placement_constraints: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_custom_placement_constraints: usize = custom_placement_constraints.count();
+        var i_custom_placement_constraints: usize = 0 as usize;
+        while i_custom_placement_constraints < n_custom_placement_constraints {
+            match custom_placement_constraints.at(i_custom_placement_constraints) {
+                option::Option[LayoutConstraint]::Some(e_custom_placement_constraints) => { rt::msg_void_id(arr_custom_placement_constraints, add_sel_custom_placement_constraints, e_custom_placement_constraints.raw()); }
+                option::Option[LayoutConstraint]::None => {}
+            }
+            i_custom_placement_constraints = i_custom_placement_constraints +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCustomPlacementConstraints:\0")), arr_custom_placement_constraints);
+    }
+
 }
 
 // `NSGridColumn` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

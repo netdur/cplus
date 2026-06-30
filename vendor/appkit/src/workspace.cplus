@@ -320,13 +320,27 @@ impl Workspace {
     }
 
     // SKIPPED `openURL:configuration:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
+    // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: block method with an NSArray<id> param not modelled
     // SKIPPED `openApplicationAtURL:configuration:completionHandler:`: block-method msgSend shape not modelled
     fn select_file_in_file_viewer_rooted_at_path(this, full_path: str, root_full_path: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("selectFile:inFileViewerRootedAtPath:\0")), bridge::nsstring(full_path), bridge::nsstring(root_full_path)) != (0 as i8);
     }
 
-    // SKIPPED `activateFileViewerSelectingURLs:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
+    fn activate_file_viewer_selecting_u_r_ls(this, file_u_r_ls: vec::Vec[URL]) {
+        let arr_file_u_r_ls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_file_u_r_ls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_file_u_r_ls: usize = file_u_r_ls.count();
+        var i_file_u_r_ls: usize = 0 as usize;
+        while i_file_u_r_ls < n_file_u_r_ls {
+            match file_u_r_ls.at(i_file_u_r_ls) {
+                option::Option[URL]::Some(e_file_u_r_ls) => { rt::msg_void_id(arr_file_u_r_ls, add_sel_file_u_r_ls, e_file_u_r_ls.raw()); }
+                option::Option[URL]::None => {}
+            }
+            i_file_u_r_ls = i_file_u_r_ls +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("activateFileViewerSelectingURLs:\0")), arr_file_u_r_ls);
+    }
+
     fn show_search_results_for_query_string(this, query_string: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("showSearchResultsForQueryString:\0")), bridge::nsstring(query_string)) != (0 as i8);
     }
@@ -356,8 +370,8 @@ impl Workspace {
     }
 
     // SKIPPED `setIcon:forFile:options:`: msgSend shape `i8_id_id_u64` not yet modelled
-    // SKIPPED `recycleURLs:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
-    // SKIPPED `duplicateURLs:completionHandler:`: leading param `NSArray<NSURL *> * _Nonnull` — generic collection
+    // SKIPPED `recycleURLs:completionHandler:`: block method with an NSArray<id> param not modelled
+    // SKIPPED `duplicateURLs:completionHandler:`: block method with an NSArray<id> param not modelled
     // SKIPPED `getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:`: msgSend shape `i8_id_id_id_id_id_id` not yet modelled
     fn unmount_and_eject_device_at_path(this, path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("unmountAndEjectDeviceAtPath:\0")), bridge::nsstring(path)) != (0 as i8);
@@ -383,7 +397,19 @@ impl Workspace {
         return option::some(URL::from_raw(obj));
     }
 
-    // SKIPPED `URLsForApplicationsWithBundleIdentifier:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
+    fn u_r_ls_for_applications_with_bundle_identifier(this, bundle_identifier: str) -> vec::Vec[URL] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLsForApplicationsWithBundleIdentifier:\0")), bridge::nsstring(bundle_identifier));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn u_r_l_for_application_to_open_u_r_l(this, url: URL) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenURL:\0")), url.raw());
         if obj == { 0 as *u8 } {
@@ -392,7 +418,19 @@ impl Workspace {
         return option::some(URL::from_raw(obj));
     }
 
-    // SKIPPED `URLsForApplicationsToOpenURL:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
+    fn u_r_ls_for_applications_to_open_u_r_l(this, url: URL) -> vec::Vec[URL] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLsForApplicationsToOpenURL:\0")), url.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:`: block-method msgSend shape not modelled
     // SKIPPED `setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:`: block-method msgSend shape not modelled
@@ -404,7 +442,19 @@ impl Workspace {
         return option::some(URL::from_raw(obj));
     }
 
-    // SKIPPED `URLsForApplicationsToOpenContentType:`: return `NSArray<NSURL *> * _Nonnull` — generic collection
+    fn u_r_ls_for_applications_to_open_content_type(this, content_type: UTType) -> vec::Vec[URL] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLsForApplicationsToOpenContentType:\0")), content_type.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setDefaultApplicationAtURL:toOpenContentType:completionHandler:`: block-method msgSend shape not modelled
     fn shared_workspace() -> Workspace {
         return Workspace { _obj: rt::msg_id(rt::get_class(#str_ptr("NSWorkspace\0")), rt::sel(#str_ptr("sharedWorkspace\0"))) };
@@ -450,7 +500,7 @@ impl Workspace {
 
     // SKIPPED `launchApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `openURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
-    // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
+    // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `launchApplication:showIcon:autolaunch:`: msgSend shape `i8_id_i8_i8` not yet modelled
     fn full_path_for_application(this, app_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fullPathForApplication:\0")), bridge::nsstring(app_name));
@@ -463,7 +513,7 @@ impl Workspace {
     }
 
     // SKIPPED `launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:`: msgSend shape `i8_id_u64_id_id` not yet modelled
-    // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSURL *> * _Nonnull` — generic collection
+    // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSNumber *> * _Nullable * _Nullable` — generic collection
     fn open_temp_file(this, full_path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openTempFile:\0")), bridge::nsstring(full_path)) != (0 as i8);
     }

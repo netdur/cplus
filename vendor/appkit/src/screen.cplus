@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSDisplayGamut` (NS_ENUM)
 enum DisplayGamut {
@@ -131,7 +132,19 @@ impl Screen {
         return rt::msg_rect_rect_u64(this._obj, rt::sel(#str_ptr("backingAlignedRect:options:\0")), rect, options);
     }
 
-    // SKIPPED `screens`: return `NSArray<NSScreen *> * _Nonnull` — generic collection
+    fn screens() -> vec::Vec[Screen] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSScreen\0")), rt::sel(#str_ptr("screens\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Screen] = vec::Vec[Screen]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Screen::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn main_screen() -> option::Option[Screen] {
         let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSScreen\0")), rt::sel(#str_ptr("mainScreen\0")));
         if obj == { 0 as *u8 } {

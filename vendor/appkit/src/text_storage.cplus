@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextStorageEditActions` (NS_OPTIONS) — bitfield; combine with `|`.
 const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u64;
@@ -96,7 +97,19 @@ impl TextStorage {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureAttributesAreFixedInRange:\0")), range);
     }
 
-    // SKIPPED `layoutManagers`: return `NSArray<NSLayoutManager *> * _Nonnull` — generic collection
+    fn layout_managers(this) -> vec::Vec[LayoutManager] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("layoutManagers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[LayoutManager] = vec::Vec[LayoutManager]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(LayoutManager::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn edited_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("editedMask\0")));
     }

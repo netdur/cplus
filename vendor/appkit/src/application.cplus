@@ -493,7 +493,19 @@ impl Application {
         return option::some(Window::from_raw(obj));
     }
 
-    // SKIPPED `windows`: return `NSArray<NSWindow *> * _Nonnull` — generic collection
+    fn windows(this) -> vec::Vec[Window] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windows\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Window] = vec::Vec[Window]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Window::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn main_menu(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("mainMenu\0")));
         return bridge::obj_option(obj);

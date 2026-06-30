@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSBackgroundStyle` (NS_ENUM)
 enum BackgroundStyle {
@@ -152,6 +153,18 @@ impl TableCellView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRowSizeStyle:\0")), table_view_row_size_style_raw(row_size_style));
     }
 
-    // SKIPPED `draggingImageComponents`: return `NSArray<NSDraggingImageComponent *> * _Nonnull` — generic collection
+    fn dragging_image_components(this) -> vec::Vec[DraggingImageComponent] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("draggingImageComponents\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DraggingImageComponent] = vec::Vec[DraggingImageComponent]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 

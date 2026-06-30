@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 // `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
@@ -132,7 +133,19 @@ impl CollectionView {
         return option::some(CollectionViewItem::from_raw(obj));
     }
 
-    // SKIPPED `visibleItems`: return `NSArray<NSCollectionViewItem *> * _Nonnull` — generic collection
+    fn visible_items(this) -> vec::Vec[CollectionViewItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("visibleItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionViewItem] = vec::Vec[CollectionViewItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `indexPathsForVisibleItems`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     fn index_path_for_item(this, item: CollectionViewItem) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathForItem:\0")), item.raw());

@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 #[repr(C)]
 struct FontAssetRequest_download_font_assets_with_completion_handler_block {
@@ -62,7 +63,19 @@ impl FontAssetRequest {
         return;
     }
 
-    // SKIPPED `downloadedFontDescriptors`: return `NSArray<NSFontDescriptor *> * _Nonnull` — generic collection
+    fn downloaded_font_descriptors(this) -> vec::Vec[FontDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("downloadedFontDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn progress(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("progress\0")));
     }

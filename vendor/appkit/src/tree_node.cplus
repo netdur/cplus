@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSIndexPath` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct IndexPath {
@@ -70,7 +71,21 @@ impl TreeNode {
         return option::some(TreeNode::from_raw(obj));
     }
 
-    // SKIPPED `sortWithSortDescriptors:recursively:`: param `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
+    fn sort_with_sort_descriptors_recursively(this, sort_descriptors: vec::Vec[SortDescriptor], recursively: bool) {
+        let arr_sort_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_sort_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_sort_descriptors: usize = sort_descriptors.count();
+        var i_sort_descriptors: usize = 0 as usize;
+        while i_sort_descriptors < n_sort_descriptors {
+            match sort_descriptors.at(i_sort_descriptors) {
+                option::Option[SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, e_sort_descriptors.raw()); }
+                option::Option[SortDescriptor]::None => {}
+            }
+            i_sort_descriptors = i_sort_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("sortWithSortDescriptors:recursively:\0")), arr_sort_descriptors, recursively as i8);
+    }
+
     fn represented_object(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("representedObject\0")));
         return bridge::obj_option(obj);

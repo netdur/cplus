@@ -8772,8 +8772,34 @@ impl MTL4StitchedFunctionDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionGraph:\0")), function_graph.raw());
     }
 
-    // SKIPPED `functionDescriptors`: return `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `setFunctionDescriptors:`: param `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
+    fn function_descriptors(this) -> vec::Vec[MTL4FunctionDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4FunctionDescriptor] = vec::Vec[MTL4FunctionDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_function_descriptors(this, function_descriptors: vec::Vec[MTL4FunctionDescriptor]) {
+        let arr_function_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_function_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_function_descriptors: usize = function_descriptors.count();
+        var i_function_descriptors: usize = 0 as usize;
+        while i_function_descriptors < n_function_descriptors {
+            match function_descriptors.at(i_function_descriptors) {
+                option::Option[MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, e_function_descriptors.raw()); }
+                option::Option[MTL4FunctionDescriptor]::None => {}
+            }
+            i_function_descriptors = i_function_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionDescriptors:\0")), arr_function_descriptors);
+    }
+
 }
 
 // `MTL4PipelineOptions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -8814,10 +8840,62 @@ impl MTL4StaticLinkingDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4StaticLinkingDescriptor { return MTL4StaticLinkingDescriptor { _obj: ptr }; }
 
-    // SKIPPED `functionDescriptors`: return `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `setFunctionDescriptors:`: param `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `privateFunctionDescriptors`: return `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
-    // SKIPPED `setPrivateFunctionDescriptors:`: param `NSArray<MTL4FunctionDescriptor *> * _Nullable` — generic collection
+    fn function_descriptors(this) -> vec::Vec[MTL4FunctionDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4FunctionDescriptor] = vec::Vec[MTL4FunctionDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_function_descriptors(this, function_descriptors: vec::Vec[MTL4FunctionDescriptor]) {
+        let arr_function_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_function_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_function_descriptors: usize = function_descriptors.count();
+        var i_function_descriptors: usize = 0 as usize;
+        while i_function_descriptors < n_function_descriptors {
+            match function_descriptors.at(i_function_descriptors) {
+                option::Option[MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, e_function_descriptors.raw()); }
+                option::Option[MTL4FunctionDescriptor]::None => {}
+            }
+            i_function_descriptors = i_function_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionDescriptors:\0")), arr_function_descriptors);
+    }
+
+    fn private_function_descriptors(this) -> vec::Vec[MTL4FunctionDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("privateFunctionDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4FunctionDescriptor] = vec::Vec[MTL4FunctionDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4FunctionDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_private_function_descriptors(this, private_function_descriptors: vec::Vec[MTL4FunctionDescriptor]) {
+        let arr_private_function_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_private_function_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_private_function_descriptors: usize = private_function_descriptors.count();
+        var i_private_function_descriptors: usize = 0 as usize;
+        while i_private_function_descriptors < n_private_function_descriptors {
+            match private_function_descriptors.at(i_private_function_descriptors) {
+                option::Option[MTL4FunctionDescriptor]::Some(e_private_function_descriptors) => { rt::msg_void_id(arr_private_function_descriptors, add_sel_private_function_descriptors, e_private_function_descriptors.raw()); }
+                option::Option[MTL4FunctionDescriptor]::None => {}
+            }
+            i_private_function_descriptors = i_private_function_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrivateFunctionDescriptors:\0")), arr_private_function_descriptors);
+    }
+
     // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — NSDictionary value `NSArray<MTL4FunctionDescriptor *> *` not modelled (NSString / NSNumber only)
     // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — generic collection
 }
@@ -9504,7 +9582,25 @@ impl Device {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("getDefaultSamplePositions:count:\0")), positions, count);
     }
 
-    // SKIPPED `newArgumentEncoderWithArguments:`: param `NSArray<MTLArgumentDescriptor *> * _Nonnull` — generic collection
+    fn new_argument_encoder_with_arguments(this, arguments: vec::Vec[ArgumentDescriptor]) -> option::Option[ArgumentEncoder] {
+        let arr_arguments: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_arguments: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_arguments: usize = arguments.count();
+        var i_arguments: usize = 0 as usize;
+        while i_arguments < n_arguments {
+            match arguments.at(i_arguments) {
+                option::Option[ArgumentDescriptor]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, e_arguments.raw()); }
+                option::Option[ArgumentDescriptor]::None => {}
+            }
+            i_arguments = i_arguments +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newArgumentEncoderWithArguments:\0")), arr_arguments);
+        if obj == { 0 as *u8 } {
+            return option::Option[ArgumentEncoder]::None;
+        }
+        return option::some(ArgumentEncoder::from_raw(obj));
+    }
+
     fn supports_rasterization_rate_map_with_layer_count(this, layer_count: u64) -> bool {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("supportsRasterizationRateMapWithLayerCount:\0")), layer_count) != (0 as i8);
     }
@@ -10531,8 +10627,32 @@ impl Function {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("patchControlPointCount\0")));
     }
 
-    // SKIPPED `vertexAttributes`: return `NSArray<MTLVertexAttribute *> * _Nullable` — generic collection
-    // SKIPPED `stageInputAttributes`: return `NSArray<MTLAttribute *> * _Nullable` — generic collection
+    fn vertex_attributes(this) -> vec::Vec[VertexAttribute] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexAttributes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[VertexAttribute] = vec::Vec[VertexAttribute]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(VertexAttribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn stage_input_attributes(this) -> vec::Vec[Attribute] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("stageInputAttributes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Attribute] = vec::Vec[Attribute]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Attribute::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);

@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 // `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
@@ -401,7 +402,7 @@ impl TableView {
     }
 
     // SKIPPED `canDragRowsWithIndexes:atPoint:`: msgSend shape `i8_id_point` not yet modelled
-    // SKIPPED `dragImageForRowsWithIndexes:tableColumns:event:offset:`: param `NSArray<NSTableColumn *> * _Nonnull` — generic collection
+    // SKIPPED `dragImageForRowsWithIndexes:tableColumns:event:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
     // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
     fn set_drop_row_drop_operation(this, row: i64, drop_operation: TableViewDropOperation) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setDropRow:dropOperation:\0")), row, table_view_drop_operation_raw(drop_operation));
@@ -655,7 +656,19 @@ impl TableView {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setRowHeight:\0")), row_height);
     }
 
-    // SKIPPED `tableColumns`: return `NSArray<NSTableColumn *> * _Nonnull` — generic collection
+    fn table_columns(this) -> vec::Vec[TableColumn] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tableColumns\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TableColumn] = vec::Vec[TableColumn]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TableColumn::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn number_of_columns(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfColumns\0")));
     }
@@ -682,8 +695,34 @@ impl TableView {
 
     // SKIPPED `doubleAction`: return `SEL _Nullable` — unmapped type `SEL`
     // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `sortDescriptors`: return `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
-    // SKIPPED `setSortDescriptors:`: param `NSArray<NSSortDescriptor *> * _Nonnull` — generic collection
+    fn sort_descriptors(this) -> vec::Vec[SortDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sortDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[SortDescriptor] = vec::Vec[SortDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_sort_descriptors(this, sort_descriptors: vec::Vec[SortDescriptor]) {
+        let arr_sort_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_sort_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_sort_descriptors: usize = sort_descriptors.count();
+        var i_sort_descriptors: usize = 0 as usize;
+        while i_sort_descriptors < n_sort_descriptors {
+            match sort_descriptors.at(i_sort_descriptors) {
+                option::Option[SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, e_sort_descriptors.raw()); }
+                option::Option[SortDescriptor]::None => {}
+            }
+            i_sort_descriptors = i_sort_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSortDescriptors:\0")), arr_sort_descriptors);
+    }
+
     fn highlighted_table_column(this) -> option::Option[TableColumn] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("highlightedTableColumn\0")));
         if obj == { 0 as *u8 } {
