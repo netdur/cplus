@@ -55,10 +55,12 @@ pub struct ObjcEmitter {
     // Kept separate from `seen_types` so the class/protocol disambiguator is not
     // tricked into renaming a type against its own pre-registration.
     known_types: HashSet<String>,
-    // Wrapper names that are ObjC protocols — always non-owning (`opaque`, no
-    // drop). An `NSArray<id<P>>` may be bridged to a `Vec[P]` only for these,
-    // since a Vec of owning wrappers would over-release +0-borrowed elements.
-    protocol_types: HashSet<String>,
+    // Wrapper names whose handle is NON-OWNING (`opaque`, no `drop`): every
+    // non-delegate protocol (Metal objects are +0-borrowed) plus every interface
+    // with no `init` (factory/singleton classes). An object array — `NSArray<id<P>>`
+    // or `NSArray<Foo *>` — bridges to `Vec[W]` only for these: a Vec of *owning*
+    // wrappers would over-release the +0-borrowed array elements when it drops.
+    non_owning_types: HashSet<String>,
     // By-value C structs (`typedef struct { … } MTLSize;`): ObjC name -> ordered
     // (field, C+ type). `used_value_structs` are the ones actually referenced (so
     // only those get a `#[repr(C)]` definition). `used_struct_shapes` are the
@@ -178,7 +180,7 @@ impl ObjcEmitter {
             seen_methods: HashSet::new(),
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
-            protocol_types: HashSet::new(),
+            non_owning_types: HashSet::new(),
             value_structs: HashMap::new(),
             used_value_structs: HashSet::new(),
             used_struct_shapes: HashSet::new(),
@@ -337,7 +339,19 @@ impl ObjcEmitter {
         // registered as typeable returns.
         for itf in &deduped {
             if let Some(n) = itf.get("name").and_then(|n| n.as_str()) {
-                self.known_types.insert(self.cplus_type_name(n));
+                let ty = self.cplus_type_name(n);
+                self.known_types.insert(ty.clone());
+                // A class with no `init`/`initWith*` is a factory/singleton: its
+                // handle is `opaque` (non-owning, no drop, same as a protocol), so
+                // an `NSArray<Foo *>` of it bridges to `Vec[W]` safely. Owned
+                // classes (have init) would over-release the +0-borrowed array
+                // elements, so they stay out and their arrays keep SKIPPING.
+                // Computed here (Pass 2a) so it's complete before any body emits.
+                let cats: &[serde_json::Value] =
+                    categories.get(n).map(|v| v.as_slice()).unwrap_or(&[]);
+                if !interface_is_owned(itf, cats) {
+                    self.non_owning_types.insert(ty);
+                }
             }
         }
         for proto in &deduped_protocols {
@@ -345,7 +359,7 @@ impl ObjcEmitter {
             if !(pname.ends_with("Delegate") || pname.ends_with("DataSource")) {
                 let ty = self.cplus_type_name(pname);
                 self.known_types.insert(ty.clone());
-                self.protocol_types.insert(ty);
+                self.non_owning_types.insert(ty);
             }
         }
         for itf in &deduped {
@@ -720,10 +734,10 @@ impl ObjcEmitter {
                 }
             }
         }
-        let owned = methods.iter().any(|m| {
-            let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            sel == "init" || sel.starts_with("initWith")
-        });
+        // Shared with Pass 2a's `non_owning_types` registration so the two never
+        // drift: a type emitted `opaque` (no drop) here must be the one Pass 2a
+        // judged safe to put in a `Vec`.
+        let owned = interface_is_owned(itf, categories);
 
         // Owned classes (have an init) carry the +1 and release in `drop`;
         // factory/singleton classes are non-owning, so the handle is `opaque`
@@ -1210,6 +1224,20 @@ impl ObjcEmitter {
             }
         }
 
+        // The `Vec[W] -> NSMutableArray` prologue (the `arr_<pname>` locals) is
+        // built only in the general scalar/object path below. The collection-return
+        // paths build their own multi-statement bodies and would reference an
+        // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
+        // collection return rather than emit dangling code.
+        if has_id_array
+            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_))
+        {
+            self.body.push_str(&format!(
+                "    // SKIPPED `{sel}`: NSArray<id> param with a collection return not modelled\n"
+            ));
+            return;
+        }
+
         // ValueArray is a multi-statement body; handle it separately.
         if let Ret::ValueArray = ret {
             let arg = match args.as_slice() {
@@ -1459,6 +1487,14 @@ impl ObjcEmitter {
             sig_parts.push(format!("{pn}: {}", self.param_sig_type(pqt)));
             send_args.push(a);
         }
+        // The block path doesn't build the `Vec[W] -> NSMutableArray` prologue, so
+        // an NSArray<id> leading param would reference an undefined `arr_<pname>`.
+        if send_args.iter().any(|a| matches!(a, Arg::IdArray { .. })) {
+            self.body.push_str(&format!(
+                "    // SKIPPED `{sel}`: block method with an NSArray<id> param not modelled\n"
+            ));
+            return;
+        }
         send_args.push(Arg::Id("bp".to_string()));
 
         let recv = if is_instance {
@@ -1651,11 +1687,13 @@ impl ObjcEmitter {
         if self.is_string_array(base_ty) {
             return Ret::TextArray;
         }
-        // `NSArray<id<P>> *` whose element is a non-owning protocol wrapper ->
-        // `Vec[P]`. (Class-element arrays may be owning, so they stay skipped.)
+        // An object array whose element wrapper is non-owning -> `Vec[W]`:
+        // `NSArray<id<P>>` (protocol) or `NSArray<Foo *>` (factory/singleton class
+        // with no init). Owning class elements stay skipped (a Vec of them would
+        // over-release the +0 borrows).
         if let Some(elem) = array_element(base_ty) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.protocol_types.contains(&w) {
+                if self.non_owning_types.contains(&w) {
                     return Ret::ObjectArray(w);
                 }
             }
@@ -1758,11 +1796,12 @@ impl ObjcEmitter {
             self.needs_vec = true;
             return Arg::Id(format!("bridge::nsarray_of_text({pname})"));
         }
-        // NSArray<id<P>> (P a non-owning protocol) -> build an NSMutableArray from a
-        // Vec[P] (mirrors the return path; only protocol elements, like ObjectArray).
+        // Object array with a non-owning element wrapper -> build an NSMutableArray
+        // from a Vec[W] (mirrors the return path; `addObject:` retains, so passing
+        // the +0 `.raw()` handles is balanced).
         if let Some(elem) = array_element(base_ty) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.protocol_types.contains(&w) {
+                if self.non_owning_types.contains(&w) {
                     self.needs_vec = true;
                     return Arg::IdArray { elem: w, pname: pname.to_string() };
                 }
@@ -1846,10 +1885,10 @@ impl ObjcEmitter {
         if self.is_string_array(b) {
             return "vec::Vec[text::Text]".to_string();
         }
-        // NSArray<id<P>> (protocol element) param -> Vec[P] (same gate as map_arg).
+        // Object array with a non-owning element -> Vec[W] (same gate as map_arg).
         if let Some(elem) = array_element(b) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.protocol_types.contains(&w) {
+                if self.non_owning_types.contains(&w) {
                     return format!("vec::Vec[{w}]");
                 }
             }
@@ -1980,6 +2019,21 @@ fn base(p: &str) -> String {
 
 /// The element spelling of an `NSArray<ELEM> *` (`NSArray<id<MTLBuffer>> *` ->
 /// `id<MTLBuffer>`), or None when `ty` is not a single-parameter NSArray.
+/// True if an interface (with its categories) declares an `init` / `initWith*`,
+/// i.e. it's an owning class that carries a +1 and releases in `drop`. A class
+/// with none is a factory/singleton: non-owning, `opaque`, no drop. Used by both
+/// `emit_interface` (to pick the field/drop shape) and Pass 2a (to decide whether
+/// the type is safe as a `Vec` element) — one source of truth so they can't drift.
+fn interface_is_owned(itf: &serde_json::Value, categories: &[serde_json::Value]) -> bool {
+    std::iter::once(itf).chain(categories.iter()).any(|src| {
+        src.get("inner").and_then(|v| v.as_array()).into_iter().flatten().any(|m| {
+            m.get("kind").and_then(|k| k.as_str()) == Some("ObjCMethodDecl")
+                && m.get("name").and_then(|v| v.as_str())
+                    .is_some_and(|sel| sel == "init" || sel.starts_with("initWith"))
+        })
+    })
+}
+
 fn array_element(ty: &str) -> Option<String> {
     let t = ty.trim();
     let rest = t.strip_prefix("NSArray<")?;
@@ -2630,6 +2684,69 @@ mod tests {
         assert!(out.contains("out.append(Buffer::from_raw("), "element wrap:\n{out}");
         // Class-element array isn't typed (MTLThing wrapper could be owning) -> skipped.
         assert!(out.contains("// SKIPPED `descriptors`"), "class array not skipped:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_of_factory_class_binds_but_owning_class_skips() {
+        // Class-element arrays (`NSArray<Foo *>`): bind to Vec[W] iff the element
+        // wrapper is non-owning. `NSScreen` has no init (factory/singleton ->
+        // `opaque`, no drop) so its array is safe; `NSWindow` has `initWith*`
+        // (owning -> drop releases) so a Vec of it would over-release the +0
+        // array elements and it must stay SKIPPED.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSScreen", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSWindow", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithFrame:", "instance": true,
+                      "loc": { "file": "test.h" }, "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "frame", "type": { "qualType": "NSRect" } }] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSApplication", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "screens", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<NSScreen *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "windows", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<NSWindow *> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // NSScreen: factory class -> opaque, and its array binds to a typed Vec.
+        assert!(out.contains("struct Screen {\n    opaque _obj: *u8,\n}"), "factory class is opaque:\n{out}");
+        assert!(out.contains("fn screens(this) -> vec::Vec[Screen]"), "factory-class array typed:\n{out}");
+        assert!(out.contains("out.append(Screen::from_raw("), "wraps each element:\n{out}");
+        // NSWindow: owning class -> its array stays skipped (no over-release).
+        assert!(out.contains("fn drop(ref this)"), "owning class has drop:\n{out}");
+        assert!(out.contains("// SKIPPED `windows`"), "owning-class array must skip:\n{out}");
+        assert!(!out.contains("Vec[Window]"), "owning class must not be a Vec element:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_id_param_with_collection_return_or_block_skips_not_breaks() {
+        // The `Vec[W] -> NSMutableArray` prologue is only built in the general
+        // path. A method that pairs an NSArray<id> param with a collection return
+        // or a block builds its body elsewhere and would reference an undefined
+        // `arr_<pname>` — those combos must SKIP, not emit broken code.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSScreen", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    // NSArray<id> param + NSArray return -> skip
+                    { "kind": "ObjCMethodDecl", "name": "filter:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<NSScreen *> * _Nonnull" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSScreen *> *" } }] },
+                    // NSArray<id> param + block -> skip
+                    { "kind": "ObjCMethodDecl", "name": "process:completion:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSScreen *> *" } },
+                        { "kind": "ParmVarDecl", "name": "completion", "type": { "qualType": "void (^)(void)" } } ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("// SKIPPED `filter:`: NSArray<id> param with a collection return not modelled"),
+            "collection-return combo must skip:\n{out}");
+        assert!(out.contains("// SKIPPED `process:completion:`: block method with an NSArray<id> param not modelled"),
+            "block combo must skip:\n{out}");
+        // And no dangling `arr_items` reference leaked into emitted code.
+        assert!(!out.contains("arr_items"), "no undefined array local emitted:\n{out}");
     }
 
     #[test]
