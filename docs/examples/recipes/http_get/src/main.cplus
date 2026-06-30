@@ -73,7 +73,7 @@ fn resolve_host(host: *u8) -> u32 {
     let b1: u32 = { first_addr[1 as usize] } as u32;
     let b2: u32 = { first_addr[2 as usize] } as u32;
     let b3: u32 = { first_addr[3 as usize] } as u32;
-    return b0| (b1 << (8 as u32))| (b2 << (16 as u32))| (b3 << (24 as u32));
+    return b0 | (b1 << (8 as u32)) | (b2 << (16 as u32)) | (b3 << (24 as u32));
 }
 
 fn main() -> i32 {

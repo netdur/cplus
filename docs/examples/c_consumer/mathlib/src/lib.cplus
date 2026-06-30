@@ -51,7 +51,7 @@ export extern fn add(a: i32, b: i32) -> i32 {
 }
 
 export extern fn negate(x: i32) -> i32 {
-    return - x;
+    return -x;
 }
 
 // ---- ≤8-byte aggregate (Point: 2×i32 = 8 bytes) ----

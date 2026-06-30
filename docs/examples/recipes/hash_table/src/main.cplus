@@ -129,7 +129,7 @@ fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
         slot = (slot +% (1 as usize)) % t.cap;
         if slot == start { break; }
     }
-    return - 1 as i32;
+    return -1 as i32;
 }
 
 fn table_free(t: Table) {
@@ -168,7 +168,7 @@ fn main() -> i32 {
     if get_str(t, "apple") != (10 as i32) { fails = fails +% (1 as i32); }
     if get_str(t, "banana") != (2 as i32) { fails = fails +% (1 as i32); }
     if get_str(t, "cherry") != (3 as i32) { fails = fails +% (1 as i32); }
-    if get_str(t, "grape") != (- 1 as i32) { fails = fails +% (1 as i32); }
+    if get_str(t, "grape") != (-1 as i32) { fails = fails +% (1 as i32); }
 
     if fails == (0 as i32) {
         let ok: str = "hash_table: 4/4 ok\n";

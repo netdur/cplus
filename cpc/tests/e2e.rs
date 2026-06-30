@@ -3399,15 +3399,36 @@ fn fmt_check_all_samples_clean() {
         .parent()
         .unwrap()
         .join("docs/examples");
+    // Only the hand-written example sources are the formatter's de facto spec.
+    // `docs/examples/projects/*/vendor/**` holds vendored dependency copies (the
+    // generated bindings, stdlib, etc.) so the example projects build hermetically
+    // — those are build artifacts, not authored samples, and the generator does not
+    // run its output through `cpc fmt`. Skip anything under a `vendor` segment.
+    fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|n| n.to_str()) == Some("vendor") {
+                    continue;
+                }
+                collect(&p, out);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("cplus") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(&root, &mut files);
+    assert!(!files.is_empty(), "no example .cplus files found under {root:?}");
     let out = Command::new(cpc)
         .arg("fmt")
         .arg("--check")
-        .arg(&root)
+        .args(&files)
         .output()
         .expect("invoke cpc fmt --check");
     assert!(
         out.status.success(),
-        "cpc fmt --check found drift in samples:\n{}",
+        "cpc fmt --check found drift in hand-written samples:\n{}",
         String::from_utf8_lossy(&out.stderr),
     );
 }
