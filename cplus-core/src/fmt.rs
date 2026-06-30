@@ -455,7 +455,38 @@ fn needs_space_between_ctx(
     if matches!(prev, Fn) && matches!(curr, LParen) {
         return false;
     }
+    // Unary `-` / `+` (negation / sign) hugs its operand: `return -1`, `f(a, -1)`,
+    // `x * -1`, `{ k: -1 }`. A sign is unary when an expression can START before it
+    // — i.e. the token two back does NOT end an operand. `a - 1` (prev_prev is an
+    // operand) stays binary and spaced; everything else (operator, opener, keyword,
+    // or start-of-input) makes the sign unary and tight against the operand.
+    if matches!(prev, Minus | Plus) && !ends_operand(prev_prev) {
+        return false;
+    }
     needs_space_between(prev, curr)
+}
+
+/// True if `t` is a token that ENDS an operand expression — after one of these a
+/// `-`/`+` is binary (subtraction / addition), otherwise it's a unary sign.
+fn ends_operand(t: Option<&TokenKind>) -> bool {
+    use TokenKind::*;
+    matches!(
+        t,
+        Some(
+            Ident(_)
+                | SelfLower
+                | SelfUpper
+                | Int(..)
+                | Float(..)
+                | Str(..)
+                | CStr(..)
+                | InterpStr(..)
+                | True
+                | False
+                | RParen
+                | RBracket
+        )
+    )
 }
 
 fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
@@ -709,6 +740,23 @@ mod tests {
         let wrapped = fmt("fn f() -> u64 {\n    let x: u64 = mask_a\n        | mask_b\n        | mask_c;\n    return x;\n}\n");
         assert!(wrapped.contains("| mask_b") && wrapped.contains("| mask_c"), "wrapped bitwise-or keeps space:\n{wrapped}");
         assert!(!wrapped.contains("|mask"), "no glued pipe:\n{wrapped}");
+    }
+
+    #[test]
+    fn unary_minus_is_tight_binary_minus_is_spaced() {
+        // A leading/sign `-` hugs its operand; subtraction between operands is spaced.
+        let out = fmt(concat!(
+            "fn f() -> i32 { return -1; }\n",
+            "fn g(a: i32, b: i32) -> i32 { return a-b; }\n",
+            "fn h(a: i32) -> i32 { return a * -1; }\n",
+            "fn k() -> i32 { let x: i32 = -5; return x-1; }\n",
+            "fn main() -> i32 { return 0; }\n",
+        ));
+        assert!(out.contains("return -1;"), "unary negative literal tight:\n{out}");
+        assert!(out.contains("return a - b;"), "binary subtraction spaced:\n{out}");
+        assert!(out.contains("return a * -1;"), "unary after operator tight:\n{out}");
+        assert!(out.contains("let x: i32 = -5;"), "unary after `=` tight:\n{out}");
+        assert!(out.contains("return x - 1;"), "binary after operand spaced:\n{out}");
     }
 
     #[test]
