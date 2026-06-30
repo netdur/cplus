@@ -61,6 +61,12 @@ pub struct ObjcEmitter {
     // or `NSArray<Foo *>` — bridges to `Vec[W]` only for these: a Vec of *owning*
     // wrappers would over-release the +0-borrowed array elements when it drops.
     non_owning_types: HashSet<String>,
+    // Wrapper names that are OWNING (interfaces with an `init`: `drop` releases the
+    // +1). An object-array RETURN of an owning element still binds to `Vec[W]`, but
+    // each element is `retain`ed on wrap so the +1 balances the wrapper's `drop`.
+    // (Owning array *params* stay skipped: iterating the Vec needs `at`, which is
+    // `T: Copy`-bound, and owning wrappers are non-Copy.)
+    owning_types: HashSet<String>,
     // By-value C structs (`typedef struct { … } MTLSize;`): ObjC name -> ordered
     // (field, C+ type). `used_value_structs` are the ones actually referenced (so
     // only those get a `#[repr(C)]` definition). `used_struct_shapes` are the
@@ -181,6 +187,7 @@ impl ObjcEmitter {
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
             non_owning_types: HashSet::new(),
+            owning_types: HashSet::new(),
             value_structs: HashMap::new(),
             used_value_structs: HashSet::new(),
             used_struct_shapes: HashSet::new(),
@@ -349,7 +356,10 @@ impl ObjcEmitter {
                 // Computed here (Pass 2a) so it's complete before any body emits.
                 let cats: &[serde_json::Value] =
                     categories.get(n).map(|v| v.as_slice()).unwrap_or(&[]);
-                if !interface_is_owned(itf, cats) {
+                if interface_is_owned(itf, cats) {
+                    // Owning: bindable as an array RETURN element (retain-on-wrap).
+                    self.owning_types.insert(ty);
+                } else {
                     self.non_owning_types.insert(ty);
                 }
             }
@@ -1304,6 +1314,14 @@ impl ObjcEmitter {
             };
             self.needs_vec = true;
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            // Array elements come back +0 (the array owns them). An owning wrapper's
+            // `drop` releases, so retain each on wrap to balance it; a non-owning
+            // wrapper has no `drop`, so wrap the +0 borrow directly.
+            let elem_handle = if self.owning_types.contains(elem_ty) {
+                "rt::retain(rt::msg_id_u64(arr, at_sel, i))".to_string()
+            } else {
+                "rt::msg_id_u64(arr, at_sel, i)".to_string()
+            };
             self.body.push_str(&format!(
                 "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
                  \x20       let arr: *u8 = {array_call};\n\
@@ -1312,7 +1330,7 @@ impl ObjcEmitter {
                  \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
                  \x20       var i: u64 = 0 as u64;\n\
                  \x20       while i < n {{\n\
-                 \x20           out.append({elem_ty}::from_raw(rt::msg_id_u64(arr, at_sel, i)));\n\
+                 \x20           out.append({elem_ty}::from_raw({elem_handle}));\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -1687,13 +1705,13 @@ impl ObjcEmitter {
         if self.is_string_array(base_ty) {
             return Ret::TextArray;
         }
-        // An object array whose element wrapper is non-owning -> `Vec[W]`:
-        // `NSArray<id<P>>` (protocol) or `NSArray<Foo *>` (factory/singleton class
-        // with no init). Owning class elements stay skipped (a Vec of them would
-        // over-release the +0 borrows).
+        // An object array RETURN binds to `Vec[W]` for any module-defined wrapper:
+        // non-owning elements (protocol / factory class) wrap +0 via `from_raw`;
+        // owning elements (class with init) are `retain`ed on wrap so the +1
+        // balances the wrapper's `drop` (the retain is emitted in the codegen).
         if let Some(elem) = array_element(base_ty) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.non_owning_types.contains(&w) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                     return Ret::ObjectArray(w);
                 }
             }
@@ -2667,8 +2685,8 @@ mod tests {
     #[test]
     fn nsarray_of_protocol_becomes_a_typed_vec() {
         // NSArray<id<P>> (P a non-owning protocol) -> Vec[P], wrapping each element.
-        // A class-element array stays skipped (its wrapper may be owning -> a Vec
-        // of owning wrappers would over-release +0-borrowed elements).
+        // An array whose element type is NOT declared in this module (MTLThing here)
+        // stays skipped — the wrapper must exist to be a typed Vec element.
         let tu = serde_json::json!({
             "inner": [
                 { "kind": "ObjCProtocolDecl", "name": "MTLBuffer", "loc": { "file": "test.h" }, "inner": [] },
@@ -2687,12 +2705,13 @@ mod tests {
     }
 
     #[test]
-    fn nsarray_of_factory_class_binds_but_owning_class_skips() {
-        // Class-element arrays (`NSArray<Foo *>`): bind to Vec[W] iff the element
-        // wrapper is non-owning. `NSScreen` has no init (factory/singleton ->
-        // `opaque`, no drop) so its array is safe; `NSWindow` has `initWith*`
-        // (owning -> drop releases) so a Vec of it would over-release the +0
-        // array elements and it must stay SKIPPED.
+    fn nsarray_class_element_returns_bind_factory_plain_owning_retains() {
+        // Class-element array RETURNS bind to Vec[W] for any module-defined wrapper.
+        // `NSScreen` (no init -> factory/singleton, `opaque`, no drop) wraps each +0
+        // element directly. `NSWindow` (has `initWith*` -> owning, `drop` releases)
+        // retains each element on wrap so the +1 balances the drop. An owning array
+        // *param* still skips: Vec iteration uses `at`, which is `T: Copy`-bound and
+        // owning wrappers are non-Copy.
         let tu = serde_json::json!({
             "inner": [
                 { "kind": "ObjCInterfaceDecl", "name": "NSScreen", "loc": { "file": "test.h" }, "inner": [] },
@@ -2704,18 +2723,22 @@ mod tests {
                     { "kind": "ObjCMethodDecl", "name": "screens", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "NSArray<NSScreen *> * _Nonnull" }, "inner": [] },
                     { "kind": "ObjCMethodDecl", "name": "windows", "instance": true, "loc": { "file": "test.h" },
-                      "returnType": { "qualType": "NSArray<NSWindow *> * _Nonnull" }, "inner": [] } ] },
+                      "returnType": { "qualType": "NSArray<NSWindow *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "setOrderedWindows:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "ordered", "type": { "qualType": "NSArray<NSWindow *> *" } }] } ] },
             ]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        // NSScreen: factory class -> opaque, and its array binds to a typed Vec.
-        assert!(out.contains("struct Screen {\n    opaque _obj: *u8,\n}"), "factory class is opaque:\n{out}");
-        assert!(out.contains("fn screens(this) -> vec::Vec[Screen]"), "factory-class array typed:\n{out}");
-        assert!(out.contains("out.append(Screen::from_raw("), "wraps each element:\n{out}");
-        // NSWindow: owning class -> its array stays skipped (no over-release).
-        assert!(out.contains("fn drop(ref this)"), "owning class has drop:\n{out}");
-        assert!(out.contains("// SKIPPED `windows`"), "owning-class array must skip:\n{out}");
-        assert!(!out.contains("Vec[Window]"), "owning class must not be a Vec element:\n{out}");
+        // Factory class: opaque wrapper, Vec[Screen] return, plain from_raw (no retain).
+        assert!(out.contains("struct Screen {\n    opaque _obj: *u8,\n}"), "factory class opaque:\n{out}");
+        assert!(out.contains("fn screens(this) -> vec::Vec[Screen]"), "factory-class array return:\n{out}");
+        assert!(out.contains("out.append(Screen::from_raw(rt::msg_id_u64("), "non-owning wrap, no retain:\n{out}");
+        // Owning class: Vec[Window] return, each element retained on wrap.
+        assert!(out.contains("fn windows(this) -> vec::Vec[Window]"), "owning-class array return binds:\n{out}");
+        assert!(out.contains("out.append(Window::from_raw(rt::retain(rt::msg_id_u64("), "owning wrap retains:\n{out}");
+        // Owning array PARAM still skips.
+        assert!(out.contains("// SKIPPED `setOrderedWindows:`"), "owning array param skips:\n{out}");
     }
 
     #[test]
