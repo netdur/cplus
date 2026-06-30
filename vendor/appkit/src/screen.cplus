@@ -239,7 +239,10 @@ impl Screen {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("lastDisplayUpdateTimestamp\0")));
     }
 
-    // SKIPPED `displayLinkWithTarget:selector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    }
+
     fn user_space_scale_factor(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("userSpaceScaleFactor\0")));
     }

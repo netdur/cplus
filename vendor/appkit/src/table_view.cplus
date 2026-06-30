@@ -693,8 +693,14 @@ impl TableView {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("clickedRow\0")));
     }
 
-    // SKIPPED `doubleAction`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn double_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("doubleAction\0")));
+    }
+
+    fn set_double_action(this, double_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDoubleAction:\0")), double_action);
+    }
+
     fn sort_descriptors(this) -> vec::Vec[SortDescriptor] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sortDescriptors\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

@@ -102,12 +102,15 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("deselectAll:\0")), sender);
     }
 
-    // SKIPPED `registerClass:forItemWithIdentifier:`: param `Class _Nullable` — unmapped type `Class`
+    fn register_class_for_item_with_identifier(this, item_class: *u8, identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerClass:forItemWithIdentifier:\0")), item_class, bridge::nsstring(identifier));
+    }
+
     fn register_nib_for_item_with_identifier(this, nib: Nib, identifier: str) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemWithIdentifier:\0")), nib.raw(), bridge::nsstring(identifier));
     }
 
-    // SKIPPED `registerClass:forSupplementaryViewOfKind:withIdentifier:`: param `Class _Nullable` — unmapped type `Class`
+    // SKIPPED `registerClass:forSupplementaryViewOfKind:withIdentifier:`: msgSend shape `void_id_id_id` not yet modelled
     // SKIPPED `registerNib:forSupplementaryViewOfKind:withIdentifier:`: msgSend shape `void_id_id_id` not yet modelled
     fn make_item_with_identifier_for_index_path(this, identifier: str, index_path: *u8) -> CollectionViewItem {
         return CollectionViewItem::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeItemWithIdentifier:forIndexPath:\0")), bridge::nsstring(identifier), index_path));

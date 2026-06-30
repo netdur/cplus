@@ -167,7 +167,10 @@ impl TextInput {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertText:\0")), string);
     }
 
-    // SKIPPED `doCommandBySelector:`: param `SEL _Null_unspecified` — unmapped type `SEL`
+    fn do_command_by_selector(this, selector: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
+    }
+
     fn set_marked_text_selected_range(this, string: *u8, sel_range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:\0")), string, sel_range);
     }

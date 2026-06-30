@@ -65,7 +65,10 @@ impl PopUpButton {
 
     fn from_raw(ptr: *u8) -> PopUpButton { return PopUpButton { _obj: ptr }; }
 
-    // SKIPPED `popUpButtonWithMenu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn pop_up_button_with_menu_target_action(menu: Menu, target: *u8, action: *u8) -> PopUpButton {
+        return PopUpButton { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("popUpButtonWithMenu:target:action:\0")), menu.raw(), target, action)) };
+    }
+
     fn pull_down_button_with_title_menu(title: str, menu: Menu) -> PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:menu:\0")), bridge::nsstring(title), menu.raw())) };
     }
@@ -119,7 +122,10 @@ impl PopUpButton {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), obj);
     }
 
-    // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    }
+
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
         return bridge::obj_option(obj);

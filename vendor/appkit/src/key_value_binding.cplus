@@ -58,8 +58,12 @@ impl BindingSelectionMarker {
         return BindingSelectionMarker { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `setDefaultPlaceholder:forMarker:onClass:withBinding:`: param `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `defaultPlaceholderForMarker:onClass:withBinding:`: param `Class _Nonnull` — unmapped type `Class`
+    // SKIPPED `setDefaultPlaceholder:forMarker:onClass:withBinding:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn default_placeholder_for_marker_on_class_with_binding(marker: BindingSelectionMarker, object_class: *u8, binding: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("defaultPlaceholderForMarker:onClass:withBinding:\0")), marker.raw(), object_class, bridge::nsstring(binding));
+        return bridge::obj_option(obj);
+    }
+
     fn multiple_values_selection_marker() -> *u8 {
         return rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("multipleValuesSelectionMarker\0")));
     }
@@ -95,7 +99,7 @@ impl Editor {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("commitEditing\0"))) != (0 as i8);
     }
 
-    // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
     fn commit_editing_and_return_error(this, error: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("commitEditingAndReturnError:\0")), error) != (0 as i8);
     }

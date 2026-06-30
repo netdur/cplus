@@ -113,7 +113,12 @@ impl GestureRecognizer {
 
     fn from_raw(ptr: *u8) -> GestureRecognizer { return GestureRecognizer { _obj: ptr }; }
 
-    // SKIPPED `initWithTarget:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn new(target: *u8, action: *u8) -> GestureRecognizer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGestureRecognizer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return GestureRecognizer { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")), target, action) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `locationInView:`: msgSend shape `point_id` not yet modelled
     fn target(this) -> option::Option[*u8] {
@@ -125,8 +130,14 @@ impl GestureRecognizer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    // SKIPPED `action`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     fn state(this) -> GestureRecognizerState {
         return gesture_recognizer_state_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0"))));
     }

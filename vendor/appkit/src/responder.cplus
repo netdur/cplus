@@ -105,7 +105,10 @@ impl Responder {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    }
+
     fn perform_key_equivalent(this, event: Event) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), event.raw()) != (0 as i8);
     }
@@ -251,7 +254,10 @@ impl Responder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("contextMenuKeyDown:\0")), event.raw());
     }
 
-    // SKIPPED `noResponderFor:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn no_responder_for(this, event_selector: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("noResponderFor:\0")), event_selector);
+    }
+
     fn become_first_responder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("becomeFirstResponder\0"))) != (0 as i8);
     }
@@ -299,7 +305,11 @@ impl Responder {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("wantsForwardedScrollEventsForAxis:\0")), event_gesture_axis_raw(axis)) != (0 as i8);
     }
 
-    // SKIPPED `supplementalTargetForAction:sender:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn supplemental_target_for_action_sender(this, action: *u8, sender: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("supplementalTargetForAction:sender:\0")), action, sender);
+        return bridge::obj_option(obj);
+    }
+
     fn next_responder(this) -> option::Option[Responder] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextResponder\0")));
         if obj == { 0 as *u8 } {
@@ -340,7 +350,7 @@ impl Responder {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")), responder.raw(), event.raw()) != (0 as i8);
     }
 
-    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
     fn present_error(this, error: Error) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
     }
@@ -384,7 +394,10 @@ impl StandardKeyBindingResponding {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertText:\0")), insert_string);
     }
 
-    // SKIPPED `doCommandBySelector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn do_command_by_selector(this, selector: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
+    }
+
     fn move_forward(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("moveForward:\0")), sender);
     }

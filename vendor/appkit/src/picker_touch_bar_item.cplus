@@ -83,8 +83,8 @@ impl PickerTouchBarItem {
 
     fn from_raw(ptr: *u8) -> PickerTouchBarItem { return PickerTouchBarItem { _obj: ptr }; }
 
-    // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:`: msgSend shape `id_id_id_i64_id_id` not yet modelled
+    // SKIPPED `pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:`: msgSend shape `id_id_id_i64_id_id` not yet modelled
     fn set_image_at_index(this, image: Image, index: i64) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:atIndex:\0")), image.raw(), index);
     }
@@ -188,8 +188,14 @@ impl PickerTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    // SKIPPED `action`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     fn is_enabled(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEnabled\0"))) != (0 as i8);
     }

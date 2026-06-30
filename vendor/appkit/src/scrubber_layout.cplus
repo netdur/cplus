@@ -137,7 +137,10 @@ impl ScrubberLayout {
 
     // SKIPPED `layoutAttributesForItemsInRect:`: return `NSSet<__kindof NSScrubberLayoutAttributes *> * _Nonnull` — generic collection
     // SKIPPED `shouldInvalidateLayoutForChangeFromVisibleRect:toVisibleRect:`: msgSend shape `i8_rect_rect` not yet modelled
-    // SKIPPED `layoutAttributesClass`: return `Class _Nonnull` — unmapped type `Class`
+    fn layout_attributes_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSScrubberLayout\0")), rt::sel(#str_ptr("layoutAttributesClass\0")));
+    }
+
     fn scrubber(this) -> option::Option[Scrubber] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("scrubber\0")));
         if obj == { 0 as *u8 } {

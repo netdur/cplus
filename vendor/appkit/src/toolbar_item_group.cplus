@@ -59,7 +59,7 @@ impl ToolbarItemGroup {
 
     fn from_raw(ptr: *u8) -> ToolbarItemGroup { return ToolbarItemGroup { _obj: ptr }; }
 
-    // SKIPPED `groupWithItemIdentifier:titles:selectionMode:labels:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `groupWithItemIdentifier:titles:selectionMode:labels:target:action:`: msgSend shape `id_id_id_i64_id_id_id` not yet modelled
     // SKIPPED `groupWithItemIdentifier:images:selectionMode:labels:target:action:`: param `NSArray<NSImage *> * _Nonnull` — generic collection
     fn set_selected_at_index(this, selected: bool, index: i64) {
         rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setSelected:atIndex:\0")), selected as i8, index);

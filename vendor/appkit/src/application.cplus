@@ -427,7 +427,7 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reportException:\0")), exception.raw());
     }
 
-    // SKIPPED `detachDrawingThread:toTarget:withObject:`: param `SEL _Nonnull` — unmapped type `SEL`
+    // SKIPPED `detachDrawingThread:toTarget:withObject:`: msgSend shape `void_id_id_id` not yet modelled
     fn reply_to_application_should_terminate(this, should_terminate: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("replyToApplicationShouldTerminate:\0")), should_terminate as i8);
     }
@@ -582,10 +582,24 @@ impl Application {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `sendAction:to:from:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `targetForAction:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `targetForAction:to:from:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn send_action_to_from(this, action: *u8, target: *u8, sender: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("sendAction:to:from:\0")), action, target, sender) != (0 as i8);
+    }
+
+    fn target_for_action(this, action: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("targetForAction:\0")), action);
+        return bridge::obj_option(obj);
+    }
+
+    fn target_for_action_to_from(this, action: *u8, target: *u8, sender: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("targetForAction:to:from:\0")), action, target, sender);
+        return bridge::obj_option(obj);
+    }
+
+    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    }
+
     fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
@@ -696,7 +710,7 @@ impl Application {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("application:printFiles:\0")), sender.raw(), bridge::nsarray_of_text(filenames));
     }
 
-    // SKIPPED `beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
     fn end_sheet(this, sheet: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet.raw());
     }
@@ -705,7 +719,14 @@ impl Application {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("endSheet:returnCode:\0")), sheet.raw(), return_code);
     }
 
-    // SKIPPED `makeWindowsPerform:inOrder:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn make_windows_perform_in_order(this, selector: *u8, in_order: bool) -> option::Option[Window] {
+        let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("makeWindowsPerform:inOrder:\0")), selector, in_order as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[Window]::None;
+        }
+        return option::some(Window::from_raw(obj));
+    }
+
     fn context(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("context\0")));
     }

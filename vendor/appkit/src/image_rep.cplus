@@ -187,12 +187,30 @@ impl ImageRep {
     // SKIPPED `drawAtPoint:`: msgSend shape `i8_point` not yet modelled
     // SKIPPED `drawInRect:`: msgSend shape `i8_rect` not yet modelled
     // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `registerImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `unregisterImageRepClass:`: param `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `imageRepClassForFileType:`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `imageRepClassForPasteboardType:`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `imageRepClassForType:`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `imageRepClassForData:`: return `Class _Nullable` — unmapped type `Class`
+    fn register_image_rep_class(image_rep_class: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("registerImageRepClass:\0")), image_rep_class);
+    }
+
+    fn unregister_image_rep_class(image_rep_class: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("unregisterImageRepClass:\0")), image_rep_class);
+    }
+
+    fn image_rep_class_for_file_type(type_: str) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepClassForFileType:\0")), bridge::nsstring(type_));
+    }
+
+    fn image_rep_class_for_pasteboard_type(type_: str) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepClassForPasteboardType:\0")), bridge::nsstring(type_));
+    }
+
+    fn image_rep_class_for_type(type_: str) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepClassForType:\0")), bridge::nsstring(type_));
+    }
+
+    fn image_rep_class_for_data(data: *u8) -> *u8 {
+        return rt::msg_id_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageRepClassForData:\0")), data);
+    }
+
     fn can_init_with_data(data: *u8) -> bool {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("canInitWithData:\0")), data) != (0 as i8);
     }

@@ -1372,7 +1372,10 @@ impl View {
     // SKIPPED `addTrackingRect:owner:userData:assumeInside:`: return `NSTrackingRectTag` — unmapped type `NSTrackingRectTag`
     // SKIPPED `removeTrackingRect:`: param `NSTrackingRectTag` — unmapped type `NSTrackingRectTag`
     // SKIPPED `trackingAreas`: return `API_AVAILABLE NSArray<NSTrackingArea *> *` — generic collection
-    // SKIPPED `displayLinkWithTarget:selector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    }
+
     // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: msgSend shape `void_id_point_size_id_id_id_i8` not yet modelled
     // SKIPPED `dragFile:fromRect:slideBack:event:`: msgSend shape `i8_id_rect_i8_id` not yet modelled
     // SKIPPED `dragPromisedFilesOfTypes:fromRect:source:slideBack:event:`: msgSend shape `i8_id_rect_id_i8_id` not yet modelled

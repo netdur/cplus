@@ -67,9 +67,9 @@ impl ComboButton {
 
     fn from_raw(ptr: *u8) -> ComboButton { return ComboButton { _obj: ptr }; }
 
-    // SKIPPED `comboButtonWithTitle:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `comboButtonWithImage:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `comboButtonWithTitle:image:menu:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `comboButtonWithTitle:menu:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
+    // SKIPPED `comboButtonWithImage:menu:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
+    // SKIPPED `comboButtonWithTitle:image:menu:target:action:`: msgSend shape `id_id_id_id_id_id` not yet modelled
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);

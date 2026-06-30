@@ -371,7 +371,7 @@ impl SegmentedControl {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderShape:\0")), control_border_shape_raw(border_shape));
     }
 
-    // SKIPPED `segmentedControlWithLabels:trackingMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `segmentedControlWithLabels:trackingMode:target:action:`: msgSend shape `id_id_i64_id_id` not yet modelled
+    // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: msgSend shape `id_id_i64_id_id` not yet modelled
 }
 

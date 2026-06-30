@@ -188,8 +188,11 @@ impl Slider {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsTickMarkValuesOnly:\0")), allows_tick_mark_values_only as i8);
     }
 
-    // SKIPPED `sliderWithTarget:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `sliderWithValue:minValue:maxValue:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn slider_with_target_action(target: *u8, action: *u8) -> Slider {
+        return Slider { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSlider\0")), rt::sel(#str_ptr("sliderWithTarget:action:\0")), target, action) };
+    }
+
+    // SKIPPED `sliderWithValue:minValue:maxValue:target:action:`: msgSend shape `id_f64_f64_f64_id_id` not yet modelled
     fn set_title_cell(this, cell: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleCell:\0")), cell);
     }

@@ -124,8 +124,14 @@ impl ObjectController {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutomaticallyPreparesContent:\0")), automatically_prepares_content as i8);
     }
 
-    // SKIPPED `objectClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `setObjectClass:`: param `Class _Nullable` — unmapped type `Class`
+    fn object_class(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("objectClass\0")));
+    }
+
+    fn set_object_class(this, object_class: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectClass:\0")), object_class);
+    }
+
     fn is_editable(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8);
     }

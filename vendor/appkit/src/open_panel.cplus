@@ -113,8 +113,8 @@ impl OpenPanel {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("filenames\0")));
     }
 
-    // SKIPPED `beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `beginForDirectory:file:types:modelessDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id_id_id` not yet modelled
+    // SKIPPED `beginForDirectory:file:types:modelessDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id_id` not yet modelled
     // SKIPPED `runModalForDirectory:file:types:`: msgSend shape `i64_id_id_id` not yet modelled
     fn run_modal_for_types(this, file_types: *u8) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalForTypes:\0")), file_types);

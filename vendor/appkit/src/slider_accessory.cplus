@@ -28,7 +28,10 @@ impl SliderAccessoryBehavior {
 
     fn from_raw(ptr: *u8) -> SliderAccessoryBehavior { return SliderAccessoryBehavior { _obj: ptr }; }
 
-    // SKIPPED `behaviorWithTarget:action:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn behavior_with_target_action(target: *u8, action: *u8) -> SliderAccessoryBehavior {
+        return SliderAccessoryBehavior { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSliderAccessoryBehavior\0")), rt::sel(#str_ptr("behaviorWithTarget:action:\0")), target, action) };
+    }
+
     // SKIPPED `behaviorWithHandler:`: block method with non-void return
     fn handle_action(this, sender: SliderAccessory) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("handleAction:\0")), sender.raw());

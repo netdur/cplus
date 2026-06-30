@@ -144,8 +144,11 @@ impl Menu {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItem:\0")), new_item);
     }
 
-    // SKIPPED `insertItemWithTitle:action:keyEquivalent:atIndex:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `addItemWithTitle:action:keyEquivalent:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `insertItemWithTitle:action:keyEquivalent:atIndex:`: msgSend shape `id_id_id_id_i64` not yet modelled
+    fn add_item_with_title_action_key_equivalent(this, string: str, selector: *u8, char_code: str) -> *u8 {
+        return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:action:keyEquivalent:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code));
+    }
+
     fn remove_item_at_index(this, index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeItemAtIndex:\0")), index);
     }
@@ -187,7 +190,10 @@ impl Menu {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithSubmenu:\0")), submenu.raw());
     }
 
-    // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    }
+
     fn item_with_title(this, title: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemWithTitle:\0")), bridge::nsstring(title));
         return bridge::obj_option(obj);

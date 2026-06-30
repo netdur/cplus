@@ -247,7 +247,10 @@ impl Control {
     }
 
     // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
-    // SKIPPED `sendAction:to:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn send_action_to(this, action: *u8, target: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("sendAction:to:\0")), action, target) != (0 as i8);
+    }
+
     fn take_int_value_from(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("takeIntValueFrom:\0")), sender);
     }
@@ -293,8 +296,14 @@ impl Control {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    // SKIPPED `action`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     fn tag(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
@@ -533,8 +542,14 @@ impl Control {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectCell:\0")), cell.raw());
     }
 
-    // SKIPPED `cellClass`: return `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `setCellClass:`: param `Class _Nullable` — unmapped type `Class`
+    fn cell_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSControl\0")), rt::sel(#str_ptr("cellClass\0")));
+    }
+
+    fn set_cell_class(cell_class: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSControl\0")), rt::sel(#str_ptr("setCellClass:\0")), cell_class);
+    }
+
     fn cell(this) -> option::Option[Cell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("cell\0")));
         if obj == { 0 as *u8 } {

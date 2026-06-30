@@ -125,7 +125,10 @@ impl Scrubber {
         return option::some(ScrubberItemView::from_raw(obj));
     }
 
-    // SKIPPED `registerClass:forItemIdentifier:`: param `Class _Nullable` — unmapped type `Class`
+    fn register_class_for_item_identifier(this, item_view_class: *u8, item_identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerClass:forItemIdentifier:\0")), item_view_class, bridge::nsstring(item_identifier));
+    }
+
     fn register_nib_for_item_identifier(this, nib: Nib, item_identifier: str) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemIdentifier:\0")), nib.raw(), bridge::nsstring(item_identifier));
     }

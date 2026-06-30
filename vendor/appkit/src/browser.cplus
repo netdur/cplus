@@ -90,7 +90,10 @@ impl Browser {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadColumnZero\0")));
     }
 
-    // SKIPPED `setCellClass:`: param `Class _Nonnull` — unmapped type `Class`
+    fn set_cell_class(this, factory_id: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCellClass:\0")), factory_id);
+    }
+
     fn item_at_index_path(this, index_path: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemAtIndexPath:\0")), index_path);
         return bridge::obj_option(obj);
@@ -264,13 +267,22 @@ impl Browser {
         rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("editItemAtIndexPath:withEvent:select:\0")), index_path, event, select as i8);
     }
 
-    // SKIPPED `cellClass`: return `Class _Nonnull` — unmapped type `Class`
+    fn cell_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSBrowser\0")), rt::sel(#str_ptr("cellClass\0")));
+    }
+
     fn is_loaded(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isLoaded\0"))) != (0 as i8);
     }
 
-    // SKIPPED `doubleAction`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn double_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("doubleAction\0")));
+    }
+
+    fn set_double_action(this, double_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDoubleAction:\0")), double_action);
+    }
+
     fn cell_prototype(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("cellPrototype\0")));
     }
@@ -518,8 +530,14 @@ impl Browser {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateScroller\0")));
     }
 
-    // SKIPPED `setMatrixClass:`: param `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `matrixClass`: return `Class _Nonnull` — unmapped type `Class`
+    fn set_matrix_class(this, factory_id: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMatrixClass:\0")), factory_id);
+    }
+
+    fn matrix_class(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("matrixClass\0")));
+    }
+
     fn column_of_matrix(this, matrix: Matrix) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("columnOfMatrix:\0")), matrix.raw());
     }

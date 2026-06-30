@@ -190,7 +190,10 @@ impl PathCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    // SKIPPED `pathComponentCellClass`: return `Class _Nonnull` — unmapped type `Class`
+    fn path_component_cell_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSPathCell\0")), rt::sel(#str_ptr("pathComponentCellClass\0")));
+    }
+
     // SKIPPED `pathComponentCells`: return `NSArray<__kindof NSPathComponentCell *> * _Nonnull` — generic collection
     // SKIPPED `setPathComponentCells:`: param `NSArray<__kindof NSPathComponentCell *> * _Nonnull` — generic collection
     fn clicked_path_component_cell(this) -> option::Option[PathComponentCell] {
@@ -201,8 +204,14 @@ impl PathCell {
         return option::some(PathComponentCell::from_raw(obj));
     }
 
-    // SKIPPED `doubleAction`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn double_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("doubleAction\0")));
+    }
+
+    fn set_double_action(this, double_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDoubleAction:\0")), double_action);
+    }
+
     fn background_color(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
         return bridge::obj_option(obj);

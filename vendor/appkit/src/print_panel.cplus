@@ -114,7 +114,7 @@ impl PrintPanel {
     }
 
     // SKIPPED `beginSheetUsingPrintInfo:onWindow:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
     fn run_modal_with_print_info(this, print_info: PrintInfo) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalWithPrintInfo:\0")), print_info.raw());
     }

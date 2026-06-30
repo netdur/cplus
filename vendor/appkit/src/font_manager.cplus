@@ -118,8 +118,14 @@ impl FontManager {
 
     fn from_raw(ptr: *u8) -> FontManager { return FontManager { _obj: ptr }; }
 
-    // SKIPPED `setFontPanelFactory:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `setFontManagerFactory:`: param `Class _Nullable` — unmapped type `Class`
+    fn set_font_panel_factory(factory_id: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSFontManager\0")), rt::sel(#str_ptr("setFontPanelFactory:\0")), factory_id);
+    }
+
+    fn set_font_manager_factory(factory_id: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSFontManager\0")), rt::sel(#str_ptr("setFontManagerFactory:\0")), factory_id);
+    }
+
     fn set_selected_font_is_multiple(this, font_obj: Font, flag: bool) {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setSelectedFont:isMultiple:\0")), font_obj.raw(), flag as i8);
     }
@@ -256,8 +262,14 @@ impl FontManager {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setEnabled:\0")), enabled as i8);
     }
 
-    // SKIPPED `action`: return `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     // SKIPPED `delegate`: return `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
     // SKIPPED `setDelegate:`: param `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
     fn collection_names(this) -> *u8 {

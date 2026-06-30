@@ -30,6 +30,51 @@ fn border_type_from_raw(raw: i64) -> BorderType {
     return BorderType::NSNoBorder;
 }
 
+// `NSControlSize` (NS_ENUM)
+enum ControlSize {
+    Regular,
+    Small,
+    Mini,
+    Large,
+    ExtraLarge,
+}
+
+fn control_size_raw(v: ControlSize) -> i64 {
+    return match v {
+        ControlSize::Regular => { 0 as i64 },
+        ControlSize::Small => { 1 as i64 },
+        ControlSize::Mini => { 2 as i64 },
+        ControlSize::Large => { 3 as i64 },
+        ControlSize::ExtraLarge => { 4 as i64 },
+    };
+}
+
+fn control_size_from_raw(raw: i64) -> ControlSize {
+    if raw == (1 as i64) { return ControlSize::Small; }
+    if raw == (2 as i64) { return ControlSize::Mini; }
+    if raw == (3 as i64) { return ControlSize::Large; }
+    if raw == (4 as i64) { return ControlSize::ExtraLarge; }
+    return ControlSize::Regular;
+}
+
+// `NSScrollerStyle` (NS_ENUM)
+enum ScrollerStyle {
+    Legacy,
+    Overlay,
+}
+
+fn scroller_style_raw(v: ScrollerStyle) -> i64 {
+    return match v {
+        ScrollerStyle::Legacy => { 0 as i64 },
+        ScrollerStyle::Overlay => { 1 as i64 },
+    };
+}
+
+fn scroller_style_from_raw(raw: i64) -> ScrollerStyle {
+    if raw == (1 as i64) { return ScrollerStyle::Overlay; }
+    return ScrollerStyle::Legacy;
+}
+
 // `NSEventGestureAxis` (NS_ENUM)
 enum EventGestureAxis {
     None,
@@ -49,24 +94,6 @@ fn event_gesture_axis_from_raw(raw: i64) -> EventGestureAxis {
     if raw == (1 as i64) { return EventGestureAxis::Horizontal; }
     if raw == (2 as i64) { return EventGestureAxis::Vertical; }
     return EventGestureAxis::None;
-}
-
-// `NSScrollerStyle` (NS_ENUM)
-enum ScrollerStyle {
-    Legacy,
-    Overlay,
-}
-
-fn scroller_style_raw(v: ScrollerStyle) -> i64 {
-    return match v {
-        ScrollerStyle::Legacy => { 0 as i64 },
-        ScrollerStyle::Overlay => { 1 as i64 },
-    };
-}
-
-fn scroller_style_from_raw(raw: i64) -> ScrollerStyle {
-    if raw == (1 as i64) { return ScrollerStyle::Overlay; }
-    return ScrollerStyle::Legacy;
 }
 
 // `NSScrollerKnobStyle` (NS_ENUM)
@@ -211,8 +238,8 @@ impl ScrollView {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
-    // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: param `Class _Nullable` — unmapped type `Class`
+    // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: msgSend shape `size_size_id_id_i64_i64_i64` not yet modelled
+    // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: msgSend shape `size_size_id_id_i64_i64_i64` not yet modelled
     // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: msgSend shape `size_size_i8_i8_i64` not yet modelled
     // SKIPPED `contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: msgSend shape `size_size_i8_i8_i64` not yet modelled
     fn tile(this) {
@@ -498,8 +525,14 @@ impl ScrollView {
         objc_msg_scroll_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setScrollerInsets:\0")), scroller_insets);
     }
 
-    // SKIPPED `rulerViewClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `setRulerViewClass:`: param `Class _Nullable` — unmapped type `Class`
+    fn ruler_view_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("rulerViewClass\0")));
+    }
+
+    fn set_ruler_view_class(ruler_view_class: *u8) {
+        rt::msg_void_id(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("setRulerViewClass:\0")), ruler_view_class);
+    }
+
     fn rulers_visible(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("rulersVisible\0"))) != (0 as i8);
     }

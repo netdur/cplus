@@ -955,7 +955,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("zoom:\0")), sender);
     }
 
-    // SKIPPED `tryToPerform:with:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    }
+
     fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
@@ -1985,7 +1988,10 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unregisterDraggedTypes\0")));
     }
 
-    // SKIPPED `displayLinkWithTarget:selector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    }
+
     fn cache_image_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("cacheImageInRect:\0")), rect);
     }

@@ -84,7 +84,10 @@ impl TextInputClient {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("insertText:replacementRange:\0")), string, replacement_range);
     }
 
-    // SKIPPED `doCommandBySelector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn do_command_by_selector(this, selector: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
+    }
+
     // SKIPPED `setMarkedText:selectedRange:replacementRange:`: msgSend shape `void_id_range_range` not yet modelled
     fn unmark_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unmarkText\0")));

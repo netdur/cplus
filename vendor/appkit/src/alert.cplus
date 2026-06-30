@@ -249,7 +249,7 @@ impl Alert {
     }
 
     // SKIPPED `alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:`: msgSend shape `id_id_id_id_id_id` not yet modelled
-    // SKIPPED `beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
 }
 
 // `NSAlertDelegate` delegate protocol -> runtime class-synthesis helper.

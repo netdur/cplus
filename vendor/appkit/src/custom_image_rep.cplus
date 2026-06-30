@@ -19,7 +19,10 @@ impl CustomImageRep {
     // SKIPPED `initWithSize:flipped:drawingHandler:`: block method with non-void return
     // SKIPPED `initWithDrawSelector:delegate:`: extra init variant (one `new` per type)
     // SKIPPED `drawingHandler`: return `API_AVAILABLE BOOL (^)(NSRect)` — block
-    // SKIPPED `drawSelector`: return `SEL _Nullable` — unmapped type `SEL`
+    fn draw_selector(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("drawSelector\0")));
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);

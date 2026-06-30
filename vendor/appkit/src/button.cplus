@@ -291,11 +291,23 @@ impl Button {
 
     fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
-    // SKIPPED `buttonWithTitle:image:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `buttonWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `buttonWithImage:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `checkboxWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `radioButtonWithTitle:target:action:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `buttonWithTitle:image:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn button_with_title_target_action(title: str, target: *u8, action: *u8) -> Button {
+        return Button { _obj: rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("buttonWithTitle:target:action:\0")), bridge::nsstring(title), target, action) };
+    }
+
+    fn button_with_image_target_action(image: *u8, target: *u8, action: *u8) -> Button {
+        return Button { _obj: rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("buttonWithImage:target:action:\0")), image, target, action) };
+    }
+
+    fn checkbox_with_title_target_action(title: str, target: *u8, action: *u8) -> Button {
+        return Button { _obj: rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("checkboxWithTitle:target:action:\0")), bridge::nsstring(title), target, action) };
+    }
+
+    fn radio_button_with_title_target_action(title: str, target: *u8, action: *u8) -> Button {
+        return Button { _obj: rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("radioButtonWithTitle:target:action:\0")), bridge::nsstring(title), target, action) };
+    }
+
     fn set_button_type(this, type_: ButtonType) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setButtonType:\0")), button_type_raw(type_));
     }

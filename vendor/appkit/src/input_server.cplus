@@ -41,7 +41,10 @@ impl InputServiceProvider {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertText:client:\0")), string, sender);
     }
 
-    // SKIPPED `doCommandBySelector:client:`: param `SEL _Null_unspecified` — unmapped type `SEL`
+    fn do_command_by_selector_client(this, selector: *u8, sender: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:client:\0")), selector, sender);
+    }
+
     fn marked_text_abandoned(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("markedTextAbandoned:\0")), sender);
     }

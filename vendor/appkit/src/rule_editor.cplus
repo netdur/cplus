@@ -262,8 +262,14 @@ impl RuleEditor {
         return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowIndexes\0"))));
     }
 
-    // SKIPPED `rowClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `setRowClass:`: param `Class _Nonnull` — unmapped type `Class`
+    fn row_class(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("rowClass\0")));
+    }
+
+    fn set_row_class(this, row_class: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRowClass:\0")), row_class);
+    }
+
     fn row_type_key_path(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rowTypeKeyPath\0")));
         return bridge::to_text(ns);

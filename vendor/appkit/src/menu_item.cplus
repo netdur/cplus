@@ -99,7 +99,12 @@ impl MenuItem {
         return MenuItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("sectionHeaderWithTitle:\0")), bridge::nsstring(title))) };
     }
 
-    // SKIPPED `initWithTitle:action:keyEquivalent:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn new(string: str, selector: *u8, char_code: str) -> MenuItem {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMenuItem\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return MenuItem { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithTitle:action:keyEquivalent:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code)) };
+    }
+
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     fn uses_user_key_equivalents() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("usesUserKeyEquivalents\0"))) != (0 as i8);
@@ -300,8 +305,14 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    // SKIPPED `action`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     fn tag(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }

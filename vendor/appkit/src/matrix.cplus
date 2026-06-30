@@ -64,8 +64,14 @@ impl Matrix {
         return rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, col);
     }
 
-    // SKIPPED `sendAction:to:forAllCells:`: param `SEL _Nonnull` — unmapped type `SEL`
-    // SKIPPED `sortUsingSelector:`: param `SEL _Nonnull` — unmapped type `SEL`
+    fn send_action_to_for_all_cells(this, selector: *u8, object: *u8, flag: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("sendAction:to:forAllCells:\0")), selector, object, flag as i8);
+    }
+
+    fn sort_using_selector(this, comparator: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("sortUsingSelector:\0")), comparator);
+    }
+
     // SKIPPED `sortUsingFunction:context:`: param `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)` — unmapped type `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)`
     // SKIPPED `setSelectionFrom:to:anchor:highlight:`: msgSend shape `void_i64_i64_i64_i8` not yet modelled
     fn deselect_selected_cell(this) {
@@ -225,8 +231,14 @@ impl Matrix {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `cellClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `setCellClass:`: param `Class _Nonnull` — unmapped type `Class`
+    fn cell_class(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("cellClass\0")));
+    }
+
+    fn set_cell_class(this, cell_class: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCellClass:\0")), cell_class);
+    }
+
     fn prototype(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("prototype\0")));
         return bridge::obj_option(obj);
@@ -335,8 +347,14 @@ impl Matrix {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfColumns\0")));
     }
 
-    // SKIPPED `doubleAction`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setDoubleAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn double_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("doubleAction\0")));
+    }
+
+    fn set_double_action(this, double_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDoubleAction:\0")), double_action);
+    }
+
     fn autosizes_cells(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autosizesCells\0"))) != (0 as i8);
     }

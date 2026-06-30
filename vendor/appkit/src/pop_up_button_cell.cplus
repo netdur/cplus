@@ -136,7 +136,10 @@ impl PopUpButtonCell {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), obj);
     }
 
-    // SKIPPED `indexOfItemWithTarget:andAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    }
+
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemAtIndex:\0")), index);
         return bridge::obj_option(obj);

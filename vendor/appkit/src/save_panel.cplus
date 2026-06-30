@@ -377,7 +377,7 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRequiredFileType:\0")), bridge::nsstring(type_));
     }
 
-    // SKIPPED `beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id_id` not yet modelled
     fn run_modal_for_directory_file(this, path: str, name: str) -> i64 {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalForDirectory:file:\0")), bridge::nsstring(path), bridge::nsstring(name));
     }

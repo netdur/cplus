@@ -168,8 +168,14 @@ impl ToolbarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    // SKIPPED `action`: return `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
     fn is_enabled(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isEnabled\0"))) != (0 as i8);
     }

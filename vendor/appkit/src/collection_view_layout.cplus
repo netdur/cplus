@@ -275,7 +275,10 @@ impl CollectionViewLayout {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutWithContext:\0")), context.raw());
     }
 
-    // SKIPPED `registerClass:forDecorationViewOfKind:`: param `Class _Nullable` — unmapped type `Class`
+    fn register_class_for_decoration_view_of_kind(this, view_class: *u8, element_kind: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerClass:forDecorationViewOfKind:\0")), view_class, bridge::nsstring(element_kind));
+    }
+
     fn register_nib_for_decoration_view_of_kind(this, nib: Nib, element_kind: str) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forDecorationViewOfKind:\0")), nib.raw(), bridge::nsstring(element_kind));
     }
@@ -344,8 +347,14 @@ impl CollectionViewLayout {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("targetContentOffsetForProposedContentOffset:\0")), proposed_content_offset);
     }
 
-    // SKIPPED `layoutAttributesClass`: return `Class _Nonnull` — unmapped type `Class`
-    // SKIPPED `invalidationContextClass`: return `Class _Nonnull` — unmapped type `Class`
+    fn layout_attributes_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSCollectionViewLayout\0")), rt::sel(#str_ptr("layoutAttributesClass\0")));
+    }
+
+    fn invalidation_context_class() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSCollectionViewLayout\0")), rt::sel(#str_ptr("invalidationContextClass\0")));
+    }
+
     fn collection_view_content_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("collectionViewContentSize\0")));
     }

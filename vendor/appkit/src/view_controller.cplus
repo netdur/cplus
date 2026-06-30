@@ -135,7 +135,7 @@ impl ViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadViewIfNeeded\0")));
     }
 
-    // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `commitEditingWithDelegate:didCommitSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
     fn commit_editing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("commitEditing\0"))) != (0 as i8);
     }

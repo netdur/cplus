@@ -102,7 +102,10 @@ impl ColorPanel {
         rt::msg_void_i64(rt::get_class(#str_ptr("NSColorPanel\0")), rt::sel(#str_ptr("setPickerMode:\0")), color_panel_mode_raw(mode));
     }
 
-    // SKIPPED `setAction:`: param `SEL _Nullable` — unmapped type `SEL`
+    fn set_action(this, selector: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), selector);
+    }
+
     fn set_target(this, target: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }

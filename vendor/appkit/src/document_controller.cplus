@@ -209,14 +209,14 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveAllDocuments:\0")), sender);
     }
 
-    // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
-    // SKIPPED `closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: msgSend shape `void_id_i8_id_id_id` not yet modelled
+    // SKIPPED `closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
     // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: msgSend shape `id_id_i8_id_id` not yet modelled
     fn standard_share_menu_item(this) -> MenuItem {
         return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
-    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: param `SEL _Nullable` — unmapped type `SEL`
+    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
     fn present_error(this, error: Error) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
     }
@@ -242,7 +242,10 @@ impl DocumentController {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `documentClassForType:`: return `Class _Nullable` — unmapped type `Class`
+    fn document_class_for_type(this, type_name: str) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentClassForType:\0")), bridge::nsstring(type_name));
+    }
+
     fn display_name_for_type(this, type_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("displayNameForType:\0")), bridge::nsstring(type_name));
         return bridge::to_text_option(ns);
