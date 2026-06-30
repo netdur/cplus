@@ -3715,6 +3715,65 @@ fn test_attribute_on_struct_rejected_e0356() {
     assert!(stderr.contains("E0356"), "expected E0356, got: {stderr}");
 }
 
+/// extern fns share one unqualified name space (they bind a literal C symbol),
+/// so two declarations of the same name with DIFFERENT signatures would silently
+/// bind one to the wrong prototype. Sema rejects the mismatch with E0357 instead.
+#[test]
+fn test_conflicting_extern_signature_rejected_e0357() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "extern fn sym(x: i32) -> i32;\nextern fn sym(x: i32) -> i64;\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure for conflicting extern sigs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0357"), "expected E0357, got: {stderr}");
+}
+
+/// The flip side of E0357: re-declaring the same extern symbol with an IDENTICAL
+/// signature is allowed (several stdlib modules each declare `extern fn write` to
+/// reach libc). The duplicate is deduped silently — the build must succeed.
+#[test]
+fn test_matching_extern_redeclaration_allowed() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ok.cplus");
+    std::fs::write(
+        &src,
+        "extern fn sym(x: i32) -> i64;\nextern fn sym(x: i32) -> i64;\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ok");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "matching extern re-decl should compile, got: {stderr}");
+}
+
+/// E0357 compares the *effective* linker symbol, not the raw `#[link_name]`:
+/// a bare `extern fn sym` (symbol = source name) and `#[link_name = "sym"] extern
+/// fn sym` denote the SAME symbol, so with matching sigs they dedup, not clash.
+/// (This is the real objc/runtime vs objc/synthesis associated-object pattern.)
+#[test]
+fn test_extern_bare_and_explicit_same_symbol_allowed() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ok.cplus");
+    std::fs::write(
+        &src,
+        "extern fn sym(x: i32) -> i32;\n#[link_name = \"sym\"]\nextern fn sym(x: i32) -> i32;\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ok");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "bare + explicit-same-symbol extern should compile, got: {stderr}");
+}
+
 /// Phase 5 slice 5ATTR.2 — sema rejects a `#[test]` function with the wrong
 /// signature. The two accepted shapes are `fn()` and `fn() -> i32`; anything
 /// else is E0358. Drives the full pipeline through `cpc build`.

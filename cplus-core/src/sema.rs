@@ -3563,11 +3563,49 @@ impl SemaCx<'_> {
             }
             if self.fns.contains_key(&f.name.name) || self.fns_generic.contains_key(&f.name.name) {
                 // Phase 1 stdlib note: when both declarations are `extern fn`
-                // they target the same external symbol; allow the duplicate
-                // silently (e.g. multiple stdlib modules declaring `extern fn
-                // write` to reach libc::write). The first declaration wins
-                // and stays in `self.fns`. Non-extern duplicates still error.
+                // they target the same external symbol, so a re-declaration is
+                // allowed — but ONLY when the signatures agree (e.g. several
+                // stdlib modules each declaring `extern fn write` to reach
+                // libc::write). The first declaration wins and stays in `self.fns`.
                 if f.is_extern && self.extern_fns.contains(&f.name.name) {
+                    // Signatures must match: extern fns share one global,
+                    // unqualified name space (the resolver does not module-qualify
+                    // them — they bind a literal C symbol). If a later module
+                    // re-declares the name with a DIFFERENT signature, silently
+                    // keeping the first would bind this module's calls to the wrong
+                    // prototype — a quiet miscompile that only surfaces downstream
+                    // as a confusing type mismatch. Reject it at the declaration.
+                    let same_sig = {
+                        let prev = &self.fns[&f.name.name];
+                        // Compare the *effective* linker symbol, not the raw
+                        // `#[link_name]` option: an absent attribute means "use the
+                        // source name", so `None` and `Some("<source name>")` denote
+                        // the same symbol (e.g. objc/runtime declares
+                        // `objc_setAssociatedObject` bare while objc/synthesis spells
+                        // it with an explicit `#[link_name]` — same symbol, no clash).
+                        let prev_sym = prev.link_name.as_deref().unwrap_or(&f.name.name);
+                        let new_sym = link_name.as_deref().unwrap_or(&f.name.name);
+                        prev.return_type == ret
+                            && prev.is_variadic == f.is_variadic
+                            && prev_sym == new_sym
+                            && prev.params.len() == params.len()
+                            && prev.params.iter().zip(params.iter()).all(|(a, b)| a.ty == b.ty)
+                    };
+                    if same_sig {
+                        continue;
+                    }
+                    self.err(
+                        "E0357",
+                        format!(
+                            "conflicting `extern fn` declarations for `{}`: an earlier \
+                             declaration has a different signature. Both bind the same C \
+                             symbol (extern fns share one unqualified name space), so their \
+                             signatures must match — align them, or give one a distinct name \
+                             (or `#[link_name]`).",
+                            f.name.name
+                        ),
+                        f.name.span,
+                    );
                     continue;
                 }
                 self.err(
