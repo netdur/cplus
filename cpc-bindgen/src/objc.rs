@@ -402,6 +402,18 @@ impl ObjcEmitter {
             Some(a) => a,
             None => return self.preamble(),
         };
+        // `CGAffineTransform` is a NAMED CoreGraphics struct (not the anonymous
+        // `typedef struct {…} Name` shape Pass 1 collects), and its header isn't a
+        // home header, so it is never collected — seed its layout so it binds as a
+        // by-value struct (6 CGFloat = 48 bytes). ABI-identical to the already-bound
+        // `NSAffineTransformStruct` (same 6-double shape), which proves cpc passes it
+        // correctly through the module-local objc_msgSend shim.
+        if !self.value_structs.contains_key("CGAffineTransform") {
+            self.value_structs.insert(
+                "CGAffineTransform".to_string(),
+                ["a", "b", "c", "d", "tx", "ty"].iter().map(|f| (f.to_string(), "f64".to_string())).collect(),
+            );
+        }
         // Pass 1: typedefs (name -> underlying), NS_ENUMs, and by-value struct
         // layouts. clang emits the anonymous `RecordDecl` immediately before the
         // `TypedefDecl` that names it (`typedef struct { … } MTLSize;`).
@@ -5034,6 +5046,30 @@ mod tests {
         assert!(out.contains("fn register_class(this, cls: *u8)"), "Class<P> param -> *u8:\n{out}");
         assert!(out.contains("fn visible_items(this) -> vec::Vec[View]"), "protocol-qualified element -> Vec[View]:\n{out}");
         assert!(!out.contains("// SKIPPED `readableClass`") && !out.contains("// SKIPPED `visibleItems`"), "no skips:\n{out}");
+    }
+
+    #[test]
+    fn cg_affine_transform_binds_as_a_by_value_struct() {
+        // CGAffineTransform is a named CoreGraphics struct not collected from the TU;
+        // its layout is seeded (6 CGFloat), so it binds as a by-value struct arg/return
+        // (ABI-proven at runtime via the identical NSAffineTransformStruct).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setMatrix:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "m", "type": { "qualType": "CGAffineTransform" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "matrix", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "CGAffineTransform" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct CGAffineTransform {"), "struct emitted:\n{out}");
+        assert!(out.contains("tx: f64,") && out.contains("ty: f64,"), "6-double layout:\n{out}");
+        assert!(out.contains("fn set_matrix(this, m: CGAffineTransform)"), "by-value struct param:\n{out}");
+        assert!(out.contains("fn matrix(this) -> CGAffineTransform"), "by-value struct return:\n{out}");
+        assert!(out.contains("CGAffineTransform(recv: *u8, sel: *u8) -> CGAffineTransform;"), "module-local struct-return shim:\n{out}");
+        assert!(!out.contains("unmapped type `CGAffineTransform`"), "no unmapped skip:\n{out}");
     }
 
     #[test]
