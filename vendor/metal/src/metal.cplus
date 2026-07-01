@@ -2650,6 +2650,24 @@ const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_none: u64 = 0 a
 const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_suspending: u64 = 1 as u64;
 const m_t_l4_render_encoder_options_m_t_l4_render_encoder_option_resuming: u64 = 2 as u64;
 
+// `MTLSparseTextureMappingMode` (NS_ENUM)
+enum SparseTextureMappingMode {
+    Map,
+    Unmap,
+}
+
+fn sparse_texture_mapping_mode_raw(v: SparseTextureMappingMode) -> i64 {
+    return match v {
+        SparseTextureMappingMode::Map => { 0 as i64 },
+        SparseTextureMappingMode::Unmap => { 1 as i64 },
+    };
+}
+
+fn sparse_texture_mapping_mode_from_raw(raw: i64) -> SparseTextureMappingMode {
+    if raw == (1 as i64) { return SparseTextureMappingMode::Unmap; }
+    return SparseTextureMappingMode::Map;
+}
+
 // `MTLBlitOption` (NS_OPTIONS) — bitfield; combine with `|`.
 const blit_option_none: u64 = 0 as u64;
 const blit_option_depth_from_depth_stencil: u64 = 1 as u64;
@@ -2964,6 +2982,13 @@ struct Region {
     size: Size,
 }
 
+// `MTLSamplePosition` — by-value C struct.
+#[repr(C)]
+struct SamplePosition {
+    x: f32,
+    y: f32,
+}
+
 // `MTLScissorRect` — by-value C struct.
 #[repr(C)]
 struct ScissorRect {
@@ -3003,6 +3028,8 @@ struct Viewport {
 extern fn objc_msg_AccelerationStructureSizes_id(recv: *u8, sel: *u8, a0: *u8) -> AccelerationStructureSizes;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_ClearColor(recv: *u8, sel: *u8) -> ClearColor;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_SamplePosition_SamplePosition_u64(recv: *u8, sel: *u8, a0: SamplePosition, a1: u64) -> SamplePosition;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_Size(recv: *u8, sel: *u8) -> Size;
 #[link_name = "objc_msgSend"]
@@ -3053,6 +3080,8 @@ extern fn objc_msg_void_id_MTL4BufferRange(recv: *u8, sel: *u8, a0: *u8, a1: MTL
 extern fn objc_msg_void_id_Region_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_Region_u64_u64_i8_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: Region, a2: u64, a3: u64, a4: i8, a5: *u8, a6: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_Region_u64_u64(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: Region, a3: u64, a4: u64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_MTL4BufferRange(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: MTL4BufferRange);
 #[link_name = "objc_msgSend"]
@@ -12044,8 +12073,14 @@ impl RasterizationRateMap {
         return objc_msg_Size_u64(this._obj, rt::sel(#str_ptr("physicalSizeForLayer:\0")), layer_index);
     }
 
-    // SKIPPED `mapScreenToPhysicalCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
-    // SKIPPED `mapPhysicalToScreenCoordinates:forLayer:`: param `MTLCoordinate2D` — unmapped type `MTLCoordinate2D`
+    fn map_screen_to_physical_coordinates_for_layer(this, screen_coordinates: SamplePosition, layer_index: u64) -> SamplePosition {
+        return objc_msg_SamplePosition_SamplePosition_u64(this._obj, rt::sel(#str_ptr("mapScreenToPhysicalCoordinates:forLayer:\0")), screen_coordinates, layer_index);
+    }
+
+    fn map_physical_to_screen_coordinates_for_layer(this, physical_coordinates: SamplePosition, layer_index: u64) -> SamplePosition {
+        return objc_msg_SamplePosition_SamplePosition_u64(this._obj, rt::sel(#str_ptr("mapPhysicalToScreenCoordinates:forLayer:\0")), physical_coordinates, layer_index);
+    }
+
     fn device(this) -> Device {
         return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
     }
@@ -12734,9 +12769,12 @@ impl ResourceStateCommandEncoder {
 
     fn from_raw(ptr: *u8) -> ResourceStateCommandEncoder { return ResourceStateCommandEncoder { _obj: ptr }; }
 
-    // SKIPPED `updateTextureMappings:mode:regions:mipLevels:slices:numRegions:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
-    // SKIPPED `updateTextureMapping:mode:region:mipLevel:slice:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
-    // SKIPPED `updateTextureMapping:mode:indirectBuffer:indirectBufferOffset:`: param `const MTLSparseTextureMappingMode` — unmapped type `const MTLSparseTextureMappingMode`
+    // SKIPPED `updateTextureMappings:mode:regions:mipLevels:slices:numRegions:`: msgSend shape `void_id_i64_id_id_id_u64` not yet modelled
+    fn update_texture_mapping_mode_region_mip_level_slice(this, texture: Texture, mode: SparseTextureMappingMode, region: Region, mip_level: u64, slice: u64) {
+        objc_msg_void_id_i64_Region_u64_u64(this._obj, rt::sel(#str_ptr("updateTextureMapping:mode:region:mipLevel:slice:\0")), texture.raw(), sparse_texture_mapping_mode_raw(mode), region, mip_level, slice);
+    }
+
+    // SKIPPED `updateTextureMapping:mode:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_id_i64_id_u64` not yet modelled
     fn update_fence(this, fence: Fence) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence.raw());
     }
