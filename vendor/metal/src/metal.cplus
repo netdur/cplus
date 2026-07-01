@@ -6687,8 +6687,15 @@ impl MTL4CommandQueueDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
     }
 
-    // SKIPPED `feedbackQueue`: return `dispatch_queue_t _Nullable` — unmapped type `dispatch_queue_t`
-    // SKIPPED `setFeedbackQueue:`: param `dispatch_queue_t _Nullable` — unmapped type `dispatch_queue_t`
+    fn feedback_queue(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("feedbackQueue\0")));
+        return bridge::obj_option(obj);
+    }
+
+    fn set_feedback_queue(this, feedback_queue: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFeedbackQueue:\0")), feedback_queue);
+    }
+
 }
 
 // `MTL4CommandAllocatorDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -8321,12 +8328,20 @@ impl SharedEventListener {
         return SharedEventListener { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithDispatchQueue:`: param `dispatch_queue_t _Nonnull` — unmapped type `dispatch_queue_t`
+    fn new_with_dispatch_queue(dispatch_queue: *u8) -> SharedEventListener {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLSharedEventListener\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharedEventListener { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDispatchQueue:\0")), dispatch_queue) };
+    }
+
     fn shared_listener() -> SharedEventListener {
         return SharedEventListener { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("MTLSharedEventListener\0")), rt::sel(#str_ptr("sharedListener\0")))) };
     }
 
-    // SKIPPED `dispatchQueue`: return `dispatch_queue_t _Nonnull` — unmapped type `dispatch_queue_t`
+    fn dispatch_queue(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("dispatchQueue\0")));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -9539,7 +9554,7 @@ impl Device {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `newTextureWithDescriptor:iosurface:plane:`: param `IOSurfaceRef _Nonnull` — unmapped type `IOSurfaceRef`
+    // SKIPPED `newTextureWithDescriptor:iosurface:plane:`: msgSend shape `id_id_id_u64` not yet modelled
     fn new_shared_texture_with_descriptor(this, descriptor: TextureDescriptor) -> option::Option[Texture] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newSharedTextureWithDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {
@@ -9596,7 +9611,14 @@ impl Device {
         return option::some(Library::from_raw(obj));
     }
 
-    // SKIPPED `newLibraryWithData:error:`: param `dispatch_data_t _Nonnull` — unmapped type `dispatch_data_t`
+    fn new_library_with_data_error(this, data: *u8, error: *u8) -> option::Option[Library] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithData:error:\0")), data, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Library]::None;
+        }
+        return option::some(Library::from_raw(obj));
+    }
+
     fn new_library_with_source_options_error(this, source: str, options: CompileOptions, error: *u8) -> option::Option[Library] {
         let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithSource:options:error:\0")), bridge::nsstring(source), options.raw(), error);
         if obj == { 0 as *u8 } {
@@ -10356,7 +10378,7 @@ impl Resource {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isAliasable\0"))) != (0 as i8);
     }
 
-    // SKIPPED `setOwnerWithIdentity:`: param `task_id_token_t` — unmapped type `task_id_token_t`
+    // SKIPPED `setOwnerWithIdentity:`: msgSend shape `i32_u32` not yet modelled
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -10618,7 +10640,11 @@ impl Texture {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferBytesPerRow\0")));
     }
 
-    // SKIPPED `iosurface`: return `IOSurfaceRef _Nullable` — unmapped type `IOSurfaceRef`
+    fn iosurface(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("iosurface\0")));
+        return bridge::obj_option(obj);
+    }
+
     fn iosurface_plane(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("iosurfacePlane\0")));
     }
