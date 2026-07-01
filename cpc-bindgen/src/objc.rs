@@ -1408,7 +1408,44 @@ impl ObjcEmitter {
         };
 
         let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
-        let (ret_spelling, body_line) = match &ret {
+        let (ret_spelling, body_line) = self
+            .return_spelling(&ret, &send)
+            .expect("collection/unsupported returns are handled earlier in emit_method");
+
+        // Prologue: build an NSMutableArray from each Vec[P] param (the send call
+        // already references the `arr_<pname>` local via arg_expr).
+        let mut prologue = String::new();
+        for a in &args {
+            if let Arg::IdArray { elem, pname } = a {
+                prologue.push_str(&format!(
+                    "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                     \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                     \x20       let n_{pname}: usize = {pname}.count();\n\
+                     \x20       var i_{pname}: usize = 0 as usize;\n\
+                     \x20       while i_{pname} < n_{pname} {{\n\
+                     \x20           match {pname}.at(i_{pname}) {{\n\
+                     \x20               option::Option[{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, e_{pname}.raw()); }}\n\
+                     \x20               option::Option[{elem}]::None => {{}}\n\
+                     \x20           }}\n\
+                     \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                     \x20       }}\n"
+                ));
+            }
+        }
+
+        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{prologue}{body_line}    }}\n\n"));
+    }
+
+    /// A method with a trailing `usingBlock:` param: emit a per-method
+    /// Block_literal struct + `invoke` trampoline (into `block_helpers`) and a
+    /// wrapper taking a C+ `fn(*u8, ...block args)` + `*u8` ctx.
+    /// The `-> T` return spelling and the body line(s) that wrap a raw `send`
+    /// expression per the return classification. `None` for the multi-statement
+    /// collection returns (ValueArray/TextArray/ObjectArray/TextMap) and Unsupported,
+    /// which callers handle (or skip) separately. Shared by emit_method and
+    /// emit_block_method so a block method's non-void return wraps identically.
+    fn return_spelling(&self, ret: &Ret, send: &str) -> Option<(String, String)> {
+        Some(match ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
             Ret::Struct(n) => (format!(" -> {n}"), format!("        return {send};\n")),
             Ret::Bool => (" -> bool".into(), format!("        return {send} != (0 as i8);\n")),
@@ -1446,36 +1483,10 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => unreachable!(),
-        };
-
-        // Prologue: build an NSMutableArray from each Vec[P] param (the send call
-        // already references the `arr_<pname>` local via arg_expr).
-        let mut prologue = String::new();
-        for a in &args {
-            if let Arg::IdArray { elem, pname } = a {
-                prologue.push_str(&format!(
-                    "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
-                     \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
-                     \x20       let n_{pname}: usize = {pname}.count();\n\
-                     \x20       var i_{pname}: usize = 0 as usize;\n\
-                     \x20       while i_{pname} < n_{pname} {{\n\
-                     \x20           match {pname}.at(i_{pname}) {{\n\
-                     \x20               option::Option[{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, e_{pname}.raw()); }}\n\
-                     \x20               option::Option[{elem}]::None => {{}}\n\
-                     \x20           }}\n\
-                     \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
-                     \x20       }}\n"
-                ));
-            }
-        }
-
-        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{prologue}{body_line}    }}\n\n"));
+            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+        })
     }
 
-    /// A method with a trailing `usingBlock:` param: emit a per-method
-    /// Block_literal struct + `invoke` trampoline (into `block_helpers`) and a
-    /// wrapper taking a C+ `fn(*u8, ...block args)` + `*u8` ctx.
     fn emit_block_method(
         &mut self,
         objc_class: &str,
@@ -1489,9 +1500,16 @@ impl ObjcEmitter {
         ov_name: &Option<String>,
         ov_params: &[String],
     ) {
-        let (mret, _) = strip_nullability(ret_qt);
-        if mret.trim() != "void" {
-            self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with non-void return\n"));
+        let ret = self.map_ret(ret_qt);
+        if let Ret::Unsupported(why) = &ret {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: block method return `{ret_qt}` — {why}\n"));
+            return;
+        }
+        // Collection returns need the multi-statement Vec/Map builders that only the
+        // general path emits; a block method returning one is rare — skip rather than
+        // emit a partial body.
+        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_)) {
+            self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with a collection return not modelled\n"));
             return;
         }
         if bidx != params.len() - 1 {
@@ -1542,7 +1560,7 @@ impl ObjcEmitter {
         } else {
             format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
         };
-        let send = match self.send_expr(&recv, sel, &Ret::Void, &send_args) {
+        let send = match self.send_expr(&recv, sel, &ret, &send_args) {
             Some(s) => s,
             None => {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: block-method msgSend shape not modelled\n"));
@@ -1587,8 +1605,21 @@ impl ObjcEmitter {
             sig.push_str(", ");
         }
         sig.push_str(&format!("cb: {fn_ty}, ctx: *u8"));
+        // Same return-wrapping as a plain method. Void keeps its explicit trailing
+        // `return;` so existing usingBlock: bindings stay byte-stable; a non-void
+        // return (completion-handler factories like newBufferWithBytesNoCopy:...
+        // deallocator: -> Option[Buffer]) wraps via return_spelling. The block slot
+        // `bp` is set up first, so `body_line`'s embedded send runs after it.
+        let (ret_spelling, body_line) = self
+            .return_spelling(&ret, &send)
+            .expect("block-method collection/unsupported returns handled above");
+        let body_line = if matches!(ret, Ret::Void) {
+            format!("{body_line}        return;\n")
+        } else {
+            body_line
+        };
         self.body.push_str(&format!(
-            "    fn {name}({sig}) {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n        {send};\n        return;\n    }}\n\n"
+            "    fn {name}({sig}){ret_spelling} {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n{body_line}    }}\n\n"
         ));
     }
 
@@ -2357,6 +2388,8 @@ const KNOWN_MSG_SHAPES: &[&str] = &[
         "void_u64_u64_u64_id_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64", "void_u64_u64_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_u64_u64_id_u64_u64",
         // Metal shapes surfaced after MTLArgument.h + typedef resolution landed.
         "void_id_i64_u64", "void_id_i64_range", "void_id_i64_id_u64", "void_id_i64_id_id_id_u64",
+        // Object-returning block factory (newBufferWithBytesNoCopy:...deallocator:).
+        "id_id_u64_u64_id",
 ];
 
 /// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
