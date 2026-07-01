@@ -92,6 +92,9 @@ pub struct ObjcEmitter {
     // is passed straight to it, so any scalar-arg callback binds without a fixed
     // synthesis-side shape zoo. Deduped module-wide.
     emitted_addmethod: HashSet<String>,
+    // Delegate-arg collection bridge helpers (`cplus_darg_arr_text` ...) emitted in
+    // this module. Deduped module-wide, shared across protocols.
+    emitted_bridges: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -102,14 +105,76 @@ struct DelegateRet {
     default_ret: Option<String>, // noop's default return expr (None == void)
 }
 
-// A delegate-callback argument kind: the C+ param type, its ObjC type-encoding
-// (a single char for scalars, a `{...}` group for by-value structs), and a short
-// tag used to build the (unique-per-signature) IMP shape symbol.
+// A delegate-callback argument kind. Two type views: the WIRE type (`cty`, what
+// the IMP/`class_addMethod` shim actually receives — `*u8` for a collection) and
+// the HANDLER type (`hty`, what the user's handler is handed — `vec::Vec[..]` for
+// a bridged collection). For a scalar/object arg the two coincide (`bridge` None).
+// `tag` keys the wire shape (shim/IMP dedup); `htag` keys the handler shape (noop
+// dedup) so two collections that share the `id` wire shape still get distinct noops.
 #[derive(Clone)]
 struct DArg {
-    cty: String, // C+ param type: *u8 / i64 / f64 / rt::Range / rt::Rect ...
+    cty: String, // WIRE C+ type: *u8 / i64 / f64 / rt::Range ... (IMP + shim param)
     enc: String, // ObjC type-encoding (@ q Q d ... or {_NSRange=QQ})
-    tag: String, // shape-symbol fragment (id / i64 / f64 / range / rect ...)
+    tag: String, // WIRE shape-symbol fragment (id / i64 / f64 / range ...)
+    hty: String, // HANDLER C+ type: == cty, or vec::Vec[text::Text] / vec::Vec[W] ...
+    htag: String, // HANDLER shape-symbol fragment: == tag, or arrtext / arrW / setW ...
+    bridge: Option<ArgBridge>, // Some -> the trampoline wraps the wire `*u8` before dispatch
+}
+
+// How a delegate-callback collection arg is read from the raw `*u8` it arrives as
+// into its handler type. Mirrors the method-side return bridges (NSArray/NSSet ->
+// Vec, via count/objectAtIndex or -allObjects).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ArgBridge {
+    ArrayText,                          // NSArray<NSString *> -> Vec[Text]
+    ArrayNumber,                        // NSArray<NSNumber *> -> Vec[f64]
+    ArrayObject { w: String, owning: bool }, // NSArray<W *> -> Vec[W]
+    SetObject { w: String, owning: bool },   // NSSet<W *> -> Vec[W] (via -allObjects)
+}
+
+impl DArg {
+    // A scalar/object arg whose wire and handler types coincide (no bridge).
+    fn scalar(cty: &str, enc: &str, tag: &str) -> DArg {
+        DArg {
+            cty: cty.into(),
+            enc: enc.into(),
+            tag: tag.into(),
+            hty: cty.into(),
+            htag: tag.into(),
+            bridge: None,
+        }
+    }
+}
+
+impl ArgBridge {
+    // The module-local bridge-helper name (stable, deduped module-wide).
+    fn fn_name(&self) -> String {
+        match self {
+            ArgBridge::ArrayText => "cplus_darg_arr_text".to_string(),
+            ArgBridge::ArrayNumber => "cplus_darg_arr_f64".to_string(),
+            ArgBridge::ArrayObject { w, .. } => format!("cplus_darg_arr_{w}"),
+            ArgBridge::SetObject { w, .. } => format!("cplus_darg_set_{w}"),
+        }
+    }
+    // The handler C+ type this bridge produces.
+    fn handler_ty(&self) -> String {
+        match self {
+            ArgBridge::ArrayText => "vec::Vec[text::Text]".to_string(),
+            ArgBridge::ArrayNumber => "vec::Vec[f64]".to_string(),
+            ArgBridge::ArrayObject { w, .. } | ArgBridge::SetObject { w, .. } => {
+                format!("vec::Vec[{w}]")
+            }
+        }
+    }
+    // The handler shape-symbol fragment (distinguishes noops sharing the `id` wire tag).
+    fn handler_tag(&self) -> String {
+        match self {
+            ArgBridge::ArrayText => "arrtext".to_string(),
+            ArgBridge::ArrayNumber => "arrf64".to_string(),
+            ArgBridge::ArrayObject { w, .. } => format!("arr{w}"),
+            ArgBridge::SetObject { w, .. } => format!("set{w}"),
+        }
+    }
 }
 
 // The C+ type / ObjC encoding / shape tag / zero-value literal for a by-value
@@ -289,6 +354,7 @@ impl ObjcEmitter {
             used_value_structs: HashSet::new(),
             used_struct_shapes: HashSet::new(),
             emitted_addmethod: HashSet::new(),
+            emitted_bridges: HashSet::new(),
         }
     }
 
@@ -1126,15 +1192,22 @@ impl ObjcEmitter {
         self.synth_key += 1;
 
         // Handler type `fn(user, <typed args>) -> <ret>`: the user handler receives
-        // each scalar in its natural C+ type (i64/f64/i8/...), objects as *u8.
+        // each scalar in its natural C+ type (i64/f64/i8/...), objects as *u8, and a
+        // bridged collection as its `Vec[..]` handler type.
         let handler_ty = |args: &[DArg], ret: &DelegateRet| {
-            let a: String = args.iter().map(|d| format!(", {}", d.cty)).collect();
+            let a: String = args.iter().map(|d| format!(", {}", d.hty)).collect();
             format!("fn(*u8{a}){}", ret.ret_suffix)
         };
-        // A unique symbol per IMP signature: return tag + each arg's tag. Two
-        // callbacks with the same wire shape share one noop / one addMethod shim.
-        let shape_sym = |args: &[DArg], ret: &DelegateRet| {
+        // WIRE symbol: return tag + each arg's wire tag. Keys the `class_addMethod`
+        // shim + IMP shape (a bridged collection contributes `id`, so it shares the
+        // object shim). HANDLER symbol uses the handler tags, so two callbacks that
+        // share the `id` wire shape but hand back different `Vec[..]` get distinct noops.
+        let wire_sym = |args: &[DArg], ret: &DelegateRet| {
             let a: String = args.iter().map(|d| format!("_{}", d.tag)).collect();
+            format!("{}{a}", ret.tag)
+        };
+        let handler_sym = |args: &[DArg], ret: &DelegateRet| {
+            let a: String = args.iter().map(|d| format!("_{}", d.htag)).collect();
             format!("{}{a}", ret.tag)
         };
         let mut s = String::new();
@@ -1143,11 +1216,25 @@ impl ObjcEmitter {
             s.push_str(sk);
         }
 
-        // A typed `class_addMethod` shim per distinct IMP signature (deduped
+        // Collection-arg bridge helpers (deduped module-wide): read the raw `*u8` a
+        // callback receives into its `Vec[..]` handler type.
+        for (_, _, args, _) in &callbacks {
+            for d in args {
+                if let Some(br) = &d.bridge {
+                    let name = br.fn_name();
+                    if self.emitted_bridges.insert(name.clone()) {
+                        self.needs_vec = true;
+                        s.push_str(&render_darg_bridge(&name, br));
+                    }
+                }
+            }
+        }
+
+        // A typed `class_addMethod` shim per distinct IMP (wire) signature (deduped
         // module-wide): the trampoline fn-pointer is passed straight to it, so any
         // scalar-arg shape binds with no synthesis-side shape zoo.
         for (_, _, args, ret) in &callbacks {
-            let sym = shape_sym(args, ret);
+            let sym = wire_sym(args, ret);
             if self.emitted_addmethod.insert(sym.clone()) {
                 let params: String = args.iter().map(|d| format!(", {}", d.cty)).collect();
                 s.push_str(&format!(
@@ -1158,10 +1245,12 @@ impl ObjcEmitter {
         }
         s.push('\n');
 
-        // A noop per distinct signature, the default for each unset handler.
+        // A noop per distinct HANDLER signature, the default for each unset handler.
+        // Keyed by handler_sym so a bridged-collection handler gets its own noop even
+        // though it shares the `id` wire shape.
         let mut shapes: Vec<(String, Vec<DArg>, DelegateRet)> = Vec::new();
         for (_, _, args, ret) in &callbacks {
-            let sym = shape_sym(args, ret);
+            let sym = handler_sym(args, ret);
             if !shapes.iter().any(|(k, _, _)| *k == sym) {
                 shapes.push((
                     sym,
@@ -1173,7 +1262,7 @@ impl ObjcEmitter {
         for (sym, args, ret) in &shapes {
             let mut pp = vec!["user: *u8".to_string()];
             for (i, d) in args.iter().enumerate() {
-                pp.push(format!("a{i}: {}", d.cty));
+                pp.push(format!("a{i}: {}", d.hty));
             }
             let body = match &ret.default_ret {
                 Some(d) => format!("return {d};"),
@@ -1194,7 +1283,7 @@ impl ObjcEmitter {
         // names, so this resolves regardless of where `_new` is called); setters
         // install the callbacks the caller actually wants.
         s.push_str(&format!("fn {proto_ty}_new(user: *u8) -> {proto_ty} {{\n    return {proto_ty} {{ "));
-        let mut inits: Vec<String> = callbacks.iter().map(|(_, mid, args, r)| format!("{mid}: {proto_ty}_noop_{}", shape_sym(args, r))).collect();
+        let mut inits: Vec<String> = callbacks.iter().map(|(_, mid, args, r)| format!("{mid}: {proto_ty}_noop_{}", handler_sym(args, r))).collect();
         inits.push("user: user".to_string());
         s.push_str(&inits.join(", "));
         s.push_str(" };\n}\n\n");
@@ -1210,18 +1299,29 @@ impl ObjcEmitter {
 
         s.push_str(&format!("fn {proto_ty}_key() -> *u8 {{ return {{ {key} as *u8 }}; }}\n\n"));
 
-        // One IMP trampoline per callback; all share the one associated ctx.
+        // One IMP trampoline per callback; all share the one associated ctx. The IMP
+        // receives WIRE types (a collection arrives as `*u8`); a bridged arg is read
+        // into its `Vec[..]` (bound to a local so it lives across — and drops after —
+        // the handler call) before dispatch.
         for (_, mid, args, r) in &callbacks {
             let mut imp_params = vec!["self_obj: *u8".to_string(), "cmd: *u8".to_string()];
             let mut call_args = vec!["u".to_string()];
             for (i, d) in args.iter().enumerate() {
                 imp_params.push(format!("a{i}: {}", d.cty));
-                call_args.push(format!("a{i}"));
+                match &d.bridge {
+                    Some(_) => call_args.push(format!("b{i}")),
+                    None => call_args.push(format!("a{i}")),
+                }
             }
             s.push_str(&format!("fn {proto_ty}_{mid}_imp({}){} {{\n", imp_params.join(", "), r.ret_suffix));
             s.push_str(&format!("    let c: *{proto_ty} = {{ synth::get_associated(self_obj, {proto_ty}_key()) as *{proto_ty} }};\n"));
             s.push_str(&format!("    let f: {} = {{ (*c).{mid} }};\n", handler_ty(args, r)));
             s.push_str("    let u: *u8 = { (*c).user };\n");
+            for (i, d) in args.iter().enumerate() {
+                if let Some(br) = &d.bridge {
+                    s.push_str(&format!("    let b{i}: {} = {}(a{i});\n", d.hty, br.fn_name()));
+                }
+            }
             let dispatch = if r.default_ret.is_some() {
                 format!("    return f({});\n", call_args.join(", "))
             } else {
@@ -1243,7 +1343,7 @@ impl ObjcEmitter {
             let types = format!("{}@:{}", r.enc, enc);
             s.push_str(&format!(
                 "        let add_{mid}: i8 = cplus_add_method_{}(cls, rt::sel(#str_ptr(\"{sel}\\0\")), {proto_ty}_{mid}_imp, #str_ptr(\"{types}\\0\"));\n",
-                shape_sym(args, r)
+                wire_sym(args, r)
             ));
         }
         s.push_str("        synth::register_class_pair(cls);\n    }\n");
@@ -1288,31 +1388,72 @@ impl ObjcEmitter {
     fn delegate_arg(&self, qt: &str) -> Option<DArg> {
         let (b, _) = strip_nullability(qt);
         let b = b.trim();
-        if b.contains('^') || b.matches('*').count() >= 2 {
-            return None;
+        if b.contains('^') {
+            return None; // a block arg -> the block-taking path, not this one
+        }
+        // Typed collection args (before the `**` guard: `NSArray<NSString *> *` has
+        // two stars but is a value, not an out-param). Bridged to a natural C+ type.
+        if let Some(darg) = self.delegate_collection_arg(b) {
+            return Some(darg);
+        }
+        if b.matches('*').count() >= 2 {
+            return None; // out-param (`NSError **`) or an unmodelled nested collection
         }
         if self.enum_of(b).is_some() {
-            return Some(DArg { cty: "u64".into(), enc: "Q".into(), tag: "u64".into() });
+            return Some(DArg::scalar("u64", "Q", "u64"));
         }
         if b == "id" || b.starts_with("id<") || b.starts_with("id <") || b.ends_with('*') {
-            return Some(DArg { cty: "*u8".into(), enc: "@".into(), tag: "id".into() });
+            return Some(DArg::scalar("*u8", "@", "id"));
         }
         if b == "SEL" {
-            return Some(DArg { cty: "*u8".into(), enc: ":".into(), tag: "id".into() });
+            return Some(DArg::scalar("*u8", ":", "id"));
         }
         if b == "Class" {
-            return Some(DArg { cty: "*u8".into(), enc: "#".into(), tag: "id".into() });
+            return Some(DArg::scalar("*u8", "#", "id"));
         }
         if let Some((cty, enc, tag, _)) = delegate_struct(b) {
-            return Some(DArg { cty: cty.into(), enc: enc.into(), tag: tag.into() });
+            return Some(DArg::scalar(cty, enc, tag));
         }
         if let Some((cty, enc, tag, _)) = delegate_numeric(b) {
-            return Some(DArg { cty: cty.into(), enc: enc.to_string(), tag: tag.into() });
+            return Some(DArg::scalar(cty, &enc.to_string(), tag));
         }
         // Fall through a typedef chain (NSString-family Kind/Identifier -> *u8;
         // NSAnimationProgress -> f32; ...) before giving up.
         let (cty, enc, tag, _) = tdcanon_kind(self.typedef_canon(b)?);
-        Some(DArg { cty: cty.into(), enc: enc.into(), tag: tag.into() })
+        Some(DArg::scalar(cty, enc, tag))
+    }
+
+    /// A delegate-callback collection arg -> a `DArg` whose wire type is `*u8` (`@`,
+    /// shares the `id` shim shape) but whose handler type is the bridged `Vec[..]`.
+    /// Only element types with a faithful bridge qualify (NSString/NSNumber/a
+    /// module-defined wrapper); a foreign-framework element (no wrapper) returns None
+    /// so the whole callback skips, matching the method-side soundness gate.
+    fn delegate_collection_arg(&self, b: &str) -> Option<DArg> {
+        let bridge = if self.is_string_array(b) {
+            ArgBridge::ArrayText
+        } else if self.is_number_array(b) {
+            ArgBridge::ArrayNumber
+        } else if let Some(w) = array_element(b).and_then(|e| self.wrapper_name_of(&e)) {
+            if !(self.non_owning_types.contains(&w) || self.owning_types.contains(&w)) {
+                return None;
+            }
+            ArgBridge::ArrayObject { owning: self.owning_types.contains(&w), w }
+        } else if let Some(w) = nsset_element(b).and_then(|e| self.wrapper_name_of(&e)) {
+            if !(self.non_owning_types.contains(&w) || self.owning_types.contains(&w)) {
+                return None;
+            }
+            ArgBridge::SetObject { owning: self.owning_types.contains(&w), w }
+        } else {
+            return None;
+        };
+        Some(DArg {
+            cty: "*u8".into(),
+            enc: "@".into(),
+            tag: "id".into(),
+            hty: bridge.handler_ty(),
+            htag: bridge.handler_tag(),
+            bridge: Some(bridge),
+        })
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -3172,6 +3313,57 @@ fn c_scalar_to_cplus(name: &str) -> Option<&'static str> {
     })
 }
 
+/// A delegate-arg collection bridge helper: `fn <name>(src: *u8) -> Vec[..]` reading
+/// the NSArray/NSSet a callback receives into its handler type. Mirrors the method
+/// side's return bridges (count/objectAtIndex; -allObjects first for a set; retain
+/// each element for an owning wrapper so the wrapper's `drop` is balanced).
+fn render_darg_bridge(name: &str, br: &ArgBridge) -> String {
+    // The element type + the read/append line, given the source NSArray local `arr`.
+    let (elem_ty, append) = match br {
+        ArgBridge::ArrayText => (
+            "text::Text".to_string(),
+            "out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i)));".to_string(),
+        ),
+        ArgBridge::ArrayNumber => (
+            "f64".to_string(),
+            "out.append(rt::msg_f64(rt::msg_id_u64(arr, at_sel, i), dv_sel));".to_string(),
+        ),
+        ArgBridge::ArrayObject { w, owning } | ArgBridge::SetObject { w, owning } => {
+            let handle = if *owning {
+                "rt::retain(rt::msg_id_u64(arr, at_sel, i))"
+            } else {
+                "rt::msg_id_u64(arr, at_sel, i)"
+            };
+            (w.clone(), format!("out.append({w}::from_raw({handle}));"))
+        }
+    };
+    // A set has no index; snapshot it as an NSArray via -allObjects first.
+    let src_arr = match br {
+        ArgBridge::SetObject { .. } => {
+            "        let arr: *u8 = rt::msg_id(src, rt::sel(#str_ptr(\"allObjects\\0\")));\n".to_string()
+        }
+        _ => "        let arr: *u8 = src;\n".to_string(),
+    };
+    let dv = match br {
+        ArgBridge::ArrayNumber => "        let dv_sel: *u8 = rt::sel(#str_ptr(\"doubleValue\\0\"));\n",
+        _ => "",
+    };
+    format!(
+        "fn {name}(src: *u8) -> vec::Vec[{elem_ty}] {{\n\
+         {src_arr}\
+         \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+         \x20       var out: vec::Vec[{elem_ty}] = vec::Vec[{elem_ty}]::with_capacity(n as usize);\n\
+         \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+         {dv}\
+         \x20       var i: u64 = 0 as u64;\n\
+         \x20       while i < n {{\n\
+         \x20           {append}\n\
+         \x20           i = i +% (1 as u64);\n\
+         \x20       }}\n\
+         \x20       return out;\n}}\n\n"
+    )
+}
+
 /// Build the `Vec[W] -> NSMutableArray` prologue for every IdArray arg, and the
 /// `StringMap[V] -> NSMutableDictionary` prologue for every DictMap arg. Elements
 /// are borrow-read (via `at_ptr` / the StringMap slot API — no move/drop); `addObject:`
@@ -3929,9 +4121,9 @@ mod tests {
 
     #[test]
     fn delegate_callback_with_an_unmodelled_arg_still_skips() {
-        // A collection / out-param arg (two stars: `NSArray<NSString *> *`, `NSError **`)
-        // has no scalar/object/struct shape, so the callback skips explicitly. A second
-        // bindable callback keeps the helper alive so the note is recorded.
+        // A collection whose element has no bound wrapper (foreign NSError) has no
+        // faithful bridge, so the callback still skips explicitly — same soundness gate
+        // as the method side. A second bindable callback keeps the helper alive.
         let tu = serde_json::json!({
             "inner": [{
                 "kind": "ObjCProtocolDecl", "name": "NSThingDelegate", "loc": { "file": "test.h" },
@@ -3940,7 +4132,7 @@ mod tests {
                       "returnType": { "qualType": "void" },
                       "inner": [
                         { "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } },
-                        { "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSString *> *" } } ] },
+                        { "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSError *> *" } } ] },
                     { "kind": "ObjCMethodDecl", "name": "thingDidLoad:", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "void" },
                       "inner": [{ "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } }] },
@@ -3948,10 +4140,47 @@ mod tests {
             }]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        assert!(out.contains("// SKIPPED `thing:namedItems:`: arg `NSArray<NSString *> *` not modelled"),
-            "collection-arg callback skips explicitly:\n{out}");
+        assert!(out.contains("// SKIPPED `thing:namedItems:`: arg `NSArray<NSError *> *` not modelled"),
+            "foreign-wrapper collection-arg callback skips explicitly:\n{out}");
         assert!(!out.contains("thing_named_items_imp"), "no trampoline for the skipped callback:\n{out}");
         assert!(out.contains("thing_did_load: fn(*u8, *u8),"), "sibling object-arg callback binds:\n{out}");
+    }
+
+    #[test]
+    fn delegate_callback_collection_args_bridge_to_typed_vecs() {
+        // A delegate callback receiving NSArray<NSString*> / NSSet<W*> / NSArray<W*>
+        // hands the user a Vec[Text] / Vec[W] — the IMP receives the raw *u8 (wire),
+        // bridges it (count/objectAtIndex, -allObjects for a set), and dispatches.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSIndexPath", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "NSCollectionViewDelegate", "loc": { "file": "test.h" },
+                  "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "view:didSelectItemsAtIndexPaths:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "view", "type": { "qualType": "id" } },
+                        { "kind": "ParmVarDecl", "name": "paths", "type": { "qualType": "NSSet<NSIndexPath *> * _Nonnull" } } ] },
+                    { "kind": "ObjCMethodDecl", "name": "view:namedItems:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "view", "type": { "qualType": "id" } },
+                        { "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSString *> *" } } ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Handler receives the bridged Vec, not *u8.
+        assert!(out.contains("view_did_select_items_at_index_paths: fn(*u8, *u8, vec::Vec[IndexPath]),"), "set handler type:\n{out}");
+        assert!(out.contains("view_named_items: fn(*u8, *u8, vec::Vec[text::Text]),"), "array handler type:\n{out}");
+        // Bridge helpers emitted (deduped, module-local).
+        assert!(out.contains("fn cplus_darg_set_IndexPath(src: *u8) -> vec::Vec[IndexPath] {"), "set bridge:\n{out}");
+        assert!(out.contains(r#"let arr: *u8 = rt::msg_id(src, rt::sel(#str_ptr("allObjects\0")));"#), "set -allObjects:\n{out}");
+        assert!(out.contains("fn cplus_darg_arr_text(src: *u8) -> vec::Vec[text::Text] {"), "text bridge:\n{out}");
+        // The IMP receives the raw *u8 (wire) and binds the bridged local before dispatch.
+        assert!(out.contains("a1: *u8"), "IMP takes the wire *u8:\n{out}");
+        assert!(out.contains("let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);"), "IMP bridges the arg:\n{out}");
+        // The class_addMethod shim + encoding still treat it as an object (@).
+        assert!(out.contains("cplus_add_method_v_id_id(cls,"), "wire shim shape is the id shape:\n{out}");
     }
 
     #[test]
