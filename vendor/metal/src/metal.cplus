@@ -3600,6 +3600,196 @@ extern fn objc_msg_void_u64_Size(recv: *u8, sel: *u8, a0: u64, a1: Size);
 extern fn objc_msg_void_u64_Size_Size(recv: *u8, sel: *u8, a0: u64, a1: Size, a2: Size);
 
 #[repr(C)]
+struct MTL4CommitOptions_add_feedback_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn MTL4CommitOptions_add_feedback_handler_invoke(block: *u8, a0: i64) {
+    let bl: *MTL4CommitOptions_add_feedback_handler_block = { block as *MTL4CommitOptions_add_feedback_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_library_with_source_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_library_with_source_options_completion_handler_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *Device_new_library_with_source_options_completion_handler_block = { block as *Device_new_library_with_source_options_completion_handler_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_library_with_stitched_descriptor_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_library_with_stitched_descriptor_completion_handler_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *Device_new_library_with_stitched_descriptor_completion_handler_block = { block as *Device_new_library_with_stitched_descriptor_completion_handler_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_render_pipeline_state_with_descriptor_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_render_pipeline_state_with_descriptor_completion_handler_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *Device_new_render_pipeline_state_with_descriptor_completion_handler_block = { block as *Device_new_render_pipeline_state_with_descriptor_completion_handler_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_render_pipeline_state_with_descriptor_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_render_pipeline_state_with_descriptor_options_completion_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) {
+    let bl: *Device_new_render_pipeline_state_with_descriptor_options_completion_handler_block = { block as *Device_new_render_pipeline_state_with_descriptor_options_completion_handler_block };
+    let f: fn(*u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_compute_pipeline_state_with_function_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_compute_pipeline_state_with_function_completion_handler_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *Device_new_compute_pipeline_state_with_function_completion_handler_block = { block as *Device_new_compute_pipeline_state_with_function_completion_handler_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_compute_pipeline_state_with_function_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_compute_pipeline_state_with_function_options_completion_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) {
+    let bl: *Device_new_compute_pipeline_state_with_function_options_completion_handler_block = { block as *Device_new_compute_pipeline_state_with_function_options_completion_handler_block };
+    let f: fn(*u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) {
+    let bl: *Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_block = { block as *Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_block };
+    let f: fn(*u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) {
+    let bl: *Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_block = { block as *Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_block };
+    let f: fn(*u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) {
+    let bl: *Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_block = { block as *Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_block };
+    let f: fn(*u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
 struct Library_new_function_with_name_constant_values_completion_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -3657,6 +3847,25 @@ fn Library_new_intersection_function_with_descriptor_completion_handler_invoke(b
 }
 
 #[repr(C)]
+struct SharedEvent_notify_listener_at_value_block_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn SharedEvent_notify_listener_at_value_block_invoke(block: *u8, a0: i64, a1: i64) {
+    let bl: *SharedEvent_notify_listener_at_value_block_block = { block as *SharedEvent_notify_listener_at_value_block_block };
+    let f: fn(*u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
 struct LogState_add_log_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -3672,6 +3881,82 @@ fn LogState_add_log_handler_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u
     let f: fn(*u8, *u8, *u8, i64, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1, a2, a3);
+    return;
+}
+
+#[repr(C)]
+struct Drawable_add_presented_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Drawable_add_presented_handler_invoke(block: *u8, a0: i64) {
+    let bl: *Drawable_add_presented_handler_block = { block as *Drawable_add_presented_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct CommandBuffer_add_scheduled_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn CommandBuffer_add_scheduled_handler_invoke(block: *u8, a0: i64) {
+    let bl: *CommandBuffer_add_scheduled_handler_block = { block as *CommandBuffer_add_scheduled_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct CommandBuffer_add_completed_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn CommandBuffer_add_completed_handler_invoke(block: *u8, a0: i64) {
+    let bl: *CommandBuffer_add_completed_handler_block = { block as *CommandBuffer_add_completed_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct IOCommandBuffer_add_completed_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn IOCommandBuffer_add_completed_handler_invoke(block: *u8, a0: i64) {
+    let bl: *IOCommandBuffer_add_completed_handler_block = { block as *IOCommandBuffer_add_completed_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
     return;
 }
 
@@ -10803,7 +11088,14 @@ impl MTL4CommitOptions {
 
     fn from_raw(ptr: *u8) -> MTL4CommitOptions { return MTL4CommitOptions { _obj: ptr }; }
 
-    // SKIPPED `addFeedbackHandler:`: param `MTL4CommitFeedbackHandler _Nonnull` — unmapped type `MTL4CommitFeedbackHandler`
+    fn add_feedback_handler(this, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: MTL4CommitOptions_add_feedback_handler_block = MTL4CommitOptions_add_feedback_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: MTL4CommitOptions_add_feedback_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addFeedbackHandler:\0")), bp);
+        return;
+    }
+
 }
 
 // `MTLCaptureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -12893,7 +13185,14 @@ impl Device {
         return option::some(Library::from_raw(obj));
     }
 
-    // SKIPPED `newLibraryWithSource:options:completionHandler:`: param `MTLNewLibraryCompletionHandler _Nonnull` — unmapped type `MTLNewLibraryCompletionHandler`
+    fn new_library_with_source_options_completion_handler(this, source: str, options: CompileOptions, cb: fn(*u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_library_with_source_options_completion_handler_block = Device_new_library_with_source_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_source_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithSource:options:completionHandler:\0")), bridge::nsstring(source), options.raw(), bp);
+        return;
+    }
+
     fn new_library_with_stitched_descriptor_error(this, descriptor: StitchedLibraryDescriptor, error: *u8) -> option::Option[Library] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithStitchedDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -12902,7 +13201,14 @@ impl Device {
         return option::some(Library::from_raw(obj));
     }
 
-    // SKIPPED `newLibraryWithStitchedDescriptor:completionHandler:`: param `MTLNewLibraryCompletionHandler _Nonnull` — unmapped type `MTLNewLibraryCompletionHandler`
+    fn new_library_with_stitched_descriptor_completion_handler(this, descriptor: StitchedLibraryDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_library_with_stitched_descriptor_completion_handler_block = Device_new_library_with_stitched_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_library_with_stitched_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newLibraryWithStitchedDescriptor:completionHandler:\0")), descriptor.raw(), bp);
+        return;
+    }
+
     fn new_render_pipeline_state_with_descriptor_error(this, descriptor: RenderPipelineDescriptor, error: *u8) -> option::Option[RenderPipelineState] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -12919,8 +13225,22 @@ impl Device {
         return option::some(RenderPipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newRenderPipelineStateWithDescriptor:completionHandler:`: param `MTLNewRenderPipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateCompletionHandler`
-    // SKIPPED `newRenderPipelineStateWithDescriptor:options:completionHandler:`: param `MTLNewRenderPipelineStateWithReflectionCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateWithReflectionCompletionHandler`
+    fn new_render_pipeline_state_with_descriptor_completion_handler(this, descriptor: RenderPipelineDescriptor, cb: fn(*u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_render_pipeline_state_with_descriptor_completion_handler_block = Device_new_render_pipeline_state_with_descriptor_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:completionHandler:\0")), descriptor.raw(), bp);
+        return;
+    }
+
+    fn new_render_pipeline_state_with_descriptor_options_completion_handler(this, descriptor: RenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_render_pipeline_state_with_descriptor_options_completion_handler_block = Device_new_render_pipeline_state_with_descriptor_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_descriptor_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
+        return;
+    }
+
     fn new_compute_pipeline_state_with_function_error(this, compute_function: Function, error: *u8) -> option::Option[ComputePipelineState] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithFunction:error:\0")), compute_function.raw(), error);
         if obj == { 0 as *u8 } {
@@ -12937,8 +13257,22 @@ impl Device {
         return option::some(ComputePipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newComputePipelineStateWithFunction:completionHandler:`: param `MTLNewComputePipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewComputePipelineStateCompletionHandler`
-    // SKIPPED `newComputePipelineStateWithFunction:options:completionHandler:`: param `MTLNewComputePipelineStateWithReflectionCompletionHandler _Nonnull` — unmapped type `MTLNewComputePipelineStateWithReflectionCompletionHandler`
+    fn new_compute_pipeline_state_with_function_completion_handler(this, compute_function: Function, cb: fn(*u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_compute_pipeline_state_with_function_completion_handler_block = Device_new_compute_pipeline_state_with_function_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithFunction:completionHandler:\0")), compute_function.raw(), bp);
+        return;
+    }
+
+    fn new_compute_pipeline_state_with_function_options_completion_handler(this, compute_function: Function, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_compute_pipeline_state_with_function_options_completion_handler_block = Device_new_compute_pipeline_state_with_function_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_function_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithFunction:options:completionHandler:\0")), compute_function.raw(), options, bp);
+        return;
+    }
+
     fn new_compute_pipeline_state_with_descriptor_options_reflection_error(this, descriptor: ComputePipelineDescriptor, options: u64, reflection: *u8, error: *u8) -> option::Option[ComputePipelineState] {
         let obj: *u8 = rt::msg_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithDescriptor:options:reflection:error:\0")), descriptor.raw(), options, reflection, error);
         if obj == { 0 as *u8 } {
@@ -12947,7 +13281,14 @@ impl Device {
         return option::some(ComputePipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newComputePipelineStateWithDescriptor:options:completionHandler:`: param `MTLNewComputePipelineStateWithReflectionCompletionHandler _Nonnull` — unmapped type `MTLNewComputePipelineStateWithReflectionCompletionHandler`
+    fn new_compute_pipeline_state_with_descriptor_options_completion_handler(this, descriptor: ComputePipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_block = Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_compute_pipeline_state_with_descriptor_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newComputePipelineStateWithDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
+        return;
+    }
+
     fn new_fence(this) -> option::Option[Fence] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("newFence\0")));
         if obj == { 0 as *u8 } {
@@ -12984,7 +13325,14 @@ impl Device {
         return option::some(RenderPipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newRenderPipelineStateWithTileDescriptor:options:completionHandler:`: param `MTLNewRenderPipelineStateWithReflectionCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateWithReflectionCompletionHandler`
+    fn new_render_pipeline_state_with_tile_descriptor_options_completion_handler(this, descriptor: TileRenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_block = Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_tile_descriptor_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithTileDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
+        return;
+    }
+
     fn new_render_pipeline_state_with_mesh_descriptor_options_reflection_error(this, descriptor: MeshRenderPipelineDescriptor, options: u64, reflection: *u8, error: *u8) -> option::Option[RenderPipelineState] {
         let obj: *u8 = rt::msg_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithMeshDescriptor:options:reflection:error:\0")), descriptor.raw(), options, reflection, error);
         if obj == { 0 as *u8 } {
@@ -12993,7 +13341,14 @@ impl Device {
         return option::some(RenderPipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newRenderPipelineStateWithMeshDescriptor:options:completionHandler:`: param `MTLNewRenderPipelineStateWithReflectionCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateWithReflectionCompletionHandler`
+    fn new_render_pipeline_state_with_mesh_descriptor_options_completion_handler(this, descriptor: MeshRenderPipelineDescriptor, options: u64, cb: fn(*u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_block = Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Device_new_render_pipeline_state_with_mesh_descriptor_options_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("newRenderPipelineStateWithMeshDescriptor:options:completionHandler:\0")), descriptor.raw(), options, bp);
+        return;
+    }
+
     fn get_default_sample_positions_count(this, positions: *u8, count: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("getDefaultSamplePositions:count:\0")), positions, count);
     }
@@ -15126,15 +15481,15 @@ impl MTL4Compiler {
         return option::some(MTL4BinaryFunction::from_raw(obj));
     }
 
-    // SKIPPED `newLibraryWithDescriptor:completionHandler:`: param `MTLNewLibraryCompletionHandler _Nonnull` — unmapped type `MTLNewLibraryCompletionHandler`
-    // SKIPPED `newDynamicLibrary:completionHandler:`: param `MTLNewDynamicLibraryCompletionHandler _Nonnull` — unmapped type `MTLNewDynamicLibraryCompletionHandler`
-    // SKIPPED `newDynamicLibraryWithURL:completionHandler:`: param `MTLNewDynamicLibraryCompletionHandler _Nonnull` — unmapped type `MTLNewDynamicLibraryCompletionHandler`
-    // SKIPPED `newComputePipelineStateWithDescriptor:compilerTaskOptions:completionHandler:`: param `MTLNewComputePipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewComputePipelineStateCompletionHandler`
-    // SKIPPED `newComputePipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:`: param `MTLNewComputePipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewComputePipelineStateCompletionHandler`
-    // SKIPPED `newRenderPipelineStateWithDescriptor:compilerTaskOptions:completionHandler:`: param `MTLNewRenderPipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateCompletionHandler`
-    // SKIPPED `newRenderPipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:`: param `MTLNewRenderPipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateCompletionHandler`
-    // SKIPPED `newRenderPipelineStateBySpecializationWithDescriptor:pipeline:completionHandler:`: param `MTLNewRenderPipelineStateCompletionHandler _Nonnull` — unmapped type `MTLNewRenderPipelineStateCompletionHandler`
-    // SKIPPED `newBinaryFunctionWithDescriptor:compilerTaskOptions:completionHandler:`: param `MTL4NewBinaryFunctionCompletionHandler _Nonnull` — unmapped type `MTL4NewBinaryFunctionCompletionHandler`
+    // SKIPPED `newLibraryWithDescriptor:completionHandler:`: block method with non-void return
+    // SKIPPED `newDynamicLibrary:completionHandler:`: block method with non-void return
+    // SKIPPED `newDynamicLibraryWithURL:completionHandler:`: block method with non-void return
+    // SKIPPED `newComputePipelineStateWithDescriptor:compilerTaskOptions:completionHandler:`: block method with non-void return
+    // SKIPPED `newComputePipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:`: block method with non-void return
+    // SKIPPED `newRenderPipelineStateWithDescriptor:compilerTaskOptions:completionHandler:`: block method with non-void return
+    // SKIPPED `newRenderPipelineStateWithDescriptor:dynamicLinkingDescriptor:compilerTaskOptions:completionHandler:`: block method with non-void return
+    // SKIPPED `newRenderPipelineStateBySpecializationWithDescriptor:pipeline:completionHandler:`: block method with non-void return
+    // SKIPPED `newBinaryFunctionWithDescriptor:compilerTaskOptions:completionHandler:`: block method with non-void return
     fn new_machine_learning_pipeline_state_with_descriptor_error(this, descriptor: MTL4MachineLearningPipelineDescriptor, error: *u8) -> option::Option[MTL4MachineLearningPipelineState] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newMachineLearningPipelineStateWithDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -15143,7 +15498,7 @@ impl MTL4Compiler {
         return option::some(MTL4MachineLearningPipelineState::from_raw(obj));
     }
 
-    // SKIPPED `newMachineLearningPipelineStateWithDescriptor:completionHandler:`: param `MTL4NewMachineLearningPipelineStateCompletionHandler _Nonnull` — unmapped type `MTL4NewMachineLearningPipelineStateCompletionHandler`
+    // SKIPPED `newMachineLearningPipelineStateWithDescriptor:completionHandler:`: block method with non-void return
     fn device(this) -> Device {
         return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
     }
@@ -15653,7 +16008,14 @@ impl SharedEvent {
 
     fn from_raw(ptr: *u8) -> SharedEvent { return SharedEvent { _obj: ptr }; }
 
-    // SKIPPED `notifyListener:atValue:block:`: param `MTLSharedEventNotificationBlock _Nonnull` — unmapped type `MTLSharedEventNotificationBlock`
+    fn notify_listener_at_value_block(this, listener: SharedEventListener, value: u64, cb: fn(*u8, i64, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SharedEvent_notify_listener_at_value_block_block = SharedEvent_notify_listener_at_value_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharedEvent_notify_listener_at_value_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("notifyListener:atValue:block:\0")), listener.raw(), value, bp);
+        return;
+    }
+
     fn new_shared_event_handle(this) -> SharedEventHandle {
         return SharedEventHandle::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("newSharedEventHandle\0"))));
     }
@@ -17112,7 +17474,14 @@ impl Drawable {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("presentAfterMinimumDuration:\0")), duration);
     }
 
-    // SKIPPED `addPresentedHandler:`: param `MTLDrawablePresentedHandler _Nonnull` — unmapped type `MTLDrawablePresentedHandler`
+    fn add_presented_handler(this, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Drawable_add_presented_handler_block = Drawable_add_presented_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Drawable_add_presented_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addPresentedHandler:\0")), bp);
+        return;
+    }
+
     fn presented_time(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("presentedTime\0")));
     }
@@ -17141,7 +17510,14 @@ impl CommandBuffer {
         rt::msg_void(this._obj, rt::sel(#str_ptr("commit\0")));
     }
 
-    // SKIPPED `addScheduledHandler:`: param `MTLCommandBufferHandler _Nonnull` — unmapped type `MTLCommandBufferHandler`
+    fn add_scheduled_handler(this, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CommandBuffer_add_scheduled_handler_block = CommandBuffer_add_scheduled_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_scheduled_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addScheduledHandler:\0")), bp);
+        return;
+    }
+
     fn present_drawable(this, drawable: Drawable) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentDrawable:\0")), drawable.raw());
     }
@@ -17158,7 +17534,14 @@ impl CommandBuffer {
         rt::msg_void(this._obj, rt::sel(#str_ptr("waitUntilScheduled\0")));
     }
 
-    // SKIPPED `addCompletedHandler:`: param `MTLCommandBufferHandler _Nonnull` — unmapped type `MTLCommandBufferHandler`
+    fn add_completed_handler(this, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CommandBuffer_add_completed_handler_block = CommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CommandBuffer_add_completed_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addCompletedHandler:\0")), bp);
+        return;
+    }
+
     fn wait_until_completed(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("waitUntilCompleted\0")));
     }
@@ -18191,7 +18574,14 @@ impl IOCommandBuffer {
 
     fn from_raw(ptr: *u8) -> IOCommandBuffer { return IOCommandBuffer { _obj: ptr }; }
 
-    // SKIPPED `addCompletedHandler:`: param `MTLIOCommandBufferHandler _Nonnull` — unmapped type `MTLIOCommandBufferHandler`
+    fn add_completed_handler(this, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: IOCommandBuffer_add_completed_handler_block = IOCommandBuffer_add_completed_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: IOCommandBuffer_add_completed_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addCompletedHandler:\0")), bp);
+        return;
+    }
+
     fn load_bytes_size_source_handle_source_handle_offset(this, pointer: *u8, size: u64, source_handle: IOFileHandle, source_handle_offset: u64) {
         rt::msg_void_id_u64_id_u64(this._obj, rt::sel(#str_ptr("loadBytes:size:sourceHandle:sourceHandleOffset:\0")), pointer, size, source_handle.raw(), source_handle_offset);
     }
