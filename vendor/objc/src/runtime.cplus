@@ -2542,6 +2542,15 @@ fn msg_void_u64_u32(recv: *u8, selector: *u8, a: u64, b: u32) {
     { objc_msg_void_u64_u32(recv, selector, a, b); };
 }
 
+// ---- Metal encoder/resource wide-arg shapes (all integer-eightbyte / id /
+// NSRange — same GPR ABI classes as the shims above, correct by construction). ----
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_range_u8(recv: *u8, sel: *u8, a: *u8, b: Range, c: u8);
+
+fn msg_void_id_range_u8(recv: *u8, selector: *u8, a: *u8, b: Range, c: u8) {
+    { objc_msg_void_id_range_u8(recv, selector, a, b, c); };
+}
+
 // class_addMethod wrapper for action IMPs: `void (*)(id self, SEL _cmd, id arg)`.
 // The `types` encoding string is passed by the caller ("v@:@\0" for a void
 // method taking one id argument).

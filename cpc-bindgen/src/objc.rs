@@ -128,6 +128,7 @@ enum Ret {
     ScalarF64, // double / CGFloat / NSTimeInterval
     ScalarI32, // int
     ScalarU32, // unsigned int
+    ScalarU8,  // uint8_t / unsigned char (zero-extended by cpc's C-ABI codegen)
     ScalarF32, // float
     EnumTy(String),
     Range,
@@ -159,6 +160,7 @@ enum Arg {
     ScalarF64(String), // double / CGFloat / NSTimeInterval
     ScalarI32(String), // int
     ScalarU32(String), // unsigned int
+    ScalarU8(String),  // uint8_t / unsigned char
     ScalarF32(String), // float
     Range(String),
     Rect(String),  // NSRect / CGRect — rt::Rect HFA
@@ -1456,6 +1458,7 @@ impl ObjcEmitter {
             Ret::ScalarF64 => (" -> f64".into(), format!("        return {send};\n")),
             Ret::ScalarI32 => (" -> i32".into(), format!("        return {send};\n")),
             Ret::ScalarU32 => (" -> u32".into(), format!("        return {send};\n")),
+            Ret::ScalarU8 => (" -> u8".into(), format!("        return {send};\n")),
             Ret::ScalarF32 => (" -> f32".into(), format!("        return {send};\n")),
             Ret::Range => (" -> rt::Range".into(), format!("        return {send};\n")),
             Ret::Rect => (" -> rt::Rect".into(), format!("        return {send};\n")),
@@ -1812,6 +1815,7 @@ impl ObjcEmitter {
             // 32-bit scalars ride their own msgSend widths (vendor/objc shims).
             "int" | "int32_t" => return Ret::ScalarI32,
             "unsigned int" | "unsigned" | "uint32_t" => return Ret::ScalarU32,
+            "uint8_t" | "unsigned char" => return Ret::ScalarU8,
             "float" => return Ret::ScalarF32,
             _ => {}
         }
@@ -1935,6 +1939,7 @@ impl ObjcEmitter {
             }
             "int" | "int32_t" => return Arg::ScalarI32(pname.to_string()),
             "unsigned int" | "unsigned" | "uint32_t" => return Arg::ScalarU32(pname.to_string()),
+            "uint8_t" | "unsigned char" => return Arg::ScalarU8(pname.to_string()),
             "float" => return Arg::ScalarF32(pname.to_string()),
             _ => {}
         }
@@ -2031,6 +2036,7 @@ impl ObjcEmitter {
             "BOOL" | "_Bool" | "bool" => "bool".to_string(),
             "int" | "int32_t" => "i32".to_string(),
             "unsigned int" | "unsigned" | "uint32_t" => "u32".to_string(),
+            "uint8_t" | "unsigned char" => "u8".to_string(),
             "float" => "f32".to_string(),
             // A by-value C struct (after the explicit scalar typedefs above, so
             // single-integer wrappers like MTLResourceID stay u64, matching map_arg).
@@ -2243,6 +2249,7 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::ScalarF64 => "f64".into(),
         Ret::ScalarI32 => "i32".into(),
         Ret::ScalarU32 => "u32".into(),
+        Ret::ScalarU8 => "u8".into(),
         Ret::ScalarF32 => "f32".into(),
         Ret::Range => "range".into(),
         Ret::Rect => "rect".into(),
@@ -2267,6 +2274,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::ScalarF64(_) => "f64".into(),
         Arg::ScalarI32(_) => "i32".into(),
         Arg::ScalarU32(_) => "u32".into(),
+        Arg::ScalarU8(_) => "u8".into(),
         Arg::ScalarF32(_) => "f32".into(),
         Arg::Range(_) => "range".into(),
         Arg::Rect(_) => "rect".into(),
@@ -2294,6 +2302,7 @@ fn tag_to_type(tag: &str) -> String {
         "i8" => "i8",
         "i32" => "i32",
         "u32" => "u32",
+        "u8" => "u8",
         "f32" => "f32",
         "f64" => "f64",
         "range" => "rt::Range",
@@ -2315,6 +2324,7 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::ScalarF64(e)
         | Arg::ScalarI32(e)
         | Arg::ScalarU32(e)
+        | Arg::ScalarU8(e)
         | Arg::ScalarF32(e)
         | Arg::Range(e)
         | Arg::Rect(e)
@@ -2441,6 +2451,9 @@ const KNOWN_MSG_SHAPES: &[&str] = &[
         "void_rect_range_rect", "void_rect_rect_i64_f64", "void_rect_rect_id", "void_rect_size", "void_rect_u64",
         "void_rect_u64_id", "void_size_range", "void_u32_id", "void_u32_id_u32", "void_u32_u64_u64",
         "void_u64_point_u64_id", "void_u64_range_i64", "void_u64_u32",
+        // uint8_t param (MTLBlitCommandEncoder fillBuffer:range:value:); cpc now
+        // zero-extends the narrow arg per the C ABI (fix in codegen abi_ext_attr).
+        "void_id_range_u8",
 ];
 
 /// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
@@ -2687,6 +2700,23 @@ mod tests {
         assert!(matches!(e.map_ret("unsigned int"), Ret::ScalarU32));
         assert!(matches!(e.map_ret("unsigned"), Ret::ScalarU32));
         assert!(matches!(e.map_ret("float"), Ret::ScalarF32));
+    }
+
+    #[test]
+    fn maps_uint8_to_u8_scalar() {
+        // uint8_t / unsigned char bind to a u8 scalar (rides its own zero-extended
+        // shim; cpc's codegen zeroexts the narrow arg per the C ABI). fillBuffer:
+        // range:value: is the metal case.
+        let mut e = emitter();
+        assert!(matches!(e.map_ret("uint8_t"), Ret::ScalarU8));
+        assert!(matches!(e.map_arg("uint8_t", "v"), Arg::ScalarU8(_)));
+        assert!(matches!(e.map_arg("unsigned char", "v"), Arg::ScalarU8(_)));
+        assert_eq!(e.param_sig_type("uint8_t"), "u8");
+        let d = e
+            .send_expr("this._obj", "fillBuffer:range:value:", &Ret::Void,
+                &[Arg::Id("b".into()), Arg::Range("r".into()), Arg::ScalarU8("v".into())])
+            .expect("void_id_range_u8 shape is KNOWN");
+        assert!(d.contains("rt::msg_void_id_range_u8("), "{d}");
     }
 
     #[test]
