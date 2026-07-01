@@ -2167,10 +2167,12 @@ fn arg_expr(a: &Arg) -> Option<String> {
     })
 }
 
-/// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
-/// Grow the two in lockstep.
-fn msg_shape_is_known(suffix: &str) -> bool {
-    const KNOWN: &[&str] = &[
+/// The scalar/geometry `objc_msgSend` shapes the shared rt:: zoo models — every
+/// entry MUST have a matching `fn msg_<tag>` wrapper in vendor/objc/src/runtime.cplus
+/// (enforced in lockstep by `every_known_shape_has_a_runtime_wrapper`). By-value
+/// value-struct shapes (PascalCase tags) are NOT listed here — they route to
+/// module-local shims via `msg_shape_has_struct`.
+const KNOWN_MSG_SHAPES: &[&str] = &[
         "void", "void_id", "void_i8", "void_i64", "void_f64", "void_range_id", "id",
         "id_id", "id_i64", "id_u64", "id_f64", "id_id_u64", "id_range",
         "i8", "i8_i64", "i8_id", "i64", "u64", "f64", "range", "range_u64", "range_range",
@@ -2198,8 +2200,23 @@ fn msg_shape_is_known(suffix: &str) -> bool {
         "id_id_i8", "id_id_i64", "id_id_f64", "id_i64_i64",
         "i64_id_id", "i8_id_id_id", "id_f64_f64_f64_f64",
         "void_rect_id", "rect_i64", "size_size",
-    ];
-    KNOWN.contains(&suffix)
+        // Batch: all remaining scalar/geometry shapes used >=3x across
+        // metal/appkit. Grown in lockstep with vendor/objc/src/runtime.cplus.
+        "void_id_id_id", "void_id_id_id_id", "id_id_id_id_id", "void_id_id_id_id_id", "i64_point", "void_id_point",
+        "void_id_id_u64", "void_f64_i64", "u64_u64", "point_id", "id_id_id_i64", "f64_id",
+        "void_id_id_id_u64", "rect_i8", "id_point", "id_id_u64_id_id", "id_i8", "i64_u64",
+        "f64_f64", "void_u64_id", "void_u64_i8", "void_id_id_id_id_id_id", "void_id_i64_i64", "void_id_f64",
+        "void_f32_f32", "id_id_rect_id_id", "id_f64_f64", "i8_rect", "void_point_point", "void_id_rect_id",
+        "void_id_range_id_u64", "void_id_i64_id", "void_i64_u64_u64_u64_u64", "void_i64_range", "void_i64_i8", "u64_range_id_id_id_id",
+        "u64_point", "u64_id_u64", "u64_id_id", "rect_id", "rect_i64_i64", "range_id_u64",
+        "id_u64_u64", "id_id_u64_u64", "id_id_rect_id", "id_id_id_id_id_id", "id_id_f64_f64", "id_i8_id",
+        "id_f64_f64_f64_f64_f64", "i8_point", "i8_id_u64", "i8_id_id_i64", "i8_id_i8", "f64_u64_rect",
+];
+
+/// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
+/// Grow `KNOWN_MSG_SHAPES` and the runtime wrappers in lockstep.
+fn msg_shape_is_known(suffix: &str) -> bool {
+    KNOWN_MSG_SHAPES.contains(&suffix)
 }
 
 /// clang's `loc` puts the file directly, or (for macro-expanded decls like
@@ -2399,16 +2416,14 @@ mod tests {
             .filter_map(|l| l.trim_start().strip_prefix("fn msg_"))
             .filter_map(|l| l.split('(').next())
             .collect();
-        // Re-list KNOWN here via the predicate: any tag it accepts must have a wrapper.
-        for tag in [
-            "i8_id", "i64_id", "u64_id", "i64_i64", "f64_i64", "i8_u64",
-            "void_id_i64", "void_id_i8", "void_i64_i64", "void_i8_i64",
-            "id_id_i8", "id_id_i64", "id_id_f64", "id_i64_i64",
-            "i64_id_id", "i8_id_id_id", "id_f64_f64_f64_f64",
-            "void_rect_id", "rect_i64", "size_size",
-        ] {
+        // EVERY shape the predicate accepts must have a wrapper — iterate the whole
+        // list so newly-added shapes can't drift out of lockstep unnoticed.
+        for tag in KNOWN_MSG_SHAPES {
             assert!(msg_shape_is_known(tag), "{tag} should be KNOWN");
-            assert!(have.contains(tag), "KNOWN tag `{tag}` has no `fn msg_{tag}` wrapper in runtime.cplus");
+            assert!(
+                have.contains(tag),
+                "KNOWN tag `{tag}` has no `fn msg_{tag}` wrapper in runtime.cplus"
+            );
         }
     }
 
