@@ -4977,9 +4977,9 @@ impl FunctionDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -5080,9 +5080,9 @@ impl CompileOptions {
         let n_libraries: usize = libraries.count();
         var i_libraries: usize = 0 as usize;
         while i_libraries < n_libraries {
-            match libraries.at(i_libraries) {
-                option::Option[DynamicLibrary]::Some(e_libraries) => { rt::msg_void_id(arr_libraries, add_sel_libraries, e_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match libraries.at_ptr(i_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_libraries) => { rt::msg_void_id(arr_libraries, add_sel_libraries, (*e_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_libraries = i_libraries +% (1 as usize);
         }
@@ -5816,7 +5816,21 @@ impl MTL4MachineLearningPipelineDescriptor {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setInputDimensions:atBufferIndex:\0")), dimensions.raw(), buffer_index);
     }
 
-    // SKIPPED `setInputDimensions:withRange:`: param `NSArray<MTLTensorExtents *> * _Nonnull` — generic collection
+    fn set_input_dimensions_with_range(this, dimensions: vec::Vec[TensorExtents], range: rt::Range) {
+        let arr_dimensions: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_dimensions: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_dimensions: usize = dimensions.count();
+        var i_dimensions: usize = 0 as usize;
+        while i_dimensions < n_dimensions {
+            match dimensions.at_ptr(i_dimensions) {
+                option::Option[*TensorExtents]::Some(e_dimensions) => { rt::msg_void_id(arr_dimensions, add_sel_dimensions, (*e_dimensions).raw()); }
+                option::Option[*TensorExtents]::None => {}
+            }
+            i_dimensions = i_dimensions +% (1 as usize);
+        }
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setInputDimensions:withRange:\0")), arr_dimensions, range);
+    }
+
     fn input_dimensions_at_buffer_index(this, buffer_index: i64) -> option::Option[TensorExtents] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("inputDimensionsAtBufferIndex:\0")), buffer_index);
         if obj == { 0 as *u8 } {
@@ -5926,9 +5940,9 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         let n_binary_linked_functions: usize = binary_linked_functions.count();
         var i_binary_linked_functions: usize = 0 as usize;
         while i_binary_linked_functions < n_binary_linked_functions {
-            match binary_linked_functions.at(i_binary_linked_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_binary_linked_functions) => { rt::msg_void_id(arr_binary_linked_functions, add_sel_binary_linked_functions, e_binary_linked_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match binary_linked_functions.at_ptr(i_binary_linked_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_binary_linked_functions) => { rt::msg_void_id(arr_binary_linked_functions, add_sel_binary_linked_functions, (*e_binary_linked_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_binary_linked_functions = i_binary_linked_functions +% (1 as usize);
         }
@@ -5954,9 +5968,9 @@ impl MTL4PipelineStageDynamicLinkingDescriptor {
         let n_preloaded_libraries: usize = preloaded_libraries.count();
         var i_preloaded_libraries: usize = 0 as usize;
         while i_preloaded_libraries < n_preloaded_libraries {
-            match preloaded_libraries.at(i_preloaded_libraries) {
-                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match preloaded_libraries.at_ptr(i_preloaded_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, (*e_preloaded_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
         }
@@ -6059,9 +6073,9 @@ impl MTL4CompilerTaskOptions {
         let n_lookup_archives: usize = lookup_archives.count();
         var i_lookup_archives: usize = 0 as usize;
         while i_lookup_archives < n_lookup_archives {
-            match lookup_archives.at(i_lookup_archives) {
-                option::Option[MTL4Archive]::Some(e_lookup_archives) => { rt::msg_void_id(arr_lookup_archives, add_sel_lookup_archives, e_lookup_archives.raw()); }
-                option::Option[MTL4Archive]::None => {}
+            match lookup_archives.at_ptr(i_lookup_archives) {
+                option::Option[*MTL4Archive]::Some(e_lookup_archives) => { rt::msg_void_id(arr_lookup_archives, add_sel_lookup_archives, (*e_lookup_archives).raw()); }
+                option::Option[*MTL4Archive]::None => {}
             }
             i_lookup_archives = i_lookup_archives +% (1 as usize);
         }
@@ -6302,9 +6316,9 @@ impl TileRenderPipelineDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -6330,9 +6344,9 @@ impl TileRenderPipelineDescriptor {
         let n_preloaded_libraries: usize = preloaded_libraries.count();
         var i_preloaded_libraries: usize = 0 as usize;
         while i_preloaded_libraries < n_preloaded_libraries {
-            match preloaded_libraries.at(i_preloaded_libraries) {
-                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match preloaded_libraries.at_ptr(i_preloaded_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, (*e_preloaded_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
         }
@@ -6599,9 +6613,9 @@ impl MeshRenderPipelineDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -7170,9 +7184,9 @@ impl RenderPipelineDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -7198,9 +7212,9 @@ impl RenderPipelineDescriptor {
         let n_vertex_preloaded_libraries: usize = vertex_preloaded_libraries.count();
         var i_vertex_preloaded_libraries: usize = 0 as usize;
         while i_vertex_preloaded_libraries < n_vertex_preloaded_libraries {
-            match vertex_preloaded_libraries.at(i_vertex_preloaded_libraries) {
-                option::Option[DynamicLibrary]::Some(e_vertex_preloaded_libraries) => { rt::msg_void_id(arr_vertex_preloaded_libraries, add_sel_vertex_preloaded_libraries, e_vertex_preloaded_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match vertex_preloaded_libraries.at_ptr(i_vertex_preloaded_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_vertex_preloaded_libraries) => { rt::msg_void_id(arr_vertex_preloaded_libraries, add_sel_vertex_preloaded_libraries, (*e_vertex_preloaded_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_vertex_preloaded_libraries = i_vertex_preloaded_libraries +% (1 as usize);
         }
@@ -7226,9 +7240,9 @@ impl RenderPipelineDescriptor {
         let n_fragment_preloaded_libraries: usize = fragment_preloaded_libraries.count();
         var i_fragment_preloaded_libraries: usize = 0 as usize;
         while i_fragment_preloaded_libraries < n_fragment_preloaded_libraries {
-            match fragment_preloaded_libraries.at(i_fragment_preloaded_libraries) {
-                option::Option[DynamicLibrary]::Some(e_fragment_preloaded_libraries) => { rt::msg_void_id(arr_fragment_preloaded_libraries, add_sel_fragment_preloaded_libraries, e_fragment_preloaded_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match fragment_preloaded_libraries.at_ptr(i_fragment_preloaded_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_fragment_preloaded_libraries) => { rt::msg_void_id(arr_fragment_preloaded_libraries, add_sel_fragment_preloaded_libraries, (*e_fragment_preloaded_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_fragment_preloaded_libraries = i_fragment_preloaded_libraries +% (1 as usize);
         }
@@ -7587,9 +7601,9 @@ impl ComputePipelineDescriptor {
         let n_insert_libraries: usize = insert_libraries.count();
         var i_insert_libraries: usize = 0 as usize;
         while i_insert_libraries < n_insert_libraries {
-            match insert_libraries.at(i_insert_libraries) {
-                option::Option[DynamicLibrary]::Some(e_insert_libraries) => { rt::msg_void_id(arr_insert_libraries, add_sel_insert_libraries, e_insert_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match insert_libraries.at_ptr(i_insert_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_insert_libraries) => { rt::msg_void_id(arr_insert_libraries, add_sel_insert_libraries, (*e_insert_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_insert_libraries = i_insert_libraries +% (1 as usize);
         }
@@ -7615,9 +7629,9 @@ impl ComputePipelineDescriptor {
         let n_preloaded_libraries: usize = preloaded_libraries.count();
         var i_preloaded_libraries: usize = 0 as usize;
         while i_preloaded_libraries < n_preloaded_libraries {
-            match preloaded_libraries.at(i_preloaded_libraries) {
-                option::Option[DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, e_preloaded_libraries.raw()); }
-                option::Option[DynamicLibrary]::None => {}
+            match preloaded_libraries.at_ptr(i_preloaded_libraries) {
+                option::Option[*DynamicLibrary]::Some(e_preloaded_libraries) => { rt::msg_void_id(arr_preloaded_libraries, add_sel_preloaded_libraries, (*e_preloaded_libraries).raw()); }
+                option::Option[*DynamicLibrary]::None => {}
             }
             i_preloaded_libraries = i_preloaded_libraries +% (1 as usize);
         }
@@ -7643,9 +7657,9 @@ impl ComputePipelineDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -8099,7 +8113,21 @@ impl StitchedLibraryDescriptor {
         return out;
     }
 
-    // SKIPPED `setFunctionGraphs:`: param `NSArray<MTLFunctionStitchingGraph *> * _Nonnull` — generic collection
+    fn set_function_graphs(this, function_graphs: vec::Vec[FunctionStitchingGraph]) {
+        let arr_function_graphs: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_function_graphs: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_function_graphs: usize = function_graphs.count();
+        var i_function_graphs: usize = 0 as usize;
+        while i_function_graphs < n_function_graphs {
+            match function_graphs.at_ptr(i_function_graphs) {
+                option::Option[*FunctionStitchingGraph]::Some(e_function_graphs) => { rt::msg_void_id(arr_function_graphs, add_sel_function_graphs, (*e_function_graphs).raw()); }
+                option::Option[*FunctionStitchingGraph]::None => {}
+            }
+            i_function_graphs = i_function_graphs +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFunctionGraphs:\0")), arr_function_graphs);
+    }
+
     fn functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -8119,9 +8147,9 @@ impl StitchedLibraryDescriptor {
         let n_functions: usize = functions.count();
         var i_functions: usize = 0 as usize;
         while i_functions < n_functions {
-            match functions.at(i_functions) {
-                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
-                option::Option[Function]::None => {}
+            match functions.at_ptr(i_functions) {
+                option::Option[*Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, (*e_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_functions = i_functions +% (1 as usize);
         }
@@ -8147,9 +8175,9 @@ impl StitchedLibraryDescriptor {
         let n_binary_archives: usize = binary_archives.count();
         var i_binary_archives: usize = 0 as usize;
         while i_binary_archives < n_binary_archives {
-            match binary_archives.at(i_binary_archives) {
-                option::Option[BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, e_binary_archives.raw()); }
-                option::Option[BinaryArchive]::None => {}
+            match binary_archives.at_ptr(i_binary_archives) {
+                option::Option[*BinaryArchive]::Some(e_binary_archives) => { rt::msg_void_id(arr_binary_archives, add_sel_binary_archives, (*e_binary_archives).raw()); }
+                option::Option[*BinaryArchive]::None => {}
             }
             i_binary_archives = i_binary_archives +% (1 as usize);
         }
@@ -9490,9 +9518,9 @@ impl LinkedFunctions {
         let n_functions: usize = functions.count();
         var i_functions: usize = 0 as usize;
         while i_functions < n_functions {
-            match functions.at(i_functions) {
-                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
-                option::Option[Function]::None => {}
+            match functions.at_ptr(i_functions) {
+                option::Option[*Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, (*e_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_functions = i_functions +% (1 as usize);
         }
@@ -9518,9 +9546,9 @@ impl LinkedFunctions {
         let n_binary_functions: usize = binary_functions.count();
         var i_binary_functions: usize = 0 as usize;
         while i_binary_functions < n_binary_functions {
-            match binary_functions.at(i_binary_functions) {
-                option::Option[Function]::Some(e_binary_functions) => { rt::msg_void_id(arr_binary_functions, add_sel_binary_functions, e_binary_functions.raw()); }
-                option::Option[Function]::None => {}
+            match binary_functions.at_ptr(i_binary_functions) {
+                option::Option[*Function]::Some(e_binary_functions) => { rt::msg_void_id(arr_binary_functions, add_sel_binary_functions, (*e_binary_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_binary_functions = i_binary_functions +% (1 as usize);
         }
@@ -9548,9 +9576,9 @@ impl LinkedFunctions {
         let n_private_functions: usize = private_functions.count();
         var i_private_functions: usize = 0 as usize;
         while i_private_functions < n_private_functions {
-            match private_functions.at(i_private_functions) {
-                option::Option[Function]::Some(e_private_functions) => { rt::msg_void_id(arr_private_functions, add_sel_private_functions, e_private_functions.raw()); }
-                option::Option[Function]::None => {}
+            match private_functions.at_ptr(i_private_functions) {
+                option::Option[*Function]::Some(e_private_functions) => { rt::msg_void_id(arr_private_functions, add_sel_private_functions, (*e_private_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_private_functions = i_private_functions +% (1 as usize);
         }
@@ -9632,9 +9660,9 @@ impl RenderPipelineFunctionsDescriptor {
         let n_vertex_additional_binary_functions: usize = vertex_additional_binary_functions.count();
         var i_vertex_additional_binary_functions: usize = 0 as usize;
         while i_vertex_additional_binary_functions < n_vertex_additional_binary_functions {
-            match vertex_additional_binary_functions.at(i_vertex_additional_binary_functions) {
-                option::Option[Function]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, e_vertex_additional_binary_functions.raw()); }
-                option::Option[Function]::None => {}
+            match vertex_additional_binary_functions.at_ptr(i_vertex_additional_binary_functions) {
+                option::Option[*Function]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, (*e_vertex_additional_binary_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_vertex_additional_binary_functions = i_vertex_additional_binary_functions +% (1 as usize);
         }
@@ -9660,9 +9688,9 @@ impl RenderPipelineFunctionsDescriptor {
         let n_fragment_additional_binary_functions: usize = fragment_additional_binary_functions.count();
         var i_fragment_additional_binary_functions: usize = 0 as usize;
         while i_fragment_additional_binary_functions < n_fragment_additional_binary_functions {
-            match fragment_additional_binary_functions.at(i_fragment_additional_binary_functions) {
-                option::Option[Function]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, e_fragment_additional_binary_functions.raw()); }
-                option::Option[Function]::None => {}
+            match fragment_additional_binary_functions.at_ptr(i_fragment_additional_binary_functions) {
+                option::Option[*Function]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, (*e_fragment_additional_binary_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_fragment_additional_binary_functions = i_fragment_additional_binary_functions +% (1 as usize);
         }
@@ -9688,9 +9716,9 @@ impl RenderPipelineFunctionsDescriptor {
         let n_tile_additional_binary_functions: usize = tile_additional_binary_functions.count();
         var i_tile_additional_binary_functions: usize = 0 as usize;
         while i_tile_additional_binary_functions < n_tile_additional_binary_functions {
-            match tile_additional_binary_functions.at(i_tile_additional_binary_functions) {
-                option::Option[Function]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, e_tile_additional_binary_functions.raw()); }
-                option::Option[Function]::None => {}
+            match tile_additional_binary_functions.at_ptr(i_tile_additional_binary_functions) {
+                option::Option[*Function]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, (*e_tile_additional_binary_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_tile_additional_binary_functions = i_tile_additional_binary_functions +% (1 as usize);
         }
@@ -9732,9 +9760,9 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let n_vertex_additional_binary_functions: usize = vertex_additional_binary_functions.count();
         var i_vertex_additional_binary_functions: usize = 0 as usize;
         while i_vertex_additional_binary_functions < n_vertex_additional_binary_functions {
-            match vertex_additional_binary_functions.at(i_vertex_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, e_vertex_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match vertex_additional_binary_functions.at_ptr(i_vertex_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_vertex_additional_binary_functions) => { rt::msg_void_id(arr_vertex_additional_binary_functions, add_sel_vertex_additional_binary_functions, (*e_vertex_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_vertex_additional_binary_functions = i_vertex_additional_binary_functions +% (1 as usize);
         }
@@ -9760,9 +9788,9 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let n_fragment_additional_binary_functions: usize = fragment_additional_binary_functions.count();
         var i_fragment_additional_binary_functions: usize = 0 as usize;
         while i_fragment_additional_binary_functions < n_fragment_additional_binary_functions {
-            match fragment_additional_binary_functions.at(i_fragment_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, e_fragment_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match fragment_additional_binary_functions.at_ptr(i_fragment_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_fragment_additional_binary_functions) => { rt::msg_void_id(arr_fragment_additional_binary_functions, add_sel_fragment_additional_binary_functions, (*e_fragment_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_fragment_additional_binary_functions = i_fragment_additional_binary_functions +% (1 as usize);
         }
@@ -9788,9 +9816,9 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let n_tile_additional_binary_functions: usize = tile_additional_binary_functions.count();
         var i_tile_additional_binary_functions: usize = 0 as usize;
         while i_tile_additional_binary_functions < n_tile_additional_binary_functions {
-            match tile_additional_binary_functions.at(i_tile_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, e_tile_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match tile_additional_binary_functions.at_ptr(i_tile_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_tile_additional_binary_functions) => { rt::msg_void_id(arr_tile_additional_binary_functions, add_sel_tile_additional_binary_functions, (*e_tile_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_tile_additional_binary_functions = i_tile_additional_binary_functions +% (1 as usize);
         }
@@ -9816,9 +9844,9 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let n_object_additional_binary_functions: usize = object_additional_binary_functions.count();
         var i_object_additional_binary_functions: usize = 0 as usize;
         while i_object_additional_binary_functions < n_object_additional_binary_functions {
-            match object_additional_binary_functions.at(i_object_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_object_additional_binary_functions) => { rt::msg_void_id(arr_object_additional_binary_functions, add_sel_object_additional_binary_functions, e_object_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match object_additional_binary_functions.at_ptr(i_object_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_object_additional_binary_functions) => { rt::msg_void_id(arr_object_additional_binary_functions, add_sel_object_additional_binary_functions, (*e_object_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_object_additional_binary_functions = i_object_additional_binary_functions +% (1 as usize);
         }
@@ -9844,9 +9872,9 @@ impl MTL4RenderPipelineBinaryFunctionsDescriptor {
         let n_mesh_additional_binary_functions: usize = mesh_additional_binary_functions.count();
         var i_mesh_additional_binary_functions: usize = 0 as usize;
         while i_mesh_additional_binary_functions < n_mesh_additional_binary_functions {
-            match mesh_additional_binary_functions.at(i_mesh_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_mesh_additional_binary_functions) => { rt::msg_void_id(arr_mesh_additional_binary_functions, add_sel_mesh_additional_binary_functions, e_mesh_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match mesh_additional_binary_functions.at_ptr(i_mesh_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_mesh_additional_binary_functions) => { rt::msg_void_id(arr_mesh_additional_binary_functions, add_sel_mesh_additional_binary_functions, (*e_mesh_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_mesh_additional_binary_functions = i_mesh_additional_binary_functions +% (1 as usize);
         }
@@ -10009,9 +10037,9 @@ impl PrimitiveAccelerationStructureDescriptor {
         let n_geometry_descriptors: usize = geometry_descriptors.count();
         var i_geometry_descriptors: usize = 0 as usize;
         while i_geometry_descriptors < n_geometry_descriptors {
-            match geometry_descriptors.at(i_geometry_descriptors) {
-                option::Option[AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, e_geometry_descriptors.raw()); }
-                option::Option[AccelerationStructureGeometryDescriptor]::None => {}
+            match geometry_descriptors.at_ptr(i_geometry_descriptors) {
+                option::Option[*AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, (*e_geometry_descriptors).raw()); }
+                option::Option[*AccelerationStructureGeometryDescriptor]::None => {}
             }
             i_geometry_descriptors = i_geometry_descriptors +% (1 as usize);
         }
@@ -10297,9 +10325,9 @@ impl AccelerationStructureMotionTriangleGeometryDescriptor {
         let n_vertex_buffers: usize = vertex_buffers.count();
         var i_vertex_buffers: usize = 0 as usize;
         while i_vertex_buffers < n_vertex_buffers {
-            match vertex_buffers.at(i_vertex_buffers) {
-                option::Option[MotionKeyframeData]::Some(e_vertex_buffers) => { rt::msg_void_id(arr_vertex_buffers, add_sel_vertex_buffers, e_vertex_buffers.raw()); }
-                option::Option[MotionKeyframeData]::None => {}
+            match vertex_buffers.at_ptr(i_vertex_buffers) {
+                option::Option[*MotionKeyframeData]::Some(e_vertex_buffers) => { rt::msg_void_id(arr_vertex_buffers, add_sel_vertex_buffers, (*e_vertex_buffers).raw()); }
+                option::Option[*MotionKeyframeData]::None => {}
             }
             i_vertex_buffers = i_vertex_buffers +% (1 as usize);
         }
@@ -10421,9 +10449,9 @@ impl AccelerationStructureMotionBoundingBoxGeometryDescriptor {
         let n_bounding_box_buffers: usize = bounding_box_buffers.count();
         var i_bounding_box_buffers: usize = 0 as usize;
         while i_bounding_box_buffers < n_bounding_box_buffers {
-            match bounding_box_buffers.at(i_bounding_box_buffers) {
-                option::Option[MotionKeyframeData]::Some(e_bounding_box_buffers) => { rt::msg_void_id(arr_bounding_box_buffers, add_sel_bounding_box_buffers, e_bounding_box_buffers.raw()); }
-                option::Option[MotionKeyframeData]::None => {}
+            match bounding_box_buffers.at_ptr(i_bounding_box_buffers) {
+                option::Option[*MotionKeyframeData]::Some(e_bounding_box_buffers) => { rt::msg_void_id(arr_bounding_box_buffers, add_sel_bounding_box_buffers, (*e_bounding_box_buffers).raw()); }
+                option::Option[*MotionKeyframeData]::None => {}
             }
             i_bounding_box_buffers = i_bounding_box_buffers +% (1 as usize);
         }
@@ -10645,9 +10673,9 @@ impl AccelerationStructureMotionCurveGeometryDescriptor {
         let n_control_point_buffers: usize = control_point_buffers.count();
         var i_control_point_buffers: usize = 0 as usize;
         while i_control_point_buffers < n_control_point_buffers {
-            match control_point_buffers.at(i_control_point_buffers) {
-                option::Option[MotionKeyframeData]::Some(e_control_point_buffers) => { rt::msg_void_id(arr_control_point_buffers, add_sel_control_point_buffers, e_control_point_buffers.raw()); }
-                option::Option[MotionKeyframeData]::None => {}
+            match control_point_buffers.at_ptr(i_control_point_buffers) {
+                option::Option[*MotionKeyframeData]::Some(e_control_point_buffers) => { rt::msg_void_id(arr_control_point_buffers, add_sel_control_point_buffers, (*e_control_point_buffers).raw()); }
+                option::Option[*MotionKeyframeData]::None => {}
             }
             i_control_point_buffers = i_control_point_buffers +% (1 as usize);
         }
@@ -10697,9 +10725,9 @@ impl AccelerationStructureMotionCurveGeometryDescriptor {
         let n_radius_buffers: usize = radius_buffers.count();
         var i_radius_buffers: usize = 0 as usize;
         while i_radius_buffers < n_radius_buffers {
-            match radius_buffers.at(i_radius_buffers) {
-                option::Option[MotionKeyframeData]::Some(e_radius_buffers) => { rt::msg_void_id(arr_radius_buffers, add_sel_radius_buffers, e_radius_buffers.raw()); }
-                option::Option[MotionKeyframeData]::None => {}
+            match radius_buffers.at_ptr(i_radius_buffers) {
+                option::Option[*MotionKeyframeData]::Some(e_radius_buffers) => { rt::msg_void_id(arr_radius_buffers, add_sel_radius_buffers, (*e_radius_buffers).raw()); }
+                option::Option[*MotionKeyframeData]::None => {}
             }
             i_radius_buffers = i_radius_buffers +% (1 as usize);
         }
@@ -10861,9 +10889,9 @@ impl InstanceAccelerationStructureDescriptor {
         let n_instanced_acceleration_structures: usize = instanced_acceleration_structures.count();
         var i_instanced_acceleration_structures: usize = 0 as usize;
         while i_instanced_acceleration_structures < n_instanced_acceleration_structures {
-            match instanced_acceleration_structures.at(i_instanced_acceleration_structures) {
-                option::Option[AccelerationStructure]::Some(e_instanced_acceleration_structures) => { rt::msg_void_id(arr_instanced_acceleration_structures, add_sel_instanced_acceleration_structures, e_instanced_acceleration_structures.raw()); }
-                option::Option[AccelerationStructure]::None => {}
+            match instanced_acceleration_structures.at_ptr(i_instanced_acceleration_structures) {
+                option::Option[*AccelerationStructure]::Some(e_instanced_acceleration_structures) => { rt::msg_void_id(arr_instanced_acceleration_structures, add_sel_instanced_acceleration_structures, (*e_instanced_acceleration_structures).raw()); }
+                option::Option[*AccelerationStructure]::None => {}
             }
             i_instanced_acceleration_structures = i_instanced_acceleration_structures +% (1 as usize);
         }
@@ -11577,7 +11605,7 @@ impl FunctionStitchingFunctionNode {
 
     fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: ptr }; }
 
-    // SKIPPED `initWithName:arguments:controlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    // SKIPPED `initWithName:arguments:controlDependencies:`: init with an NSArray<id> param not modelled
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);
@@ -11606,9 +11634,9 @@ impl FunctionStitchingFunctionNode {
         let n_arguments: usize = arguments.count();
         var i_arguments: usize = 0 as usize;
         while i_arguments < n_arguments {
-            match arguments.at(i_arguments) {
-                option::Option[FunctionStitchingNode]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, e_arguments.raw()); }
-                option::Option[FunctionStitchingNode]::None => {}
+            match arguments.at_ptr(i_arguments) {
+                option::Option[*FunctionStitchingNode]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, (*e_arguments).raw()); }
+                option::Option[*FunctionStitchingNode]::None => {}
             }
             i_arguments = i_arguments +% (1 as usize);
         }
@@ -11628,7 +11656,21 @@ impl FunctionStitchingFunctionNode {
         return out;
     }
 
-    // SKIPPED `setControlDependencies:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    fn set_control_dependencies(this, control_dependencies: vec::Vec[FunctionStitchingFunctionNode]) {
+        let arr_control_dependencies: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_control_dependencies: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_control_dependencies: usize = control_dependencies.count();
+        var i_control_dependencies: usize = 0 as usize;
+        while i_control_dependencies < n_control_dependencies {
+            match control_dependencies.at_ptr(i_control_dependencies) {
+                option::Option[*FunctionStitchingFunctionNode]::Some(e_control_dependencies) => { rt::msg_void_id(arr_control_dependencies, add_sel_control_dependencies, (*e_control_dependencies).raw()); }
+                option::Option[*FunctionStitchingFunctionNode]::None => {}
+            }
+            i_control_dependencies = i_control_dependencies +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setControlDependencies:\0")), arr_control_dependencies);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -11644,7 +11686,7 @@ impl FunctionStitchingGraph {
 
     fn from_raw(ptr: *u8) -> FunctionStitchingGraph { return FunctionStitchingGraph { _obj: ptr }; }
 
-    // SKIPPED `initWithFunctionName:nodes:outputNode:attributes:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    // SKIPPED `initWithFunctionName:nodes:outputNode:attributes:`: init with an NSArray<id> param not modelled
     fn function_name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionName\0")));
         return bridge::to_text(ns);
@@ -11667,7 +11709,21 @@ impl FunctionStitchingGraph {
         return out;
     }
 
-    // SKIPPED `setNodes:`: param `NSArray<MTLFunctionStitchingFunctionNode *> * _Nonnull` — generic collection
+    fn set_nodes(this, nodes: vec::Vec[FunctionStitchingFunctionNode]) {
+        let arr_nodes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_nodes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_nodes: usize = nodes.count();
+        var i_nodes: usize = 0 as usize;
+        while i_nodes < n_nodes {
+            match nodes.at_ptr(i_nodes) {
+                option::Option[*FunctionStitchingFunctionNode]::Some(e_nodes) => { rt::msg_void_id(arr_nodes, add_sel_nodes, (*e_nodes).raw()); }
+                option::Option[*FunctionStitchingFunctionNode]::None => {}
+            }
+            i_nodes = i_nodes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNodes:\0")), arr_nodes);
+    }
+
     fn output_node(this) -> option::Option[FunctionStitchingFunctionNode] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("outputNode\0")));
         if obj == { 0 as *u8 } {
@@ -11699,9 +11755,9 @@ impl FunctionStitchingGraph {
         let n_attributes: usize = attributes.count();
         var i_attributes: usize = 0 as usize;
         while i_attributes < n_attributes {
-            match attributes.at(i_attributes) {
-                option::Option[FunctionStitchingAttribute]::Some(e_attributes) => { rt::msg_void_id(arr_attributes, add_sel_attributes, e_attributes.raw()); }
-                option::Option[FunctionStitchingAttribute]::None => {}
+            match attributes.at_ptr(i_attributes) {
+                option::Option[*FunctionStitchingAttribute]::Some(e_attributes) => { rt::msg_void_id(arr_attributes, add_sel_attributes, (*e_attributes).raw()); }
+                option::Option[*FunctionStitchingAttribute]::None => {}
             }
             i_attributes = i_attributes +% (1 as usize);
         }
@@ -11823,9 +11879,9 @@ impl MTL4PrimitiveAccelerationStructureDescriptor {
         let n_geometry_descriptors: usize = geometry_descriptors.count();
         var i_geometry_descriptors: usize = 0 as usize;
         while i_geometry_descriptors < n_geometry_descriptors {
-            match geometry_descriptors.at(i_geometry_descriptors) {
-                option::Option[MTL4AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, e_geometry_descriptors.raw()); }
-                option::Option[MTL4AccelerationStructureGeometryDescriptor]::None => {}
+            match geometry_descriptors.at_ptr(i_geometry_descriptors) {
+                option::Option[*MTL4AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, (*e_geometry_descriptors).raw()); }
+                option::Option[*MTL4AccelerationStructureGeometryDescriptor]::None => {}
             }
             i_geometry_descriptors = i_geometry_descriptors +% (1 as usize);
         }
@@ -12649,9 +12705,9 @@ impl MTL4StitchedFunctionDescriptor {
         let n_function_descriptors: usize = function_descriptors.count();
         var i_function_descriptors: usize = 0 as usize;
         while i_function_descriptors < n_function_descriptors {
-            match function_descriptors.at(i_function_descriptors) {
-                option::Option[MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, e_function_descriptors.raw()); }
-                option::Option[MTL4FunctionDescriptor]::None => {}
+            match function_descriptors.at_ptr(i_function_descriptors) {
+                option::Option[*MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, (*e_function_descriptors).raw()); }
+                option::Option[*MTL4FunctionDescriptor]::None => {}
             }
             i_function_descriptors = i_function_descriptors +% (1 as usize);
         }
@@ -12717,9 +12773,9 @@ impl MTL4StaticLinkingDescriptor {
         let n_function_descriptors: usize = function_descriptors.count();
         var i_function_descriptors: usize = 0 as usize;
         while i_function_descriptors < n_function_descriptors {
-            match function_descriptors.at(i_function_descriptors) {
-                option::Option[MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, e_function_descriptors.raw()); }
-                option::Option[MTL4FunctionDescriptor]::None => {}
+            match function_descriptors.at_ptr(i_function_descriptors) {
+                option::Option[*MTL4FunctionDescriptor]::Some(e_function_descriptors) => { rt::msg_void_id(arr_function_descriptors, add_sel_function_descriptors, (*e_function_descriptors).raw()); }
+                option::Option[*MTL4FunctionDescriptor]::None => {}
             }
             i_function_descriptors = i_function_descriptors +% (1 as usize);
         }
@@ -12745,9 +12801,9 @@ impl MTL4StaticLinkingDescriptor {
         let n_private_function_descriptors: usize = private_function_descriptors.count();
         var i_private_function_descriptors: usize = 0 as usize;
         while i_private_function_descriptors < n_private_function_descriptors {
-            match private_function_descriptors.at(i_private_function_descriptors) {
-                option::Option[MTL4FunctionDescriptor]::Some(e_private_function_descriptors) => { rt::msg_void_id(arr_private_function_descriptors, add_sel_private_function_descriptors, e_private_function_descriptors.raw()); }
-                option::Option[MTL4FunctionDescriptor]::None => {}
+            match private_function_descriptors.at_ptr(i_private_function_descriptors) {
+                option::Option[*MTL4FunctionDescriptor]::Some(e_private_function_descriptors) => { rt::msg_void_id(arr_private_function_descriptors, add_sel_private_function_descriptors, (*e_private_function_descriptors).raw()); }
+                option::Option[*MTL4FunctionDescriptor]::None => {}
             }
             i_private_function_descriptors = i_private_function_descriptors +% (1 as usize);
         }
@@ -13578,9 +13634,9 @@ impl Device {
         let n_arguments: usize = arguments.count();
         var i_arguments: usize = 0 as usize;
         while i_arguments < n_arguments {
-            match arguments.at(i_arguments) {
-                option::Option[ArgumentDescriptor]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, e_arguments.raw()); }
-                option::Option[ArgumentDescriptor]::None => {}
+            match arguments.at_ptr(i_arguments) {
+                option::Option[*ArgumentDescriptor]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, (*e_arguments).raw()); }
+                option::Option[*ArgumentDescriptor]::None => {}
             }
             i_arguments = i_arguments +% (1 as usize);
         }
@@ -15305,9 +15361,9 @@ impl ComputePipelineState {
         let n_additional_binary_functions: usize = additional_binary_functions.count();
         var i_additional_binary_functions: usize = 0 as usize;
         while i_additional_binary_functions < n_additional_binary_functions {
-            match additional_binary_functions.at(i_additional_binary_functions) {
-                option::Option[MTL4BinaryFunction]::Some(e_additional_binary_functions) => { rt::msg_void_id(arr_additional_binary_functions, add_sel_additional_binary_functions, e_additional_binary_functions.raw()); }
-                option::Option[MTL4BinaryFunction]::None => {}
+            match additional_binary_functions.at_ptr(i_additional_binary_functions) {
+                option::Option[*MTL4BinaryFunction]::Some(e_additional_binary_functions) => { rt::msg_void_id(arr_additional_binary_functions, add_sel_additional_binary_functions, (*e_additional_binary_functions).raw()); }
+                option::Option[*MTL4BinaryFunction]::None => {}
             }
             i_additional_binary_functions = i_additional_binary_functions +% (1 as usize);
         }
@@ -15336,9 +15392,9 @@ impl ComputePipelineState {
         let n_functions: usize = functions.count();
         var i_functions: usize = 0 as usize;
         while i_functions < n_functions {
-            match functions.at(i_functions) {
-                option::Option[Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, e_functions.raw()); }
-                option::Option[Function]::None => {}
+            match functions.at_ptr(i_functions) {
+                option::Option[*Function]::Some(e_functions) => { rt::msg_void_id(arr_functions, add_sel_functions, (*e_functions).raw()); }
+                option::Option[*Function]::None => {}
             }
             i_functions = i_functions +% (1 as usize);
         }
