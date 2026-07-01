@@ -1801,10 +1801,10 @@ impl ObjcEmitter {
             let typed = self.typed_object(base_ty);
             return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
         }
-        // A by-value C struct (MTLSize) returned by value.
-        if self.value_structs.contains_key(base_ty) {
-            self.mark_value_struct_used(base_ty);
-            return Ret::Struct(self.cplus_type_name(base_ty));
+        // A by-value C struct (MTLSize) returned by value — through typedef aliases.
+        if let Some(vs) = self.value_struct_of(base_ty) {
+            self.mark_value_struct_used(&vs);
+            return Ret::Struct(self.cplus_type_name(&vs));
         }
         // Last resort: follow the typedef chain to a supported scalar / pointer.
         match self.typedef_canon(base_ty) {
@@ -1905,10 +1905,10 @@ impl ObjcEmitter {
             }
             return Arg::Id(pname.to_string());
         }
-        // A by-value C struct (MTLSize) passed by value.
-        if self.value_structs.contains_key(base_ty) {
-            self.mark_value_struct_used(base_ty);
-            return Arg::Struct(self.cplus_type_name(base_ty), pname.to_string());
+        // A by-value C struct (MTLSize) passed by value — through typedef aliases.
+        if let Some(vs) = self.value_struct_of(base_ty) {
+            self.mark_value_struct_used(&vs);
+            return Arg::Struct(self.cplus_type_name(&vs), pname.to_string());
         }
         // Last resort: follow the typedef chain to a supported scalar / pointer.
         // Must mirror map_ret + param_sig_type so the wire type and the public
@@ -1981,7 +1981,10 @@ impl ObjcEmitter {
             "float" => "f32".to_string(),
             // A by-value C struct (after the explicit scalar typedefs above, so
             // single-integer wrappers like MTLResourceID stay u64, matching map_arg).
-            _ if self.value_structs.contains_key(b) => self.cplus_type_name(b),
+            // Follows typedef aliases (MTLCoordinate2D -> MTLSamplePosition).
+            _ if self.value_struct_of(b).is_some() => {
+                self.cplus_type_name(&self.value_struct_of(b).unwrap())
+            }
             // Last resort mirrors map_arg's typedef fallback so the public signature
             // matches the wire type. Pointer typedefs (and unknown leaves) stay `*u8`.
             _ => match self.typedef_canon(b) {
@@ -2039,6 +2042,24 @@ impl ObjcEmitter {
         let mut cur = ty.to_string();
         for _ in 0..8 {
             if self.enums.contains_key(&cur) {
+                return Some(cur);
+            }
+            match self.typedefs.get(&cur) {
+                Some(u) => cur = u.trim().to_string(),
+                None => return None,
+            }
+        }
+        None
+    }
+
+    /// The registered by-value struct a type resolves to, following typedef
+    /// aliases (`MTLCoordinate2D` -> `MTLSamplePosition`). Mirrors `enum_of`:
+    /// without it a `typedef Struct Alias;` param/return skips as an unmapped
+    /// type even though the layout is a known repr(C) struct.
+    fn value_struct_of(&self, ty: &str) -> Option<String> {
+        let mut cur = ty.to_string();
+        for _ in 0..8 {
+            if self.value_structs.contains_key(&cur) {
                 return Some(cur);
             }
             match self.typedefs.get(&cur) {
@@ -2330,13 +2351,20 @@ fn loc_included(loc: &serde_json::Value) -> bool {
 
 fn strip_nullability(qt: &str) -> (String, bool) {
     let mut s = qt.trim();
-    // Strip leading annotation tokens that don't affect the C+ type.
-    // `NS_REFINED_FOR_SWIFT` leaks on properties; `__kindof` is an ObjC
-    // subclass qualifier (`__kindof NSApplication *` means "NSApplication or
-    // a subclass") — both collapse to the plain type for binding purposes.
-    for prefix in &["NS_REFINED_FOR_SWIFT ", "__kindof "] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            s = rest.trim();
+    // Strip leading annotation tokens that don't affect the C+ type, repeatedly
+    // (they can stack, e.g. `const __kindof`). `NS_REFINED_FOR_SWIFT` leaks on
+    // properties; `__kindof` is an ObjC subclass qualifier (`__kindof NSApplication *`
+    // = "NSApplication or a subclass"); `const` on a by-value param/return is a
+    // no-op for binding purposes — all collapse to the plain type.
+    loop {
+        let before = s;
+        for prefix in &["NS_REFINED_FOR_SWIFT ", "__kindof ", "const "] {
+            if let Some(rest) = s.strip_prefix(prefix) {
+                s = rest.trim();
+            }
+        }
+        if s == before {
+            break;
         }
     }
     for (suf, nul) in [(" _Nullable", true), (" _Nonnull", false), (" _Null_unspecified", true)] {
@@ -2771,6 +2799,51 @@ mod tests {
         assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
         // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
         assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
+    }
+
+    #[test]
+    fn value_struct_typedef_alias_resolves_to_the_underlying_struct() {
+        // `typedef MTLSamplePosition MTLCoordinate2D;` — a method using the alias
+        // must resolve to the registered value struct (value_struct_of follows the
+        // typedef), not skip as an unmapped type.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "RecordDecl", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "FieldDecl", "name": "x", "type": { "qualType": "float" } },
+                    { "kind": "FieldDecl", "name": "y", "type": { "qualType": "float" } } ] },
+                { "kind": "TypedefDecl", "name": "MTLSamplePosition", "loc": { "file": "test.h" },
+                  "type": { "qualType": "struct MTLSamplePosition" } },
+                { "kind": "TypedefDecl", "name": "MTLCoordinate2D", "loc": { "file": "test.h" },
+                  "type": { "qualType": "MTLSamplePosition" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "originFor:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "MTLCoordinate2D" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "coord", "type": { "qualType": "MTLCoordinate2D" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn origin_for(this, coord: SamplePosition) -> SamplePosition"),
+            "alias resolves to the value struct:\n{out}");
+        assert!(!out.contains("unmapped type `MTLCoordinate2D`"), "no unmapped skip:\n{out}");
+    }
+
+    #[test]
+    fn const_qualifier_is_stripped_before_type_mapping() {
+        // `const` on a by-value param/return is an ABI no-op; a const-qualified
+        // typedef must resolve like the bare type (here MTLMode -> NSUInteger -> u64),
+        // not skip as an unmapped type.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "MTLMode", "type": { "qualType": "NSUInteger" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "useMode:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "mode", "type": { "qualType": "const MTLMode" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn use_mode(this, mode: u64)"), "const stripped + typedef resolved:\n{out}");
+        assert!(!out.contains("unmapped type"), "no unmapped skip:\n{out}");
     }
 
     #[test]
