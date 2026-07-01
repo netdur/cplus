@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `MTLTensorDataType` (NS_ENUM)
 enum TensorDataType {
@@ -5037,7 +5038,7 @@ impl CompileOptions {
 
     fn from_raw(ptr: *u8) -> CompileOptions { return CompileOptions { _obj: ptr }; }
 
-    // SKIPPED `preprocessorMacros`: return `NSDictionary<NSString *,NSObject *> * _Nullable` — NSDictionary value `NSObject *` not modelled (NSString / NSNumber only)
+    // SKIPPED `preprocessorMacros`: return `NSDictionary<NSString *,NSObject *> * _Nullable` — NSDictionary value `NSObject *` not modelled (NSString / NSNumber / non-owning object)
     // SKIPPED `setPreprocessorMacros:`: param `NSDictionary<NSString *,NSObject *> * _Nullable` — generic collection
     fn fast_math_enabled(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("fastMathEnabled\0"))) != (0 as i8);
@@ -9582,7 +9583,7 @@ impl LinkedFunctions {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBinaryFunctions:\0")), arr_binary_functions);
     }
 
-    // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — NSDictionary value `NSArray<id<MTLFunction>> *` not modelled (NSString / NSNumber only)
+    // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — NSDictionary value `NSArray<id<MTLFunction>> *` not modelled (NSString / NSNumber / non-owning object)
     // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — generic collection
     fn private_functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("privateFunctions\0")));
@@ -12891,7 +12892,7 @@ impl MTL4StaticLinkingDescriptor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrivateFunctionDescriptors:\0")), arr_private_function_descriptors);
     }
 
-    // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — NSDictionary value `NSArray<MTL4FunctionDescriptor *> *` not modelled (NSString / NSNumber only)
+    // SKIPPED `groups`: return `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — NSDictionary value `NSArray<MTL4FunctionDescriptor *> *` not modelled (NSString / NSNumber / non-owning object)
     // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — generic collection
 }
 
@@ -15124,7 +15125,23 @@ impl Function {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `functionConstantsDictionary`: return `NSDictionary<NSString *,MTLFunctionConstant *> * _Nonnull` — NSDictionary value `MTLFunctionConstant *` not modelled (NSString / NSNumber only)
+    fn function_constants_dictionary(this) -> string_map::StringMap[FunctionConstant] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionConstantsDictionary\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[FunctionConstant] = string_map::new::[FunctionConstant]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), FunctionConstant::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
