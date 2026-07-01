@@ -5656,10 +5656,22 @@ fn gen_function(
     } else {
         ""
     };
+    // C-ABI: a narrow-int C-export return carries zero/sign-extension (clang emits
+    // `define zeroext i8 @f()`); not for sret (void) or coerced-struct returns.
+    let ret_ext = if is_c_export && !uses_sret && coerce_ret_ty.is_none() {
+        abi_ext_attr(&return_ty)
+    } else {
+        ""
+    };
+    let ret_ext = if ret_ext.is_empty() {
+        String::new()
+    } else {
+        format!("{ret_ext} ")
+    };
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, sig_return_ty, f.name.name
+        "define {}{}{}{} @{}(",
+        linkage, cc, ret_ext, sig_return_ty, f.name.name
     )
     .unwrap();
     if uses_sret {
@@ -5732,11 +5744,22 @@ fn gen_function(
                 } else {
                     llvm_ty(pty, types)
                 };
-                if attrs.is_empty() {
-                    write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+                // C-ABI: a narrow-int C-export param carries zero/sign-extension.
+                let ext = if is_c_export && !by_ptr {
+                    abi_ext_attr(pty)
                 } else {
-                    write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+                    ""
+                };
+                let mut prefix = String::new();
+                if !attrs.is_empty() {
+                    prefix.push_str(&attrs);
+                    prefix.push(' ');
                 }
+                if !ext.is_empty() {
+                    prefix.push_str(ext);
+                    prefix.push(' ');
+                }
+                write!(out, "{} {}%{}", base_ty, prefix, llvm_idx).unwrap();
             }
         }
     }
@@ -19614,6 +19637,21 @@ mod tests {
         // 32-bit fills a register slot exactly — no extension attribute.
         assert!(ir.contains("declare void @take_u32(i32)"), "u32 has no ext attr:\n{ir}");
         assert!(!ir.contains("i32 zeroext"), "u32 must not be extended:\n{ir}");
+    }
+
+    #[test]
+    fn export_extern_fn_narrow_params_and_return_carry_zeroext_signext() {
+        // The DEFINITION side of the C-ABI narrow-int extension: an `export extern
+        // fn` cpc DEFINES (callable from C) zero/sign-extends its narrow params +
+        // return, matching clang `define zeroext i8 @f(i8 zeroext %0)`.
+        let ir = gen_src(
+            "export extern fn add_u8(a: u8, b: u8) -> u8 { return a +% b; }\n\
+             export extern fn neg_i8(a: i8) -> i8 { return 0 as i8 -% a; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(ir.contains("define zeroext i8 @add_u8("), "u8 return zeroext:\n{ir}");
+        assert!(ir.contains("@add_u8(i8 noundef zeroext %0, i8 noundef zeroext %1)"), "u8 params zeroext:\n{ir}");
+        assert!(ir.contains("define signext i8 @neg_i8(i8 noundef signext %0)"), "i8 param+return signext:\n{ir}");
     }
 
     #[test]
