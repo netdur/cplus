@@ -198,6 +198,7 @@ enum Ret {
     Size,  // NSSize / CGSize — rt::Size HFA
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
+    NumberArray, // NSArray<NSNumber *> -> Vec[f64] (each element via -doubleValue)
     ObjectArray(String), // NSArray<id<P>> -> Vec[P]; only non-owning protocol elems
     TextSet,    // NSSet<NSString *> (or NSString typedef) -> StringSet (via -allObjects)
     // NSSet<W *> (object-wrapper element) -> Vec[W], LOSSY on set-ness (via -allObjects):
@@ -247,6 +248,9 @@ enum Arg {
     // the ObjectSet return (lossy on set-ness). Same prologue as IdArray, then wrapped
     // in `[NSSet setWithArray:]`.
     ObjectSetParam { elem: String, pname: String },
+    // NSArray<NSNumber *> param built from a Vec[f64] — the reverse of the NumberArray
+    // return. Prologue boxes each f64 via `+[NSNumber numberWithDouble:]`.
+    NumberArrayParam { pname: String },
     Unsupported(String),
 }
 
@@ -1395,7 +1399,11 @@ impl ObjcEmitter {
         let has_collection_param = args.iter().any(|a| {
             matches!(
                 a,
-                Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. } | Arg::ObjectSetParam { .. }
+                Arg::IdArray { .. }
+                    | Arg::DictMap { .. }
+                    | Arg::TextSetParam { .. }
+                    | Arg::ObjectSetParam { .. }
+                    | Arg::NumberArrayParam { .. }
             )
         });
         if is_init {
@@ -1483,7 +1491,7 @@ impl ObjcEmitter {
         // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
         // collection return rather than emit dangling code.
         if has_collection_param
-            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_))
+            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::NumberArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_))
         {
             self.body.push_str(&format!(
                 "    // SKIPPED `{sel}`: NSArray<id> param with a collection return not modelled\n"
@@ -1540,6 +1548,36 @@ impl ObjcEmitter {
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
                  \x20           out.append(bridge::to_text(value));\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
+        if let Ret::NumberArray = ret {
+            let array_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSArray<NSNumber> arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_vec = true;
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            // Each NSNumber is read as a double (the widest single scalar it boxes),
+            // the same f64 bridge the dictionary NSNumber value uses.
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[f64] {{\n\
+                 \x20       let arr: *u8 = {array_call};\n\
+                 \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       let dv_sel: *u8 = rt::sel(#str_ptr(\"doubleValue\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
+                 \x20           out.append(rt::msg_f64(value, dv_sel));\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -1774,7 +1812,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+            Ret::ValueArray | Ret::TextArray | Ret::NumberArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
         })
     }
 
@@ -1799,7 +1837,7 @@ impl ObjcEmitter {
         // Collection returns need the multi-statement Vec/Map builders that only the
         // general path emits; a block method returning one is rare — skip rather than
         // emit a partial body.
-        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_)) {
+        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::NumberArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_)) {
             self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with a collection return not modelled\n"));
             return;
         }
@@ -1855,7 +1893,11 @@ impl ObjcEmitter {
         if send_args.iter().any(|a| {
             matches!(
                 a,
-                Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. } | Arg::ObjectSetParam { .. }
+                Arg::IdArray { .. }
+                    | Arg::DictMap { .. }
+                    | Arg::TextSetParam { .. }
+                    | Arg::ObjectSetParam { .. }
+                    | Arg::NumberArrayParam { .. }
             )
         }) {
             self.body.push_str(&format!(
@@ -2091,6 +2133,9 @@ impl ObjcEmitter {
         if self.is_string_array(base_ty) {
             return Ret::TextArray;
         }
+        if self.is_number_array(base_ty) {
+            return Ret::NumberArray;
+        }
         if self.is_string_set(base_ty) {
             self.needs_string_set = true;
             return Ret::TextSet;
@@ -2259,6 +2304,12 @@ impl ObjcEmitter {
             self.needs_vec = true;
             return Arg::Id(format!("bridge::nsarray_of_text({pname})"));
         }
+        // NSArray<NSNumber *> param -> built from a Vec[f64] (the reverse of the
+        // NumberArray return): the prologue boxes each f64 as an NSNumber.
+        if self.is_number_array(base_ty) {
+            self.needs_vec = true;
+            return Arg::NumberArrayParam { pname: pname.to_string() };
+        }
         // Object array param -> build an NSMutableArray from a Vec[W]. Sound for both
         // non-owning AND owning element wrappers: the prologue borrow-reads each
         // element's handle through `at_ptr` (never moving/dropping it — cpc's borrowck
@@ -2401,6 +2452,10 @@ impl ObjcEmitter {
         }
         if self.is_string_array(b) {
             return "vec::Vec[text::Text]".to_string();
+        }
+        // NSArray<NSNumber *> param -> Vec[f64] (same gate as map_arg).
+        if self.is_number_array(b) {
+            return "vec::Vec[f64]".to_string();
         }
         // Object array param -> Vec[W], non-owning or owning element (same gate as map_arg).
         if let Some(elem) = array_element(b) {
@@ -2556,6 +2611,21 @@ impl ObjcEmitter {
             let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"));
             if let Some(elem) = elem {
                 return self.is_nsstring(elem.trim());
+            }
+        }
+        false
+    }
+
+    /// `NSArray<NSNumber *> *` -> bridges to `Vec[f64]` (each element via
+    /// `-doubleValue`; built back via `+[NSNumber numberWithDouble:]`). NSNumber's
+    /// boxed value is read as a double, the widest single scalar it carries — the
+    /// same f64 bridge the string-keyed dictionary uses for NSNumber values.
+    fn is_number_array(&self, ty: &str) -> bool {
+        let t = ty.trim();
+        if let Some(rest) = t.strip_prefix("NSArray<") {
+            let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"));
+            if let Some(elem) = elem {
+                return self.is_nsnumber(elem.trim());
             }
         }
         false
@@ -2732,7 +2802,7 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::Point => "point".into(),
         Ret::Size => "size".into(),
         Ret::Struct(name) => name.clone(),
-        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+        Ret::ValueArray | Ret::TextArray | Ret::NumberArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
     };
     let mut tags: Vec<String> = vec![ret_tag];
     for a in args {
@@ -2761,6 +2831,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::DictMap { .. } => "id".into(), // the built NSDictionary is an id on the wire
         Arg::TextSetParam { .. } => "id".into(), // the built NSSet is an id on the wire
         Arg::ObjectSetParam { .. } => "id".into(), // the built NSSet is an id on the wire
+        Arg::NumberArrayParam { .. } => "id".into(), // the built NSArray is an id on the wire
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2815,6 +2886,7 @@ fn arg_expr(a: &Arg) -> Option<String> {
         Arg::DictMap { pname, .. } => format!("dict_{pname}"),
         Arg::TextSetParam { pname } => format!("set_{pname}"),
         Arg::ObjectSetParam { pname, .. } => format!("set_{pname}"),
+        Arg::NumberArrayParam { pname } => format!("arr_{pname}"),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -3053,6 +3125,25 @@ fn build_id_array_prologue(args: &[Arg]) -> String {
                  \x20           match {pname}.at_ptr(i_{pname}) {{\n\
                  \x20               option::Option[*{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, (*e_{pname}).raw()); }}\n\
                  \x20               option::Option[*{elem}]::None => {{}}\n\
+                 \x20           }}\n\
+                 \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                 \x20       }}\n"
+            ));
+        }
+        if let Arg::NumberArrayParam { pname } = a {
+            // Box each f64 as an NSNumber (+[NSNumber numberWithDouble:]) into an
+            // NSMutableArray. The Vec is borrow-read (at_ptr never moves the f64).
+            prologue.push_str(&format!(
+                "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                 \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                 \x20       let num_cls_{pname}: *u8 = rt::get_class(#str_ptr(\"NSNumber\\0\"));\n\
+                 \x20       let num_sel_{pname}: *u8 = rt::sel(#str_ptr(\"numberWithDouble:\\0\"));\n\
+                 \x20       let n_{pname}: usize = {pname}.count();\n\
+                 \x20       var i_{pname}: usize = 0 as usize;\n\
+                 \x20       while i_{pname} < n_{pname} {{\n\
+                 \x20           match {pname}.at_ptr(i_{pname}) {{\n\
+                 \x20               option::Option[*f64]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, rt::msg_id_f64(num_cls_{pname}, num_sel_{pname}, *e_{pname})); }}\n\
+                 \x20               option::Option[*f64]::None => {{}}\n\
                  \x20           }}\n\
                  \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
                  \x20       }}\n"
@@ -4388,6 +4479,32 @@ mod tests {
         assert!(out.contains("fn set_selection_index_paths(this, index_paths: vec::Vec[IndexPath])"), "object-set param sig:\n{out}");
         assert!(out.contains(r#"let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);"#), "param setWithArray: snapshot:\n{out}");
         assert!(!out.contains("// SKIPPED `selectionIndexPaths`") && !out.contains("// SKIPPED `setSelectionIndexPaths:`"), "no generic-collection skip:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_of_numbers_bridges_to_a_vec_of_f64() {
+        // NSArray<NSNumber*> <-> Vec[f64]: return reads each element via -doubleValue;
+        // param boxes each f64 via +[NSNumber numberWithDouble:] into an NSMutableArray.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSSlider", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "progressMarks", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<NSNumber *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "setProgressMarks:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "marks", "type": { "qualType": "NSArray<NSNumber *> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Return -> Vec[f64] via doubleValue.
+        assert!(out.contains("fn progress_marks(this) -> vec::Vec[f64] {"), "number-array return:\n{out}");
+        assert!(out.contains(r#"let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));"#), "doubleValue read:\n{out}");
+        assert!(out.contains("out.append(rt::msg_f64(value, dv_sel));"), "append f64:\n{out}");
+        // Param <- Vec[f64]: box each element as an NSNumber.
+        assert!(out.contains("fn set_progress_marks(this, marks: vec::Vec[f64])"), "number-array param sig:\n{out}");
+        assert!(out.contains(r#"let num_sel_marks: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));"#), "numberWithDouble: box:\n{out}");
+        assert!(out.contains("rt::msg_void_id(arr_marks, add_sel_marks, rt::msg_id_f64(num_cls_marks, num_sel_marks, *e_marks));"), "box + addObject:\n{out}");
+        assert!(!out.contains("// SKIPPED `progressMarks`") && !out.contains("// SKIPPED `setProgressMarks:`"), "no generic-collection skip:\n{out}");
     }
 
     #[test]
