@@ -528,27 +528,30 @@ impl CollectionViewItem {
 }
 
 // `NSCollectionViewDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `collectionView:viewForSupplementaryElementOfKind:atIndexPath:`: arg `NSCollectionViewSupplementaryElementKind _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
 
 fn CollectionViewDataSource_noop_i64_id_i64(user: *u8, a0: *u8, a1: i64) -> i64 { return 0 as i64; }
 fn CollectionViewDataSource_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn CollectionViewDataSource_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct CollectionViewDataSource {
     collection_view_number_of_items_in_section: fn(*u8, *u8, i64) -> i64,
     collection_view_item_for_represented_object_at_index_path: fn(*u8, *u8, *u8) -> *u8,
     number_of_sections_in_collection_view: fn(*u8, *u8) -> i64,
+    collection_view_view_for_supplementary_element_of_kind_at_index_path: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn CollectionViewDataSource_new(user: *u8) -> CollectionViewDataSource {
-    return CollectionViewDataSource { collection_view_number_of_items_in_section: CollectionViewDataSource_noop_i64_id_i64, collection_view_item_for_represented_object_at_index_path: CollectionViewDataSource_noop_id_id_id, number_of_sections_in_collection_view: CollectionViewDataSource_noop_i64_id, user: user };
+    return CollectionViewDataSource { collection_view_number_of_items_in_section: CollectionViewDataSource_noop_i64_id_i64, collection_view_item_for_represented_object_at_index_path: CollectionViewDataSource_noop_id_id_id, number_of_sections_in_collection_view: CollectionViewDataSource_noop_i64_id, collection_view_view_for_supplementary_element_of_kind_at_index_path: CollectionViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl CollectionViewDataSource {
@@ -562,6 +565,10 @@ impl CollectionViewDataSource {
     }
     fn set_number_of_sections_in_collection_view(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_sections_in_collection_view = handler;
+        return;
+    }
+    fn set_collection_view_view_for_supplementary_element_of_kind_at_index_path(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
+        this.collection_view_view_for_supplementary_element_of_kind_at_index_path = handler;
         return;
     }
 }
@@ -589,6 +596,13 @@ fn CollectionViewDataSource_number_of_sections_in_collection_view_imp(self_obj: 
     return f(u, a0);
 }
 
+fn CollectionViewDataSource_collection_view_view_for_supplementary_element_of_kind_at_index_path_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *CollectionViewDataSource = { synth::get_associated(self_obj, CollectionViewDataSource_key()) as *CollectionViewDataSource };
+    let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).collection_view_view_for_supplementary_element_of_kind_at_index_path };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
 fn create_CollectionViewDataSource(ctx: *CollectionViewDataSource) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_CollectionViewDataSource\0");
     var cls: *u8 = rt::get_class(name);
@@ -597,6 +611,7 @@ fn create_CollectionViewDataSource(ctx: *CollectionViewDataSource) -> *u8 {
         let add_collection_view_number_of_items_in_section: i8 = cplus_add_method_i64_id_i64(cls, rt::sel(#str_ptr("collectionView:numberOfItemsInSection:\0")), CollectionViewDataSource_collection_view_number_of_items_in_section_imp, #str_ptr("q@:@q\0"));
         let add_collection_view_item_for_represented_object_at_index_path: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("collectionView:itemForRepresentedObjectAtIndexPath:\0")), CollectionViewDataSource_collection_view_item_for_represented_object_at_index_path_imp, #str_ptr("@@:@@\0"));
         let add_number_of_sections_in_collection_view: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfSectionsInCollectionView:\0")), CollectionViewDataSource_number_of_sections_in_collection_view_imp, #str_ptr("q@:@\0"));
+        let add_collection_view_view_for_supplementary_element_of_kind_at_index_path: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:viewForSupplementaryElementOfKind:atIndexPath:\0")), CollectionViewDataSource_collection_view_view_for_supplementary_element_of_kind_at_index_path_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -609,7 +624,6 @@ fn create_CollectionViewDataSource(ctx: *CollectionViewDataSource) -> *u8 {
 // SKIPPED `collectionView:writeItemsAtIndexPaths:toPasteboard:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:namesOfPromisedFilesDroppedAtDestination:forDraggedItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:draggingImageForItemsAtIndexPaths:withEvent:offset:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:draggingImageForItemsAtIndexes:withEvent:offset:`: arg `NSPointPointer _Nonnull` not modelled
 // SKIPPED `collectionView:validateDrop:proposedIndexPath:dropOperation:`: arg `NSIndexPath * _Nonnull * _Nonnull` not modelled
 // SKIPPED `collectionView:draggingSession:willBeginAtPoint:forItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:shouldChangeItemsAtIndexPaths:toHighlightState:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
@@ -618,12 +632,10 @@ fn create_CollectionViewDataSource(ctx: *CollectionViewDataSource) -> *u8 {
 // SKIPPED `collectionView:shouldDeselectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:didSelectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:didDeselectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:`: arg `NSCollectionViewSupplementaryElementKind _Nonnull` not modelled
-// SKIPPED `collectionView:didEndDisplayingSupplementaryView:forElementOfKind:atIndexPath:`: arg `NSCollectionViewSupplementaryElementKind _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
-extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+extern fn cplus_add_method_id_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -640,9 +652,12 @@ extern fn cplus_add_method_v_id_id_point_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u
 extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
 
 fn CollectionViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
 fn CollectionViewDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn CollectionViewDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDelegate_noop_u64_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> u64 { return 0 as u64; }
 fn CollectionViewDelegate_noop_i8_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: u64) -> i8 { return 0 as i8; }
 fn CollectionViewDelegate_noop_i8_id_id_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> i8 { return 0 as i8; }
@@ -652,11 +667,13 @@ fn CollectionViewDelegate_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2:
 fn CollectionViewDelegate_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
 fn CollectionViewDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn CollectionViewDelegate_noop_v_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn CollectionViewDelegate_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
 
 struct CollectionViewDelegate {
     collection_view_can_drag_items_at_indexes_with_event: fn(*u8, *u8, *u8, *u8) -> i8,
     collection_view_write_items_at_indexes_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: fn(*u8, *u8, *u8, *u8) -> *u8,
+    collection_view_dragging_image_for_items_at_indexes_with_event_offset: fn(*u8, *u8, *u8, *u8, *u8) -> *u8,
     collection_view_validate_drop_proposed_index_drop_operation: fn(*u8, *u8, *u8, *u8, *u8) -> u64,
     collection_view_accept_drop_index_path_drop_operation: fn(*u8, *u8, *u8, *u8, u64) -> i8,
     collection_view_accept_drop_index_drop_operation: fn(*u8, *u8, *u8, i64, u64) -> i8,
@@ -666,13 +683,15 @@ struct CollectionViewDelegate {
     collection_view_dragging_session_ended_at_point_drag_operation: fn(*u8, *u8, *u8, rt::Point, u64),
     collection_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
     collection_view_will_display_item_for_represented_object_at_index_path: fn(*u8, *u8, *u8, *u8),
+    collection_view_will_display_supplementary_view_for_element_kind_at_index_path: fn(*u8, *u8, *u8, *u8, *u8),
     collection_view_did_end_displaying_item_for_represented_object_at_index_path: fn(*u8, *u8, *u8, *u8),
+    collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path: fn(*u8, *u8, *u8, *u8, *u8),
     collection_view_transition_layout_for_old_layout_new_layout: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn CollectionViewDelegate_new(user: *u8) -> CollectionViewDelegate {
-    return CollectionViewDelegate { collection_view_can_drag_items_at_indexes_with_event: CollectionViewDelegate_noop_i8_id_id_id, collection_view_write_items_at_indexes_to_pasteboard: CollectionViewDelegate_noop_i8_id_id_id, collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: CollectionViewDelegate_noop_id_id_id_id, collection_view_validate_drop_proposed_index_drop_operation: CollectionViewDelegate_noop_u64_id_id_id_id, collection_view_accept_drop_index_path_drop_operation: CollectionViewDelegate_noop_i8_id_id_id_u64, collection_view_accept_drop_index_drop_operation: CollectionViewDelegate_noop_i8_id_id_i64_u64, collection_view_pasteboard_writer_for_item_at_index_path: CollectionViewDelegate_noop_id_id_id, collection_view_pasteboard_writer_for_item_at_index: CollectionViewDelegate_noop_id_id_u64, collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: CollectionViewDelegate_noop_v_id_id_point_id, collection_view_dragging_session_ended_at_point_drag_operation: CollectionViewDelegate_noop_v_id_id_point_u64, collection_view_update_dragging_items_for_drag: CollectionViewDelegate_noop_v_id_id, collection_view_will_display_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_did_end_displaying_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_transition_layout_for_old_layout_new_layout: CollectionViewDelegate_noop_id_id_id_id, user: user };
+    return CollectionViewDelegate { collection_view_can_drag_items_at_indexes_with_event: CollectionViewDelegate_noop_i8_id_id_id, collection_view_write_items_at_indexes_to_pasteboard: CollectionViewDelegate_noop_i8_id_id_id, collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: CollectionViewDelegate_noop_id_id_id_id, collection_view_dragging_image_for_items_at_indexes_with_event_offset: CollectionViewDelegate_noop_id_id_id_id_id, collection_view_validate_drop_proposed_index_drop_operation: CollectionViewDelegate_noop_u64_id_id_id_id, collection_view_accept_drop_index_path_drop_operation: CollectionViewDelegate_noop_i8_id_id_id_u64, collection_view_accept_drop_index_drop_operation: CollectionViewDelegate_noop_i8_id_id_i64_u64, collection_view_pasteboard_writer_for_item_at_index_path: CollectionViewDelegate_noop_id_id_id, collection_view_pasteboard_writer_for_item_at_index: CollectionViewDelegate_noop_id_id_u64, collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: CollectionViewDelegate_noop_v_id_id_point_id, collection_view_dragging_session_ended_at_point_drag_operation: CollectionViewDelegate_noop_v_id_id_point_u64, collection_view_update_dragging_items_for_drag: CollectionViewDelegate_noop_v_id_id, collection_view_will_display_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_will_display_supplementary_view_for_element_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_did_end_displaying_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_transition_layout_for_old_layout_new_layout: CollectionViewDelegate_noop_id_id_id_id, user: user };
 }
 
 impl CollectionViewDelegate {
@@ -686,6 +705,10 @@ impl CollectionViewDelegate {
     }
     fn set_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
         this.collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes = handler;
+        return;
+    }
+    fn set_collection_view_dragging_image_for_items_at_indexes_with_event_offset(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> *u8) {
+        this.collection_view_dragging_image_for_items_at_indexes_with_event_offset = handler;
         return;
     }
     fn set_collection_view_validate_drop_proposed_index_drop_operation(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> u64) {
@@ -724,8 +747,16 @@ impl CollectionViewDelegate {
         this.collection_view_will_display_item_for_represented_object_at_index_path = handler;
         return;
     }
+    fn set_collection_view_will_display_supplementary_view_for_element_kind_at_index_path(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
+        this.collection_view_will_display_supplementary_view_for_element_kind_at_index_path = handler;
+        return;
+    }
     fn set_collection_view_did_end_displaying_item_for_represented_object_at_index_path(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
         this.collection_view_did_end_displaying_item_for_represented_object_at_index_path = handler;
+        return;
+    }
+    fn set_collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
+        this.collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path = handler;
         return;
     }
     fn set_collection_view_transition_layout_for_old_layout_new_layout(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
@@ -755,6 +786,13 @@ fn CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_des
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn CollectionViewDelegate_collection_view_dragging_image_for_items_at_indexes_with_event_offset_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) -> *u8 = { (*c).collection_view_dragging_image_for_items_at_indexes_with_event_offset };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
 }
 
 fn CollectionViewDelegate_collection_view_validate_drop_proposed_index_drop_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> u64 {
@@ -824,11 +862,27 @@ fn CollectionViewDelegate_collection_view_will_display_item_for_represented_obje
     return;
 }
 
+fn CollectionViewDelegate_collection_view_will_display_supplementary_view_for_element_kind_at_index_path_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).collection_view_will_display_supplementary_view_for_element_kind_at_index_path };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
 fn CollectionViewDelegate_collection_view_did_end_displaying_item_for_represented_object_at_index_path_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
     let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) = { (*c).collection_view_did_end_displaying_item_for_represented_object_at_index_path };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2);
+    return;
+}
+
+fn CollectionViewDelegate_collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) = { (*c).collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
     return;
 }
 
@@ -847,6 +901,7 @@ fn create_CollectionViewDelegate(ctx: *CollectionViewDelegate) -> *u8 {
         let add_collection_view_can_drag_items_at_indexes_with_event: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:canDragItemsAtIndexes:withEvent:\0")), CollectionViewDelegate_collection_view_can_drag_items_at_indexes_with_event_imp, #str_ptr("c@:@@@\0"));
         let add_collection_view_write_items_at_indexes_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:writeItemsAtIndexes:toPasteboard:\0")), CollectionViewDelegate_collection_view_write_items_at_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
         let add_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:namesOfPromisedFilesDroppedAtDestination:forDraggedItemsAtIndexes:\0")), CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes_imp, #str_ptr("@@:@@@\0"));
+        let add_collection_view_dragging_image_for_items_at_indexes_with_event_offset: i8 = cplus_add_method_id_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:draggingImageForItemsAtIndexes:withEvent:offset:\0")), CollectionViewDelegate_collection_view_dragging_image_for_items_at_indexes_with_event_offset_imp, #str_ptr("@@:@@@@\0"));
         let add_collection_view_validate_drop_proposed_index_drop_operation: i8 = cplus_add_method_u64_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:validateDrop:proposedIndex:dropOperation:\0")), CollectionViewDelegate_collection_view_validate_drop_proposed_index_drop_operation_imp, #str_ptr("Q@:@@@@\0"));
         let add_collection_view_accept_drop_index_path_drop_operation: i8 = cplus_add_method_i8_id_id_id_u64(cls, rt::sel(#str_ptr("collectionView:acceptDrop:indexPath:dropOperation:\0")), CollectionViewDelegate_collection_view_accept_drop_index_path_drop_operation_imp, #str_ptr("c@:@@@Q\0"));
         let add_collection_view_accept_drop_index_drop_operation: i8 = cplus_add_method_i8_id_id_i64_u64(cls, rt::sel(#str_ptr("collectionView:acceptDrop:index:dropOperation:\0")), CollectionViewDelegate_collection_view_accept_drop_index_drop_operation_imp, #str_ptr("c@:@@qQ\0"));
@@ -856,7 +911,9 @@ fn create_CollectionViewDelegate(ctx: *CollectionViewDelegate) -> *u8 {
         let add_collection_view_dragging_session_ended_at_point_drag_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("collectionView:draggingSession:endedAtPoint:dragOperation:\0")), CollectionViewDelegate_collection_view_dragging_session_ended_at_point_drag_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
         let add_collection_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("collectionView:updateDraggingItemsForDrag:\0")), CollectionViewDelegate_collection_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
         let add_collection_view_will_display_item_for_represented_object_at_index_path: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("collectionView:willDisplayItem:forRepresentedObjectAtIndexPath:\0")), CollectionViewDelegate_collection_view_will_display_item_for_represented_object_at_index_path_imp, #str_ptr("v@:@@@\0"));
+        let add_collection_view_will_display_supplementary_view_for_element_kind_at_index_path: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:\0")), CollectionViewDelegate_collection_view_will_display_supplementary_view_for_element_kind_at_index_path_imp, #str_ptr("v@:@@@@\0"));
         let add_collection_view_did_end_displaying_item_for_represented_object_at_index_path: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("collectionView:didEndDisplayingItem:forRepresentedObjectAtIndexPath:\0")), CollectionViewDelegate_collection_view_did_end_displaying_item_for_represented_object_at_index_path_imp, #str_ptr("v@:@@@\0"));
+        let add_collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:didEndDisplayingSupplementaryView:forElementOfKind:atIndexPath:\0")), CollectionViewDelegate_collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path_imp, #str_ptr("v@:@@@@\0"));
         let add_collection_view_transition_layout_for_old_layout_new_layout: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:transitionLayoutForOldLayout:newLayout:\0")), CollectionViewDelegate_collection_view_transition_layout_for_old_layout_new_layout_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }

@@ -972,6 +972,7 @@ type ToolbarItemGroupControlRepresentation = toolbar_item_group::ToolbarItemGrou
 type ToolbarItemGroup = toolbar_item_group::ToolbarItemGroup;
 type TouchType = touch::TouchType;
 type TouchBar = touch_bar::TouchBar;
+type TouchBarDelegate = touch_bar::TouchBarDelegate;
 type TouchBarProvider = touch_bar::TouchBarProvider;
 type TouchBarItem = touch_bar_item::TouchBarItem;
 type TrackingSeparatorToolbarItem = tracking_separator_toolbar_item::TrackingSeparatorToolbarItem;

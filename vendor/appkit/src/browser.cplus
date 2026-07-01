@@ -581,7 +581,6 @@ impl Browser {
 }
 
 // `NSBrowserDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `browser:draggingImageForRowsWithIndexes:inColumn:withEvent:offset:`: arg `NSPointPointer _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -621,6 +620,8 @@ extern fn cplus_add_method_i8_id_id_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8,
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_i64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_id_i64_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, i64, u64) -> i8, types: *u8) -> i8;
@@ -654,6 +655,7 @@ fn BrowserDelegate_noop_f64_id_i64_i8_f64(user: *u8, a0: *u8, a1: i64, a2: i8, a
 fn BrowserDelegate_noop_f64_id_i64(user: *u8, a0: *u8, a1: i64) -> f64 { return 0 as f64; }
 fn BrowserDelegate_noop_i8_id_id_i64_id(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> i8 { return 0 as i8; }
 fn BrowserDelegate_noop_id_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> *u8 { return { 0 as *u8 }; }
+fn BrowserDelegate_noop_id_id_id_i64_id_id(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8, a4: *u8) -> *u8 { return { 0 as *u8 }; }
 fn BrowserDelegate_noop_u64_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) -> u64 { return 0 as u64; }
 fn BrowserDelegate_noop_i8_id_id_i64_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: i64, a4: u64) -> i8 { return 0 as i8; }
 fn BrowserDelegate_noop_id_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) -> *u8 { return { 0 as *u8 }; }
@@ -687,6 +689,7 @@ struct BrowserDelegate {
     browser_write_rows_with_indexes_in_column_to_pasteboard: fn(*u8, *u8, *u8, i64, *u8) -> i8,
     browser_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_in_column: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
     browser_can_drag_rows_with_indexes_in_column_with_event: fn(*u8, *u8, *u8, i64, *u8) -> i8,
+    browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset: fn(*u8, *u8, *u8, i64, *u8, *u8) -> *u8,
     browser_validate_drop_proposed_row_column_drop_operation: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> u64,
     browser_accept_drop_at_row_column_drop_operation: fn(*u8, *u8, *u8, i64, i64, u64) -> i8,
     browser_type_select_string_for_row_in_column: fn(*u8, *u8, i64, i64) -> *u8,
@@ -700,7 +703,7 @@ struct BrowserDelegate {
 }
 
 fn BrowserDelegate_new(user: *u8) -> BrowserDelegate {
-    return BrowserDelegate { browser_number_of_rows_in_column: BrowserDelegate_noop_i64_id_i64, browser_create_rows_for_column_in_matrix: BrowserDelegate_noop_v_id_i64_id, browser_number_of_children_of_item: BrowserDelegate_noop_i64_id_id, browser_child_of_item: BrowserDelegate_noop_id_id_i64_id, browser_is_leaf_item: BrowserDelegate_noop_i8_id_id, browser_object_value_for_item: BrowserDelegate_noop_id_id_id, browser_height_of_row_in_column: BrowserDelegate_noop_f64_id_i64_i64, root_item_for_browser: BrowserDelegate_noop_id_id, browser_set_object_value_for_item: BrowserDelegate_noop_v_id_id_id, browser_should_edit_item: BrowserDelegate_noop_i8_id_id, browser_will_display_cell_at_row_column: BrowserDelegate_noop_v_id_id_i64_i64, browser_title_of_column: BrowserDelegate_noop_id_id_i64, browser_select_cell_with_string_in_column: BrowserDelegate_noop_i8_id_id_i64, browser_select_row_in_column: BrowserDelegate_noop_i8_id_i64_i64, browser_is_column_valid: BrowserDelegate_noop_i8_id_i64, browser_will_scroll: BrowserDelegate_noop_v_id, browser_did_scroll: BrowserDelegate_noop_v_id, browser_should_size_column_for_user_resize_to_width: BrowserDelegate_noop_f64_id_i64_i8_f64, browser_size_to_fit_width_of_column: BrowserDelegate_noop_f64_id_i64, browser_column_configuration_did_change: BrowserDelegate_noop_v_id, browser_should_show_cell_expansion_for_row_column: BrowserDelegate_noop_i8_id_i64_i64, browser_write_rows_with_indexes_in_column_to_pasteboard: BrowserDelegate_noop_i8_id_id_i64_id, browser_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_in_column: BrowserDelegate_noop_id_id_id_id_i64, browser_can_drag_rows_with_indexes_in_column_with_event: BrowserDelegate_noop_i8_id_id_i64_id, browser_validate_drop_proposed_row_column_drop_operation: BrowserDelegate_noop_u64_id_id_id_id_id, browser_accept_drop_at_row_column_drop_operation: BrowserDelegate_noop_i8_id_id_i64_i64_u64, browser_type_select_string_for_row_in_column: BrowserDelegate_noop_id_id_i64_i64, browser_should_type_select_for_event_with_current_search_string: BrowserDelegate_noop_i8_id_id_id, browser_next_type_select_match_from_row_to_row_in_column_for_string: BrowserDelegate_noop_i64_id_i64_i64_i64_id, browser_preview_view_controller_for_leaf_item: BrowserDelegate_noop_id_id_id, browser_header_view_controller_for_item: BrowserDelegate_noop_id_id_id, browser_did_change_last_column_to_column: BrowserDelegate_noop_v_id_i64_i64, browser_selection_indexes_for_proposed_selection_in_column: BrowserDelegate_noop_id_id_id_i64, user: user };
+    return BrowserDelegate { browser_number_of_rows_in_column: BrowserDelegate_noop_i64_id_i64, browser_create_rows_for_column_in_matrix: BrowserDelegate_noop_v_id_i64_id, browser_number_of_children_of_item: BrowserDelegate_noop_i64_id_id, browser_child_of_item: BrowserDelegate_noop_id_id_i64_id, browser_is_leaf_item: BrowserDelegate_noop_i8_id_id, browser_object_value_for_item: BrowserDelegate_noop_id_id_id, browser_height_of_row_in_column: BrowserDelegate_noop_f64_id_i64_i64, root_item_for_browser: BrowserDelegate_noop_id_id, browser_set_object_value_for_item: BrowserDelegate_noop_v_id_id_id, browser_should_edit_item: BrowserDelegate_noop_i8_id_id, browser_will_display_cell_at_row_column: BrowserDelegate_noop_v_id_id_i64_i64, browser_title_of_column: BrowserDelegate_noop_id_id_i64, browser_select_cell_with_string_in_column: BrowserDelegate_noop_i8_id_id_i64, browser_select_row_in_column: BrowserDelegate_noop_i8_id_i64_i64, browser_is_column_valid: BrowserDelegate_noop_i8_id_i64, browser_will_scroll: BrowserDelegate_noop_v_id, browser_did_scroll: BrowserDelegate_noop_v_id, browser_should_size_column_for_user_resize_to_width: BrowserDelegate_noop_f64_id_i64_i8_f64, browser_size_to_fit_width_of_column: BrowserDelegate_noop_f64_id_i64, browser_column_configuration_did_change: BrowserDelegate_noop_v_id, browser_should_show_cell_expansion_for_row_column: BrowserDelegate_noop_i8_id_i64_i64, browser_write_rows_with_indexes_in_column_to_pasteboard: BrowserDelegate_noop_i8_id_id_i64_id, browser_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_in_column: BrowserDelegate_noop_id_id_id_id_i64, browser_can_drag_rows_with_indexes_in_column_with_event: BrowserDelegate_noop_i8_id_id_i64_id, browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset: BrowserDelegate_noop_id_id_id_i64_id_id, browser_validate_drop_proposed_row_column_drop_operation: BrowserDelegate_noop_u64_id_id_id_id_id, browser_accept_drop_at_row_column_drop_operation: BrowserDelegate_noop_i8_id_id_i64_i64_u64, browser_type_select_string_for_row_in_column: BrowserDelegate_noop_id_id_i64_i64, browser_should_type_select_for_event_with_current_search_string: BrowserDelegate_noop_i8_id_id_id, browser_next_type_select_match_from_row_to_row_in_column_for_string: BrowserDelegate_noop_i64_id_i64_i64_i64_id, browser_preview_view_controller_for_leaf_item: BrowserDelegate_noop_id_id_id, browser_header_view_controller_for_item: BrowserDelegate_noop_id_id_id, browser_did_change_last_column_to_column: BrowserDelegate_noop_v_id_i64_i64, browser_selection_indexes_for_proposed_selection_in_column: BrowserDelegate_noop_id_id_id_i64, user: user };
 }
 
 impl BrowserDelegate {
@@ -798,6 +801,10 @@ impl BrowserDelegate {
     }
     fn set_browser_can_drag_rows_with_indexes_in_column_with_event(ref this, handler: fn(*u8, *u8, *u8, i64, *u8) -> i8) {
         this.browser_can_drag_rows_with_indexes_in_column_with_event = handler;
+        return;
+    }
+    fn set_browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset(ref this, handler: fn(*u8, *u8, *u8, i64, *u8, *u8) -> *u8) {
+        this.browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset = handler;
         return;
     }
     fn set_browser_validate_drop_proposed_row_column_drop_operation(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> u64) {
@@ -1014,6 +1021,13 @@ fn BrowserDelegate_browser_can_drag_rows_with_indexes_in_column_with_event_imp(s
     return f(u, a0, a1, a2, a3);
 }
 
+fn BrowserDelegate_browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8, a4: *u8) -> *u8 {
+    let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
+    let f: fn(*u8, *u8, *u8, i64, *u8, *u8) -> *u8 = { (*c).browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3, a4);
+}
+
 fn BrowserDelegate_browser_validate_drop_proposed_row_column_drop_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8) -> u64 {
     let c: *BrowserDelegate = { synth::get_associated(self_obj, BrowserDelegate_key()) as *BrowserDelegate };
     let f: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> u64 = { (*c).browser_validate_drop_proposed_row_column_drop_operation };
@@ -1107,6 +1121,7 @@ fn create_BrowserDelegate(ctx: *BrowserDelegate) -> *u8 {
         let add_browser_write_rows_with_indexes_in_column_to_pasteboard: i8 = cplus_add_method_i8_id_id_i64_id(cls, rt::sel(#str_ptr("browser:writeRowsWithIndexes:inColumn:toPasteboard:\0")), BrowserDelegate_browser_write_rows_with_indexes_in_column_to_pasteboard_imp, #str_ptr("c@:@@q@\0"));
         let add_browser_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_in_column: i8 = cplus_add_method_id_id_id_id_i64(cls, rt::sel(#str_ptr("browser:namesOfPromisedFilesDroppedAtDestination:forDraggedRowsWithIndexes:inColumn:\0")), BrowserDelegate_browser_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_in_column_imp, #str_ptr("@@:@@@q\0"));
         let add_browser_can_drag_rows_with_indexes_in_column_with_event: i8 = cplus_add_method_i8_id_id_i64_id(cls, rt::sel(#str_ptr("browser:canDragRowsWithIndexes:inColumn:withEvent:\0")), BrowserDelegate_browser_can_drag_rows_with_indexes_in_column_with_event_imp, #str_ptr("c@:@@q@\0"));
+        let add_browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset: i8 = cplus_add_method_id_id_id_i64_id_id(cls, rt::sel(#str_ptr("browser:draggingImageForRowsWithIndexes:inColumn:withEvent:offset:\0")), BrowserDelegate_browser_dragging_image_for_rows_with_indexes_in_column_with_event_offset_imp, #str_ptr("@@:@@q@@\0"));
         let add_browser_validate_drop_proposed_row_column_drop_operation: i8 = cplus_add_method_u64_id_id_id_id_id(cls, rt::sel(#str_ptr("browser:validateDrop:proposedRow:column:dropOperation:\0")), BrowserDelegate_browser_validate_drop_proposed_row_column_drop_operation_imp, #str_ptr("Q@:@@@@@\0"));
         let add_browser_accept_drop_at_row_column_drop_operation: i8 = cplus_add_method_i8_id_id_i64_i64_u64(cls, rt::sel(#str_ptr("browser:acceptDrop:atRow:column:dropOperation:\0")), BrowserDelegate_browser_accept_drop_at_row_column_drop_operation_imp, #str_ptr("c@:@@qqQ\0"));
         let add_browser_type_select_string_for_row_in_column: i8 = cplus_add_method_id_id_i64_i64(cls, rt::sel(#str_ptr("browser:typeSelectStringForRow:inColumn:\0")), BrowserDelegate_browser_type_select_string_for_row_in_column_imp, #str_ptr("@@:@qq\0"));

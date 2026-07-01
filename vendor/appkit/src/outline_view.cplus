@@ -312,7 +312,6 @@ impl OutlineView {
 }
 
 // `NSOutlineViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `outlineView:toolTipForCell:rect:tableColumn:item:mouseLocation:`: arg `NSRectPointer _Nonnull` not modelled
 // SKIPPED `outlineView:userDidChangeVisibilityOfTableColumns:`: arg `NSArray<NSTableColumn *> * _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
@@ -330,6 +329,8 @@ extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i
 extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id_id_id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8, rt::Point) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_f64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> f64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -351,6 +352,7 @@ fn OutlineViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) ->
 fn OutlineViewDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
 fn OutlineViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
 fn OutlineViewDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn OutlineViewDelegate_noop_id_id_id_id_id_id_point(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: rt::Point) -> *u8 { return { 0 as *u8 }; }
 fn OutlineViewDelegate_noop_f64_id_id(user: *u8, a0: *u8, a1: *u8) -> f64 { return 0 as f64; }
 fn OutlineViewDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn OutlineViewDelegate_noop_i8_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 { return 0 as i8; }
@@ -372,6 +374,7 @@ struct OutlineViewDelegate {
     outline_view_mouse_down_in_header_of_table_column: fn(*u8, *u8, *u8),
     outline_view_did_click_table_column: fn(*u8, *u8, *u8),
     outline_view_did_drag_table_column: fn(*u8, *u8, *u8),
+    outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location: fn(*u8, *u8, *u8, *u8, *u8, *u8, rt::Point) -> *u8,
     outline_view_height_of_row_by_item: fn(*u8, *u8, *u8) -> f64,
     outline_view_tint_configuration_for_item: fn(*u8, *u8, *u8) -> *u8,
     outline_view_type_select_string_for_table_column_item: fn(*u8, *u8, *u8, *u8) -> *u8,
@@ -400,7 +403,7 @@ struct OutlineViewDelegate {
 }
 
 fn OutlineViewDelegate_new(user: *u8) -> OutlineViewDelegate {
-    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_did_add_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_did_remove_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_id, outline_view_should_select_item: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_id_id, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_height_of_row_by_item: OutlineViewDelegate_noop_f64_id_id, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_id_id_id_id, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_track_cell_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id_id, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_is_group_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_id_id, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_size_to_fit_width_of_column: OutlineViewDelegate_noop_f64_id_i64, outline_view_should_reorder_column_to_column: OutlineViewDelegate_noop_i8_id_i64_i64, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_id_id, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_did_change: OutlineViewDelegate_noop_v_id, outline_view_column_did_move: OutlineViewDelegate_noop_v_id, outline_view_column_did_resize: OutlineViewDelegate_noop_v_id, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_id, outline_view_item_will_expand: OutlineViewDelegate_noop_v_id, outline_view_item_did_expand: OutlineViewDelegate_noop_v_id, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_id, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_id, user: user };
+    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_did_add_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_did_remove_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_id, outline_view_should_select_item: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_id_id, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location: OutlineViewDelegate_noop_id_id_id_id_id_id_point, outline_view_height_of_row_by_item: OutlineViewDelegate_noop_f64_id_id, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_id_id_id_id, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_track_cell_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id_id, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_is_group_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_id_id, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_size_to_fit_width_of_column: OutlineViewDelegate_noop_f64_id_i64, outline_view_should_reorder_column_to_column: OutlineViewDelegate_noop_i8_id_i64_i64, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_id_id, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_did_change: OutlineViewDelegate_noop_v_id, outline_view_column_did_move: OutlineViewDelegate_noop_v_id, outline_view_column_did_resize: OutlineViewDelegate_noop_v_id, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_id, outline_view_item_will_expand: OutlineViewDelegate_noop_v_id, outline_view_item_did_expand: OutlineViewDelegate_noop_v_id, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_id, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_id, user: user };
 }
 
 impl OutlineViewDelegate {
@@ -454,6 +457,10 @@ impl OutlineViewDelegate {
     }
     fn set_outline_view_did_drag_table_column(ref this, handler: fn(*u8, *u8, *u8)) {
         this.outline_view_did_drag_table_column = handler;
+        return;
+    }
+    fn set_outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8, *u8, rt::Point) -> *u8) {
+        this.outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location = handler;
         return;
     }
     fn set_outline_view_height_of_row_by_item(ref this, handler: fn(*u8, *u8, *u8) -> f64) {
@@ -653,6 +660,13 @@ fn OutlineViewDelegate_outline_view_did_drag_table_column_imp(self_obj: *u8, cmd
     return;
 }
 
+fn OutlineViewDelegate_outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: rt::Point) -> *u8 {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8, *u8, rt::Point) -> *u8 = { (*c).outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3, a4, a5);
+}
+
 fn OutlineViewDelegate_outline_view_height_of_row_by_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> f64 {
     let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
     let f: fn(*u8, *u8, *u8) -> f64 = { (*c).outline_view_height_of_row_by_item };
@@ -848,6 +862,7 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
         let add_outline_view_mouse_down_in_header_of_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:mouseDownInHeaderOfTableColumn:\0")), OutlineViewDelegate_outline_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
         let add_outline_view_did_click_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:didClickTableColumn:\0")), OutlineViewDelegate_outline_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
         let add_outline_view_did_drag_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:didDragTableColumn:\0")), OutlineViewDelegate_outline_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location: i8 = cplus_add_method_id_id_id_id_id_id_point(cls, rt::sel(#str_ptr("outlineView:toolTipForCell:rect:tableColumn:item:mouseLocation:\0")), OutlineViewDelegate_outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location_imp, #str_ptr("@@:@@@@@{CGPoint=dd}\0"));
         let add_outline_view_height_of_row_by_item: i8 = cplus_add_method_f64_id_id(cls, rt::sel(#str_ptr("outlineView:heightOfRowByItem:\0")), OutlineViewDelegate_outline_view_height_of_row_by_item_imp, #str_ptr("d@:@@\0"));
         let add_outline_view_tint_configuration_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:tintConfigurationForItem:\0")), OutlineViewDelegate_outline_view_tint_configuration_for_item_imp, #str_ptr("@@:@@\0"));
         let add_outline_view_type_select_string_for_table_column_item: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:typeSelectStringForTableColumn:item:\0")), OutlineViewDelegate_outline_view_type_select_string_for_table_column_item_imp, #str_ptr("@@:@@@\0"));

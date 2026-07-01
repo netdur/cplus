@@ -1564,7 +1564,6 @@ impl TextView {
 }
 
 // `NSTextViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `textView:writeCell:atIndex:toPasteboard:type:`: arg `NSPasteboardType _Nonnull` not modelled
 // SKIPPED `textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
 // SKIPPED `textView:shouldChangeTextInRanges:replacementStrings:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
 // SKIPPED `textView:shouldChangeTypingAttributes:toAttributes:`: arg `NSDictionary<NSString *,id> * _Nonnull` not modelled
@@ -1579,6 +1578,8 @@ extern fn cplus_add_method_v_id_id_rect_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8
 extern fn cplus_add_method_v_id_id_rect_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Rect, *u8, u64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_u64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64, *u8, *u8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_range_id_range_range(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Range, rt::Range) -> rt::Range, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -1612,6 +1613,7 @@ fn TextViewDelegate_noop_i8_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> i
 fn TextViewDelegate_noop_v_id_id_rect_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Rect, a3: u64) { return; }
 fn TextViewDelegate_noop_v_id_id_rect_id_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Rect, a3: *u8, a4: u64) { return; }
 fn TextViewDelegate_noop_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_i8_id_id_u64_id_id(user: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_range_id_range_range(user: *u8, a0: *u8, a1: rt::Range, a2: rt::Range) -> rt::Range { return rt::Range { location: 0 as u64, length: 0 as u64 }; }
 fn TextViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 fn TextViewDelegate_noop_i8_id_range_id(user: *u8, a0: *u8, a1: rt::Range, a2: *u8) -> i8 { return 0 as i8; }
@@ -1633,6 +1635,7 @@ struct TextViewDelegate {
     text_view_double_clicked_on_cell_in_rect_at_index: fn(*u8, *u8, *u8, rt::Rect, u64),
     text_view_dragged_cell_in_rect_event_at_index: fn(*u8, *u8, *u8, rt::Rect, *u8, u64),
     text_view_writable_pasteboard_types_for_cell_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
+    text_view_write_cell_at_index_to_pasteboard_type: fn(*u8, *u8, *u8, u64, *u8, *u8) -> i8,
     text_view_will_change_selection_from_character_range_to_character_range: fn(*u8, *u8, rt::Range, rt::Range) -> rt::Range,
     text_view_did_change_selection: fn(*u8, *u8),
     text_view_did_change_typing_attributes: fn(*u8, *u8),
@@ -1659,7 +1662,7 @@ struct TextViewDelegate {
 }
 
 fn TextViewDelegate_new(user: *u8) -> TextViewDelegate {
-    return TextViewDelegate { text_view_clicked_on_link_at_index: TextViewDelegate_noop_i8_id_id_u64, text_view_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_double_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_dragged_cell_in_rect_event_at_index: TextViewDelegate_noop_v_id_id_rect_id_u64, text_view_writable_pasteboard_types_for_cell_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_change_selection_from_character_range_to_character_range: TextViewDelegate_noop_range_id_range_range, text_view_did_change_selection: TextViewDelegate_noop_v_id, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_id, text_view_will_display_tool_tip_for_character_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_should_change_text_in_range_replacement_string: TextViewDelegate_noop_i8_id_range_id, text_view_do_command_by_selector: TextViewDelegate_noop_i8_id_id, text_view_should_set_spelling_state_range: TextViewDelegate_noop_i64_id_i64_range, text_view_menu_for_event_at_index: TextViewDelegate_noop_id_id_id_id_u64, text_view_will_check_text_in_range_options_types: TextViewDelegate_noop_id_id_range_id_id, text_view_u_r_l_for_contents_of_text_attachment_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_id_id_id, undo_manager_for_text_view: TextViewDelegate_noop_id_id, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_id_id, text_view_candidates_for_selected_range: TextViewDelegate_noop_id_id_range, text_view_should_select_candidate_at_index: TextViewDelegate_noop_i8_id_u64, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_id, text_view_writing_tools_did_end: TextViewDelegate_noop_v_id, text_view_writing_tools_ignored_ranges_in_enclosing_range: TextViewDelegate_noop_id_id_range, text_view_clicked_on_link: TextViewDelegate_noop_i8_id_id, text_view_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_double_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_dragged_cell_in_rect_event: TextViewDelegate_noop_v_id_id_rect_id, user: user };
+    return TextViewDelegate { text_view_clicked_on_link_at_index: TextViewDelegate_noop_i8_id_id_u64, text_view_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_double_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_dragged_cell_in_rect_event_at_index: TextViewDelegate_noop_v_id_id_rect_id_u64, text_view_writable_pasteboard_types_for_cell_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_write_cell_at_index_to_pasteboard_type: TextViewDelegate_noop_i8_id_id_u64_id_id, text_view_will_change_selection_from_character_range_to_character_range: TextViewDelegate_noop_range_id_range_range, text_view_did_change_selection: TextViewDelegate_noop_v_id, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_id, text_view_will_display_tool_tip_for_character_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_should_change_text_in_range_replacement_string: TextViewDelegate_noop_i8_id_range_id, text_view_do_command_by_selector: TextViewDelegate_noop_i8_id_id, text_view_should_set_spelling_state_range: TextViewDelegate_noop_i64_id_i64_range, text_view_menu_for_event_at_index: TextViewDelegate_noop_id_id_id_id_u64, text_view_will_check_text_in_range_options_types: TextViewDelegate_noop_id_id_range_id_id, text_view_u_r_l_for_contents_of_text_attachment_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_id_id_id, undo_manager_for_text_view: TextViewDelegate_noop_id_id, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_id_id, text_view_candidates_for_selected_range: TextViewDelegate_noop_id_id_range, text_view_should_select_candidate_at_index: TextViewDelegate_noop_i8_id_u64, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_id, text_view_writing_tools_did_end: TextViewDelegate_noop_v_id, text_view_writing_tools_ignored_ranges_in_enclosing_range: TextViewDelegate_noop_id_id_range, text_view_clicked_on_link: TextViewDelegate_noop_i8_id_id, text_view_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_double_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_dragged_cell_in_rect_event: TextViewDelegate_noop_v_id_id_rect_id, user: user };
 }
 
 impl TextViewDelegate {
@@ -1681,6 +1684,10 @@ impl TextViewDelegate {
     }
     fn set_text_view_writable_pasteboard_types_for_cell_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
         this.text_view_writable_pasteboard_types_for_cell_at_index = handler;
+        return;
+    }
+    fn set_text_view_write_cell_at_index_to_pasteboard_type(ref this, handler: fn(*u8, *u8, *u8, u64, *u8, *u8) -> i8) {
+        this.text_view_write_cell_at_index_to_pasteboard_type = handler;
         return;
     }
     fn set_text_view_will_change_selection_from_character_range_to_character_range(ref this, handler: fn(*u8, *u8, rt::Range, rt::Range) -> rt::Range) {
@@ -1811,6 +1818,13 @@ fn TextViewDelegate_text_view_writable_pasteboard_types_for_cell_at_index_imp(se
     let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_writable_pasteboard_types_for_cell_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn TextViewDelegate_text_view_write_cell_at_index_to_pasteboard_type_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, *u8, u64, *u8, *u8) -> i8 = { (*c).text_view_write_cell_at_index_to_pasteboard_type };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3, a4);
 }
 
 fn TextViewDelegate_text_view_will_change_selection_from_character_range_to_character_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Range, a2: rt::Range) -> rt::Range {
@@ -1984,6 +1998,7 @@ fn create_TextViewDelegate(ctx: *TextViewDelegate) -> *u8 {
         let add_text_view_double_clicked_on_cell_in_rect_at_index: i8 = cplus_add_method_v_id_id_rect_u64(cls, rt::sel(#str_ptr("textView:doubleClickedOnCell:inRect:atIndex:\0")), TextViewDelegate_text_view_double_clicked_on_cell_in_rect_at_index_imp, #str_ptr("v@:@@{CGRect={CGPoint=dd}{CGSize=dd}}Q\0"));
         let add_text_view_dragged_cell_in_rect_event_at_index: i8 = cplus_add_method_v_id_id_rect_id_u64(cls, rt::sel(#str_ptr("textView:draggedCell:inRect:event:atIndex:\0")), TextViewDelegate_text_view_dragged_cell_in_rect_event_at_index_imp, #str_ptr("v@:@@{CGRect={CGPoint=dd}{CGSize=dd}}@Q\0"));
         let add_text_view_writable_pasteboard_types_for_cell_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:writablePasteboardTypesForCell:atIndex:\0")), TextViewDelegate_text_view_writable_pasteboard_types_for_cell_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_text_view_write_cell_at_index_to_pasteboard_type: i8 = cplus_add_method_i8_id_id_u64_id_id(cls, rt::sel(#str_ptr("textView:writeCell:atIndex:toPasteboard:type:\0")), TextViewDelegate_text_view_write_cell_at_index_to_pasteboard_type_imp, #str_ptr("c@:@@Q@@\0"));
         let add_text_view_will_change_selection_from_character_range_to_character_range: i8 = cplus_add_method_range_id_range_range(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRange:toCharacterRange:\0")), TextViewDelegate_text_view_will_change_selection_from_character_range_to_character_range_imp, #str_ptr("{_NSRange=QQ}@:@{_NSRange=QQ}{_NSRange=QQ}\0"));
         let add_text_view_did_change_selection: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegate_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
         let add_text_view_did_change_typing_attributes: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegate_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));

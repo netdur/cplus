@@ -952,7 +952,6 @@ impl LayoutManager {
 }
 
 // `NSLayoutManagerDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `layoutManager:shouldUseTemporaryAttributes:forDrawingToScreen:atCharacterIndex:effectiveRange:`: arg `NSRangePointer _Nullable` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_id_id_id_range(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8, rt::Range) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -971,6 +970,8 @@ extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), type
 extern fn cplus_add_method_v_id_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_size(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Size), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_i8_u64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8, u64, *u8) -> *u8, types: *u8) -> i8;
 
 fn LayoutManagerDelegate_noop_u64_id_id_id_id_id_range(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: rt::Range) -> u64 { return 0 as u64; }
 fn LayoutManagerDelegate_noop_f64_id_u64_rect(user: *u8, a0: *u8, a1: u64, a2: rt::Rect) -> f64 { return 0 as f64; }
@@ -981,6 +982,7 @@ fn LayoutManagerDelegate_noop_i8_id_id_id_id_id_range(user: *u8, a0: *u8, a1: *u
 fn LayoutManagerDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 fn LayoutManagerDelegate_noop_v_id_id_i8(user: *u8, a0: *u8, a1: *u8, a2: i8) { return; }
 fn LayoutManagerDelegate_noop_v_id_id_size(user: *u8, a0: *u8, a1: *u8, a2: rt::Size) { return; }
+fn LayoutManagerDelegate_noop_id_id_id_i8_u64_id(user: *u8, a0: *u8, a1: *u8, a2: i8, a3: u64, a4: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct LayoutManagerDelegate {
     layout_manager_should_generate_glyphs_properties_character_indexes_font_for_glyph_range: fn(*u8, *u8, *u8, *u8, *u8, *u8, rt::Range) -> u64,
@@ -995,11 +997,12 @@ struct LayoutManagerDelegate {
     layout_manager_did_invalidate_layout: fn(*u8, *u8),
     layout_manager_did_complete_layout_for_text_container_at_end: fn(*u8, *u8, *u8, i8),
     layout_manager_text_container_did_change_geometry_from_size: fn(*u8, *u8, *u8, rt::Size),
+    layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range: fn(*u8, *u8, *u8, i8, u64, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn LayoutManagerDelegate_new(user: *u8) -> LayoutManagerDelegate {
-    return LayoutManagerDelegate { layout_manager_should_generate_glyphs_properties_character_indexes_font_for_glyph_range: LayoutManagerDelegate_noop_u64_id_id_id_id_id_range, layout_manager_line_spacing_after_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_paragraph_spacing_before_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_paragraph_spacing_after_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_should_use_action_for_control_character_at_index: LayoutManagerDelegate_noop_u64_id_u64_u64, layout_manager_should_break_line_by_word_before_character_at_index: LayoutManagerDelegate_noop_i8_id_u64, layout_manager_should_break_line_by_hyphenating_before_character_at_index: LayoutManagerDelegate_noop_i8_id_u64, layout_manager_bounding_box_for_control_glyph_at_index_for_text_container_proposed_line_fragment_glyph_position_character_index: LayoutManagerDelegate_noop_rect_id_u64_id_rect_point_u64, layout_manager_should_set_line_fragment_rect_line_fragment_used_rect_baseline_offset_in_text_container_for_glyph_range: LayoutManagerDelegate_noop_i8_id_id_id_id_id_range, layout_manager_did_invalidate_layout: LayoutManagerDelegate_noop_v_id, layout_manager_did_complete_layout_for_text_container_at_end: LayoutManagerDelegate_noop_v_id_id_i8, layout_manager_text_container_did_change_geometry_from_size: LayoutManagerDelegate_noop_v_id_id_size, user: user };
+    return LayoutManagerDelegate { layout_manager_should_generate_glyphs_properties_character_indexes_font_for_glyph_range: LayoutManagerDelegate_noop_u64_id_id_id_id_id_range, layout_manager_line_spacing_after_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_paragraph_spacing_before_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_paragraph_spacing_after_glyph_at_index_with_proposed_line_fragment_rect: LayoutManagerDelegate_noop_f64_id_u64_rect, layout_manager_should_use_action_for_control_character_at_index: LayoutManagerDelegate_noop_u64_id_u64_u64, layout_manager_should_break_line_by_word_before_character_at_index: LayoutManagerDelegate_noop_i8_id_u64, layout_manager_should_break_line_by_hyphenating_before_character_at_index: LayoutManagerDelegate_noop_i8_id_u64, layout_manager_bounding_box_for_control_glyph_at_index_for_text_container_proposed_line_fragment_glyph_position_character_index: LayoutManagerDelegate_noop_rect_id_u64_id_rect_point_u64, layout_manager_should_set_line_fragment_rect_line_fragment_used_rect_baseline_offset_in_text_container_for_glyph_range: LayoutManagerDelegate_noop_i8_id_id_id_id_id_range, layout_manager_did_invalidate_layout: LayoutManagerDelegate_noop_v_id, layout_manager_did_complete_layout_for_text_container_at_end: LayoutManagerDelegate_noop_v_id_id_i8, layout_manager_text_container_did_change_geometry_from_size: LayoutManagerDelegate_noop_v_id_id_size, layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range: LayoutManagerDelegate_noop_id_id_id_i8_u64_id, user: user };
 }
 
 impl LayoutManagerDelegate {
@@ -1049,6 +1052,10 @@ impl LayoutManagerDelegate {
     }
     fn set_layout_manager_text_container_did_change_geometry_from_size(ref this, handler: fn(*u8, *u8, *u8, rt::Size)) {
         this.layout_manager_text_container_did_change_geometry_from_size = handler;
+        return;
+    }
+    fn set_layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range(ref this, handler: fn(*u8, *u8, *u8, i8, u64, *u8) -> *u8) {
+        this.layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range = handler;
         return;
     }
 }
@@ -1142,6 +1149,13 @@ fn LayoutManagerDelegate_layout_manager_text_container_did_change_geometry_from_
     return;
 }
 
+fn LayoutManagerDelegate_layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i8, a3: u64, a4: *u8) -> *u8 {
+    let c: *LayoutManagerDelegate = { synth::get_associated(self_obj, LayoutManagerDelegate_key()) as *LayoutManagerDelegate };
+    let f: fn(*u8, *u8, *u8, i8, u64, *u8) -> *u8 = { (*c).layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3, a4);
+}
+
 fn create_LayoutManagerDelegate(ctx: *LayoutManagerDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_LayoutManagerDelegate\0");
     var cls: *u8 = rt::get_class(name);
@@ -1159,6 +1173,7 @@ fn create_LayoutManagerDelegate(ctx: *LayoutManagerDelegate) -> *u8 {
         let add_layout_manager_did_invalidate_layout: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("layoutManagerDidInvalidateLayout:\0")), LayoutManagerDelegate_layout_manager_did_invalidate_layout_imp, #str_ptr("v@:@\0"));
         let add_layout_manager_did_complete_layout_for_text_container_at_end: i8 = cplus_add_method_v_id_id_i8(cls, rt::sel(#str_ptr("layoutManager:didCompleteLayoutForTextContainer:atEnd:\0")), LayoutManagerDelegate_layout_manager_did_complete_layout_for_text_container_at_end_imp, #str_ptr("v@:@@c\0"));
         let add_layout_manager_text_container_did_change_geometry_from_size: i8 = cplus_add_method_v_id_id_size(cls, rt::sel(#str_ptr("layoutManager:textContainer:didChangeGeometryFromSize:\0")), LayoutManagerDelegate_layout_manager_text_container_did_change_geometry_from_size_imp, #str_ptr("v@:@@{CGSize=dd}\0"));
+        let add_layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range: i8 = cplus_add_method_id_id_id_i8_u64_id(cls, rt::sel(#str_ptr("layoutManager:shouldUseTemporaryAttributes:forDrawingToScreen:atCharacterIndex:effectiveRange:\0")), LayoutManagerDelegate_layout_manager_should_use_temporary_attributes_for_drawing_to_screen_at_character_index_effective_range_imp, #str_ptr("@@:@@cQ@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
