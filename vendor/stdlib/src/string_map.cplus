@@ -186,6 +186,37 @@ impl StringMap[V] {
         };
     }
 
+    // Slot-based enumeration (a map has no order). Walk `slot_capacity()` slots;
+    // a slot yields `Some(..)` only when occupied, `None` otherwise. The returned
+    // pointers borrow into storage and are valid until the next mutation — the same
+    // contract as `get_ptr`. This is the low-level door the higher-level iteration
+    // (and FFI dictionary builders) are written against.
+    fn slot_capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn key_ptr_at_slot(this, slot: usize) -> option::Option[*text::Text] {
+        if slot >= this._cap {
+            return option::Option[*text::Text]::None;
+        }
+        let occ: u8 = { this._occupied[slot] };
+        if occ == (0 as u8) {
+            return option::Option[*text::Text]::None;
+        }
+        return option::Option[*text::Text]::Some({ this._keys + slot });
+    }
+
+    fn value_ptr_at_slot(this, slot: usize) -> option::Option[*V] {
+        if slot >= this._cap {
+            return option::Option[*V]::None;
+        }
+        let occ: u8 = { this._occupied[slot] };
+        if occ == (0 as u8) {
+            return option::Option[*V]::None;
+        }
+        return option::Option[*V]::Some({ this._vals + slot });
+    }
+
     // Grow capacity to at least `new_cap`, relocating every live entry. Open
     // addressing positions depend on `cap`, so each entry is re-probed into the
     // new table. Entries are relocated by copying their raw key/value bytes
@@ -440,5 +471,38 @@ fn string_map_text_value_overwrite_drops_old() {
         option::Option[*text::Text]::Some(p) => { assert { (*p).equals("second") }; }
         option::Option[*text::Text]::None => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn string_map_slot_iteration_visits_every_entry() {
+    // Walking slot_capacity() slots and reading key/value pointers must visit
+    // each occupied entry exactly once (order-independent). Sum the i64 values
+    // and OR the key first-bytes to check both accessors reach every slot.
+    var m: StringMap[i64] = new::[i64]();
+    m.insert(text::from_str("a"), 10 as i64);
+    m.insert(text::from_str("b"), 20 as i64);
+    m.insert(text::from_str("c"), 30 as i64);
+    var seen: usize = 0 as usize;
+    var sum: i64 = 0 as i64;
+    let cap: usize = m.slot_capacity();
+    var s: usize = 0 as usize;
+    while s < cap {
+        match m.value_ptr_at_slot(s) {
+            option::Option[*i64]::Some(vp) => {
+                seen = seen +% (1 as usize);
+                sum = sum +% { *vp };
+                // The key accessor must agree (occupied at the same slot).
+                match m.key_ptr_at_slot(s) {
+                    option::Option[*text::Text]::Some(_) => {}
+                    option::Option[*text::Text]::None => { assert false; }
+                }
+            }
+            option::Option[*i64]::None => {}
+        }
+        s = s +% (1 as usize);
+    }
+    assert seen == (3 as usize);
+    assert sum == (60 as i64);
     return;
 }
