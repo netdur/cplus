@@ -102,12 +102,27 @@ struct DelegateRet {
 }
 
 // A delegate-callback argument kind: the C+ param type, its ObjC type-encoding
-// char, and a short tag used to build the (unique-per-signature) IMP shape symbol.
+// (a single char for scalars, a `{...}` group for by-value structs), and a short
+// tag used to build the (unique-per-signature) IMP shape symbol.
 #[derive(Clone)]
 struct DArg {
-    cty: String, // C+ param type: *u8 / i64 / u64 / f64 / i8 ...
-    enc: char,   // ObjC type-encoding char (@ q Q d ...)
-    tag: String, // shape-symbol fragment (id / i64 / f64 ...)
+    cty: String, // C+ param type: *u8 / i64 / f64 / rt::Range / rt::Rect ...
+    enc: String, // ObjC type-encoding (@ q Q d ... or {_NSRange=QQ})
+    tag: String, // shape-symbol fragment (id / i64 / f64 / range / rect ...)
+}
+
+// The C+ type / ObjC encoding / shape tag / zero-value literal for a by-value
+// geometry struct usable as a delegate arg or return. These pass in registers on
+// arm64 (Range in 2 GP, Rect/Point/Size as HFAs in v-regs), matching the msgSend
+// side's `rt::Range`/`rt::Rect`/... exactly.
+fn delegate_struct(b: &str) -> Option<(&'static str, &'static str, &'static str, &'static str)> {
+    Some(match b {
+        "NSRange" | "_NSRange" => ("rt::Range", "{_NSRange=QQ}", "range", "rt::Range { location: 0 as u64, length: 0 as u64 }"),
+        "NSRect" | "CGRect" => ("rt::Rect", "{CGRect={CGPoint=dd}{CGSize=dd}}", "rect", "rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 }"),
+        "NSPoint" | "CGPoint" => ("rt::Point", "{CGPoint=dd}", "point", "rt::Point { x: 0 as f64, y: 0 as f64 }"),
+        "NSSize" | "CGSize" => ("rt::Size", "{CGSize=dd}", "size", "rt::Size { w: 0 as f64, h: 0 as f64 }"),
+        _ => return None,
+    })
 }
 
 // The scalar C+ type / ObjC encoding / shape tag / zero default for a numeric
@@ -1178,7 +1193,7 @@ impl ObjcEmitter {
         s.push_str("    if cls == { 0 as *u8 } {\n");
         s.push_str("        cls = synth::allocate_class_pair(rt::get_class(#str_ptr(\"NSObject\\0\")), name, 0 as usize);\n");
         for (sel, mid, args, r) in &callbacks {
-            let enc: String = args.iter().map(|d| d.enc).collect();
+            let enc: String = args.iter().map(|d| d.enc.as_str()).collect();
             let types = format!("{}@:{}", r.enc, enc);
             s.push_str(&format!(
                 "        let add_{mid}: i8 = cplus_add_method_{}(cls, rt::sel(#str_ptr(\"{sel}\\0\")), {proto_ty}_{mid}_imp, #str_ptr(\"{types}\\0\"));\n",
@@ -1205,8 +1220,11 @@ impl ObjcEmitter {
         if self.enum_of(b).is_some() {
             return Some(DelegateRet { tag: "u64".into(), ret_suffix: " -> u64".into(), enc: "Q".into(), default_ret: Some("0 as u64".into()) });
         }
-        if b == "instancetype" || b == "id" || b.ends_with('*') {
+        if b == "instancetype" || b == "id" || b.starts_with("id<") || b.starts_with("id <") || b.ends_with('*') {
             return Some(DelegateRet { tag: "id".into(), ret_suffix: " -> *u8".into(), enc: "@".into(), default_ret: Some("{ 0 as *u8 }".into()) });
+        }
+        if let Some((cty, enc, tag, def)) = delegate_struct(b) {
+            return Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.into(), default_ret: Some(def.into()) });
         }
         let (cty, enc, tag, def) = delegate_numeric(b)?;
         Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.to_string(), default_ret: Some(def.into()) })
@@ -1223,19 +1241,22 @@ impl ObjcEmitter {
             return None;
         }
         if self.enum_of(b).is_some() {
-            return Some(DArg { cty: "u64".into(), enc: 'Q', tag: "u64".into() });
+            return Some(DArg { cty: "u64".into(), enc: "Q".into(), tag: "u64".into() });
         }
         if b == "id" || b.starts_with("id<") || b.starts_with("id <") || b.ends_with('*') {
-            return Some(DArg { cty: "*u8".into(), enc: '@', tag: "id".into() });
+            return Some(DArg { cty: "*u8".into(), enc: "@".into(), tag: "id".into() });
         }
         if b == "SEL" {
-            return Some(DArg { cty: "*u8".into(), enc: ':', tag: "id".into() });
+            return Some(DArg { cty: "*u8".into(), enc: ":".into(), tag: "id".into() });
         }
         if b == "Class" {
-            return Some(DArg { cty: "*u8".into(), enc: '#', tag: "id".into() });
+            return Some(DArg { cty: "*u8".into(), enc: "#".into(), tag: "id".into() });
+        }
+        if let Some((cty, enc, tag, _)) = delegate_struct(b) {
+            return Some(DArg { cty: cty.into(), enc: enc.into(), tag: tag.into() });
         }
         let (cty, enc, tag, _) = delegate_numeric(b)?;
-        Some(DArg { cty: cty.into(), enc, tag: tag.into() })
+        Some(DArg { cty: cty.into(), enc: enc.to_string(), tag: tag.into() })
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -3418,20 +3439,63 @@ mod tests {
     }
 
     #[test]
-    fn delegate_callback_with_a_struct_arg_still_skips() {
-        // A by-value struct arg (NSRange / NSRect / ...) has no scalar/object shape,
-        // so the callback is skipped with an explicit note — never mis-bound. (A
-        // second, bindable callback keeps the protocol's helper alive so the skip
-        // note is recorded rather than swallowed by the empty-callbacks early return.)
+    fn delegate_callback_with_geometry_struct_arg_and_return_binds() {
+        // By-value geometry structs (NSRange arg, NSRect/NSSize return) bind to the
+        // matching rt:: types — ABI-identical to the ObjC struct (Range in 2 GP regs,
+        // Rect/Size as HFAs). A protocol-qualified `id<P>` return also binds (as *u8).
+        let m = |sel: &str, ret: &str, params: &[(&str, &str)]| {
+            serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+                "returnType": { "qualType": ret },
+                "inner": params.iter().map(|(n, t)| serde_json::json!(
+                    { "kind": "ParmVarDecl", "name": n, "type": { "qualType": t } })).collect::<Vec<_>>()
+            })
+        };
         let tu = serde_json::json!({
             "inner": [{
                 "kind": "ObjCProtocolDecl", "name": "NSThingDelegate", "loc": { "file": "test.h" },
                 "inner": [
-                    { "kind": "ObjCMethodDecl", "name": "thing:didSelectRange:", "instance": true, "loc": { "file": "test.h" },
+                    m("thing:didSelectRange:", "void", &[("thing", "id"), ("range", "NSRange")]),
+                    m("thing:rectForItem:", "NSRect", &[("thing", "id"), ("item", "NSInteger")]),
+                    m("sizeForThing:", "NSSize", &[("thing", "id")]),
+                    m("writerForThing:", "id<NSPasteboardWriting>", &[("thing", "id")]),
+                ]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Struct arg -> rt::Range; the handler receives it by value.
+        assert!(out.contains("thing_did_select_range: fn(*u8, *u8, rt::Range),"), "NSRange arg handler:\n{out}");
+        // Struct returns -> rt::Rect / rt::Size.
+        assert!(out.contains("thing_rect_for_item: fn(*u8, *u8, i64) -> rt::Rect,"), "NSRect return handler:\n{out}");
+        assert!(out.contains("size_for_thing: fn(*u8, *u8) -> rt::Size,"), "NSSize return handler:\n{out}");
+        // A protocol-qualified id return binds as *u8 (was wrongly skipped before).
+        assert!(out.contains("writer_for_thing: fn(*u8, *u8) -> *u8,"), "id<P> return handler:\n{out}");
+        // Typed shims carry the struct in the IMP signature.
+        assert!(out.contains("extern fn cplus_add_method_v_id_range(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Range), types: *u8) -> i8;"),
+            "struct-arg shim:\n{out}");
+        assert!(out.contains("extern fn cplus_add_method_rect_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> rt::Rect, types: *u8) -> i8;"),
+            "struct-return shim:\n{out}");
+        // Struct noops build a zero value.
+        assert!(out.contains("-> rt::Size { return rt::Size { w: 0 as f64, h: 0 as f64 }; }"), "struct noop default:\n{out}");
+        // ObjC encodings: NSRange = {_NSRange=QQ}, NSRect return = {CGRect=...}.
+        assert!(out.contains(r#"#str_ptr("v@:@{_NSRange=QQ}\0")"#), "NSRange arg encoding:\n{out}");
+        assert!(out.contains(r#"{CGRect={CGPoint=dd}{CGSize=dd}}@:@q"#), "NSRect return encoding:\n{out}");
+    }
+
+    #[test]
+    fn delegate_callback_with_an_unmodelled_arg_still_skips() {
+        // A collection / out-param arg (two stars: `NSArray<NSString *> *`, `NSError **`)
+        // has no scalar/object/struct shape, so the callback skips explicitly. A second
+        // bindable callback keeps the helper alive so the note is recorded.
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl", "name": "NSThingDelegate", "loc": { "file": "test.h" },
+                "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "thing:namedItems:", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "void" },
                       "inner": [
                         { "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } },
-                        { "kind": "ParmVarDecl", "name": "range", "type": { "qualType": "NSRange" } } ] },
+                        { "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSString *> *" } } ] },
                     { "kind": "ObjCMethodDecl", "name": "thingDidLoad:", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "void" },
                       "inner": [{ "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } }] },
@@ -3439,10 +3503,9 @@ mod tests {
             }]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        assert!(out.contains("// SKIPPED `thing:didSelectRange:`: arg `NSRange` not modelled"),
-            "struct-arg callback skips explicitly:\n{out}");
-        assert!(!out.contains("thing_did_select_range_imp"), "no trampoline for the struct-arg callback:\n{out}");
-        // The bindable neighbor still binds.
+        assert!(out.contains("// SKIPPED `thing:namedItems:`: arg `NSArray<NSString *> *` not modelled"),
+            "collection-arg callback skips explicitly:\n{out}");
+        assert!(!out.contains("thing_named_items_imp"), "no trampoline for the skipped callback:\n{out}");
         assert!(out.contains("thing_did_load: fn(*u8, *u8),"), "sibling object-arg callback binds:\n{out}");
     }
 
