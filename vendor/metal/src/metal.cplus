@@ -9607,7 +9607,39 @@ impl LinkedFunctions {
         return out;
     }
 
-    // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<id<MTLFunction>> *> * _Nullable` — generic collection
+    fn set_groups(this, groups: string_map::StringMap[vec::Vec[Function]]) {
+        let dict_groups: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_groups: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_groups: usize = groups.slot_capacity();
+        var dsi_groups: usize = 0 as usize;
+        while dsi_groups < dcap_groups {
+            match groups.value_ptr_at_slot(dsi_groups) {
+                option::Option[*vec::Vec[Function]]::Some(dvp_groups) => {
+                    match groups.key_ptr_at_slot(dsi_groups) {
+                        option::Option[*text::Text]::Some(dkp_groups) => {
+                    let dval_groups: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+                    let dadd_groups: *u8 = rt::sel(#str_ptr("addObject:\0"));
+                    let dan_groups: usize = (*dvp_groups).count();
+                    var daj_groups: usize = 0 as usize;
+                    while daj_groups < dan_groups {
+                        match (*dvp_groups).at_ptr(daj_groups) {
+                            option::Option[*Function]::Some(dae_groups) => { rt::msg_void_id(dval_groups, dadd_groups, (*dae_groups).raw()); }
+                            option::Option[*Function]::None => {}
+                        }
+                        daj_groups = daj_groups +% (1 as usize);
+                    }
+                            rt::msg_void_id_id(dict_groups, dset_groups, dval_groups, bridge::nsstring((*dkp_groups).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*vec::Vec[Function]]::None => {}
+            }
+            dsi_groups = dsi_groups +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setGroups:\0")), dict_groups);
+    }
+
     fn private_functions(this) -> vec::Vec[Function] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("privateFunctions\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -12939,7 +12971,39 @@ impl MTL4StaticLinkingDescriptor {
         return out;
     }
 
-    // SKIPPED `setGroups:`: param `NSDictionary<NSString *,NSArray<MTL4FunctionDescriptor *> *> * _Nullable` — generic collection
+    fn set_groups(this, groups: string_map::StringMap[vec::Vec[MTL4FunctionDescriptor]]) {
+        let dict_groups: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_groups: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_groups: usize = groups.slot_capacity();
+        var dsi_groups: usize = 0 as usize;
+        while dsi_groups < dcap_groups {
+            match groups.value_ptr_at_slot(dsi_groups) {
+                option::Option[*vec::Vec[MTL4FunctionDescriptor]]::Some(dvp_groups) => {
+                    match groups.key_ptr_at_slot(dsi_groups) {
+                        option::Option[*text::Text]::Some(dkp_groups) => {
+                    let dval_groups: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+                    let dadd_groups: *u8 = rt::sel(#str_ptr("addObject:\0"));
+                    let dan_groups: usize = (*dvp_groups).count();
+                    var daj_groups: usize = 0 as usize;
+                    while daj_groups < dan_groups {
+                        match (*dvp_groups).at_ptr(daj_groups) {
+                            option::Option[*MTL4FunctionDescriptor]::Some(dae_groups) => { rt::msg_void_id(dval_groups, dadd_groups, (*dae_groups).raw()); }
+                            option::Option[*MTL4FunctionDescriptor]::None => {}
+                        }
+                        daj_groups = daj_groups +% (1 as usize);
+                    }
+                            rt::msg_void_id_id(dict_groups, dset_groups, dval_groups, bridge::nsstring((*dkp_groups).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*vec::Vec[MTL4FunctionDescriptor]]::None => {}
+            }
+            dsi_groups = dsi_groups +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setGroups:\0")), dict_groups);
+    }
+
 }
 
 // `MTL4RenderPipelineColorAttachmentDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
