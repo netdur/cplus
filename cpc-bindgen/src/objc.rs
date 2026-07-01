@@ -2969,7 +2969,17 @@ fn strip_nullability(qt: &str) -> (String, bool) {
     // no-op for binding purposes — all collapse to the plain type.
     loop {
         let before = s;
-        for prefix in &["NS_REFINED_FOR_SWIFT ", "__kindof ", "const "] {
+        for prefix in &[
+            "NS_REFINED_FOR_SWIFT ",
+            // `NS_RETURNS_INNER_POINTER` (on a getter returning a borrowed CF pointer)
+            // and `NS_SWIFT_UI_ACTOR` (main-actor annotation) leak into type spellings
+            // like `NS_RETURNS_INNER_POINTER CGColorRef` / `NS_SWIFT_UI_ACTOR id` — the
+            // underlying type binds normally once the annotation is stripped.
+            "NS_RETURNS_INNER_POINTER ",
+            "NS_SWIFT_UI_ACTOR ",
+            "__kindof ",
+            "const ",
+        ] {
             if let Some(rest) = s.strip_prefix(prefix) {
                 s = rest.trim();
             }
@@ -4026,6 +4036,11 @@ mod tests {
         assert_eq!(strip_nullability("API_DEPRECATED_WITH_REPLACEMENT(\"y\") id").0, "id");
         // __kindof inside an NSArray element resolves via array_element.
         assert_eq!(array_element("NSArray<__kindof NSView *> *").as_deref(), Some("NSView *"));
+        // Word-prefix annotations that leak into type spellings: strip so the
+        // underlying type (opaque CF pointer -> *u8, id, SEL) binds normally.
+        assert_eq!(strip_nullability("NS_RETURNS_INNER_POINTER CGColorRef").0, "CGColorRef");
+        assert_eq!(strip_nullability("NS_SWIFT_UI_ACTOR id _Nullable").0, "id");
+        assert_eq!(strip_nullability("NS_SWIFT_UI_ACTOR SEL _Nullable").0, "SEL");
     }
 
     #[test]
