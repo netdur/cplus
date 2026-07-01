@@ -151,12 +151,6 @@ fn generate_merged(
     sdk: &str,
     pkg: &str,
 ) -> i32 {
-    // Header basenames this framework owns; the merged emitter accepts decls from
-    // any of them and drops everything #imported from a system header.
-    let home_set: std::collections::HashSet<String> = header_paths
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
-        .collect();
     // The umbrella (`Headers/<name>.h`) transitively imports every public header,
     // so one parse yields all framework types with their home-header locs intact.
     let umbrella = match header_paths.first().and_then(|p| p.parent()) {
@@ -166,6 +160,26 @@ fn generate_merged(
             return 1;
         }
     };
+    // Header basenames this framework owns; the merged emitter accepts decls from
+    // any of them and drops everything #imported from a system header. Seed from the
+    // umbrella's #import list (which also carries sub-framework headers), then add
+    // every header physically in the framework's own `Headers/` dir. A header pulled
+    // in only *transitively* — e.g. Metal's `MTLArgument.h`, imported via
+    // `MTLArgumentEncoder.h` and never listed in the umbrella's direct #imports —
+    // would otherwise have its entire type set (MTLType, MTLArgument, MTLBinding, …)
+    // dropped, taking every `NSArray<id<MTLBinding>>` accessor down with it. clang
+    // stamps each decl with its true home-header loc, so any decl homed in a physical
+    // framework header is unambiguously ours; a header not reachable from the umbrella
+    // contributes no decls to the AST, so the wider set can't pull in foreign types.
+    let mut home_set: std::collections::HashSet<String> = header_paths
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect();
+    if let Some(dir) = umbrella.parent() {
+        for h in list_headers(dir, name) {
+            home_set.insert(h);
+        }
+    }
     let ast = match clang_ast(&umbrella, sdk) {
         Some(a) => a,
         None => {
