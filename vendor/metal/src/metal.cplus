@@ -3489,6 +3489,15 @@ struct SizeAndAlign {
     align: u64,
 }
 
+// `MTLTextureSwizzleChannels` — by-value C struct.
+#[repr(C)]
+struct TextureSwizzleChannels {
+    red: u8,
+    green: u8,
+    blue: u8,
+    alpha: u8,
+}
+
 // `MTLViewport` — by-value C struct.
 #[repr(C)]
 struct Viewport {
@@ -3525,6 +3534,8 @@ extern fn objc_msg_Size_i64_i64_u64_i64(recv: *u8, sel: *u8, a0: i64, a1: i64, a
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_Size_u64(recv: *u8, sel: *u8, a0: u64) -> Size;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_TextureSwizzleChannels(recv: *u8, sel: *u8) -> TextureSwizzleChannels;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_Size(recv: *u8, sel: *u8, a0: Size) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_Size_id(recv: *u8, sel: *u8, a0: Size, a1: *u8) -> *u8;
@@ -3532,6 +3543,8 @@ extern fn objc_msg_id_Size_id(recv: *u8, sel: *u8, a0: Size, a1: *u8) -> *u8;
 extern fn objc_msg_id_Size_id_id(recv: *u8, sel: *u8, a0: Size, a1: *u8, a2: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_Size_u64_id(recv: *u8, sel: *u8, a0: Size, a1: u64, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64_range_range_TextureSwizzleChannels(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: rt::Range, a3: rt::Range, a4: TextureSwizzleChannels) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_u64_Size(recv: *u8, sel: *u8, a0: Size) -> u64;
 #[link_name = "objc_msgSend"]
@@ -3552,6 +3565,8 @@ extern fn objc_msg_void_Size(recv: *u8, sel: *u8, a0: Size);
 extern fn objc_msg_void_Size_Size(recv: *u8, sel: *u8, a0: Size, a1: Size);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_Size_Size_Size(recv: *u8, sel: *u8, a0: Size, a1: Size, a2: Size);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_TextureSwizzleChannels(recv: *u8, sel: *u8, a0: TextureSwizzleChannels);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_Viewport(recv: *u8, sel: *u8, a0: Viewport);
 #[link_name = "objc_msgSend"]
@@ -4420,8 +4435,14 @@ impl TextureDescriptor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCompressionType:\0")), texture_compression_type_raw(compression_type));
     }
 
-    // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
-    // SKIPPED `setSwizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn swizzle(this) -> TextureSwizzleChannels {
+        return objc_msg_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("swizzle\0")));
+    }
+
+    fn set_swizzle(this, swizzle: TextureSwizzleChannels) {
+        objc_msg_void_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("setSwizzle:\0")), swizzle);
+    }
+
     fn placement_sparse_page_size(this) -> SparsePageSize {
         return sparse_page_size_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("placementSparsePageSize\0"))));
     }
@@ -4495,8 +4516,14 @@ impl TextureViewDescriptor {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("setSliceRange:\0")), slice_range);
     }
 
-    // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
-    // SKIPPED `setSwizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn swizzle(this) -> TextureSwizzleChannels {
+        return objc_msg_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("swizzle\0")));
+    }
+
+    fn set_swizzle(this, swizzle: TextureSwizzleChannels) {
+        objc_msg_void_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("setSwizzle:\0")), swizzle);
+    }
+
 }
 
 // `MTLArgument` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -14604,7 +14631,14 @@ impl Texture {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn new_texture_view_with_pixel_format_texture_type_levels_slices_swizzle(this, pixel_format: PixelFormat, texture_type: TextureType, level_range: rt::Range, slice_range: rt::Range, swizzle: TextureSwizzleChannels) -> option::Option[Texture] {
+        let obj: *u8 = objc_msg_id_i64_i64_range_range_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:\0")), pixel_format_raw(pixel_format), texture_type_raw(texture_type), level_range, slice_range, swizzle);
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
+    }
+
     fn root_resource(this) -> option::Option[Resource] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("rootResource\0")));
         if obj == { 0 as *u8 } {
@@ -14726,7 +14760,10 @@ impl Texture {
         return Texture::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("remoteStorageTexture\0"))));
     }
 
-    // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
+    fn swizzle(this) -> TextureSwizzleChannels {
+        return objc_msg_TextureSwizzleChannels(this._obj, rt::sel(#str_ptr("swizzle\0")));
+    }
+
     fn sparse_texture_tier(this) -> TextureSparseTier {
         return texture_sparse_tier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sparseTextureTier\0"))));
     }
