@@ -816,15 +816,21 @@ impl ObjcEmitter {
         }
 
         // Every `init`/`initWith*` becomes a named constructor. The primary — the
-        // first init in AST order, exactly as before — keeps the plain `new` name so
-        // existing `Type::new(...)` bindings are byte-stable; each further variant is
-        // `new_with_<selector>` (`initWithCoder:` -> `new_with_coder`). Was: only the
-        // primary bound, every other init skipped as "extra init variant".
-        let primary_init: Option<String> = methods
-            .iter()
-            .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
-            .find(|s| *s == "init" || s.starts_with("initWith"))
-            .map(String::from);
+        // no-arg `init` if the class has one, else the first init in AST order —
+        // keeps the plain `new` name; each further variant is `new_with_<selector>`
+        // (`initWithCoder:` -> `new_with_coder`). Preferring the bare `init` matters:
+        // when an `initWith…:` merely appears first, it used to claim `new` and the
+        // no-arg `init` then collided on `new` and was DROPPED ("extra constructor").
+        // Making `new` the no-arg constructor recovers it (and reads correctly —
+        // `Foo::new()` is the empty init, `Foo::new_with_frame(f)` the parameterized).
+        let primary_init: Option<String> = {
+            let inits: Vec<&str> = methods
+                .iter()
+                .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+                .filter(|s| *s == "init" || s.starts_with("initWith"))
+                .collect();
+            inits.iter().find(|s| **s == "init").or_else(|| inits.first()).map(|s| s.to_string())
+        };
 
         // Plan the non-init method names against a reserved set of everything that
         // shares this impl's name scope but is NOT planned here: `raw`/`from_raw`,
@@ -3647,10 +3653,11 @@ mod tests {
 
     #[test]
     fn multiple_init_variants_each_bind_as_a_named_constructor() {
-        // A class with several `init*` selectors: the first in AST order keeps the
-        // plain `new` (byte-stable with the old single-`new` behavior); every other
-        // variant becomes `new_with_<selector>`. Was: only the first bound, the rest
-        // skipped as "extra init variant".
+        // A class with several `init*` selectors: the no-arg `init` claims the plain
+        // `new` even when an `initWith…:` appears BEFORE it in AST order; every other
+        // variant becomes `new_with_<selector>`. This is the fix for the "extra
+        // constructor" drop — previously the first-in-AST `initWithName:` grabbed
+        // `new` and the bare `init` collided and was lost.
         let tu = serde_json::json!({
             "inner": [
                 { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
@@ -3666,14 +3673,14 @@ mod tests {
             ]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        // Primary (first in AST order) keeps the plain `new`.
-        assert!(out.contains("fn new(name: i64) -> Thing"), "primary init -> new:\n{out}");
-        // Every other variant gets a distinct `new_with_<selector>` constructor.
-        assert!(out.contains("fn new_with_coder(coder: *u8) -> Thing"), "second init -> new_with_coder:\n{out}");
-        // The legacy blanket skip is gone; the bare `init` here collides with the
-        // primary `new` so it drops as an already-defined constructor, not a dangling fn.
+        // The no-arg `init` is the primary `new`, even though it's last in AST order.
+        assert!(out.contains("fn new() -> Thing"), "bare init -> new:\n{out}");
+        // The parameterized variants each get a distinct `new_with_<selector>`.
+        assert!(out.contains("fn new_with_name(name: i64) -> Thing"), "initWithName -> new_with_name:\n{out}");
+        assert!(out.contains("fn new_with_coder(coder: *u8) -> Thing"), "initWithCoder -> new_with_coder:\n{out}");
+        // No constructor is dropped now — the bare init no longer collides.
         assert!(!out.contains("extra init variant"), "no legacy extra-init skip:\n{out}");
-        assert!(out.contains("`new` already defined"), "bare init collides with primary new:\n{out}");
+        assert!(!out.contains("already defined (extra constructor)"), "no constructor dropped:\n{out}");
     }
 
     #[test]
