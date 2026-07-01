@@ -37,6 +37,7 @@ pub struct ObjcEmitter {
     block_helpers: String,
     needs_vec: bool,
     needs_string_map: bool,
+    needs_string_set: bool,
     needs_any_object: bool,
     needs_synth: bool,
     synth_key: u64,
@@ -198,6 +199,7 @@ enum Ret {
     ValueArray, // NSArray<NSValue *> -> Vec[Range]
     TextArray,  // NSArray<NSString *> -> Vec[Text]
     ObjectArray(String), // NSArray<id<P>> -> Vec[P]; only non-owning protocol elems
+    TextSet,    // NSSet<NSString *> (or NSString typedef) -> StringSet (via -allObjects)
     Struct(String), // a by-value C struct (MTLSize) returned by value (sret)
     TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
     Unsupported(String),
@@ -248,6 +250,7 @@ impl ObjcEmitter {
             block_helpers: String::new(),
             needs_vec: false,
             needs_string_map: false,
+            needs_string_set: false,
             needs_any_object: false,
             needs_synth: false,
             synth_key: 0x7000,
@@ -577,6 +580,10 @@ impl ObjcEmitter {
         }
         if self.needs_string_map {
             p.push_str("import \"stdlib/string_map\" as string_map;\n");
+        }
+        if self.needs_string_set {
+            p.push_str("import \"stdlib/string_set\" as string_set;\n");
+            p.push_str("import \"stdlib/status\" as status;\n");
         }
         if self.needs_synth {
             p.push_str("import \"objc/synthesis\" as synth;\n");
@@ -1460,7 +1467,7 @@ impl ObjcEmitter {
         // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
         // collection return rather than emit dangling code.
         if has_collection_param
-            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_))
+            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_))
         {
             self.body.push_str(&format!(
                 "    // SKIPPED `{sel}`: NSArray<id> param with a collection return not modelled\n"
@@ -1517,6 +1524,36 @@ impl ObjcEmitter {
                  \x20       while i < n {{\n\
                  \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
                  \x20           out.append(bridge::to_text(value));\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
+        if let Ret::TextSet = ret {
+            let set_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSSet<NSString> arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_string_set = true;
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            // NSSet has no index; take `-allObjects` (an NSArray snapshot) and fold
+            // each NSString element into an owning StringSet.
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> string_set::StringSet {{\n\
+                 \x20       let set: *u8 = {set_call};\n\
+                 \x20       let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr(\"allObjects\\0\")));\n\
+                 \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: string_set::StringSet = string_set::with_capacity(n as usize);\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           let value: *u8 = rt::msg_id_u64(arr, at_sel, i);\n\
+                 \x20           let _st: status::Status = out.insert(bridge::to_text(value));\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -1687,7 +1724,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
         })
     }
 
@@ -1712,7 +1749,7 @@ impl ObjcEmitter {
         // Collection returns need the multi-statement Vec/Map builders that only the
         // general path emits; a block method returning one is rare — skip rather than
         // emit a partial body.
-        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_)) {
+        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_)) {
             self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with a collection return not modelled\n"));
             return;
         }
@@ -1998,6 +2035,10 @@ impl ObjcEmitter {
         }
         if self.is_string_array(base_ty) {
             return Ret::TextArray;
+        }
+        if self.is_string_set(base_ty) {
+            self.needs_string_set = true;
+            return Ret::TextSet;
         }
         // An object array RETURN binds to `Vec[W]` for any module-defined wrapper:
         // non-owning elements (protocol / factory class) wrap +0 via `from_raw`;
@@ -2426,6 +2467,21 @@ impl ObjcEmitter {
         false
     }
 
+    /// `NSSet<NSString *> *` (or an NSString-typedef element like
+    /// `NSToolbarItemIdentifier`) -> bridges to `StringSet`. Sets of object
+    /// wrappers or scalars are NOT string sets (no faithful `HashSet` element:
+    /// wrappers aren't `Copy`/`Hash`/`Eq`), so only the string case is modelled.
+    fn is_string_set(&self, ty: &str) -> bool {
+        let t = ty.trim();
+        if let Some(rest) = t.strip_prefix("NSSet<") {
+            let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"));
+            if let Some(elem) = elem {
+                return self.is_nsstring(elem.trim());
+            }
+        }
+        false
+    }
+
     /// `NSDictionary<K, V> *` / `NSMutableDictionary<K, V> *` -> the (key, value)
     /// element spellings. The split is on the top-level comma so a generic value
     /// (`NSArray<NSString *> *`) doesn't get cut at its own inner comma. None for
@@ -2571,7 +2627,7 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::Point => "point".into(),
         Ret::Size => "size".into(),
         Ret::Struct(name) => name.clone(),
-        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
     };
     let mut tags: Vec<String> = vec![ret_tag];
     for a in args {
@@ -4081,6 +4137,31 @@ mod tests {
         assert!(out.contains("out.append(Buffer::from_raw("), "element wrap:\n{out}");
         // Class-element array isn't typed (MTLThing wrapper could be owning) -> skipped.
         assert!(out.contains("// SKIPPED `descriptors`"), "class array not skipped:\n{out}");
+    }
+
+    #[test]
+    fn nsset_of_strings_bridges_to_a_string_set() {
+        // NSSet<NSString*> (and an NSString-typedef element) -> StringSet: `-allObjects`
+        // gives an NSArray snapshot whose NSString elements fold into an owning set.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "NSToolbarItemIdentifier", "type": { "qualType": "NSString *" } },
+                { "kind": "ObjCInterfaceDecl", "name": "NSToolbar", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "tags", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSSet<NSString *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "visibleIdentifiers", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSSet<NSToolbarItemIdentifier> *" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("import \"stdlib/string_set\" as string_set;"), "string_set import:\n{out}");
+        assert!(out.contains("fn tags(this) -> string_set::StringSet {"), "NSSet<NSString*> -> StringSet:\n{out}");
+        // The typedef element resolves to NSString too.
+        assert!(out.contains("fn visible_identifiers(this) -> string_set::StringSet {"), "typedef-element set:\n{out}");
+        // -allObjects snapshot + fold each NSString into the owning set.
+        assert!(out.contains(r#"rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")))"#), "allObjects hop:\n{out}");
+        assert!(out.contains("let _st: status::Status = out.insert(bridge::to_text(value));"), "insert bridged Text:\n{out}");
+        assert!(!out.contains("// SKIPPED `tags`"), "no generic-collection skip:\n{out}");
     }
 
     #[test]
