@@ -10135,7 +10135,29 @@ impl FileWrapper {
         return FileWrapper { _obj: rt::msg_id_id_u64_id(alloced, rt::sel(#str_ptr("initWithURL:options:error:\0")), url.raw(), options, out_error) };
     }
 
-    // SKIPPED `initDirectoryWithFileWrappers:`: param `NSDictionary<NSString *,NSFileWrapper *> * _Nonnull` — generic collection
+    fn init_directory_with_file_wrappers(this, children_by_preferred_name: string_map::StringMap[FileWrapper]) -> *u8 {
+        let dict_children_by_preferred_name: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_children_by_preferred_name: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_children_by_preferred_name: usize = children_by_preferred_name.slot_capacity();
+        var dsi_children_by_preferred_name: usize = 0 as usize;
+        while dsi_children_by_preferred_name < dcap_children_by_preferred_name {
+            match children_by_preferred_name.value_ptr_at_slot(dsi_children_by_preferred_name) {
+                option::Option[*FileWrapper]::Some(dvp_children_by_preferred_name) => {
+                    match children_by_preferred_name.key_ptr_at_slot(dsi_children_by_preferred_name) {
+                        option::Option[*text::Text]::Some(dkp_children_by_preferred_name) => {
+                    let dval_children_by_preferred_name: *u8 = (*dvp_children_by_preferred_name).raw();
+                            rt::msg_void_id_id(dict_children_by_preferred_name, dset_children_by_preferred_name, dval_children_by_preferred_name, bridge::nsstring((*dkp_children_by_preferred_name).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*FileWrapper]::None => {}
+            }
+            dsi_children_by_preferred_name = dsi_children_by_preferred_name +% (1 as usize);
+        }
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initDirectoryWithFileWrappers:\0")), dict_children_by_preferred_name);
+    }
+
     fn init_regular_file_with_contents(this, contents: Data) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initRegularFileWithContents:\0")), contents.raw());
     }
@@ -10265,7 +10287,23 @@ impl FileWrapper {
         return option::some(Data::from_raw(obj));
     }
 
-    // SKIPPED `fileWrappers`: return `NSDictionary<NSString *,NSFileWrapper *> * _Nullable` — NSDictionary value `NSFileWrapper *` not modelled (NSString / NSNumber / object[array])
+    fn file_wrappers(this) -> string_map::StringMap[FileWrapper] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileWrappers\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[FileWrapper] = string_map::new::[FileWrapper]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), FileWrapper::from_raw(rt::retain(nsval)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn regular_file_contents(this) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("regularFileContents\0")));
         if obj == { 0 as *u8 } {
@@ -34332,7 +34370,7 @@ impl FontCollection {
         return option::some(FontCollection { _obj: obj });
     }
 
-    // SKIPPED `matchingDescriptorsWithOptions:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
+    // SKIPPED `matchingDescriptorsWithOptions:`: NSArray<id> param with a collection return not modelled
     fn matching_descriptors_for_family(this, family: str) -> vec::Vec[FontDescriptor] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingDescriptorsForFamily:\0")), bridge::nsstring(family));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -34346,7 +34384,7 @@ impl FontCollection {
         return out;
     }
 
-    // SKIPPED `matchingDescriptorsForFamily:options:`: param `NSDictionary<NSFontCollectionMatchingOptionKey,NSNumber *> * _Nullable` — generic collection
+    // SKIPPED `matchingDescriptorsForFamily:options:`: NSArray<id> param with a collection return not modelled
     fn font_collection_with_all_available_descriptors() -> FontCollection {
         return FontCollection { _obj: rt::msg_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithAllAvailableDescriptors\0"))) };
     }
@@ -36018,7 +36056,23 @@ impl TableView {
         return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("hiddenRowIndexes\0"))));
     }
 
-    // SKIPPED `registeredNibsByIdentifier`: return `API_AVAILABLE NSDictionary<NSUserInterfaceItemIdentifier,NSNib *> *` — NSDictionary value `NSNib *` not modelled (NSString / NSNumber / object[array])
+    fn registered_nibs_by_identifier(this) -> string_map::StringMap[Nib] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("registeredNibsByIdentifier\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[Nib] = string_map::new::[Nib]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), Nib::from_raw(rt::retain(nsval)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn uses_static_contents(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesStaticContents\0"))) != (0 as i8);
     }
