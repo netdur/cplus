@@ -773,18 +773,29 @@ impl ObjcEmitter {
             self.seen_methods.insert("drop".to_string());
         }
 
-        let mut init_done = false;
+        // Every `init`/`initWith*` becomes a named constructor. The primary — the
+        // first init in AST order, exactly as before — keeps the plain `new` name so
+        // existing `Type::new(...)` bindings are byte-stable; each further variant is
+        // `new_with_<selector>` (`initWithCoder:` -> `new_with_coder`). Was: only the
+        // primary bound, every other init skipped as "extra init variant".
+        let primary_init: Option<String> = methods
+            .iter()
+            .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
+            .find(|s| *s == "init" || s.starts_with("initWith"))
+            .map(String::from);
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let is_init = sel == "init" || sel.starts_with("initWith");
-            if is_init {
-                if init_done {
-                    self.body.push_str(&format!("    // SKIPPED `{sel}`: extra init variant (one `new` per type)\n"));
-                    continue;
+            let ctor: Option<String> = if is_init {
+                if primary_init.as_deref() == Some(sel.as_str()) {
+                    Some("new".to_string())
+                } else {
+                    Some(ctor_name(&sel))
                 }
-                init_done = true;
-            }
-            self.emit_method(m, &objc_name, &ty, is_init, owned);
+            } else {
+                None
+            };
+            self.emit_method(m, &objc_name, &ty, is_init, owned, ctor.as_deref());
         }
 
         if owned {
@@ -842,7 +853,7 @@ impl ObjcEmitter {
         self.seen_methods.insert("raw".to_string());
         self.seen_methods.insert("from_raw".to_string());
         for m in &methods {
-            self.emit_method(m, &objc_name, &ty, false, false);
+            self.emit_method(m, &objc_name, &ty, false, false, None);
         }
         self.body.push_str("}\n\n");
     }
@@ -1099,7 +1110,7 @@ impl ObjcEmitter {
         b == "id" || b.ends_with('*')
     }
 
-    fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool) {
+    fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
         let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let is_instance = m.get("instance").and_then(|v| v.as_bool()).unwrap_or(false);
         let ret_qt = m.get("returnType").and_then(|t| t.get("qualType")).and_then(|v| v.as_str()).unwrap_or("void");
@@ -1173,13 +1184,14 @@ impl ObjcEmitter {
                     return;
                 }
             };
-            if !self.seen_methods.insert("new".to_string()) {
-                self.body.push_str(&format!("    // SKIPPED `{sel}`: `new` already defined (extra constructor)\n"));
+            let ctor = ctor.unwrap_or("new");
+            if !self.seen_methods.insert(ctor.to_string()) {
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: `{ctor}` already defined (extra constructor)\n"));
                 return;
             }
             let header = if sig_param.is_empty() { String::new() } else { sig_param.clone() };
             self.body.push_str(&format!(
-                "    fn new({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n        return {ty} {{ _obj: {send} }};\n    }}\n\n"
+                "    fn {ctor}({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n        return {ty} {{ _obj: {send} }};\n    }}\n\n"
             ));
             return;
         }
@@ -2299,6 +2311,18 @@ fn mechanical_name(sel: &str) -> String {
     snake(&joined)
 }
 
+/// Constructor name for an `init`/`initWith*` selector: the `init` stem becomes
+/// `new`, so bare `init` -> `new` and `initWithFrame:size:` -> `new_with_frame_size`.
+/// Derived purely from the selector (order-independent), so a type's constructor
+/// set is stable across regenerations.
+fn ctor_name(sel: &str) -> String {
+    let mech = mechanical_name(sel); // "init" | "init_with_frame_size" | ...
+    match mech.strip_prefix("init") {
+        Some(rest) => format!("new{rest}"),
+        None => format!("new_{mech}"),
+    }
+}
+
 /// camelCase / PascalCase -> snake_case.
 fn snake(s: &str) -> String {
     let mut out = String::new();
@@ -2616,6 +2640,37 @@ mod tests {
         assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
+    }
+
+    #[test]
+    fn multiple_init_variants_each_bind_as_a_named_constructor() {
+        // A class with several `init*` selectors: the first in AST order keeps the
+        // plain `new` (byte-stable with the old single-`new` behavior); every other
+        // variant becomes `new_with_<selector>`. Was: only the first bound, the rest
+        // skipped as "extra init variant".
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithName:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "name", "type": { "qualType": "long" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "initWithCoder:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "coder", "type": { "qualType": "id" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] },
+                ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Primary (first in AST order) keeps the plain `new`.
+        assert!(out.contains("fn new(name: i64) -> Thing"), "primary init -> new:\n{out}");
+        // Every other variant gets a distinct `new_with_<selector>` constructor.
+        assert!(out.contains("fn new_with_coder(coder: *u8) -> Thing"), "second init -> new_with_coder:\n{out}");
+        // The legacy blanket skip is gone; the bare `init` here collides with the
+        // primary `new` so it drops as an already-defined constructor, not a dangling fn.
+        assert!(!out.contains("extra init variant"), "no legacy extra-init skip:\n{out}");
+        assert!(out.contains("`new` already defined"), "bare init collides with primary new:\n{out}");
     }
 
     #[test]
