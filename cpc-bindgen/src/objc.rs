@@ -125,6 +125,21 @@ fn delegate_struct(b: &str) -> Option<(&'static str, &'static str, &'static str,
     })
 }
 
+// A resolved typedef canon -> delegate (C+ type, ObjC enc, shape tag, zero default).
+// A pointer typedef (NSString-family Kind/Identifier, or any `Foo *`) is an object
+// handle (*u8, '@'); scalar canons carry their width.
+fn tdcanon_kind(c: TdCanon) -> (&'static str, &'static str, &'static str, &'static str) {
+    match c {
+        TdCanon::I64 => ("i64", "q", "i64", "0 as i64"),
+        TdCanon::U64 => ("u64", "Q", "u64", "0 as u64"),
+        TdCanon::F64 => ("f64", "d", "f64", "0 as f64"),
+        TdCanon::F32 => ("f32", "f", "f32", "0 as f32"),
+        TdCanon::I32 => ("i32", "i", "i32", "0 as i32"),
+        TdCanon::U32 => ("u32", "I", "u32", "0 as u32"),
+        TdCanon::Ptr => ("*u8", "@", "id", "{ 0 as *u8 }"),
+    }
+}
+
 // The scalar C+ type / ObjC encoding / shape tag / zero default for a numeric
 // (non-object) delegate arg-or-return type. `None` for anything not a plain
 // scalar (struct, block, pointer-to-pointer) — those stay skipped.
@@ -1226,8 +1241,13 @@ impl ObjcEmitter {
         if let Some((cty, enc, tag, def)) = delegate_struct(b) {
             return Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.into(), default_ret: Some(def.into()) });
         }
-        let (cty, enc, tag, def) = delegate_numeric(b)?;
-        Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.to_string(), default_ret: Some(def.into()) })
+        if let Some((cty, enc, tag, def)) = delegate_numeric(b) {
+            return Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.to_string(), default_ret: Some(def.into()) });
+        }
+        // Fall through a typedef chain (NSString-family Kind/Identifier -> object;
+        // NSAnimationProgress -> float; ...) before giving up.
+        let (cty, enc, tag, def) = tdcanon_kind(self.typedef_canon(b)?);
+        Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.into(), default_ret: Some(def.into()) })
     }
 
     // Classify one delegate-callback argument. Objects (`id`/`Foo *`/`id<P>`) and
@@ -1255,8 +1275,13 @@ impl ObjcEmitter {
         if let Some((cty, enc, tag, _)) = delegate_struct(b) {
             return Some(DArg { cty: cty.into(), enc: enc.into(), tag: tag.into() });
         }
-        let (cty, enc, tag, _) = delegate_numeric(b)?;
-        Some(DArg { cty: cty.into(), enc: enc.to_string(), tag: tag.into() })
+        if let Some((cty, enc, tag, _)) = delegate_numeric(b) {
+            return Some(DArg { cty: cty.into(), enc: enc.to_string(), tag: tag.into() });
+        }
+        // Fall through a typedef chain (NSString-family Kind/Identifier -> *u8;
+        // NSAnimationProgress -> f32; ...) before giving up.
+        let (cty, enc, tag, _) = tdcanon_kind(self.typedef_canon(b)?);
+        Some(DArg { cty: cty.into(), enc: enc.into(), tag: tag.into() })
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -3507,6 +3532,43 @@ mod tests {
             "collection-arg callback skips explicitly:\n{out}");
         assert!(!out.contains("thing_named_items_imp"), "no trampoline for the skipped callback:\n{out}");
         assert!(out.contains("thing_did_load: fn(*u8, *u8),"), "sibling object-arg callback binds:\n{out}");
+    }
+
+    #[test]
+    fn delegate_callback_resolves_typedef_args_and_returns() {
+        // A typedef arg/return is followed through the typedef chain: an NSString
+        // typedef (Kind/Identifier family) -> *u8 object handle; a scalar typedef
+        // (NSAnimationProgress -> float) -> its width. Previously both skipped.
+        let m = |sel: &str, ret: &str, params: &[(&str, &str)]| {
+            serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+                "returnType": { "qualType": ret },
+                "inner": params.iter().map(|(n, t)| serde_json::json!(
+                    { "kind": "ParmVarDecl", "name": n, "type": { "qualType": t } })).collect::<Vec<_>>()
+            })
+        };
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "NSToolbarItemIdentifier", "type": { "qualType": "NSString *" } },
+                { "kind": "TypedefDecl", "name": "NSAnimationProgress", "type": { "qualType": "float" } },
+                { "kind": "ObjCProtocolDecl", "name": "NSBarDelegate", "loc": { "file": "test.h" }, "inner": [
+                    m("bar:selectedIdentifier:", "void", &[("bar", "id"), ("ident", "NSToolbarItemIdentifier")]),
+                    m("bar:progressChanged:", "void", &[("bar", "id"), ("p", "NSAnimationProgress")]),
+                    m("defaultIdentifierForBar:", "NSToolbarItemIdentifier", &[("bar", "id")]),
+                ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // NSString typedef arg -> *u8 object; scalar typedef arg -> f32.
+        assert!(out.contains("bar_selected_identifier: fn(*u8, *u8, *u8),"), "NSString-typedef arg -> *u8:\n{out}");
+        assert!(out.contains("bar_progress_changed: fn(*u8, *u8, f32),"), "float-typedef arg -> f32:\n{out}");
+        // NSString typedef return -> *u8.
+        assert!(out.contains("default_identifier_for_bar: fn(*u8, *u8) -> *u8,"), "NSString-typedef return -> *u8:\n{out}");
+        // The scalar-typedef shape gets its typed shim + encoding (object '@', float 'f').
+        assert!(out.contains("extern fn cplus_add_method_v_id_f32(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, f32), types: *u8) -> i8;"),
+            "float-typedef shim:\n{out}");
+        assert!(out.contains(r#"#str_ptr("v@:@f\0")"#), "id + float encoding:\n{out}");
+        assert!(!out.contains("NSToolbarItemIdentifier` not modelled"), "typedef no longer skips:\n{out}");
     }
 
     #[test]
