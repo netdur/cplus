@@ -3724,6 +3724,20 @@ fn ptr_size_bytes() -> u64 {
     (active_target().pointer_width / 8) as u64
 }
 
+/// The AArch64/Apple + SysV ABI extension attribute for a narrow (< 32-bit)
+/// integer that crosses the C boundary (extern arg/return): unsigned → `zeroext`,
+/// signed → `signext`, wider → none. clang emits exactly this for `unsigned char`
+/// / `signed char` / `short` params and returns; without it, an extern arg's high
+/// register bits are undefined and a callee that reads the full w-register (Apple
+/// ARM64 caller-extends rule) sees garbage. `bool` is 0/1 → zeroext.
+fn abi_ext_attr(ty: &Ty) -> &'static str {
+    match ty {
+        Ty::U8 | Ty::U16 | Ty::Bool => "zeroext",
+        Ty::I8 | Ty::I16 => "signext",
+        _ => "",
+    }
+}
+
 fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
     match ty {
         Ty::I8 | Ty::U8 => "i8".to_string(),
@@ -5464,7 +5478,19 @@ fn gen_function(
         } else {
             llvm_ty(&return_ty, types)
         };
-        write!(out, "declare {} @{}(", sig_ret_ty, resolved_symbol).unwrap();
+        // C-ABI: a narrow (<32-bit) integer return is zero/sign-extended (matches
+        // clang `declare zeroext i8 @f()`). Not for sret (void) or coerced returns.
+        let ret_ext = if uses_sret || coerce_ret_ty.is_some() {
+            ""
+        } else {
+            abi_ext_attr(&return_ty)
+        };
+        let ret_ext = if ret_ext.is_empty() {
+            String::new()
+        } else {
+            format!("{ret_ext} ")
+        };
+        write!(out, "declare {}{} @{}(", ret_ext, sig_ret_ty, resolved_symbol).unwrap();
         if uses_sret {
             let ret_inner = llvm_ty(&return_ty, types);
             let (sz, al) = static_layout(&return_ty, types)
@@ -5505,7 +5531,15 @@ fn gen_function(
                     }
                 }
                 CAbiClass::Coerce { llvm_ty, .. } => out.push_str(&llvm_ty),
-                CAbiClass::Direct => out.push_str(&llvm_ty(pty, types)),
+                CAbiClass::Direct => {
+                    out.push_str(&llvm_ty(pty, types));
+                    // C-ABI: narrow-int extern param carries zero/sign-extension.
+                    let ext = abi_ext_attr(pty);
+                    if !ext.is_empty() {
+                        out.push(' ');
+                        out.push_str(ext);
+                    }
+                }
             }
         }
         // Slice 10.FFI.4: trailing `, ...` for variadic extern fns.
@@ -12387,6 +12421,12 @@ impl<'a> FnState<'a> {
                 // `ptr noalias noundef` signature.
                 let ty_str = if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                     format!("{} noalias noundef", self.lty(pty))
+                } else if sig.is_extern && !abi_ext_attr(pty).is_empty() {
+                    // C-ABI: a narrow (<32-bit) integer extern arg is zero/sign-extended
+                    // by the caller (matches clang; see abi_ext_attr). The generic
+                    // `objc_msgSend` declaration carries no such attr, so the call site
+                    // is where it must land for a typed msgSend shim.
+                    format!("{} {}", self.lty(pty), abi_ext_attr(pty))
                 } else {
                     self.lty(pty)
                 };
@@ -12618,8 +12658,15 @@ impl<'a> FnState<'a> {
             }
             ret => {
                 let v = self.next_tmp();
+                // C-ABI: a narrow-int extern return is zero/sign-extended (matches
+                // clang `call zeroext i8 @f()`); the attr precedes the return type.
+                let ret_ext = if sig.is_extern && !abi_ext_attr(&ret).is_empty() {
+                    format!("{} ", abi_ext_attr(&ret))
+                } else {
+                    String::new()
+                };
                 self.emit(&format!(
-                    "{v} = {call_kind} {cc}{}{type_prefix} @{symbol}({arg_str})",
+                    "{v} = {call_kind} {cc}{ret_ext}{}{type_prefix} @{symbol}({arg_str})",
                     self.lty(&ret)
                 ));
                 Some((v, ret))
@@ -19534,6 +19581,39 @@ mod tests {
             ir.contains("= call i64 @take_s8(i64 "),
             "≤8B struct call site must pass i64 (coerced), not %S8, got:\n{ir}"
         );
+    }
+
+    #[test]
+    fn extern_narrow_int_args_and_returns_carry_zeroext_signext() {
+        // C-ABI: a narrow (<32-bit) integer extern arg/return is zero/sign-extended
+        // (matches clang `i8 zeroext` / `signext`), on both the declare and the call.
+        // Without it an unextended high register byte is UB across the C boundary on
+        // AArch64. u32/i32 fill a slot exactly -> no attr.
+        let ir = gen_src(
+            "extern fn take_u8(a: u8);\n\
+             extern fn take_i8(a: i8);\n\
+             extern fn take_u16(a: u16);\n\
+             extern fn take_u32(a: u32);\n\
+             extern fn ret_i8() -> i8;\n\
+             fn main() -> i32 {\n\
+                 take_u8(1 as u8);\n\
+                 take_i8(1 as i8);\n\
+                 take_u16(1 as u16);\n\
+                 take_u32(1 as u32);\n\
+                 let _x: i8 = ret_i8();\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(ir.contains("declare void @take_u8(i8 zeroext)"), "u8 param zeroext:\n{ir}");
+        assert!(ir.contains("call void @take_u8(i8 zeroext "), "u8 arg zeroext:\n{ir}");
+        assert!(ir.contains("declare void @take_i8(i8 signext)"), "i8 param signext:\n{ir}");
+        assert!(ir.contains("call void @take_i8(i8 signext "), "i8 arg signext:\n{ir}");
+        assert!(ir.contains("declare void @take_u16(i16 zeroext)"), "u16 param zeroext:\n{ir}");
+        assert!(ir.contains("declare signext i8 @ret_i8()"), "i8 return signext (declare):\n{ir}");
+        assert!(ir.contains("= call signext i8 @ret_i8()"), "i8 return signext (call):\n{ir}");
+        // 32-bit fills a register slot exactly — no extension attribute.
+        assert!(ir.contains("declare void @take_u32(i32)"), "u32 has no ext attr:\n{ir}");
+        assert!(!ir.contains("i32 zeroext"), "u32 must not be extended:\n{ir}");
     }
 
     #[test]
