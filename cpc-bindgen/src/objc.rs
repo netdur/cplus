@@ -146,10 +146,11 @@ enum Ret {
 // The value side of a string-keyed `NSDictionary` the bindgen can bridge.
 // (Keys are always `NSString` -> `Text`.) Numbers come out as `f64` via
 // `-doubleValue`; nested strings come out as owned `Text`.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum MapVal {
-    Text,      // NSString * value -> Text
-    ScalarF64, // NSNumber * value -> f64 (via doubleValue)
+    Text,           // NSString * value -> Text
+    ScalarF64,      // NSNumber * value -> f64 (via doubleValue)
+    Object(String), // a NON-owning wrapper value -> StringMap[Wrapper] (from_raw, +0)
 }
 
 enum Arg {
@@ -1375,12 +1376,14 @@ impl ObjcEmitter {
             };
             self.needs_string_map = true;
             // Key is always NSString -> Text; the value bridge depends on V.
-            let (val_ty, val_bridge): (&str, String) = match val {
-                MapVal::Text => ("text::Text", "bridge::to_text(nsval)".to_string()),
+            let (val_ty, val_bridge): (String, String) = match val {
+                MapVal::Text => ("text::Text".to_string(), "bridge::to_text(nsval)".to_string()),
                 MapVal::ScalarF64 => (
-                    "f64",
+                    "f64".to_string(),
                     "rt::msg_f64(nsval, rt::sel(#str_ptr(\"doubleValue\\0\")))".to_string(),
                 ),
+                // Non-owning wrapper value: wrap the +0 dict element via from_raw.
+                MapVal::Object(w) => (w.clone(), format!("{w}::from_raw(nsval)")),
             };
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
             self.body.push_str(&format!(
@@ -1834,8 +1837,17 @@ impl ObjcEmitter {
                 self.needs_string_map = true;
                 return Ret::TextMap(MapVal::ScalarF64);
             }
+            // A NON-owning wrapper value (opaque handle, no drop) -> StringMap[Wrapper]:
+            // each value wraps +0 via `from_raw`, so the map's drop doesn't over-release.
+            // Owning values would need retain-on-wrap, so they stay skipped.
+            if let Some(w) = self.wrapper_name_of(&v) {
+                if self.non_owning_types.contains(&w) {
+                    self.needs_string_map = true;
+                    return Ret::TextMap(MapVal::Object(w));
+                }
+            }
             return Ret::Unsupported(format!(
-                "NSDictionary value `{v}` not modelled (NSString / NSNumber only)"
+                "NSDictionary value `{v}` not modelled (NSString / NSNumber / non-owning object)"
             ));
         }
         // A protocol-qualified id (`id<MTLDevice>`, `id<A,B>`) is an ordinary ObjC
@@ -2839,6 +2851,24 @@ mod tests {
         let refined = e.map_ret("NS_REFINED_FOR_SWIFT NSDictionary<NSString *, NSNumber *> *");
         assert!(matches!(plain, Ret::TextMap(MapVal::ScalarF64)));
         assert!(matches!(refined, Ret::TextMap(MapVal::ScalarF64)));
+    }
+
+    #[test]
+    fn string_dict_with_nonowning_object_value_binds_to_stringmap_of_wrapper() {
+        // NSDictionary<NSString *, MTLThing *> where MTLThing is a non-owning
+        // protocol wrapper -> StringMap[Thing]; each value wraps +0 via from_raw
+        // (no over-release). An owning value would still skip.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "constants", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSDictionary<NSString *,MTLThing *> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn constants(this) -> string_map::StringMap[Thing]"), "dict->StringMap[Wrapper]:\n{out}");
+        assert!(out.contains("Thing::from_raw(nsval)"), "value wrapped via from_raw:\n{out}");
     }
 
     #[test]
