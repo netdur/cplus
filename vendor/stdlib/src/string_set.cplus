@@ -1,0 +1,624 @@
+// stdlib/string_set.cplus — `StringSet`: a `Text`-keyed set.
+//
+// The owning counterpart to `HashSet[T]` for the one element type `HashSet`
+// cannot take: `Text`. `HashSet` requires `T: Copy` because it bitwise-copies
+// elements; `Text` owns a heap buffer and has `drop`, so it is not `Copy`.
+// `StringSet` fixes the element type to `Text` and *owns* every element —
+// dropping each live element when the set drops or an element is removed — so
+// it is exactly to `HashSet` what `StringMap` is to `HashMap`.
+//
+// This is the target for bridging Foundation's `NSSet<NSString*>`: a
+// string-valued set maps to a `StringSet` of the bridged `Text` elements.
+//
+// **Storage** (parallel arrays, open addressing with linear probing and
+// tombstone deletion, doubling at a 0.75 load factor):
+//
+//   _slots:      *Text  — cap slots; an owned Text per live slot
+//   _occupied:   *u8    — cap slots; 0 = empty, 1 = live, 2 = tombstone
+//   _cap, _len:  usize
+//   _tombstones: usize  — live+tombstone drives the grow/rehash threshold
+//
+// **Hashing / equality.** Elements hash via `Text::hash` (FNV-1a). A stored
+// `Text` and an equal `str` lookup agree because `text::hash_str` shares that
+// hash core; stored elements are compared in place through a `*Text`
+// (`(*sp).equals(key)` for a `str`, `(*sp).eq(other)` for a `Text`) — a borrow,
+// never a move, so a probe never disturbs the element it walks past.
+//
+// **API.**
+//
+//   string_set::new() -> StringSet
+//   string_set::with_capacity(capacity: usize) -> StringSet
+//   StringSet::count(this) -> usize
+//   StringSet::capacity(this) -> usize
+//   StringSet::is_empty(this) -> bool
+//   StringSet::insert(ref this, take value: Text) -> status::Status
+//   StringSet::contains(this, value: str) -> bool
+//   StringSet::remove(ref this, value: str) -> bool
+//   StringSet::clear(ref this)
+//   StringSet::is_subset(this, of: StringSet) -> bool
+//   StringSet::is_superset(this, of: StringSet) -> bool
+//   StringSet::is_disjoint(this, from: StringSet) -> bool
+//   StringSet::union_with(this, other: StringSet) -> StringSet
+//   StringSet::intersection(this, other: StringSet) -> StringSet
+//   StringSet::difference(this, other: StringSet) -> StringSet
+//   StringSet::slot_capacity(this) -> usize
+//   StringSet::element_ptr_at_slot(this, slot: usize) -> option::Option[*Text]
+
+import "./text" as text;
+import "./option" as option;
+import "./status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
+
+struct StringSet {
+    _slots: *text::Text,
+    _occupied: *u8,
+    _cap: usize,
+    _len: usize,
+    _tombstones: usize,
+}
+
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
+}
+
+// Empty set; first insert allocates.
+fn new() -> StringSet {
+    return StringSet {
+        _slots: { 0 as *text::Text },
+        _occupied: { 0 as *u8 },
+        _cap: 0 as usize,
+        _len: 0 as usize,
+        _tombstones: 0 as usize,
+    };
+}
+
+// Pre-sized empty set: reserves capacity for `capacity` elements without
+// regrowing (accounting for the 0.75 load factor). On allocation failure the
+// set is returned empty (first insert retries).
+fn with_capacity(capacity: usize) -> StringSet {
+    var s: StringSet = new();
+    if capacity == (0 as usize) {
+        return s;
+    }
+    var want: usize = (capacity *% (4 as usize)) / (3 as usize) +% (1 as usize);
+    if want < (16 as usize) {
+        want = 16 as usize;
+    }
+    let _st: status::Status = s.grow_to(want);
+    return s;
+}
+
+impl StringSet {
+    fn count(this) -> usize {
+        return this._len;
+    }
+
+    fn capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn is_empty(this) -> bool {
+        return this._len == (0 as usize);
+    }
+
+    // Insert `value`; the set takes ownership. A no-op (returns Ok) if an equal
+    // element is already present — the incoming duplicate `value` is dropped as
+    // the function returns, so nothing leaks. Returns OutOfMemory (value dropped,
+    // set unchanged) if a needed grow fails.
+    fn insert(ref this, take value: text::Text) -> status::Status {
+        if this._cap == (0 as usize) {
+            let st: status::Status = this.grow_to(16 as usize);
+            if st != status::Status::Ok {
+                return st;               // value drops on return
+            }
+        }
+        if (this._len +% this._tombstones) *% (4 as usize) >= (this._cap *% (3 as usize)) {
+            let target_cap: usize = if (this._len *% (4 as usize)) >= (this._cap *% (3 as usize)) {
+                this._cap *% (2 as usize)
+            } else {
+                this._cap
+            };
+            let st: status::Status = this.grow_to(target_cap);
+            if st != status::Status::Ok {
+                return st;               // value drops on return
+            }
+        }
+        // Locate the target slot first, then store exactly once outside the loop
+        // (keeps the owned `value` moved on a single, unambiguous path).
+        let h: u64 = value.hash();
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        var target: usize = max_usize();
+        var is_dup: bool = false;
+        var first_tomb: usize = max_usize();
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                target = if first_tomb != max_usize() { first_tomb } else { slot };
+                break;
+            }
+            if occ == (1 as u8) {
+                let sp: *text::Text = { this._slots + slot };
+                if { (*sp).eq(value) } {
+                    is_dup = true;
+                    break;
+                }
+            } else {
+                if first_tomb == max_usize() {
+                    first_tomb = slot;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                if first_tomb != max_usize() {
+                    target = first_tomb;
+                    break;
+                }
+                return status::Status::OutOfMemory; // full of live — value drops
+            }
+        }
+        if is_dup {
+            return status::Status::Ok;   // incoming `value` drops here (duplicate)
+        }
+        let reused_tomb: bool = first_tomb != max_usize();
+        let sp: *text::Text = { this._slots + target };
+        { *sp = value; }
+        { this._occupied[target] = 1 as u8; }
+        if reused_tomb {
+            this._tombstones = this._tombstones -% (1 as usize);
+        }
+        this._len = this._len +% (1 as usize);
+        return status::Status::Ok;
+    }
+
+    fn contains(this, value: str) -> bool {
+        if this._cap == (0 as usize) {
+            return false;
+        }
+        let h: u64 = text::hash_str(value);
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                return false;
+            }
+            if occ == (1 as u8) {
+                let sp: *text::Text = { this._slots + slot };
+                if { (*sp).equals(value) } {
+                    return true;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return false;
+            }
+        }
+        return false; // unreachable
+    }
+
+    // Remove `value`. Returns whether it was present, dropping the owned Text.
+    // The slot becomes a tombstone so colliding probe runs stay intact.
+    fn remove(ref this, value: str) -> bool {
+        if this._cap == (0 as usize) {
+            return false;
+        }
+        let h: u64 = text::hash_str(value);
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                return false;
+            }
+            if occ == (1 as u8) {
+                let sp: *text::Text = { this._slots + slot };
+                if { (*sp).equals(value) } {
+                    { #drop_in_place::[text::Text](sp); }
+                    { this._occupied[slot] = 2 as u8; }
+                    this._len = this._len -% (1 as usize);
+                    this._tombstones = this._tombstones +% (1 as usize);
+                    return true;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return false;
+            }
+        }
+        return false; // unreachable
+    }
+
+    // Drop every element and reset to empty, keeping the allocated capacity.
+    fn clear(ref this) {
+        if this._cap == (0 as usize) {
+            return;
+        }
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                { #drop_in_place::[text::Text](sp); }
+            }
+            i = i +% (1 as usize);
+        }
+        { memset(this._occupied, 0 as i32, this._cap); }
+        this._len = 0 as usize;
+        this._tombstones = 0 as usize;
+        return;
+    }
+
+    // Every element of `this` is in `of`.
+    fn is_subset(this, of: StringSet) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                let sv: str = { (*sp).view() };
+                if of.contains(sv) == false {
+                    return false;
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Every element of `of` is in `this`.
+    fn is_superset(this, of: StringSet) -> bool {
+        return of.is_subset(this);
+    }
+
+    // `this` and `from` share no element.
+    fn is_disjoint(this, from: StringSet) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                let sv: str = { (*sp).view() };
+                if from.contains(sv) {
+                    return false;
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // A new set with every element of `this` and `other`. Elements are cloned
+    // (the source sets keep ownership). Best-effort on allocation: an insert
+    // that cannot grow drops that clone (its ignorable Status is discarded).
+    fn union_with(this, other: StringSet) -> StringSet {
+        var out: StringSet = with_capacity(this._len +% other._len);
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                let _st: status::Status = out.insert({ (*sp).clone() });
+            }
+            i = i +% (1 as usize);
+        }
+        var j: usize = 0 as usize;
+        while j < other._cap {
+            if { other._occupied[j] } == (1 as u8) {
+                let op: *text::Text = { other._slots + j };
+                let _st: status::Status = out.insert({ (*op).clone() });
+            }
+            j = j +% (1 as usize);
+        }
+        return out;
+    }
+
+    // A new set of the elements in both `this` and `other` (cloned).
+    fn intersection(this, other: StringSet) -> StringSet {
+        var out: StringSet = new();
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                let sv: str = { (*sp).view() };
+                if other.contains(sv) {
+                    let _st: status::Status = out.insert({ (*sp).clone() });
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return out;
+    }
+
+    // A new set of the elements in `this` but not `other` (cloned).
+    fn difference(this, other: StringSet) -> StringSet {
+        var out: StringSet = new();
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                let sv: str = { (*sp).view() };
+                if other.contains(sv) == false {
+                    let _st: status::Status = out.insert({ (*sp).clone() });
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return out;
+    }
+
+    // Iteration surface (parity with StringMap): walk `0 .. slot_capacity()` and
+    // read the `Some` element pointers. Order is table order, not insertion order.
+    fn slot_capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn element_ptr_at_slot(this, slot: usize) -> option::Option[*text::Text] {
+        if slot >= this._cap {
+            return option::Option[*text::Text]::None;
+        }
+        if { this._occupied[slot] } == (1 as u8) {
+            return option::Option[*text::Text]::Some({ this._slots + slot });
+        }
+        return option::Option[*text::Text]::None;
+    }
+
+    // Grow (or rehash at the same size) to `new_cap`, relocating only the live
+    // elements. Positions depend on `cap`, so each element is re-probed; the
+    // bytes are moved with memcpy (the old array is freed without per-entry
+    // drops, so no double free), which also sheds tombstones. Internal helper.
+    fn grow_to(ref this, new_cap: usize) -> status::Status {
+        let old_slots: *text::Text = this._slots;
+        let old_occ: *u8 = this._occupied;
+        let old_cap: usize = this._cap;
+
+        let ssize: usize = #size_of::[text::Text]();
+        if ssize != (0 as usize) && new_cap > (max_usize() / ssize) {
+            return status::Status::OutOfMemory;
+        }
+        let slots_bytes: usize = new_cap *% ssize;
+        let occ_bytes: usize = new_cap;
+
+        let ns_raw: *u8 = { malloc(slots_bytes) };
+        if ns_raw.is_null() {
+            return status::Status::OutOfMemory;
+        }
+        let no_raw: *u8 = { malloc(occ_bytes) };
+        if no_raw.is_null() {
+            { free(ns_raw); }
+            return status::Status::OutOfMemory;
+        }
+        { memset(no_raw, 0 as i32, occ_bytes); }
+        this._slots = { ns_raw as *text::Text };
+        this._occupied = { no_raw as *u8 };
+        this._cap = new_cap;
+        this._len = 0 as usize;
+        this._tombstones = 0 as usize;
+
+        var j: usize = 0 as usize;
+        while j < old_cap {
+            let occ_j: u8 = { old_occ[j] };
+            if occ_j == (1 as u8) {
+                let src: *text::Text = { old_slots + j };
+                let h: u64 = { (*src).hash() };
+                let start: usize = (h as usize) % this._cap;
+                var slot: usize = start;
+                loop {
+                    let cur: u8 = { this._occupied[slot] };
+                    if cur == (0 as u8) {
+                        let dst: *text::Text = { this._slots + slot };
+                        { memcpy(dst as *u8, src as *u8, ssize); }
+                        { this._occupied[slot] = 1 as u8; }
+                        this._len = this._len +% (1 as usize);
+                        break;
+                    }
+                    slot = (slot +% (1 as usize)) % this._cap;
+                    if slot == start { break; }
+                }
+            }
+            j = j +% (1 as usize);
+        }
+        if old_cap > (0 as usize) {
+            { free(old_slots as *u8); }
+            { free(old_occ); }
+        }
+        return status::Status::Ok;
+    }
+
+    fn drop(ref this) {
+        if this._cap == (0 as usize) { return; }
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                let sp: *text::Text = { this._slots + i };
+                { #drop_in_place::[text::Text](sp); }
+            }
+            i = i +% (1 as usize);
+        }
+        { free(this._slots as *u8); }
+        { free(this._occupied); }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn string_set_new_is_empty() {
+    let s: StringSet = new();
+    assert s.count() == (0 as usize);
+    assert s.is_empty();
+    assert s.capacity() == (0 as usize);
+}
+
+#[test]
+fn string_set_insert_and_contains() {
+    var s: StringSet = new();
+    assert s.insert(text::from_str("apple")) == status::Status::Ok;
+    assert s.insert(text::from_str("banana")) == status::Status::Ok;
+    assert s.count() == (2 as usize);
+    assert s.contains("apple");
+    assert s.contains("banana");
+    assert s.contains("cherry") == false;
+}
+
+#[test]
+fn string_set_insert_duplicate_is_noop() {
+    var s: StringSet = new();
+    s.insert(text::from_str("dup"));
+    s.insert(text::from_str("dup"));   // incoming duplicate drops, no leak
+    s.insert(text::from_str("dup"));
+    assert s.count() == (1 as usize);
+    assert s.contains("dup");
+}
+
+#[test]
+fn string_set_empty_string_element() {
+    var s: StringSet = new();
+    s.insert(text::new());             // empty Text as element
+    assert s.contains("");
+    assert s.count() == (1 as usize);
+}
+
+#[test]
+fn string_set_remove_present_and_missing() {
+    var s: StringSet = new();
+    s.insert(text::from_str("a"));
+    s.insert(text::from_str("b"));
+    assert s.remove("a");              // present -> true, drops the Text
+    assert s.contains("a") == false;
+    assert s.count() == (1 as usize);
+    assert s.remove("zzz") == false;   // missing
+    assert s.remove("a") == false;     // already removed
+}
+
+#[test]
+fn string_set_remove_then_reinsert_reuses_tombstone() {
+    var s: StringSet = new();
+    s.insert(text::from_str("x"));
+    s.insert(text::from_str("y"));
+    s.insert(text::from_str("z"));
+    assert s.remove("y");
+    assert s.contains("y") == false;
+    assert s.insert(text::from_str("y")) == status::Status::Ok;
+    assert s.contains("y");
+    assert s.contains("x");
+    assert s.contains("z");
+    assert s.count() == (3 as usize);
+}
+
+#[test]
+fn string_set_grows_past_load_factor() {
+    // 100 distinct keys "k", "kx", "kxx", ... (length encodes the index).
+    var s: StringSet = new();
+    var i: i32 = 0;
+    while i < 100 {
+        var key: text::Text = text::from_str("k");
+        var j: i32 = 0;
+        while j < i {
+            key.append("x");
+            j = j +% 1;
+        }
+        s.insert(key);
+        i = i +% 1;
+    }
+    assert s.count() == (100 as usize);
+    assert s.contains("kxxxxx");        // "k" + 5 'x' = index 5
+    assert s.contains("k");             // index 0
+    assert s.contains("kxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") == false;
+}
+
+#[test]
+fn string_set_clear_keeps_capacity() {
+    var s: StringSet = new();
+    s.insert(text::from_str("one"));
+    s.insert(text::from_str("two"));
+    let cap: usize = s.capacity();
+    s.clear();                          // drops both Texts
+    assert s.count() == (0 as usize);
+    assert s.is_empty();
+    assert s.contains("one") == false;
+    assert s.capacity() == cap;
+    s.insert(text::from_str("three"));
+    assert s.contains("three");
+}
+
+#[test]
+fn string_set_subset_superset_disjoint() {
+    var a: StringSet = new();
+    a.insert(text::from_str("x"));
+    a.insert(text::from_str("y"));
+    var b: StringSet = new();
+    b.insert(text::from_str("x"));
+    b.insert(text::from_str("y"));
+    b.insert(text::from_str("z"));
+    assert a.is_subset(b);
+    assert b.is_subset(a) == false;
+    assert b.is_superset(a);
+    var c: StringSet = new();
+    c.insert(text::from_str("p"));
+    c.insert(text::from_str("q"));
+    assert a.is_disjoint(c);
+    assert a.is_disjoint(b) == false;
+}
+
+#[test]
+fn string_set_union_intersection_difference() {
+    var a: StringSet = new();
+    a.insert(text::from_str("a"));
+    a.insert(text::from_str("b"));
+    a.insert(text::from_str("c"));
+    var b: StringSet = new();
+    b.insert(text::from_str("b"));
+    b.insert(text::from_str("c"));
+    b.insert(text::from_str("d"));
+
+    let u: StringSet = a.union_with(b);
+    assert u.count() == (4 as usize);
+    assert u.contains("a");
+    assert u.contains("d");
+
+    let inter: StringSet = a.intersection(b);
+    assert inter.count() == (2 as usize);
+    assert inter.contains("b");
+    assert inter.contains("c");
+    assert inter.contains("a") == false;
+
+    let diff: StringSet = a.difference(b);
+    assert diff.count() == (1 as usize);
+    assert diff.contains("a");
+    assert diff.contains("b") == false;
+}
+
+#[test]
+fn string_set_slot_iteration_visits_every_element() {
+    var s: StringSet = new();
+    s.insert(text::from_str("alpha"));
+    s.insert(text::from_str("beta"));
+    s.insert(text::from_str("gamma"));
+    var found: usize = 0 as usize;
+    var slot: usize = 0 as usize;
+    let cap: usize = s.slot_capacity();
+    while slot < cap {
+        match s.element_ptr_at_slot(slot) {
+            option::Option[*text::Text]::Some(p) => {
+                assert { (*p).view() } != "";   // every visited element is non-empty here
+                found = found +% (1 as usize);
+            }
+            option::Option[*text::Text]::None => {}
+        }
+        slot = slot +% (1 as usize);
+    }
+    assert found == (3 as usize);
+}
+
+#[test]
+fn string_set_with_capacity_preallocates() {
+    var s: StringSet = with_capacity(100 as usize);
+    assert s.count() == (0 as usize);
+    assert s.capacity() >= (100 as usize);
+    s.insert(text::from_str("hi"));
+    assert s.contains("hi");
+}

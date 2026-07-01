@@ -24,6 +24,7 @@ import "./arc" as arc;
 import "./hash_map" as hash_map;
 import "./hash_set" as hash_set;
 import "./string_map" as string_map;
+import "./string_set" as string_set;
 import "./atomic" as atomic;
 import "./thread" as thread;
 import "./channel" as channel;
