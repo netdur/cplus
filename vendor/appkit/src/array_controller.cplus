@@ -153,7 +153,20 @@ impl ArrayController {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutomaticallyRearrangesObjects:\0")), automatically_rearranges_objects as i8);
     }
 
-    // SKIPPED `automaticRearrangementKeyPaths`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn automatic_rearrangement_key_paths(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("automaticRearrangementKeyPaths\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn sort_descriptors(this) -> vec::Vec[SortDescriptor] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sortDescriptors\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

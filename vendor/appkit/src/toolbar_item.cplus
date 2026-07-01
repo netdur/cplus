@@ -143,12 +143,12 @@ impl ToolbarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), bridge::nsstring(tool_tip));
     }
 
-    fn menu_form_representation(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("menuFormRepresentation\0")));
+    fn menu_form_representation(this) -> MenuItem {
+        return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("menuFormRepresentation\0"))));
     }
 
-    fn set_menu_form_representation(this, menu_form_representation: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenuFormRepresentation:\0")), menu_form_representation);
+    fn set_menu_form_representation(this, menu_form_representation: MenuItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenuFormRepresentation:\0")), menu_form_representation.raw());
     }
 
     fn tag(this) -> i64 {
@@ -237,12 +237,12 @@ impl ToolbarItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setNavigational:\0")), navigational as i8);
     }
 
-    fn view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
+    fn view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("view\0"))));
     }
 
-    fn set_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
+    fn set_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
     fn is_visible(this) -> bool {
@@ -281,12 +281,12 @@ impl ToolbarItem {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVisibilityPriority:\0")), visibility_priority);
     }
 
-    fn badge(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("badge\0")));
+    fn badge(this) -> ItemBadge {
+        return ItemBadge::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("badge\0"))));
     }
 
-    fn set_badge(this, badge: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBadge:\0")), badge);
+    fn set_badge(this, badge: ItemBadge) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBadge:\0")), badge.raw());
     }
 
     fn autovalidates(this) -> bool {

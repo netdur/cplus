@@ -837,8 +837,34 @@ impl View {
         return option::some(View::from_raw(obj));
     }
 
-    // SKIPPED `subviews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
-    // SKIPPED `setSubviews:`: param `NSArray<__kindof NSView *> * _Nonnull` — generic collection
+    fn subviews(this) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("subviews\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_subviews(this, subviews: vec::Vec[View]) {
+        let arr_subviews: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_subviews: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_subviews: usize = subviews.count();
+        var i_subviews: usize = 0 as usize;
+        while i_subviews < n_subviews {
+            match subviews.at_ptr(i_subviews) {
+                option::Option[*View]::Some(e_subviews) => { rt::msg_void_id(arr_subviews, add_sel_subviews, (*e_subviews).raw()); }
+                option::Option[*View]::None => {}
+            }
+            i_subviews = i_subviews +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubviews:\0")), arr_subviews);
+    }
+
     fn opaque_ancestor(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("opaqueAncestor\0")));
         if obj == { 0 as *u8 } {
@@ -1027,12 +1053,12 @@ impl View {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setWantsLayer:\0")), wants_layer as i8);
     }
 
-    fn layer(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0")));
+    fn layer(this) -> CALayer {
+        return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
     }
 
-    fn set_layer(this, layer: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayer:\0")), layer);
+    fn set_layer(this, layer: CALayer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayer:\0")), layer.raw());
     }
 
     fn wants_update_layer(this) -> bool {
@@ -1071,24 +1097,76 @@ impl View {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setLayerUsesCoreImageFilters:\0")), layer_uses_core_image_filters as i8);
     }
 
-    // SKIPPED `backgroundFilters`: return `API_AVAILABLE NSArray<__kindof CIFilter *> *` — generic collection
-    // SKIPPED `setBackgroundFilters:`: param `API_AVAILABLE NSArray<__kindof CIFilter *> *` — generic collection
-    fn compositing_filter(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("compositingFilter\0")));
+    fn background_filters(this) -> vec::Vec[CIFilter] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundFilters\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CIFilter] = vec::Vec[CIFilter]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
 
-    fn set_compositing_filter(this, compositing_filter: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCompositingFilter:\0")), compositing_filter);
+    fn set_background_filters(this, background_filters: vec::Vec[CIFilter]) {
+        let arr_background_filters: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_background_filters: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_background_filters: usize = background_filters.count();
+        var i_background_filters: usize = 0 as usize;
+        while i_background_filters < n_background_filters {
+            match background_filters.at_ptr(i_background_filters) {
+                option::Option[*CIFilter]::Some(e_background_filters) => { rt::msg_void_id(arr_background_filters, add_sel_background_filters, (*e_background_filters).raw()); }
+                option::Option[*CIFilter]::None => {}
+            }
+            i_background_filters = i_background_filters +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundFilters:\0")), arr_background_filters);
     }
 
-    // SKIPPED `contentFilters`: return `API_AVAILABLE NSArray<__kindof CIFilter *> *` — generic collection
-    // SKIPPED `setContentFilters:`: param `API_AVAILABLE NSArray<__kindof CIFilter *> *` — generic collection
-    fn shadow(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("shadow\0")));
+    fn compositing_filter(this) -> CIFilter {
+        return CIFilter::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("compositingFilter\0"))));
     }
 
-    fn set_shadow(this, shadow: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setShadow:\0")), shadow);
+    fn set_compositing_filter(this, compositing_filter: CIFilter) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCompositingFilter:\0")), compositing_filter.raw());
+    }
+
+    fn content_filters(this) -> vec::Vec[CIFilter] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("contentFilters\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CIFilter] = vec::Vec[CIFilter]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CIFilter::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_content_filters(this, content_filters: vec::Vec[CIFilter]) {
+        let arr_content_filters: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_content_filters: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_content_filters: usize = content_filters.count();
+        var i_content_filters: usize = 0 as usize;
+        while i_content_filters < n_content_filters {
+            match content_filters.at_ptr(i_content_filters) {
+                option::Option[*CIFilter]::Some(e_content_filters) => { rt::msg_void_id(arr_content_filters, add_sel_content_filters, (*e_content_filters).raw()); }
+                option::Option[*CIFilter]::None => {}
+            }
+            i_content_filters = i_content_filters +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentFilters:\0")), arr_content_filters);
+    }
+
+    fn shadow(this) -> Shadow {
+        return Shadow::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("shadow\0"))));
+    }
+
+    fn set_shadow(this, shadow: Shadow) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setShadow:\0")), shadow.raw());
     }
 
     fn clips_to_bounds(this) -> bool {
@@ -1141,8 +1219,8 @@ impl View {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("rectPreservedDuringLiveResize\0")));
     }
 
-    fn input_context(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("inputContext\0")));
+    fn input_context(this) -> TextInputContext {
+        return TextInputContext::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("inputContext\0"))));
     }
 
     fn user_interface_layout_direction(this) -> UserInterfaceLayoutDirection {
@@ -1368,8 +1446,34 @@ impl View {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeGestureRecognizer:\0")), gesture_recognizer.raw());
     }
 
-    // SKIPPED `gestureRecognizers`: return `API_AVAILABLE NSArray<__kindof NSGestureRecognizer *> *` — generic collection
-    // SKIPPED `setGestureRecognizers:`: param `API_AVAILABLE NSArray<__kindof NSGestureRecognizer *> *` — generic collection
+    fn gesture_recognizers(this) -> vec::Vec[GestureRecognizer] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("gestureRecognizers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[GestureRecognizer] = vec::Vec[GestureRecognizer]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(GestureRecognizer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_gesture_recognizers(this, gesture_recognizers: vec::Vec[GestureRecognizer]) {
+        let arr_gesture_recognizers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_gesture_recognizers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_gesture_recognizers: usize = gesture_recognizers.count();
+        var i_gesture_recognizers: usize = 0 as usize;
+        while i_gesture_recognizers < n_gesture_recognizers {
+            match gesture_recognizers.at_ptr(i_gesture_recognizers) {
+                option::Option[*GestureRecognizer]::Some(e_gesture_recognizers) => { rt::msg_void_id(arr_gesture_recognizers, add_sel_gesture_recognizers, (*e_gesture_recognizers).raw()); }
+                option::Option[*GestureRecognizer]::None => {}
+            }
+            i_gesture_recognizers = i_gesture_recognizers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setGestureRecognizers:\0")), arr_gesture_recognizers);
+    }
+
     fn allowed_touch_types(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("allowedTouchTypes\0")));
     }
@@ -1390,16 +1494,16 @@ impl View {
         objc_msg_view_void_EdgeInsets(this._obj, rt::sel(#str_ptr("setAdditionalSafeAreaInsets:\0")), additional_safe_area_insets);
     }
 
-    fn safe_area_layout_guide(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("safeAreaLayoutGuide\0")));
+    fn safe_area_layout_guide(this) -> LayoutGuide {
+        return LayoutGuide::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("safeAreaLayoutGuide\0"))));
     }
 
     fn safe_area_rect(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("safeAreaRect\0")));
     }
 
-    fn layout_margins_guide(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("layoutMarginsGuide\0")));
+    fn layout_margins_guide(this) -> LayoutGuide {
+        return LayoutGuide::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layoutMarginsGuide\0"))));
     }
 
     fn prefers_compact_control_size_metrics(this) -> bool {
@@ -1446,7 +1550,19 @@ impl View {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeTrackingRect:\0")), tag);
     }
 
-    // SKIPPED `trackingAreas`: return `API_AVAILABLE NSArray<NSTrackingArea *> *` — generic collection
+    fn tracking_areas(this) -> vec::Vec[TrackingArea] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("trackingAreas\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TrackingArea] = vec::Vec[TrackingArea]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TrackingArea::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
     }

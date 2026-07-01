@@ -575,8 +575,8 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setApplicationIconImage:\0")), application_icon_image.raw());
     }
 
-    fn dock_tile(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("dockTile\0")));
+    fn dock_tile(this) -> DockTile {
+        return DockTile::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("dockTile\0"))));
     }
 
     fn presentation_options(this) -> u64 {
@@ -784,8 +784,8 @@ impl Application {
         return option::some(Window::from_raw(obj));
     }
 
-    fn context(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("context\0")));
+    fn context(this) -> GraphicsContext {
+        return GraphicsContext::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("context\0"))));
     }
 
 }

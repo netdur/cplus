@@ -266,8 +266,8 @@ impl OpenGLContext {
         rt::msg_void_u32_id_u32(this._obj, rt::sel(#str_ptr("createTexture:fromView:internalFormat:\0")), target, view.raw(), format);
     }
 
-    fn pixel_format(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0")));
+    fn pixel_format(this) -> OpenGLPixelFormat {
+        return OpenGLPixelFormat::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));
     }
 
     fn view(this) -> *u8 {

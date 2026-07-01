@@ -416,8 +416,34 @@ impl ImageRep {
     }
 
     // SKIPPED `registeredImageRepClasses`: return `NSArray<Class> * _Nonnull` — generic collection
-    // SKIPPED `imageUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `imageTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn image_unfiltered_types() -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageUnfilteredTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn image_types() -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

@@ -320,7 +320,19 @@ impl DocumentController {
         return DocumentController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSDocumentController\0")), rt::sel(#str_ptr("sharedDocumentController\0")))) };
     }
 
-    // SKIPPED `documents`: return `NSArray<__kindof NSDocument *> * _Nonnull` — generic collection
+    fn documents(this) -> vec::Vec[Document] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("documents\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Document] = vec::Vec[Document]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Document::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn current_document(this) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("currentDocument\0")));
         if obj == { 0 as *u8 } {

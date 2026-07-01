@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSCorrectionResponse` (NS_ENUM)
 enum CorrectionResponse {
@@ -299,7 +300,23 @@ impl SpellChecker {
         return rt::msg_i8(rt::get_class(#str_ptr("NSSpellChecker\0")), rt::sel(#str_ptr("sharedSpellCheckerExists\0"))) != (0 as i8);
     }
 
-    // SKIPPED `userReplacementsDictionary`: return `API_AVAILABLE NSDictionary<NSString *,NSString *> *` — generic collection
+    fn user_replacements_dictionary(this) -> string_map::StringMap[text::Text] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("userReplacementsDictionary\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[text::Text] = string_map::new::[text::Text]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), bridge::to_text(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn spelling_panel(this) -> Panel {
         return Panel::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("spellingPanel\0"))));
     }
@@ -316,20 +333,46 @@ impl SpellChecker {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessoryView:\0")), accessory_view.raw());
     }
 
-    fn substitutions_panel(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("substitutionsPanel\0")));
+    fn substitutions_panel(this) -> Panel {
+        return Panel::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("substitutionsPanel\0"))));
     }
 
-    fn substitutions_panel_accessory_view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("substitutionsPanelAccessoryViewController\0")));
+    fn substitutions_panel_accessory_view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("substitutionsPanelAccessoryViewController\0"))));
     }
 
-    fn set_substitutions_panel_accessory_view_controller(this, substitutions_panel_accessory_view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubstitutionsPanelAccessoryViewController:\0")), substitutions_panel_accessory_view_controller);
+    fn set_substitutions_panel_accessory_view_controller(this, substitutions_panel_accessory_view_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubstitutionsPanelAccessoryViewController:\0")), substitutions_panel_accessory_view_controller.raw());
     }
 
-    // SKIPPED `availableLanguages`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `userPreferredLanguages`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn available_languages(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("availableLanguages\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn user_preferred_languages(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("userPreferredLanguages\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn automatically_identifies_languages(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("automaticallyIdentifiesLanguages\0"))) != (0 as i8);
     }

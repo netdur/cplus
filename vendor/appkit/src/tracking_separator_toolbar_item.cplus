@@ -32,12 +32,12 @@ impl TrackingSeparatorToolbarItem {
         return TrackingSeparatorToolbarItem { _obj: rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSTrackingSeparatorToolbarItem\0")), rt::sel(#str_ptr("trackingSeparatorToolbarItemWithIdentifier:splitView:dividerIndex:\0")), bridge::nsstring(identifier), split_view.raw(), divider_index) };
     }
 
-    fn split_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0")));
+    fn split_view(this) -> SplitView {
+        return SplitView::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0"))));
     }
 
-    fn set_split_view(this, split_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSplitView:\0")), split_view);
+    fn set_split_view(this, split_view: SplitView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSplitView:\0")), split_view.raw());
     }
 
     fn divider_index(this) -> i64 {

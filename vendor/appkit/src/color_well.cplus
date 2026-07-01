@@ -93,10 +93,22 @@ impl ColorWell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    // SKIPPED `pulldownTarget`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
-    // SKIPPED `setPulldownTarget:`: param `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
-    // SKIPPED `pulldownAction`: return `API_AVAILABLE SEL` — unmapped type `API_AVAILABLE SEL`
-    // SKIPPED `setPulldownAction:`: param `API_AVAILABLE SEL` — unmapped type `API_AVAILABLE SEL`
+    fn pulldown_target(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("pulldownTarget\0")));
+    }
+
+    fn set_pulldown_target(this, pulldown_target: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPulldownTarget:\0")), pulldown_target);
+    }
+
+    fn pulldown_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("pulldownAction\0")));
+    }
+
+    fn set_pulldown_action(this, pulldown_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPulldownAction:\0")), pulldown_action);
+    }
+
     fn supports_alpha(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supportsAlpha\0"))) != (0 as i8);
     }

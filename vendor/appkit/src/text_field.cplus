@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextFieldBezelStyle` (NS_ENUM)
 enum TextFieldBezelStyle {
@@ -64,12 +65,13 @@ impl TextField {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidChange:\0")), notification);
     }
 
-    fn placeholder_string(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("placeholderString\0")));
+    fn placeholder_string(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("placeholderString\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_placeholder_string(this, placeholder_string: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderString:\0")), placeholder_string);
+    fn set_placeholder_string(this, placeholder_string: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderString:\0")), bridge::nsstring(placeholder_string));
     }
 
     fn placeholder_attributed_string(this) -> *u8 {
@@ -207,8 +209,24 @@ impl TextField {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsWritingToolsAffordance:\0")), allows_writing_tools_affordance as i8);
     }
 
-    // SKIPPED `placeholderStrings`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setPlaceholderStrings:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn placeholder_strings(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("placeholderStrings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_placeholder_strings(this, placeholder_strings: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderStrings:\0")), bridge::nsarray_of_text(placeholder_strings));
+    }
+
     // SKIPPED `placeholderAttributedStrings`: return `API_AVAILABLE NSArray<NSAttributedString *> *` — generic collection
     // SKIPPED `setPlaceholderAttributedStrings:`: param `API_AVAILABLE NSArray<NSAttributedString *> *` — generic collection
     fn resolves_natural_alignment_with_base_writing_direction(this) -> bool {

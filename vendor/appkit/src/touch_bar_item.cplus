@@ -101,7 +101,11 @@ impl TouchBarItem {
     }
 
     // SKIPPED `init`: `new` already defined (extra constructor)
-    // SKIPPED `identifier`: return `API_AVAILABLE NSTouchBarItemIdentifier` — unmapped type `API_AVAILABLE NSTouchBarItemIdentifier`
+    fn identifier(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
+        return bridge::to_text(ns);
+    }
+
     fn visibility_priority(this) -> f32 {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("visibilityPriority\0")));
     }
@@ -126,8 +130,9 @@ impl TouchBarItem {
         return option::some(ViewController::from_raw(obj));
     }
 
-    fn customization_label(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("customizationLabel\0")));
+    fn customization_label(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("customizationLabel\0")));
+        return bridge::to_text(ns);
     }
 
     fn is_visible(this) -> bool {

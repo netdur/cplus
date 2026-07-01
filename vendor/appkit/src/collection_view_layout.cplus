@@ -295,7 +295,19 @@ impl CollectionViewLayout {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareLayout\0")));
     }
 
-    // SKIPPED `layoutAttributesForElementsInRect:`: return `NSArray<__kindof NSCollectionViewLayoutAttributes *> * _Nonnull` — generic collection
+    fn layout_attributes_for_elements_in_rect(this, rect: rt::Rect) -> vec::Vec[CollectionViewLayoutAttributes] {
+        let arr: *u8 = rt::msg_id_rect(this._obj, rt::sel(#str_ptr("layoutAttributesForElementsInRect:\0")), rect);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[CollectionViewLayoutAttributes] = vec::Vec[CollectionViewLayoutAttributes]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(CollectionViewLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn layout_attributes_for_item_at_index_path(this, index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), index_path.raw());
         if obj == { 0 as *u8 } {

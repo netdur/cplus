@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSLayoutConstraint` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct LayoutConstraint {
@@ -82,16 +83,32 @@ impl LayoutAnchor {
     // SKIPPED `constraintEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
     // SKIPPED `constraintGreaterThanOrEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
     // SKIPPED `constraintLessThanOrEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    fn name(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
     }
 
-    // SKIPPED `item`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
+    fn item(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("item\0")));
+    }
+
     fn has_ambiguous_layout(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasAmbiguousLayout\0"))) != (0 as i8);
     }
 
-    // SKIPPED `constraintsAffectingLayout`: return `API_AVAILABLE NSArray<NSLayoutConstraint *> *` — generic collection
+    fn constraints_affecting_layout(this) -> vec::Vec[LayoutConstraint] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("constraintsAffectingLayout\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[LayoutConstraint] = vec::Vec[LayoutConstraint]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSLayoutXAxisAnchor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

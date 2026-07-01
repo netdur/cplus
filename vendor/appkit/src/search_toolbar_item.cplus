@@ -48,12 +48,12 @@ impl SearchToolbarItem {
         rt::msg_void(this._obj, rt::sel(#str_ptr("endSearchInteraction\0")));
     }
 
-    fn search_field(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("searchField\0")));
+    fn search_field(this) -> SearchField {
+        return SearchField::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("searchField\0"))));
     }
 
-    fn set_search_field(this, search_field: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchField:\0")), search_field);
+    fn set_search_field(this, search_field: SearchField) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSearchField:\0")), search_field.raw());
     }
 
     fn view(this) -> *u8 {

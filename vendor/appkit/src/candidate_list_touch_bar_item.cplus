@@ -42,8 +42,14 @@ impl CandidateListTouchBarItem {
     // SKIPPED `setCandidates:forSelectedRange:inString:`: param `NSArray<CandidateType> * _Nonnull` — generic collection
     // SKIPPED `client`: return `NSView<NSTextInputClient> * _Nullable` — generic collection
     // SKIPPED `setClient:`: param `NSView<NSTextInputClient> * _Nullable` — generic collection
-    // SKIPPED `delegate`: return `API_UNAVAILABLE id<NSCandidateListTouchBarItemDelegate>` — generic collection
-    // SKIPPED `setDelegate:`: param `API_UNAVAILABLE id<NSCandidateListTouchBarItemDelegate>` — generic collection
+    fn delegate(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn is_collapsed(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isCollapsed\0"))) != (0 as i8);
     }

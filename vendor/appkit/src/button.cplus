@@ -505,12 +505,12 @@ impl Button {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setImageHugsTitle:\0")), image_hugs_title as i8);
     }
 
-    fn symbol_configuration(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("symbolConfiguration\0")));
+    fn symbol_configuration(this) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("symbolConfiguration\0"))));
     }
 
-    fn set_symbol_configuration(this, symbol_configuration: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), symbol_configuration);
+    fn set_symbol_configuration(this, symbol_configuration: ImageSymbolConfiguration) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), symbol_configuration.raw());
     }
 
     fn state(this) -> i64 {

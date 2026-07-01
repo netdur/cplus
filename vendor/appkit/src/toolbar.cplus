@@ -185,8 +185,32 @@ impl Toolbar {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `items`: return `NSArray<__kindof NSToolbarItem *> * _Nonnull` — generic collection
-    // SKIPPED `visibleItems`: return `NSArray<__kindof NSToolbarItem *> * _Nullable` — generic collection
+    fn items(this) -> vec::Vec[ToolbarItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("items\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ToolbarItem] = vec::Vec[ToolbarItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn visible_items(this) -> vec::Vec[ToolbarItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("visibleItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ToolbarItem] = vec::Vec[ToolbarItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ToolbarItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn item_identifiers(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("itemIdentifiers\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -241,12 +265,12 @@ impl Toolbar {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCenteredItemIdentifier:\0")), bridge::nsstring(centered_item_identifier));
     }
 
-    fn full_screen_accessory_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fullScreenAccessoryView\0")));
+    fn full_screen_accessory_view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fullScreenAccessoryView\0"))));
     }
 
-    fn set_full_screen_accessory_view(this, full_screen_accessory_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFullScreenAccessoryView:\0")), full_screen_accessory_view);
+    fn set_full_screen_accessory_view(this, full_screen_accessory_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFullScreenAccessoryView:\0")), full_screen_accessory_view.raw());
     }
 
     fn full_screen_accessory_view_min_height(this) -> f64 {
@@ -273,7 +297,7 @@ impl Toolbar {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsBaselineSeparator:\0")), shows_baseline_separator as i8);
     }
 
-    // SKIPPED `configurationDictionary`: return `API_DEPRECATED NSDictionary<NSString *,id> *` — generic collection
+    // SKIPPED `configurationDictionary`: return `API_DEPRECATED NSDictionary<NSString *,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn drop(ref this) {
         rt::release(this._obj);
     }

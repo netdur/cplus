@@ -536,12 +536,12 @@ impl ButtonCell {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setGradientType:\0")), gradient_type_raw(gradient_type));
     }
 
-    fn key_equivalent_font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("keyEquivalentFont\0")));
+    fn key_equivalent_font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("keyEquivalentFont\0"))));
     }
 
-    fn set_key_equivalent_font(this, key_equivalent_font: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeyEquivalentFont:\0")), key_equivalent_font);
+    fn set_key_equivalent_font(this, key_equivalent_font: Font) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeyEquivalentFont:\0")), key_equivalent_font.raw());
     }
 
     fn drop(ref this) {

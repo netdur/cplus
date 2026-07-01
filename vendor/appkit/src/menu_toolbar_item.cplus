@@ -28,12 +28,12 @@ impl MenuToolbarItem {
 
     fn from_raw(ptr: *u8) -> MenuToolbarItem { return MenuToolbarItem { _obj: ptr }; }
 
-    fn menu(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
+    fn menu(this) -> Menu {
+        return Menu::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0"))));
     }
 
-    fn set_menu(this, menu: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu);
+    fn set_menu(this, menu: Menu) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
     }
 
     fn shows_indicator(this) -> bool {

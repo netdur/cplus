@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSRectEdge` (NS_ENUM)
 enum RectEdge {
@@ -223,8 +224,8 @@ impl ViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
-    fn view_if_loaded(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("viewIfLoaded\0")));
+    fn view_if_loaded(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("viewIfLoaded\0"))));
     }
 
     fn is_view_loaded(this) -> bool {
@@ -251,9 +252,21 @@ impl ViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("dismissController:\0")), sender);
     }
 
-    // SKIPPED `presentedViewControllers`: return `API_AVAILABLE NSArray<__kindof NSViewController *> *` — generic collection
-    fn presenting_view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("presentingViewController\0")));
+    fn presented_view_controllers(this) -> vec::Vec[ViewController] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("presentedViewControllers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ViewController] = vec::Vec[ViewController]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ViewController::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn presenting_view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("presentingViewController\0"))));
     }
 
     fn present_view_controller_as_sheet(this, view_controller: ViewController) {
@@ -297,12 +310,38 @@ impl ViewController {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("viewWillTransitionToSize:\0")), new_size);
     }
 
-    fn parent_view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("parentViewController\0")));
+    fn parent_view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("parentViewController\0"))));
     }
 
-    // SKIPPED `childViewControllers`: return `API_AVAILABLE NSArray<__kindof NSViewController *> *` — generic collection
-    // SKIPPED `setChildViewControllers:`: param `API_AVAILABLE NSArray<__kindof NSViewController *> *` — generic collection
+    fn child_view_controllers(this) -> vec::Vec[ViewController] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("childViewControllers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ViewController] = vec::Vec[ViewController]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ViewController::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_child_view_controllers(this, child_view_controllers: vec::Vec[ViewController]) {
+        let arr_child_view_controllers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_child_view_controllers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_child_view_controllers: usize = child_view_controllers.count();
+        var i_child_view_controllers: usize = 0 as usize;
+        while i_child_view_controllers < n_child_view_controllers {
+            match child_view_controllers.at_ptr(i_child_view_controllers) {
+                option::Option[*ViewController]::Some(e_child_view_controllers) => { rt::msg_void_id(arr_child_view_controllers, add_sel_child_view_controllers, (*e_child_view_controllers).raw()); }
+                option::Option[*ViewController]::None => {}
+            }
+            i_child_view_controllers = i_child_view_controllers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setChildViewControllers:\0")), arr_child_view_controllers);
+    }
+
     fn storyboard(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("storyboard\0")));
     }
@@ -311,12 +350,12 @@ impl ViewController {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("extensionContext\0")));
     }
 
-    fn source_item_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("sourceItemView\0")));
+    fn source_item_view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("sourceItemView\0"))));
     }
 
-    fn set_source_item_view(this, source_item_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSourceItemView:\0")), source_item_view);
+    fn set_source_item_view(this, source_item_view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSourceItemView:\0")), source_item_view.raw());
     }
 
     fn preferred_screen_origin(this) -> rt::Point {

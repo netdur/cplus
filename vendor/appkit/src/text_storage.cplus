@@ -138,8 +138,14 @@ impl TextStorage {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("fixesAttributesLazily\0"))) != (0 as i8);
     }
 
-    // SKIPPED `textStorageObserver`: return `API_UNAVAILABLE id<NSTextStorageObserving>` — generic collection
-    // SKIPPED `setTextStorageObserver:`: param `API_UNAVAILABLE id<NSTextStorageObserving>` — generic collection
+    fn text_storage_observer(this) -> TextStorageObserving {
+        return TextStorageObserving::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textStorageObserver\0"))));
+    }
+
+    fn set_text_storage_observer(this, text_storage_observer: TextStorageObserving) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextStorageObserver:\0")), text_storage_observer.raw());
+    }
+
 }
 
 // `NSTextStorageObserving` (ObjC protocol). Non-owning handle; `opaque`, no drop.

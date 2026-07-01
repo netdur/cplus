@@ -175,12 +175,12 @@ impl GestureRecognizer {
         return option::some(View::from_raw(obj));
     }
 
-    fn pressure_configuration(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("pressureConfiguration\0")));
+    fn pressure_configuration(this) -> PressureConfiguration {
+        return PressureConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("pressureConfiguration\0"))));
     }
 
-    fn set_pressure_configuration(this, pressure_configuration: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPressureConfiguration:\0")), pressure_configuration);
+    fn set_pressure_configuration(this, pressure_configuration: PressureConfiguration) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPressureConfiguration:\0")), pressure_configuration.raw());
     }
 
     fn delays_primary_mouse_button_events(this) -> bool {
@@ -231,12 +231,13 @@ impl GestureRecognizer {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setDelaysRotationEvents:\0")), delays_rotation_events as i8);
     }
 
-    fn name(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_name(this, name: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setName:\0")), name);
+    fn set_name(this, name: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(name));
     }
 
     fn modifier_flags(this) -> u64 {

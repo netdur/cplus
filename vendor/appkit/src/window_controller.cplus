@@ -190,12 +190,12 @@ impl WindowController {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShouldCloseDocument:\0")), should_close_document as i8);
     }
 
-    fn content_view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0")));
+    fn content_view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0"))));
     }
 
-    fn set_content_view_controller(this, content_view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller);
+    fn set_content_view_controller(this, content_view_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller.raw());
     }
 
     fn window(this) -> option::Option[Window] {
@@ -214,8 +214,8 @@ impl WindowController {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isWindowLoaded\0"))) != (0 as i8);
     }
 
-    fn storyboard(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("storyboard\0")));
+    fn storyboard(this) -> Storyboard {
+        return Storyboard::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("storyboard\0"))));
     }
 
     fn dismiss_controller(this, sender: *u8) {

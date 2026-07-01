@@ -306,9 +306,12 @@ impl BitmapImageRep {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `CGImage`: return `API_AVAILABLE CGImageRef` — unmapped type `API_AVAILABLE CGImageRef`
-    fn color_space(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0")));
+    fn c_g_image(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGImage\0")));
+    }
+
+    fn color_space(this) -> ColorSpace {
+        return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
 
     // SKIPPED `representationOfImageRepsInArray:usingType:properties:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection

@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSViewController` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct ViewController {
@@ -120,8 +121,34 @@ impl ColorPickerTouchBarItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsAlpha:\0")), shows_alpha as i8);
     }
 
-    // SKIPPED `allowedColorSpaces`: return `API_AVAILABLE NSArray<NSColorSpace *> *` — generic collection
-    // SKIPPED `setAllowedColorSpaces:`: param `API_AVAILABLE NSArray<NSColorSpace *> *` — generic collection
+    fn allowed_color_spaces(this) -> vec::Vec[ColorSpace] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedColorSpaces\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ColorSpace] = vec::Vec[ColorSpace]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ColorSpace::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_allowed_color_spaces(this, allowed_color_spaces: vec::Vec[ColorSpace]) {
+        let arr_allowed_color_spaces: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_allowed_color_spaces: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_allowed_color_spaces: usize = allowed_color_spaces.count();
+        var i_allowed_color_spaces: usize = 0 as usize;
+        while i_allowed_color_spaces < n_allowed_color_spaces {
+            match allowed_color_spaces.at_ptr(i_allowed_color_spaces) {
+                option::Option[*ColorSpace]::Some(e_allowed_color_spaces) => { rt::msg_void_id(arr_allowed_color_spaces, add_sel_allowed_color_spaces, (*e_allowed_color_spaces).raw()); }
+                option::Option[*ColorSpace]::None => {}
+            }
+            i_allowed_color_spaces = i_allowed_color_spaces +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedColorSpaces:\0")), arr_allowed_color_spaces);
+    }
+
     fn color_list(this) -> ColorList {
         return ColorList::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorList\0"))));
     }

@@ -260,7 +260,7 @@ impl PrintInfo {
         return option::some(Printer::from_raw(obj));
     }
 
-    // SKIPPED `printSettings`: return `API_AVAILABLE NSMutableDictionary<NSPrintInfoSettingKey,id> *` — generic collection
+    // SKIPPED `printSettings`: return `API_AVAILABLE NSMutableDictionary<NSPrintInfoSettingKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn is_selection_only(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSelectionOnly\0"))) != (0 as i8);
     }

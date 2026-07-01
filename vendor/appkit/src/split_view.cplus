@@ -98,8 +98,15 @@ impl SplitView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setDividerStyle:\0")), split_view_divider_style_raw(divider_style));
     }
 
-    // SKIPPED `autosaveName`: return `API_AVAILABLE NSSplitViewAutosaveName` — unmapped type `API_AVAILABLE NSSplitViewAutosaveName`
-    // SKIPPED `setAutosaveName:`: param `API_AVAILABLE NSSplitViewAutosaveName` — unmapped type `API_AVAILABLE NSSplitViewAutosaveName`
+    fn autosave_name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("autosaveName\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn set_autosave_name(this, autosave_name: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAutosaveName:\0")), bridge::nsstring(autosave_name));
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);

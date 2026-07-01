@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 // `NSTabViewType` (NS_ENUM)
@@ -277,8 +278,34 @@ impl TabView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabViewBorderType:\0")), tab_view_border_type_raw(tab_view_border_type));
     }
 
-    // SKIPPED `tabViewItems`: return `NSArray<__kindof NSTabViewItem *> * _Nonnull` — generic collection
-    // SKIPPED `setTabViewItems:`: param `NSArray<__kindof NSTabViewItem *> * _Nonnull` — generic collection
+    fn tab_view_items(this) -> vec::Vec[TabViewItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabViewItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TabViewItem] = vec::Vec[TabViewItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TabViewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_tab_view_items(this, tab_view_items: vec::Vec[TabViewItem]) {
+        let arr_tab_view_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_tab_view_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_tab_view_items: usize = tab_view_items.count();
+        var i_tab_view_items: usize = 0 as usize;
+        while i_tab_view_items < n_tab_view_items {
+            match tab_view_items.at_ptr(i_tab_view_items) {
+                option::Option[*TabViewItem]::Some(e_tab_view_items) => { rt::msg_void_id(arr_tab_view_items, add_sel_tab_view_items, (*e_tab_view_items).raw()); }
+                option::Option[*TabViewItem]::None => {}
+            }
+            i_tab_view_items = i_tab_view_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTabViewItems:\0")), arr_tab_view_items);
+    }
+
     fn allows_truncated_labels(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsTruncatedLabels\0"))) != (0 as i8);
     }

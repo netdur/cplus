@@ -318,7 +318,7 @@ impl AnimatablePropertyContainer {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `animations`: return `API_AVAILABLE NSDictionary<NSAnimatablePropertyKey,id> *` — generic collection
+    // SKIPPED `animations`: return `API_AVAILABLE NSDictionary<NSAnimatablePropertyKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `setAnimations:`: param `API_AVAILABLE NSDictionary<NSAnimatablePropertyKey,id> *` — generic collection
 }
 

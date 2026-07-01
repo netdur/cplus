@@ -67,16 +67,16 @@ impl BindingSelectionMarker {
         return bridge::obj_option(obj);
     }
 
-    fn multiple_values_selection_marker() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("multipleValuesSelectionMarker\0")));
+    fn multiple_values_selection_marker() -> BindingSelectionMarker {
+        return BindingSelectionMarker { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("multipleValuesSelectionMarker\0")))) };
     }
 
-    fn no_selection_marker() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("noSelectionMarker\0")));
+    fn no_selection_marker() -> BindingSelectionMarker {
+        return BindingSelectionMarker { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("noSelectionMarker\0")))) };
     }
 
-    fn not_applicable_selection_marker() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("notApplicableSelectionMarker\0")));
+    fn not_applicable_selection_marker() -> BindingSelectionMarker {
+        return BindingSelectionMarker { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSBindingSelectionMarker\0")), rt::sel(#str_ptr("notApplicableSelectionMarker\0")))) };
     }
 
     fn drop(ref this) {

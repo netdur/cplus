@@ -41,12 +41,12 @@ impl SliderTouchBarItem {
     fn from_raw(ptr: *u8) -> SliderTouchBarItem { return SliderTouchBarItem { _obj: ptr }; }
 
     // SKIPPED `view`: return `API_UNAVAILABLE NSView<NSUserInterfaceCompression> *` — generic collection
-    fn slider(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("slider\0")));
+    fn slider(this) -> Slider {
+        return Slider::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("slider\0"))));
     }
 
-    fn set_slider(this, slider: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSlider:\0")), slider);
+    fn set_slider(this, slider: Slider) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSlider:\0")), slider.raw());
     }
 
     fn double_value(this) -> f64 {

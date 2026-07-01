@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 #[repr(C)]
@@ -204,16 +205,42 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identifier));
     }
 
-    fn directory_u_r_l(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("directoryURL\0")));
+    fn directory_u_r_l(this) -> URL {
+        return URL::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("directoryURL\0"))));
     }
 
-    fn set_directory_u_r_l(this, directory_u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDirectoryURL:\0")), directory_u_r_l);
+    fn set_directory_u_r_l(this, directory_u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDirectoryURL:\0")), directory_u_r_l.raw());
     }
 
-    // SKIPPED `allowedContentTypes`: return `API_AVAILABLE NSArray<UTType *> *` — generic collection
-    // SKIPPED `setAllowedContentTypes:`: param `API_AVAILABLE NSArray<UTType *> *` — generic collection
+    fn allowed_content_types(this) -> vec::Vec[UTType] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedContentTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[UTType] = vec::Vec[UTType]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(UTType::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_allowed_content_types(this, allowed_content_types: vec::Vec[UTType]) {
+        let arr_allowed_content_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_allowed_content_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_allowed_content_types: usize = allowed_content_types.count();
+        var i_allowed_content_types: usize = 0 as usize;
+        while i_allowed_content_types < n_allowed_content_types {
+            match allowed_content_types.at_ptr(i_allowed_content_types) {
+                option::Option[*UTType]::Some(e_allowed_content_types) => { rt::msg_void_id(arr_allowed_content_types, add_sel_allowed_content_types, (*e_allowed_content_types).raw()); }
+                option::Option[*UTType]::None => {}
+            }
+            i_allowed_content_types = i_allowed_content_types +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedContentTypes:\0")), arr_allowed_content_types);
+    }
+
     fn allows_other_file_types(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsOtherFileTypes\0"))) != (0 as i8);
     }
@@ -222,12 +249,12 @@ impl SavePanel {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsOtherFileTypes:\0")), allows_other_file_types as i8);
     }
 
-    fn current_content_type(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("currentContentType\0")));
+    fn current_content_type(this) -> UTType {
+        return UTType::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("currentContentType\0"))));
     }
 
-    fn set_current_content_type(this, current_content_type: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCurrentContentType:\0")), current_content_type);
+    fn set_current_content_type(this, current_content_type: UTType) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCurrentContentType:\0")), current_content_type.raw());
     }
 
     fn accessory_view(this) -> option::Option[View] {
@@ -314,12 +341,13 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNameFieldLabel:\0")), bridge::nsstring(name_field_label));
     }
 
-    fn name_field_string_value(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("nameFieldStringValue\0")));
+    fn name_field_string_value(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nameFieldStringValue\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_name_field_string_value(this, name_field_string_value: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNameFieldStringValue:\0")), name_field_string_value);
+    fn set_name_field_string_value(this, name_field_string_value: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setNameFieldStringValue:\0")), bridge::nsstring(name_field_string_value));
     }
 
     fn message(this) -> text::Text {
@@ -347,8 +375,24 @@ impl SavePanel {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsTagField:\0")), shows_tag_field as i8);
     }
 
-    // SKIPPED `tagNames`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setTagNames:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn tag_names(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tagNames\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_tag_names(this, tag_names: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTagNames:\0")), bridge::nsarray_of_text(tag_names));
+    }
+
     fn shows_content_types(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("showsContentTypes\0"))) != (0 as i8);
     }
@@ -392,8 +436,24 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    // SKIPPED `allowedFileTypes`: return `API_DEPRECATED NSArray<NSString *> *` — generic collection
-    // SKIPPED `setAllowedFileTypes:`: param `API_DEPRECATED NSArray<NSString *> *` — generic collection
+    fn allowed_file_types(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedFileTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_allowed_file_types(this, allowed_file_types: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedFileTypes:\0")), bridge::nsarray_of_text(allowed_file_types));
+    }
+
 }
 
 // `NSOpenSavePanelDelegate` delegate protocol -> runtime class-synthesis helper.

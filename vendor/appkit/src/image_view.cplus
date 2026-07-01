@@ -196,12 +196,12 @@ impl ImageView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setImageFrameStyle:\0")), image_frame_style_raw(image_frame_style));
     }
 
-    fn symbol_configuration(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("symbolConfiguration\0")));
+    fn symbol_configuration(this) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("symbolConfiguration\0"))));
     }
 
-    fn set_symbol_configuration(this, symbol_configuration: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), symbol_configuration);
+    fn set_symbol_configuration(this, symbol_configuration: ImageSymbolConfiguration) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), symbol_configuration.raw());
     }
 
     fn content_tint_color(this) -> *u8 {

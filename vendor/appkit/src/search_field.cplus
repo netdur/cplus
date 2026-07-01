@@ -89,8 +89,14 @@ impl SearchField {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setSendsSearchStringImmediately:\0")), sends_search_string_immediately as i8);
     }
 
-    // SKIPPED `delegate`: return `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
-    // SKIPPED `setDelegate:`: param `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
+    fn delegate(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn rect_for_search_text_when_centered(this, is_centered: bool) -> rt::Rect {
         return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("rectForSearchTextWhenCentered:\0")), is_centered as i8);
     }

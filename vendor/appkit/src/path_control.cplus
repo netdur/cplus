@@ -99,14 +99,31 @@ impl PathControl {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setEditable:\0")), editable as i8);
     }
 
-    // SKIPPED `allowedTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setAllowedTypes:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    fn placeholder_string(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("placeholderString\0")));
+    fn allowed_types(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
 
-    fn set_placeholder_string(this, placeholder_string: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderString:\0")), placeholder_string);
+    fn set_allowed_types(this, allowed_types: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedTypes:\0")), bridge::nsarray_of_text(allowed_types));
+    }
+
+    fn placeholder_string(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("placeholderString\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn set_placeholder_string(this, placeholder_string: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderString:\0")), bridge::nsstring(placeholder_string));
     }
 
     fn placeholder_attributed_string(this) -> *u8 {
@@ -142,12 +159,38 @@ impl PathControl {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setPathStyle:\0")), path_style_raw(path_style));
     }
 
-    fn clicked_path_item(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("clickedPathItem\0")));
+    fn clicked_path_item(this) -> PathControlItem {
+        return PathControlItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("clickedPathItem\0"))));
     }
 
-    // SKIPPED `pathItems`: return `API_AVAILABLE NSArray<NSPathControlItem *> *` — generic collection
-    // SKIPPED `setPathItems:`: param `API_AVAILABLE NSArray<NSPathControlItem *> *` — generic collection
+    fn path_items(this) -> vec::Vec[PathControlItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pathItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[PathControlItem] = vec::Vec[PathControlItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(PathControlItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_path_items(this, path_items: vec::Vec[PathControlItem]) {
+        let arr_path_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_path_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_path_items: usize = path_items.count();
+        var i_path_items: usize = 0 as usize;
+        while i_path_items < n_path_items {
+            match path_items.at_ptr(i_path_items) {
+                option::Option[*PathControlItem]::Some(e_path_items) => { rt::msg_void_id(arr_path_items, add_sel_path_items, (*e_path_items).raw()); }
+                option::Option[*PathControlItem]::None => {}
+            }
+            i_path_items = i_path_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPathItems:\0")), arr_path_items);
+    }
+
     fn background_color(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("backgroundColor\0")));
         return bridge::obj_option(obj);

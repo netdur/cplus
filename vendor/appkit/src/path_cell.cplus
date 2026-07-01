@@ -210,8 +210,34 @@ impl PathCell {
         return rt::msg_id(rt::get_class(#str_ptr("NSPathCell\0")), rt::sel(#str_ptr("pathComponentCellClass\0")));
     }
 
-    // SKIPPED `pathComponentCells`: return `NSArray<__kindof NSPathComponentCell *> * _Nonnull` — generic collection
-    // SKIPPED `setPathComponentCells:`: param `NSArray<__kindof NSPathComponentCell *> * _Nonnull` — generic collection
+    fn path_component_cells(this) -> vec::Vec[PathComponentCell] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pathComponentCells\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[PathComponentCell] = vec::Vec[PathComponentCell]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(PathComponentCell::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_path_component_cells(this, path_component_cells: vec::Vec[PathComponentCell]) {
+        let arr_path_component_cells: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_path_component_cells: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_path_component_cells: usize = path_component_cells.count();
+        var i_path_component_cells: usize = 0 as usize;
+        while i_path_component_cells < n_path_component_cells {
+            match path_component_cells.at_ptr(i_path_component_cells) {
+                option::Option[*PathComponentCell]::Some(e_path_component_cells) => { rt::msg_void_id(arr_path_component_cells, add_sel_path_component_cells, (*e_path_component_cells).raw()); }
+                option::Option[*PathComponentCell]::None => {}
+            }
+            i_path_component_cells = i_path_component_cells +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPathComponentCells:\0")), arr_path_component_cells);
+    }
+
     fn clicked_path_component_cell(this) -> option::Option[PathComponentCell] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("clickedPathComponentCell\0")));
         if obj == { 0 as *u8 } {

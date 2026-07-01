@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSEventModifierFlags` (NS_OPTIONS) — bitfield; combine with `|`.
 const event_modifier_flags_n_s_event_modifier_flag_caps_lock: u64 = 65536 as u64;
@@ -75,8 +76,8 @@ impl View {
 
     fn from_raw(ptr: *u8) -> View { return View { _obj: ptr }; }
 
-    fn enclosing_menu_item(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("enclosingMenuItem\0")));
+    fn enclosing_menu_item(this) -> MenuItem {
+        return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("enclosingMenuItem\0"))));
     }
 
 }
@@ -119,7 +120,19 @@ impl MenuItem {
         rt::msg_void_i8(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("setUsesUserKeyEquivalents:\0")), uses_user_key_equivalents as i8);
     }
 
-    // SKIPPED `writingToolsItems`: return `API_AVAILABLE NSArray<NSMenuItem *> *` — generic collection
+    fn writing_tools_items() -> vec::Vec[MenuItem] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("writingToolsItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MenuItem] = vec::Vec[MenuItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MenuItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn menu(this) -> option::Option[Menu] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menu\0")));
         if obj == { 0 as *u8 } {
@@ -148,8 +161,8 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu.raw());
     }
 
-    fn parent_item(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("parentItem\0")));
+    fn parent_item(this) -> MenuItem {
+        return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("parentItem\0"))));
     }
 
     fn title(this) -> text::Text {
@@ -173,12 +186,13 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title.raw());
     }
 
-    fn subtitle(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("subtitle\0")));
+    fn subtitle(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("subtitle\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_subtitle(this, subtitle: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubtitle:\0")), subtitle);
+    fn set_subtitle(this, subtitle: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubtitle:\0")), bridge::nsstring(subtitle));
     }
 
     fn is_separator_item(this) -> bool {
@@ -341,12 +355,12 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRepresentedObject:\0")), represented_object);
     }
 
-    fn view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
+    fn view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("view\0"))));
     }
 
-    fn set_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
+    fn set_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
     fn is_highlighted(this) -> bool {
@@ -374,12 +388,12 @@ impl MenuItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), bridge::nsstring(tool_tip));
     }
 
-    fn badge(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("badge\0")));
+    fn badge(this) -> MenuItemBadge {
+        return MenuItemBadge::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("badge\0"))));
     }
 
-    fn set_badge(this, badge: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBadge:\0")), badge);
+    fn set_badge(this, badge: MenuItemBadge) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBadge:\0")), badge.raw());
     }
 
     fn set_mnemonic_location(this, location: u64) {

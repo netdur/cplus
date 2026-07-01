@@ -307,8 +307,32 @@ impl StackView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setDetachesHiddenViews:\0")), detaches_hidden_views as i8);
     }
 
-    // SKIPPED `arrangedSubviews`: return `API_AVAILABLE NSArray<__kindof NSView *> *` — generic collection
-    // SKIPPED `detachedViews`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
+    fn arranged_subviews(this) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("arrangedSubviews\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn detached_views(this) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("detachedViews\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn add_view_in_gravity(this, view: View, gravity: StackViewGravity) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addView:inGravity:\0")), view.raw(), stack_view_gravity_raw(gravity));
     }
@@ -321,7 +345,19 @@ impl StackView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view.raw());
     }
 
-    // SKIPPED `viewsInGravity:`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
+    fn views_in_gravity(this, gravity: StackViewGravity) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("viewsInGravity:\0")), stack_view_gravity_raw(gravity));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn set_views_in_gravity(this, views: vec::Vec[View], gravity: StackViewGravity) {
         let arr_views: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_views: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -337,7 +373,19 @@ impl StackView {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setViews:inGravity:\0")), arr_views, stack_view_gravity_raw(gravity));
     }
 
-    // SKIPPED `views`: return `NSArray<__kindof NSView *> * _Nonnull` — generic collection
+    fn views(this) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("views\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn has_equal_spacing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasEqualSpacing\0"))) != (0 as i8);
     }

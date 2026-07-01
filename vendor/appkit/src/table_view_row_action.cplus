@@ -92,12 +92,12 @@ impl TableViewRowAction {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBackgroundColor:\0")), background_color.raw());
     }
 
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
 }

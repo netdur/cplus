@@ -82,8 +82,8 @@ impl Storyboard {
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("instantiateControllerWithIdentifier:creator:\0")), bridge::nsstring(identifier), bp);
     }
 
-    fn main_storyboard() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSStoryboard\0")), rt::sel(#str_ptr("mainStoryboard\0")));
+    fn main_storyboard() -> Storyboard {
+        return Storyboard { _obj: rt::msg_id(rt::get_class(#str_ptr("NSStoryboard\0")), rt::sel(#str_ptr("mainStoryboard\0"))) };
     }
 
 }

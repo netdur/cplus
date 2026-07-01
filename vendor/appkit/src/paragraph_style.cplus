@@ -277,7 +277,19 @@ impl ParagraphStyle {
         return rt::msg_f32(this._obj, rt::sel(#str_ptr("tighteningFactorForTruncation\0")));
     }
 
-    // SKIPPED `textBlocks`: return `NSArray<__kindof NSTextBlock *> * _Nonnull` — generic collection
+    fn text_blocks(this) -> vec::Vec[TextBlock] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textBlocks\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextBlock] = vec::Vec[TextBlock]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn header_level(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("headerLevel\0")));
     }
@@ -506,8 +518,34 @@ impl MutableParagraphStyle {
         rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setTighteningFactorForTruncation:\0")), tightening_factor_for_truncation);
     }
 
-    // SKIPPED `textBlocks`: return `NSArray<__kindof NSTextBlock *> * _Nonnull` — generic collection
-    // SKIPPED `setTextBlocks:`: param `NSArray<__kindof NSTextBlock *> * _Nonnull` — generic collection
+    fn text_blocks(this) -> vec::Vec[TextBlock] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textBlocks\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextBlock] = vec::Vec[TextBlock]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextBlock::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_text_blocks(this, text_blocks: vec::Vec[TextBlock]) {
+        let arr_text_blocks: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_blocks: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_blocks: usize = text_blocks.count();
+        var i_text_blocks: usize = 0 as usize;
+        while i_text_blocks < n_text_blocks {
+            match text_blocks.at_ptr(i_text_blocks) {
+                option::Option[*TextBlock]::Some(e_text_blocks) => { rt::msg_void_id(arr_text_blocks, add_sel_text_blocks, (*e_text_blocks).raw()); }
+                option::Option[*TextBlock]::None => {}
+            }
+            i_text_blocks = i_text_blocks +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextBlocks:\0")), arr_text_blocks);
+    }
+
     fn header_level(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("headerLevel\0")));
     }

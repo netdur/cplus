@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSAttributedString` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct AttributedString {
@@ -73,8 +74,34 @@ impl AttributedString {
         return rt::msg_i64_id_u64(this._obj, rt::sel(#str_ptr("itemNumberInTextList:atIndex:\0")), list.raw(), location);
     }
 
-    // SKIPPED `textTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `textUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn text_types() -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")), rt::sel(#str_ptr("textTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn text_unfiltered_types() -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")), rt::sel(#str_ptr("textUnfilteredTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn text_file_types() -> *u8 {
         return rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")), rt::sel(#str_ptr("textFileTypes\0")));
     }

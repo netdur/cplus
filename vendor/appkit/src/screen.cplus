@@ -178,8 +178,8 @@ impl Screen {
     }
 
     // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    fn color_space(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0")));
+    fn color_space(this) -> ColorSpace {
+        return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
 
     fn supported_window_depths(this) -> *u8 {
@@ -190,8 +190,9 @@ impl Screen {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("backingScaleFactor\0")));
     }
 
-    fn localized_name(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("localizedName\0")));
+    fn localized_name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("localizedName\0")));
+        return bridge::to_text(ns);
     }
 
     fn safe_area_insets(this) -> EdgeInsets {

@@ -187,12 +187,13 @@ impl TableColumn {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setResizingMask:\0")), resizing_mask);
     }
 
-    fn header_tool_tip(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("headerToolTip\0")));
+    fn header_tool_tip(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("headerToolTip\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_header_tool_tip(this, header_tool_tip: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderToolTip:\0")), header_tool_tip);
+    fn set_header_tool_tip(this, header_tool_tip: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setHeaderToolTip:\0")), bridge::nsstring(header_tool_tip));
     }
 
     fn is_hidden(this) -> bool {

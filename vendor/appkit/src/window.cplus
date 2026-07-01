@@ -1328,12 +1328,13 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
     }
 
-    fn subtitle(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("subtitle\0")));
+    fn subtitle(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("subtitle\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_subtitle(this, subtitle: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubtitle:\0")), subtitle);
+    fn set_subtitle(this, subtitle: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubtitle:\0")), bridge::nsstring(subtitle));
     }
 
     fn title_visibility(this) -> WindowTitleVisibility {
@@ -1364,15 +1365,44 @@ impl Window {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("contentLayoutRect\0")));
     }
 
-    // SKIPPED `contentLayoutGuide`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
-    // SKIPPED `titlebarAccessoryViewControllers`: return `API_AVAILABLE NSArray<__kindof NSTitlebarAccessoryViewController *> *` — generic collection
-    // SKIPPED `setTitlebarAccessoryViewControllers:`: param `API_AVAILABLE NSArray<__kindof NSTitlebarAccessoryViewController *> *` — generic collection
-    fn represented_u_r_l(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("representedURL\0")));
+    fn content_layout_guide(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("contentLayoutGuide\0")));
     }
 
-    fn set_represented_u_r_l(this, represented_u_r_l: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRepresentedURL:\0")), represented_u_r_l);
+    fn titlebar_accessory_view_controllers(this) -> vec::Vec[TitlebarAccessoryViewController] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("titlebarAccessoryViewControllers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TitlebarAccessoryViewController] = vec::Vec[TitlebarAccessoryViewController]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TitlebarAccessoryViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_titlebar_accessory_view_controllers(this, titlebar_accessory_view_controllers: vec::Vec[TitlebarAccessoryViewController]) {
+        let arr_titlebar_accessory_view_controllers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_titlebar_accessory_view_controllers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_titlebar_accessory_view_controllers: usize = titlebar_accessory_view_controllers.count();
+        var i_titlebar_accessory_view_controllers: usize = 0 as usize;
+        while i_titlebar_accessory_view_controllers < n_titlebar_accessory_view_controllers {
+            match titlebar_accessory_view_controllers.at_ptr(i_titlebar_accessory_view_controllers) {
+                option::Option[*TitlebarAccessoryViewController]::Some(e_titlebar_accessory_view_controllers) => { rt::msg_void_id(arr_titlebar_accessory_view_controllers, add_sel_titlebar_accessory_view_controllers, (*e_titlebar_accessory_view_controllers).raw()); }
+                option::Option[*TitlebarAccessoryViewController]::None => {}
+            }
+            i_titlebar_accessory_view_controllers = i_titlebar_accessory_view_controllers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitlebarAccessoryViewControllers:\0")), arr_titlebar_accessory_view_controllers);
+    }
+
+    fn represented_u_r_l(this) -> URL {
+        return URL::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("representedURL\0"))));
+    }
+
+    fn set_represented_u_r_l(this, represented_u_r_l: URL) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRepresentedURL:\0")), represented_u_r_l.raw());
     }
 
     fn represented_filename(this) -> text::Text {
@@ -1571,8 +1601,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMiniwindowTitle:\0")), bridge::nsstring(miniwindow_title));
     }
 
-    fn dock_tile(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("dockTile\0")));
+    fn dock_tile(this) -> DockTile {
+        return DockTile::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("dockTile\0"))));
     }
 
     fn is_document_edited(this) -> bool {
@@ -1818,7 +1848,19 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setWindowController:\0")), window_controller.raw());
     }
 
-    // SKIPPED `sheets`: return `API_AVAILABLE NSArray<__kindof NSWindow *> *` — generic collection
+    fn sheets(this) -> vec::Vec[Window] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sheets\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Window] = vec::Vec[Window]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Window::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn attached_sheet(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attachedSheet\0")));
         if obj == { 0 as *u8 } {
@@ -1831,11 +1873,23 @@ impl Window {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSheet\0"))) != (0 as i8);
     }
 
-    fn sheet_parent(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("sheetParent\0")));
+    fn sheet_parent(this) -> Window {
+        return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("sheetParent\0"))));
     }
 
-    // SKIPPED `childWindows`: return `NSArray<__kindof NSWindow *> * _Nullable` — generic collection
+    fn child_windows(this) -> vec::Vec[Window] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("childWindows\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Window] = vec::Vec[Window]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Window::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn parent_window(this) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("parentWindow\0")));
         if obj == { 0 as *u8 } {
@@ -1850,12 +1904,12 @@ impl Window {
 
     // SKIPPED `appearanceSource`: return `NSObject<NSAppearanceCustomization> * _Nonnull` — generic collection
     // SKIPPED `setAppearanceSource:`: param `NSObject<NSAppearanceCustomization> * _Nullable` — generic collection
-    fn color_space(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0")));
+    fn color_space(this) -> ColorSpace {
+        return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
 
-    fn set_color_space(this, color_space: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorSpace:\0")), color_space);
+    fn set_color_space(this, color_space: ColorSpace) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColorSpace:\0")), color_space.raw());
     }
 
     fn occlusion_state(this) -> u64 {
@@ -1870,12 +1924,12 @@ impl Window {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTitlebarSeparatorStyle:\0")), titlebar_separator_style_raw(titlebar_separator_style));
     }
 
-    fn content_view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0")));
+    fn content_view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("contentViewController\0"))));
     }
 
-    fn set_content_view_controller(this, content_view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller);
+    fn set_content_view_controller(this, content_view_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContentViewController:\0")), content_view_controller.raw());
     }
 
     fn initial_first_responder(this) -> option::Option[View] {
@@ -1954,15 +2008,34 @@ impl Window {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTabbingMode:\0")), window_tabbing_mode_raw(tabbing_mode));
     }
 
-    // SKIPPED `tabbingIdentifier`: return `API_AVAILABLE NSWindowTabbingIdentifier` — unmapped type `API_AVAILABLE NSWindowTabbingIdentifier`
-    // SKIPPED `setTabbingIdentifier:`: param `API_AVAILABLE NSWindowTabbingIdentifier` — unmapped type `API_AVAILABLE NSWindowTabbingIdentifier`
-    // SKIPPED `tabbedWindows`: return `API_AVAILABLE NSArray<NSWindow *> *` — generic collection
-    fn tab(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("tab\0")));
+    fn tabbing_identifier(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabbingIdentifier\0")));
+        return bridge::to_text(ns);
     }
 
-    fn tab_group(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("tabGroup\0")));
+    fn set_tabbing_identifier(this, tabbing_identifier: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTabbingIdentifier:\0")), bridge::nsstring(tabbing_identifier));
+    }
+
+    fn tabbed_windows(this) -> vec::Vec[Window] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tabbedWindows\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Window] = vec::Vec[Window]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Window::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn tab(this) -> WindowTab {
+        return WindowTab::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("tab\0"))));
+    }
+
+    fn tab_group(this) -> WindowTabGroup {
+        return WindowTabGroup::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("tabGroup\0"))));
     }
 
     fn has_active_window_sharing_session(this) -> bool {
@@ -2149,8 +2222,8 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutodisplay:\0")), autodisplay as i8);
     }
 
-    fn graphics_context(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("graphicsContext\0")));
+    fn graphics_context(this) -> GraphicsContext {
+        return GraphicsContext::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("graphicsContext\0"))));
     }
 
     fn is_one_shot(this) -> bool {

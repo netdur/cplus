@@ -170,20 +170,20 @@ impl Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("disappearingItemCursor\0")))) };
     }
 
-    fn operation_not_allowed_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("operationNotAllowedCursor\0")));
+    fn operation_not_allowed_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("operationNotAllowedCursor\0")))) };
     }
 
-    fn drag_link_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("dragLinkCursor\0")));
+    fn drag_link_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("dragLinkCursor\0")))) };
     }
 
-    fn drag_copy_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("dragCopyCursor\0")));
+    fn drag_copy_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("dragCopyCursor\0")))) };
     }
 
-    fn contextual_menu_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("contextualMenuCursor\0")));
+    fn contextual_menu_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("contextualMenuCursor\0")))) };
     }
 
     fn pointing_hand_cursor() -> Cursor {
@@ -202,16 +202,16 @@ impl Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("IBeamCursor\0")))) };
     }
 
-    fn i_beam_cursor_for_vertical_layout() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("IBeamCursorForVerticalLayout\0")));
+    fn i_beam_cursor_for_vertical_layout() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("IBeamCursorForVerticalLayout\0")))) };
     }
 
-    fn zoom_in_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("zoomInCursor\0")));
+    fn zoom_in_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("zoomInCursor\0")))) };
     }
 
-    fn zoom_out_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("zoomOutCursor\0")));
+    fn zoom_out_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("zoomOutCursor\0")))) };
     }
 
     fn column_resize_cursor() -> *u8 {
@@ -222,32 +222,32 @@ impl Cursor {
         return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("rowResizeCursor\0")));
     }
 
-    fn current_system_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("currentSystemCursor\0")));
+    fn current_system_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("currentSystemCursor\0")))) };
     }
 
-    fn resize_left_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeLeftCursor\0")));
+    fn resize_left_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeLeftCursor\0")))) };
     }
 
-    fn resize_right_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeRightCursor\0")));
+    fn resize_right_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeRightCursor\0")))) };
     }
 
-    fn resize_left_right_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeLeftRightCursor\0")));
+    fn resize_left_right_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeLeftRightCursor\0")))) };
     }
 
-    fn resize_up_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpCursor\0")));
+    fn resize_up_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpCursor\0")))) };
     }
 
-    fn resize_down_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeDownCursor\0")));
+    fn resize_down_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeDownCursor\0")))) };
     }
 
-    fn resize_up_down_cursor() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpDownCursor\0")));
+    fn resize_up_down_cursor() -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpDownCursor\0")))) };
     }
 
     // SKIPPED `initWithImage:foregroundColorHint:backgroundColorHint:hotSpot:`: init arg shape not yet modelled

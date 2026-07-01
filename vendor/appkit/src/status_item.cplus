@@ -169,8 +169,8 @@ impl StatusItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
     }
 
-    fn button(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("button\0")));
+    fn button(this) -> StatusBarButton {
+        return StatusBarButton::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("button\0"))));
     }
 
     fn behavior(this) -> u64 {
@@ -210,42 +210,61 @@ impl StatusItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("popUpStatusItemMenu:\0")), menu.raw());
     }
 
-    // SKIPPED `action`: return `API_DEPRECATED SEL` — unmapped type `API_DEPRECATED SEL`
-    // SKIPPED `setAction:`: param `API_DEPRECATED SEL` — unmapped type `API_DEPRECATED SEL`
-    // SKIPPED `doubleAction`: return `API_DEPRECATED SEL` — unmapped type `API_DEPRECATED SEL`
-    // SKIPPED `setDoubleAction:`: param `API_DEPRECATED SEL` — unmapped type `API_DEPRECATED SEL`
-    // SKIPPED `target`: return `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
-    // SKIPPED `setTarget:`: param `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
-    fn title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
     }
 
-    fn set_title(this, title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), title);
+    fn set_action(this, action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 
-    fn attributed_title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedTitle\0")));
+    fn double_action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("doubleAction\0")));
     }
 
-    fn set_attributed_title(this, attributed_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title);
+    fn set_double_action(this, double_action: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDoubleAction:\0")), double_action);
     }
 
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn target(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_target(this, target: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    fn alternate_image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("alternateImage\0")));
+    fn title(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_alternate_image(this, alternate_image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image);
+    fn set_title(this, title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title));
+    }
+
+    fn attributed_title(this) -> AttributedString {
+        return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedTitle\0"))));
+    }
+
+    fn set_attributed_title(this, attributed_title: AttributedString) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributedTitle:\0")), attributed_title.raw());
+    }
+
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
+    }
+
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
+    }
+
+    fn alternate_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("alternateImage\0"))));
+    }
+
+    fn set_alternate_image(this, alternate_image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAlternateImage:\0")), alternate_image.raw());
     }
 
     fn is_enabled(this) -> bool {
@@ -264,20 +283,21 @@ impl StatusItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHighlightMode:\0")), highlight_mode as i8);
     }
 
-    fn tool_tip(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
+    fn tool_tip(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_tool_tip(this, tool_tip: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), tool_tip);
+    fn set_tool_tip(this, tool_tip: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), bridge::nsstring(tool_tip));
     }
 
-    fn view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
+    fn view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("view\0"))));
     }
 
-    fn set_view(this, view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view);
+    fn set_view(this, view: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
 }

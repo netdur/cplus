@@ -213,10 +213,22 @@ impl CollectionView {
         return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("draggingImageForItemsAtIndexes:withEvent:offset:\0")), indexes.raw(), event, drag_image_offset);
     }
 
-    // SKIPPED `dataSource`: return `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection
-    // SKIPPED `setDataSource:`: param `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection
-    // SKIPPED `prefetchDataSource`: return `API_AVAILABLE id<NSCollectionViewPrefetching>` — generic collection
-    // SKIPPED `setPrefetchDataSource:`: param `API_AVAILABLE id<NSCollectionViewPrefetching>` — generic collection
+    fn data_source(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("dataSource\0")));
+    }
+
+    fn set_data_source(this, data_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    fn prefetch_data_source(this) -> CollectionViewPrefetching {
+        return CollectionViewPrefetching::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("prefetchDataSource\0"))));
+    }
+
+    fn set_prefetch_data_source(this, prefetch_data_source: CollectionViewPrefetching) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrefetchDataSource:\0")), prefetch_data_source.raw());
+    }
+
     // SKIPPED `content`: return `NSArray<id> * _Nonnull` — generic collection
     // SKIPPED `setContent:`: param `NSArray<id> * _Nonnull` — generic collection
     fn delegate(this) -> option::Option[*u8] {
@@ -244,12 +256,12 @@ impl CollectionView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setBackgroundViewScrollsWithContent:\0")), background_view_scrolls_with_content as i8);
     }
 
-    fn collection_view_layout(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("collectionViewLayout\0")));
+    fn collection_view_layout(this) -> CollectionViewLayout {
+        return CollectionViewLayout::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("collectionViewLayout\0"))));
     }
 
-    fn set_collection_view_layout(this, collection_view_layout: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCollectionViewLayout:\0")), collection_view_layout);
+    fn set_collection_view_layout(this, collection_view_layout: CollectionViewLayout) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCollectionViewLayout:\0")), collection_view_layout.raw());
     }
 
     // SKIPPED `backgroundColors`: return `NSArray<NSColor *> * _Nonnull` — generic collection
@@ -300,12 +312,12 @@ impl CollectionView {
         return CollectionViewItem::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newItemForRepresentedObject:\0")), object));
     }
 
-    fn item_prototype(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("itemPrototype\0")));
+    fn item_prototype(this) -> CollectionViewItem {
+        return CollectionViewItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("itemPrototype\0"))));
     }
 
-    fn set_item_prototype(this, item_prototype: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setItemPrototype:\0")), item_prototype);
+    fn set_item_prototype(this, item_prototype: CollectionViewItem) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setItemPrototype:\0")), item_prototype.raw());
     }
 
     fn max_number_of_rows(this) -> u64 {
@@ -484,23 +496,35 @@ impl CollectionViewItem {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setHighlightState:\0")), collection_view_item_highlight_state_raw(highlight_state));
     }
 
-    fn image_view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0")));
+    fn image_view(this) -> ImageView {
+        return ImageView::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageView\0"))));
     }
 
-    fn set_image_view(this, image_view: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view);
+    fn set_image_view(this, image_view: ImageView) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view.raw());
     }
 
-    fn text_field(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textField\0")));
+    fn text_field(this) -> TextField {
+        return TextField::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textField\0"))));
     }
 
-    fn set_text_field(this, text_field: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field);
+    fn set_text_field(this, text_field: TextField) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field.raw());
     }
 
-    // SKIPPED `draggingImageComponents`: return `API_AVAILABLE NSArray<NSDraggingImageComponent *> *` — generic collection
+    fn dragging_image_components(this) -> vec::Vec[DraggingImageComponent] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("draggingImageComponents\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DraggingImageComponent] = vec::Vec[DraggingImageComponent]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSCollectionViewDataSource` delegate protocol -> runtime class-synthesis helper.

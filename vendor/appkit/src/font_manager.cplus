@@ -300,8 +300,14 @@ impl FontManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 
-    // SKIPPED `delegate`: return `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
-    // SKIPPED `setDelegate:`: param `API_DEPRECATED id` — unmapped type `API_DEPRECATED id`
+    fn delegate(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
+    }
+
+    fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
     fn collection_names(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("collectionNames\0")));
     }
@@ -310,8 +316,14 @@ impl FontManager {
         return font_action_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("currentFontAction\0"))));
     }
 
-    // SKIPPED `target`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
-    // SKIPPED `setTarget:`: param `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
+    fn target(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
+    }
+
+    fn set_target(this, target: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
+    }
+
     fn font_named_has_traits(this, f_name: str, some_traits: u64) -> bool {
         return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("fontNamed:hasTraits:\0")), bridge::nsstring(f_name), some_traits) != (0 as i8);
     }

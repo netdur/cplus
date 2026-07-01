@@ -243,8 +243,8 @@ impl Alert {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsSuppressionButton:\0")), shows_suppression_button as i8);
     }
 
-    fn suppression_button(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("suppressionButton\0")));
+    fn suppression_button(this) -> Button {
+        return Button::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("suppressionButton\0"))));
     }
 
     fn window(this) -> Window {

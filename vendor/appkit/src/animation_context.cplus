@@ -95,12 +95,12 @@ impl AnimationContext {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setDuration:\0")), duration);
     }
 
-    fn timing_function(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0")));
+    fn timing_function(this) -> CAMediaTimingFunction {
+        return CAMediaTimingFunction::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0"))));
     }
 
-    fn set_timing_function(this, timing_function: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTimingFunction:\0")), timing_function);
+    fn set_timing_function(this, timing_function: CAMediaTimingFunction) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTimingFunction:\0")), timing_function.raw());
     }
 
     // SKIPPED `completionHandler`: return `API_AVAILABLE void (^)(void)` — block

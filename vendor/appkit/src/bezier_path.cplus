@@ -279,8 +279,14 @@ impl BezierPath {
         return rt::msg_i8_point(this._obj, rt::sel(#str_ptr("containsPoint:\0")), point) != (0 as i8);
     }
 
-    // SKIPPED `CGPath`: return `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
-    // SKIPPED `setCGPath:`: param `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
+    fn c_g_path(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGPath\0")));
+    }
+
+    fn set_c_g_path(this, c_g_path: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCGPath:\0")), c_g_path);
+    }
+
     fn default_miter_limit() -> f64 {
         return rt::msg_f64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("defaultMiterLimit\0")));
     }

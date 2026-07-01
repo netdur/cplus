@@ -920,11 +920,11 @@ impl TableView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setRowActionsVisible:\0")), row_actions_visible as i8);
     }
 
-    fn hidden_row_indexes(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("hiddenRowIndexes\0")));
+    fn hidden_row_indexes(this) -> IndexSet {
+        return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("hiddenRowIndexes\0"))));
     }
 
-    // SKIPPED `registeredNibsByIdentifier`: return `API_AVAILABLE NSDictionary<NSUserInterfaceItemIdentifier,NSNib *> *` — generic collection
+    // SKIPPED `registeredNibsByIdentifier`: return `API_AVAILABLE NSDictionary<NSUserInterfaceItemIdentifier,NSNib *> *` — NSDictionary value `NSNib *` not modelled (NSString / NSNumber only)
     fn uses_static_contents(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesStaticContents\0"))) != (0 as i8);
     }

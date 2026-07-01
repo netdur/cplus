@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSColorType` (NS_ENUM)
 enum ColorType {
@@ -374,8 +375,8 @@ impl Color {
         return color_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }
 
-    fn standard_dynamic_range_color(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("standardDynamicRangeColor\0")));
+    fn standard_dynamic_range_color(this) -> Color {
+        return Color::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardDynamicRangeColor\0"))));
     }
 
     fn black_color() -> Color {
@@ -438,32 +439,32 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("clearColor\0")))) };
     }
 
-    fn label_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("labelColor\0")));
+    fn label_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("labelColor\0")))) };
     }
 
-    fn secondary_label_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondaryLabelColor\0")));
+    fn secondary_label_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondaryLabelColor\0")))) };
     }
 
-    fn tertiary_label_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("tertiaryLabelColor\0")));
+    fn tertiary_label_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("tertiaryLabelColor\0")))) };
     }
 
-    fn quaternary_label_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quaternaryLabelColor\0")));
+    fn quaternary_label_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quaternaryLabelColor\0")))) };
     }
 
-    fn quinary_label_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quinaryLabelColor\0")));
+    fn quinary_label_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quinaryLabelColor\0")))) };
     }
 
-    fn link_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("linkColor\0")));
+    fn link_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("linkColor\0")))) };
     }
 
-    fn placeholder_text_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("placeholderTextColor\0")));
+    fn placeholder_text_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("placeholderTextColor\0")))) };
     }
 
     fn window_frame_text_color() -> Color {
@@ -482,8 +483,8 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("headerTextColor\0")))) };
     }
 
-    fn separator_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("separatorColor\0")));
+    fn separator_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("separatorColor\0")))) };
     }
 
     fn grid_color() -> Color {
@@ -494,25 +495,37 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("windowBackgroundColor\0")))) };
     }
 
-    fn under_page_background_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("underPageBackgroundColor\0")));
+    fn under_page_background_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("underPageBackgroundColor\0")))) };
     }
 
     fn control_background_color() -> Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlBackgroundColor\0")))) };
     }
 
-    fn selected_content_background_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedContentBackgroundColor\0")));
+    fn selected_content_background_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedContentBackgroundColor\0")))) };
     }
 
-    fn unemphasized_selected_content_background_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedContentBackgroundColor\0")));
+    fn unemphasized_selected_content_background_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedContentBackgroundColor\0")))) };
     }
 
-    // SKIPPED `alternatingContentBackgroundColors`: return `API_AVAILABLE NSArray<NSColor *> *` — generic collection
-    fn find_highlight_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("findHighlightColor\0")));
+    fn alternating_content_background_colors() -> vec::Vec[Color] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("alternatingContentBackgroundColors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Color] = vec::Vec[Color]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Color::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn find_highlight_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("findHighlightColor\0")))) };
     }
 
     fn text_color() -> Color {
@@ -523,8 +536,8 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("textBackgroundColor\0")))) };
     }
 
-    fn text_insertion_point_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("textInsertionPointColor\0")));
+    fn text_insertion_point_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("textInsertionPointColor\0")))) };
     }
 
     fn selected_text_color() -> Color {
@@ -535,12 +548,12 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedTextBackgroundColor\0")))) };
     }
 
-    fn unemphasized_selected_text_background_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedTextBackgroundColor\0")));
+    fn unemphasized_selected_text_background_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedTextBackgroundColor\0")))) };
     }
 
-    fn unemphasized_selected_text_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedTextColor\0")));
+    fn unemphasized_selected_text_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("unemphasizedSelectedTextColor\0")))) };
     }
 
     fn control_color() -> Color {
@@ -567,84 +580,84 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("keyboardFocusIndicatorColor\0")))) };
     }
 
-    fn scrubber_textured_background_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("scrubberTexturedBackgroundColor\0")));
+    fn scrubber_textured_background_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("scrubberTexturedBackgroundColor\0")))) };
     }
 
-    fn system_red_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemRedColor\0")));
+    fn system_red_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemRedColor\0")))) };
     }
 
-    fn system_green_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemGreenColor\0")));
+    fn system_green_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemGreenColor\0")))) };
     }
 
-    fn system_blue_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemBlueColor\0")));
+    fn system_blue_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemBlueColor\0")))) };
     }
 
-    fn system_orange_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemOrangeColor\0")));
+    fn system_orange_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemOrangeColor\0")))) };
     }
 
-    fn system_yellow_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemYellowColor\0")));
+    fn system_yellow_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemYellowColor\0")))) };
     }
 
-    fn system_brown_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemBrownColor\0")));
+    fn system_brown_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemBrownColor\0")))) };
     }
 
-    fn system_pink_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemPinkColor\0")));
+    fn system_pink_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemPinkColor\0")))) };
     }
 
-    fn system_purple_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemPurpleColor\0")));
+    fn system_purple_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemPurpleColor\0")))) };
     }
 
-    fn system_gray_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemGrayColor\0")));
+    fn system_gray_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemGrayColor\0")))) };
     }
 
-    fn system_teal_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemTealColor\0")));
+    fn system_teal_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemTealColor\0")))) };
     }
 
-    fn system_indigo_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemIndigoColor\0")));
+    fn system_indigo_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemIndigoColor\0")))) };
     }
 
-    fn system_mint_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemMintColor\0")));
+    fn system_mint_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemMintColor\0")))) };
     }
 
-    fn system_cyan_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemCyanColor\0")));
+    fn system_cyan_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemCyanColor\0")))) };
     }
 
-    fn system_fill_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemFillColor\0")));
+    fn system_fill_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("systemFillColor\0")))) };
     }
 
-    fn secondary_system_fill_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondarySystemFillColor\0")));
+    fn secondary_system_fill_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondarySystemFillColor\0")))) };
     }
 
-    fn tertiary_system_fill_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("tertiarySystemFillColor\0")));
+    fn tertiary_system_fill_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("tertiarySystemFillColor\0")))) };
     }
 
-    fn quaternary_system_fill_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quaternarySystemFillColor\0")));
+    fn quaternary_system_fill_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quaternarySystemFillColor\0")))) };
     }
 
-    fn quinary_system_fill_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quinarySystemFillColor\0")));
+    fn quinary_system_fill_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("quinarySystemFillColor\0")))) };
     }
 
-    fn control_accent_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlAccentColor\0")));
+    fn control_accent_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlAccentColor\0")))) };
     }
 
     fn current_control_tint() -> ControlTint {
@@ -761,56 +774,72 @@ impl Color {
         return option::some(Color::from_raw(obj));
     }
 
-    fn control_highlight_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlHighlightColor\0")));
+    fn control_highlight_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlHighlightColor\0")))) };
     }
 
-    fn control_light_highlight_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlLightHighlightColor\0")));
+    fn control_light_highlight_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlLightHighlightColor\0")))) };
     }
 
-    fn control_shadow_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlShadowColor\0")));
+    fn control_shadow_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlShadowColor\0")))) };
     }
 
-    fn control_dark_shadow_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlDarkShadowColor\0")));
+    fn control_dark_shadow_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlDarkShadowColor\0")))) };
     }
 
-    fn scroll_bar_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("scrollBarColor\0")));
+    fn scroll_bar_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("scrollBarColor\0")))) };
     }
 
-    fn knob_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("knobColor\0")));
+    fn knob_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("knobColor\0")))) };
     }
 
-    fn selected_knob_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedKnobColor\0")));
+    fn selected_knob_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedKnobColor\0")))) };
     }
 
-    fn window_frame_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("windowFrameColor\0")));
+    fn window_frame_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("windowFrameColor\0")))) };
     }
 
-    fn selected_menu_item_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedMenuItemColor\0")));
+    fn selected_menu_item_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("selectedMenuItemColor\0")))) };
     }
 
-    fn header_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("headerColor\0")));
+    fn header_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("headerColor\0")))) };
     }
 
-    fn secondary_selected_control_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondarySelectedControlColor\0")));
+    fn secondary_selected_control_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondarySelectedControlColor\0")))) };
     }
 
-    fn alternate_selected_control_color() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("alternateSelectedControlColor\0")));
+    fn alternate_selected_control_color() -> Color {
+        return Color { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("alternateSelectedControlColor\0")))) };
     }
 
-    // SKIPPED `controlAlternatingRowBackgroundColors`: return `API_DEPRECATED_WITH_REPLACEMENT NSArray<NSColor *> *` — generic collection
-    // SKIPPED `colorSpaceName`: return `API_DEPRECATED NSColorSpaceName` — unmapped type `API_DEPRECATED NSColorSpaceName`
+    fn control_alternating_row_background_colors() -> vec::Vec[Color] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlAlternatingRowBackgroundColors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Color] = vec::Vec[Color]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Color::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn color_space_name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpaceName\0")));
+        return bridge::to_text(ns);
+    }
+
     fn color_with_c_i_color(color: *u8) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCIColor:\0")), color)) };
     }

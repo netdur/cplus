@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSTextFieldBezelStyle` (NS_ENUM)
 enum TextFieldBezelStyle {
@@ -126,8 +127,24 @@ impl TextFieldCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaceholderAttributedString:\0")), placeholder_attributed_string);
     }
 
-    // SKIPPED `allowedInputSourceLocales`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setAllowedInputSourceLocales:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn allowed_input_source_locales(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedInputSourceLocales\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_allowed_input_source_locales(this, allowed_input_source_locales: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedInputSourceLocales:\0")), bridge::nsarray_of_text(allowed_input_source_locales));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

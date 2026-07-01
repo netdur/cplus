@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 #[repr(C)]
 struct PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block {
@@ -127,7 +128,19 @@ impl PageLayout {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    // SKIPPED `accessoryControllers`: return `API_AVAILABLE NSArray<__kindof NSViewController *> *` — generic collection
+    fn accessory_controllers(this) -> vec::Vec[ViewController] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accessoryControllers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ViewController] = vec::Vec[ViewController]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ViewController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn print_info(this) -> option::Option[PrintInfo] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("printInfo\0")));
         if obj == { 0 as *u8 } {

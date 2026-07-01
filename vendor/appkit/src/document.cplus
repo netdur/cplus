@@ -1137,8 +1137,8 @@ impl Document {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("keepBackupFile\0"))) != (0 as i8);
     }
 
-    fn backup_file_u_r_l(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("backupFileURL\0")));
+    fn backup_file_u_r_l(this) -> URL {
+        return URL::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("backupFileURL\0"))));
     }
 
     fn save_panel_shows_file_formats_control(this) -> bool {
@@ -1203,8 +1203,8 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintInfo:\0")), print_info.raw());
     }
 
-    fn p_d_f_print_operation(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("PDFPrintOperation\0")));
+    fn p_d_f_print_operation(this) -> PrintOperation {
+        return PrintOperation::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("PDFPrintOperation\0"))));
     }
 
     fn allows_document_sharing(this) -> bool {
@@ -1246,7 +1246,19 @@ impl Document {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `windowControllers`: return `NSArray<__kindof NSWindowController *> * _Nonnull` — generic collection
+    fn window_controllers(this) -> vec::Vec[WindowController] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windowControllers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[WindowController] = vec::Vec[WindowController]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(WindowController::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn display_name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("displayName\0")));
         return bridge::to_text(ns);
@@ -1292,8 +1304,8 @@ impl Document {
         return rt::msg_i8(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("usesUbiquitousStorage\0"))) != (0 as i8);
     }
 
-    fn presented_item_u_r_l(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("presentedItemURL\0")));
+    fn presented_item_u_r_l(this) -> URL {
+        return URL::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("presentedItemURL\0"))));
     }
 
     // SKIPPED `observedPresentedItemUbiquityAttributes`: return `API_AVAILABLE NSSet<NSURLResourceKey> *` — generic collection

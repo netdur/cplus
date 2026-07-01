@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSWritingDirection` (NS_ENUM)
 enum WritingDirection {
@@ -141,8 +142,8 @@ impl TextContainer {
         return rt::msg_rect_rect_u64_i64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:\0")), proposed_rect, character_index, writing_direction_raw(base_writing_direction), remaining_rect);
     }
 
-    fn text_layout_manager(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
+    fn text_layout_manager(this) -> TextLayoutManager {
+        return TextLayoutManager::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0"))));
     }
 
     fn size(this) -> rt::Size {
@@ -209,8 +210,34 @@ impl TextContainer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceLayoutManager:\0")), new_layout_manager);
     }
 
-    // SKIPPED `exclusionPaths`: return `API_UNAVAILABLE NSArray<NSBezierPath *> *` — generic collection
-    // SKIPPED `setExclusionPaths:`: param `API_UNAVAILABLE NSArray<NSBezierPath *> *` — generic collection
+    fn exclusion_paths(this) -> vec::Vec[BezierPath] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("exclusionPaths\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[BezierPath] = vec::Vec[BezierPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(BezierPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_exclusion_paths(this, exclusion_paths: vec::Vec[BezierPath]) {
+        let arr_exclusion_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_exclusion_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_exclusion_paths: usize = exclusion_paths.count();
+        var i_exclusion_paths: usize = 0 as usize;
+        while i_exclusion_paths < n_exclusion_paths {
+            match exclusion_paths.at_ptr(i_exclusion_paths) {
+                option::Option[*BezierPath]::Some(e_exclusion_paths) => { rt::msg_void_id(arr_exclusion_paths, add_sel_exclusion_paths, (*e_exclusion_paths).raw()); }
+                option::Option[*BezierPath]::None => {}
+            }
+            i_exclusion_paths = i_exclusion_paths +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setExclusionPaths:\0")), arr_exclusion_paths);
+    }
+
     fn text_view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textView\0")));
         return bridge::obj_option(obj);

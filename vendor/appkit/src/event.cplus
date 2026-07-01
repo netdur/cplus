@@ -477,8 +477,8 @@ impl Event {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowNumber\0")));
     }
 
-    fn context(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("context\0")));
+    fn context(this) -> GraphicsContext {
+        return GraphicsContext::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("context\0"))));
     }
 
     fn click_count(this) -> i64 {
@@ -556,8 +556,8 @@ impl Event {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("userData\0")));
     }
 
-    fn tracking_area(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("trackingArea\0")));
+    fn tracking_area(this) -> TrackingArea {
+        return TrackingArea::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("trackingArea\0"))));
     }
 
     fn subtype(this) -> EventSubtype {
@@ -576,7 +576,10 @@ impl Event {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("eventRef\0")));
     }
 
-    // SKIPPED `CGEvent`: return `API_AVAILABLE CGEventRef` — unmapped type `API_AVAILABLE CGEventRef`
+    fn c_g_event(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGEvent\0")));
+    }
+
     fn is_mouse_coalescing_enabled() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("isMouseCoalescingEnabled\0"))) != (0 as i8);
     }

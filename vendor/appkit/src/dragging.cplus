@@ -240,8 +240,8 @@ impl DraggingInfo {
         return rt::msg_point(this._obj, rt::sel(#str_ptr("draggedImageLocation\0")));
     }
 
-    fn dragged_image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("draggedImage\0")));
+    fn dragged_image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggedImage\0"))));
     }
 
     fn dragging_pasteboard(this) -> *u8 {

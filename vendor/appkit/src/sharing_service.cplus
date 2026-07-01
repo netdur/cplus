@@ -249,34 +249,54 @@ impl SharingService {
         return option::some(Image::from_raw(obj));
     }
 
-    fn menu_item_title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("menuItemTitle\0")));
+    fn menu_item_title(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("menuItemTitle\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_menu_item_title(this, menu_item_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenuItemTitle:\0")), menu_item_title);
+    fn set_menu_item_title(this, menu_item_title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMenuItemTitle:\0")), bridge::nsstring(menu_item_title));
     }
 
-    // SKIPPED `recipients`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setRecipients:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    fn subject(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("subject\0")));
+    fn recipients(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("recipients\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
 
-    fn set_subject(this, subject: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubject:\0")), subject);
+    fn set_recipients(this, recipients: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRecipients:\0")), bridge::nsarray_of_text(recipients));
     }
 
-    fn message_body(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("messageBody\0")));
+    fn subject(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("subject\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn set_subject(this, subject: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSubject:\0")), bridge::nsstring(subject));
+    }
+
+    fn message_body(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("messageBody\0")));
+        return bridge::to_text(ns);
     }
 
     fn permanent_link(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("permanentLink\0")));
     }
 
-    fn account_name(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("accountName\0")));
+    fn account_name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accountName\0")));
+        return bridge::to_text(ns);
     }
 
     // SKIPPED `attachmentFileURLs`: return `API_AVAILABLE NSArray<NSURL *> *` — generic collection
@@ -319,8 +339,8 @@ impl SharingServicePicker {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    fn standard_share_menu_item(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0")));
+    fn standard_share_menu_item(this) -> MenuItem {
+        return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
     fn drop(ref this) {

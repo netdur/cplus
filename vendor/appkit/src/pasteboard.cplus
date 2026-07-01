@@ -197,7 +197,19 @@ impl Pasteboard {
         return pasteboard_access_behavior_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("accessBehavior\0"))));
     }
 
-    // SKIPPED `pasteboardItems`: return `API_AVAILABLE NSArray<NSPasteboardItem *> *` — generic collection
+    fn pasteboard_items(this) -> vec::Vec[PasteboardItem] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pasteboardItems\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[PasteboardItem] = vec::Vec[PasteboardItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(PasteboardItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn types(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("types\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

@@ -93,7 +93,11 @@ impl Appearance {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `name`: return `API_AVAILABLE NSAppearanceName` — unmapped type `API_AVAILABLE NSAppearanceName`
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
+    }
+
     fn current_appearance() -> Appearance {
         return Appearance { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("currentAppearance\0")))) };
     }
@@ -102,8 +106,8 @@ impl Appearance {
         rt::msg_void_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("setCurrentAppearance:\0")), current_appearance.raw());
     }
 
-    fn current_drawing_appearance() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("currentDrawingAppearance\0")));
+    fn current_drawing_appearance() -> Appearance {
+        return Appearance { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")), rt::sel(#str_ptr("currentDrawingAppearance\0")))) };
     }
 
     fn allows_vibrancy(this) -> bool {
@@ -125,16 +129,16 @@ impl AppearanceCustomization {
 
     fn from_raw(ptr: *u8) -> AppearanceCustomization { return AppearanceCustomization { _obj: ptr }; }
 
-    fn appearance(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("appearance\0")));
+    fn appearance(this) -> Appearance {
+        return Appearance::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("appearance\0"))));
     }
 
-    fn set_appearance(this, appearance: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppearance:\0")), appearance);
+    fn set_appearance(this, appearance: Appearance) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppearance:\0")), appearance.raw());
     }
 
-    fn effective_appearance(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("effectiveAppearance\0")));
+    fn effective_appearance(this) -> Appearance {
+        return Appearance::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("effectiveAppearance\0"))));
     }
 
 }

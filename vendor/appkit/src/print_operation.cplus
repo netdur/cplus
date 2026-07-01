@@ -222,12 +222,13 @@ impl PrintOperation {
         return print_rendering_quality_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredRenderingQuality\0"))));
     }
 
-    fn job_title(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("jobTitle\0")));
+    fn job_title(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("jobTitle\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_job_title(this, job_title: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setJobTitle:\0")), job_title);
+    fn set_job_title(this, job_title: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setJobTitle:\0")), bridge::nsstring(job_title));
     }
 
     fn shows_print_panel(this) -> bool {
@@ -254,12 +255,12 @@ impl PrintOperation {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrintPanel:\0")), print_panel.raw());
     }
 
-    fn p_d_f_panel(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("PDFPanel\0")));
+    fn p_d_f_panel(this) -> PDFPanel {
+        return PDFPanel::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("PDFPanel\0"))));
     }
 
-    fn set_p_d_f_panel(this, p_d_f_panel: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPDFPanel:\0")), p_d_f_panel);
+    fn set_p_d_f_panel(this, p_d_f_panel: PDFPanel) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPDFPanel:\0")), p_d_f_panel.raw());
     }
 
     fn can_spawn_separate_thread(this) -> bool {

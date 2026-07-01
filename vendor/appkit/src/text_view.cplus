@@ -618,12 +618,12 @@ impl TextView {
         return option::some(TextStorage::from_raw(obj));
     }
 
-    fn text_layout_manager(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
+    fn text_layout_manager(this) -> TextLayoutManager {
+        return TextLayoutManager::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0"))));
     }
 
-    fn text_content_storage(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("textContentStorage\0")));
+    fn text_content_storage(this) -> TextContentStorage {
+        return TextContentStorage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textContentStorage\0"))));
     }
 
     fn should_draw_insertion_point(this) -> bool {
@@ -1075,8 +1075,24 @@ impl TextView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setRulerVisible:\0")), ruler_visible as i8);
     }
 
-    // SKIPPED `allowedInputSourceLocales`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `setAllowedInputSourceLocales:`: param `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn allowed_input_source_locales(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allowedInputSourceLocales\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_allowed_input_source_locales(this, allowed_input_source_locales: vec::Vec[text::Text]) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAllowedInputSourceLocales:\0")), bridge::nsarray_of_text(allowed_input_source_locales));
+    }
+
     fn is_writing_tools_active(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isWritingToolsActive\0"))) != (0 as i8);
     }
@@ -1334,7 +1350,7 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("highlight:\0")), sender);
     }
 
-    // SKIPPED `textHighlightAttributes`: return `API_AVAILABLE NSDictionary<NSAttributedStringKey,id> *` — generic collection
+    // SKIPPED `textHighlightAttributes`: return `API_AVAILABLE NSDictionary<NSAttributedStringKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `setTextHighlightAttributes:`: param `API_AVAILABLE NSDictionary<NSAttributedStringKey,id> *` — generic collection
     fn toggle_base_writing_direction(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleBaseWritingDirection:\0")), sender);

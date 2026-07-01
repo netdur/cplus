@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSData` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Data {
@@ -114,7 +115,20 @@ impl Sound {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `soundUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
+    fn sound_unfiltered_types() -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSSound\0")), rt::sel(#str_ptr("soundUnfilteredTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn is_playing(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isPlaying\0"))) != (0 as i8);
     }
@@ -156,8 +170,15 @@ impl Sound {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setLoops:\0")), loops as i8);
     }
 
-    // SKIPPED `playbackDeviceIdentifier`: return `API_AVAILABLE NSSoundPlaybackDeviceIdentifier` — unmapped type `API_AVAILABLE NSSoundPlaybackDeviceIdentifier`
-    // SKIPPED `setPlaybackDeviceIdentifier:`: param `API_AVAILABLE NSSoundPlaybackDeviceIdentifier` — unmapped type `API_AVAILABLE NSSoundPlaybackDeviceIdentifier`
+    fn playback_device_identifier(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("playbackDeviceIdentifier\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn set_playback_device_identifier(this, playback_device_identifier: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPlaybackDeviceIdentifier:\0")), bridge::nsstring(playback_device_identifier));
+    }
+
     fn sound_unfiltered_file_types() -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSSound\0")), rt::sel(#str_ptr("soundUnfilteredFileTypes\0")));
         return bridge::obj_option(obj);

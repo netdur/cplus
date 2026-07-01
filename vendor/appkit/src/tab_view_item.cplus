@@ -141,12 +141,12 @@ impl TabViewItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
     }
 
-    fn image(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")));
+    fn image(this) -> Image {
+        return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
-    fn set_image(this, image: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image);
+    fn set_image(this, image: Image) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImage:\0")), image.raw());
     }
 
     fn view(this) -> option::Option[View] {
@@ -161,12 +161,12 @@ impl TabViewItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }
 
-    fn view_controller(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("viewController\0")));
+    fn view_controller(this) -> ViewController {
+        return ViewController::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("viewController\0"))));
     }
 
-    fn set_view_controller(this, view_controller: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setViewController:\0")), view_controller);
+    fn set_view_controller(this, view_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setViewController:\0")), view_controller.raw());
     }
 
     fn tab_state(this) -> TabState {
@@ -193,12 +193,13 @@ impl TabViewItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialFirstResponder:\0")), initial_first_responder.raw());
     }
 
-    fn tool_tip(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
+    fn tool_tip(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
+        return bridge::to_text(ns);
     }
 
-    fn set_tool_tip(this, tool_tip: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), tool_tip);
+    fn set_tool_tip(this, tool_tip: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setToolTip:\0")), bridge::nsstring(tool_tip));
     }
 
     fn drop(ref this) {

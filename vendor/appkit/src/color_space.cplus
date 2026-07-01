@@ -108,7 +108,10 @@ impl ColorSpace {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("colorSyncProfile\0")));
     }
 
-    // SKIPPED `CGColorSpace`: return `API_AVAILABLE CGColorSpaceRef` — unmapped type `API_AVAILABLE CGColorSpaceRef`
+    fn c_g_color_space(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGColorSpace\0")));
+    }
+
     fn number_of_color_components(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfColorComponents\0")));
     }
@@ -122,28 +125,28 @@ impl ColorSpace {
         return bridge::to_text_option(ns);
     }
 
-    fn s_r_g_b_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("sRGBColorSpace\0")));
+    fn s_r_g_b_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("sRGBColorSpace\0")))) };
     }
 
-    fn generic_gamma22_gray_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("genericGamma22GrayColorSpace\0")));
+    fn generic_gamma22_gray_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("genericGamma22GrayColorSpace\0")))) };
     }
 
-    fn extended_s_r_g_b_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("extendedSRGBColorSpace\0")));
+    fn extended_s_r_g_b_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("extendedSRGBColorSpace\0")))) };
     }
 
-    fn extended_generic_gamma22_gray_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("extendedGenericGamma22GrayColorSpace\0")));
+    fn extended_generic_gamma22_gray_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("extendedGenericGamma22GrayColorSpace\0")))) };
     }
 
-    fn display_p3_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("displayP3ColorSpace\0")));
+    fn display_p3_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("displayP3ColorSpace\0")))) };
     }
 
-    fn adobe_r_g_b1998_color_space() -> *u8 {
-        return rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("adobeRGB1998ColorSpace\0")));
+    fn adobe_r_g_b1998_color_space() -> ColorSpace {
+        return ColorSpace { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("adobeRGB1998ColorSpace\0")))) };
     }
 
     fn generic_r_g_b_color_space() -> ColorSpace {

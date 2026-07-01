@@ -340,8 +340,8 @@ impl Font {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFixedPitch\0"))) != (0 as i8);
     }
 
-    fn vertical_font(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("verticalFont\0")));
+    fn vertical_font(this) -> Font {
+        return Font::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("verticalFont\0"))));
     }
 
     fn is_vertical(this) -> bool {

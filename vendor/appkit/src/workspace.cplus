@@ -632,14 +632,39 @@ impl Workspace {
         return NotificationCenter::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("notificationCenter\0"))));
     }
 
-    // SKIPPED `fileLabels`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
-    // SKIPPED `fileLabelColors`: return `API_AVAILABLE NSArray<NSColor *> *` — generic collection
-    fn frontmost_application(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("frontmostApplication\0")));
+    fn file_labels(this) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileLabels\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
 
-    fn menu_bar_owning_application(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("menuBarOwningApplication\0")));
+    fn file_label_colors(this) -> vec::Vec[Color] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileLabelColors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Color] = vec::Vec[Color]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Color::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn frontmost_application(this) -> RunningApplication {
+        return RunningApplication::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("frontmostApplication\0"))));
+    }
+
+    fn menu_bar_owning_application(this) -> RunningApplication {
+        return RunningApplication::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("menuBarOwningApplication\0"))));
     }
 
     // SKIPPED `setDesktopImageURL:forScreen:options:error:`: param `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nonnull` — generic collection
