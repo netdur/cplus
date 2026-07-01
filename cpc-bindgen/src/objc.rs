@@ -1144,9 +1144,16 @@ impl ObjcEmitter {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        // A `usingBlock:` parameter -> dedicated block-literal emission.
-        if let Some(bidx) = params.iter().position(|(_, qt)| qt.contains("(^")) {
-            self.emit_block_method(objc_class, &ty, &sel, is_instance, ret_qt, &params, bidx, &ov_name, &ov_params);
+        // A block parameter -> dedicated block-literal emission. Handles both an
+        // inline `(^)(...)` type (`usingBlock:`) and a typedef alias to one
+        // (completion handlers: `typedef void (^MTLNewLibraryCompletionHandler)(...)`),
+        // resolving the alias to the underlying block signature for parse_block_args.
+        if let Some((bidx, block_qt)) = params
+            .iter()
+            .enumerate()
+            .find_map(|(i, (_, qt))| self.resolve_block_type(qt).map(|bt| (i, bt)))
+        {
+            self.emit_block_method(objc_class, &ty, &sel, is_instance, ret_qt, &params, bidx, &block_qt, &ov_name, &ov_params);
             return;
         }
 
@@ -1478,6 +1485,7 @@ impl ObjcEmitter {
         ret_qt: &str,
         params: &[(String, String)],
         bidx: usize,
+        block_qt: &str,
         ov_name: &Option<String>,
         ov_params: &[String],
     ) {
@@ -1490,7 +1498,9 @@ impl ObjcEmitter {
             self.body.push_str(&format!("    // SKIPPED `{sel}`: params after the block not modelled\n"));
             return;
         }
-        let block_args = match self.parse_block_args(&params[bidx].1) {
+        // `block_qt` is the underlying `RET (^)(...)` type — resolved through a
+        // typedef alias by the caller for completion-handler params.
+        let block_args = match self.parse_block_args(block_qt) {
             Some(a) => a,
             None => {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: unparseable block signature\n"));
@@ -1580,6 +1590,26 @@ impl ObjcEmitter {
         self.body.push_str(&format!(
             "    fn {name}({sig}) {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n        {send};\n        return;\n    }}\n\n"
         ));
+    }
+
+    /// The underlying `RET (^)(...)` block type of a param — directly, or through a
+    /// typedef alias (completion handlers: `typedef void (^MTLNewLibraryCompletionHandler)(
+    /// id<MTLLibrary>, NSError *)`). None if the type is not (and does not alias) a
+    /// block, so ordinary params are unaffected. A function-pointer typedef spells
+    /// `(*)`, never `(^)`, so it can't be mistaken for a block.
+    fn resolve_block_type(&self, qt: &str) -> Option<String> {
+        let (base, _) = strip_nullability(qt);
+        let mut cur = base.trim().to_string();
+        for _ in 0..8 {
+            if cur.contains("(^") {
+                return Some(cur);
+            }
+            match self.typedefs.get(&cur) {
+                Some(u) => cur = u.trim().to_string(),
+                None => return None,
+            }
+        }
+        None
     }
 
     /// Parse a block parameter's C signature `RET (^...)(A0, A1, ...)` into the
@@ -2801,6 +2831,31 @@ mod tests {
         assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
         // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
         assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
+    }
+
+    #[test]
+    fn completion_handler_typedef_binds_as_a_block_param() {
+        // `typedef void (^MTLHandler)(id, NSError *)` used as a param must be detected
+        // as a block *through the typedef* and emit the block struct + invoke
+        // trampoline + (cb, ctx) wrapper — not skip as an unmapped type. Reuses the
+        // same stack-block mechanism as inline `usingBlock:`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "MTLHandler",
+                  "type": { "qualType": "void (^)(id, NSError *)" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "compileWithSource:completionHandler:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "source", "type": { "qualType": "NSString *" } },
+                        { "kind": "ParmVarDecl", "name": "handler", "type": { "qualType": "MTLHandler" } } ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("cb: fn(*u8, i64, *u8), ctx: *u8"), "block wrapper sig:\n{out}");
+        assert!(out.contains("_block {"), "block struct emitted:\n{out}");
+        assert!(out.contains("rt::stack_block_isa()"), "stack block:\n{out}");
+        assert!(!out.contains("unmapped type `MTLHandler`"), "not skipped as unmapped:\n{out}");
     }
 
     #[test]
