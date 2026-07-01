@@ -59,6 +59,17 @@ fn correction_indicator_type_from_raw(raw: i64) -> CorrectionIndicatorType {
     return CorrectionIndicatorType::Default;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct String {
     opaque _obj: *u8,
@@ -145,23 +156,23 @@ impl SpellChecker {
         return rt::msg_i64(rt::get_class(#str_ptr("NSSpellChecker\0")), rt::sel(#str_ptr("uniqueSpellDocumentTag\0")));
     }
 
-    fn check_spelling_of_string_starting_at_language_wrap_in_spell_document_with_tag_word_count(this, string_to_check: str, starting_offset: i64, language: str, wrap_flag: bool, tag: i64, word_count: *u8) -> rt::Range {
-        return rt::msg_range_id_i64_id_i8_i64_id(this._obj, rt::sel(#str_ptr("checkSpellingOfString:startingAt:language:wrap:inSpellDocumentWithTag:wordCount:\0")), bridge::nsstring(string_to_check), starting_offset, bridge::nsstring(language), wrap_flag as i8, tag, word_count);
+    fn check_spelling_of_string_starting_at(this, string_to_check: str, starting_offset: i64, language: str, wrap: bool, in_spell_document_with_tag: i64, word_count: *u8) -> rt::Range {
+        return rt::msg_range_id_i64_id_i8_i64_id(this._obj, rt::sel(#str_ptr("checkSpellingOfString:startingAt:language:wrap:inSpellDocumentWithTag:wordCount:\0")), bridge::nsstring(string_to_check), starting_offset, bridge::nsstring(language), wrap as i8, in_spell_document_with_tag, word_count);
     }
 
-    fn check_spelling_of_string_starting_at(this, string_to_check: str, starting_offset: i64) -> rt::Range {
-        return rt::msg_range_id_i64(this._obj, rt::sel(#str_ptr("checkSpellingOfString:startingAt:\0")), bridge::nsstring(string_to_check), starting_offset);
+    fn check_spelling_of_string(this, string_to_check: str, starting_at: i64) -> rt::Range {
+        return rt::msg_range_id_i64(this._obj, rt::sel(#str_ptr("checkSpellingOfString:startingAt:\0")), bridge::nsstring(string_to_check), starting_at);
     }
 
-    fn count_words_in_string_language(this, string_to_count: str, language: str) -> i64 {
+    fn count_words_in_string(this, string_to_count: str, language: str) -> i64 {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("countWordsInString:language:\0")), bridge::nsstring(string_to_count), bridge::nsstring(language));
     }
 
     // SKIPPED `checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:`: param `NSArray<NSDictionary<NSString *,id> *> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
-    // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: leading param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
-    // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: leading param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
-    // SKIPPED `menuForResult:string:options:atLocation:inView:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
+    // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: return `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
+    // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `menuForResult:string:options:atLocation:inView:`: msgSend shape `id_id_id_id_point_id` not yet modelled
     fn user_quotes_array_for_language(this, language: str) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("userQuotesArrayForLanguage:\0")), bridge::nsstring(language));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -180,13 +191,35 @@ impl SpellChecker {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateSpellingPanelWithMisspelledWord:\0")), bridge::nsstring(word));
     }
 
-    // SKIPPED `updateSpellingPanelWithGrammarString:detail:`: param `NSDictionary<NSString *,id> * _Nonnull` — generic collection
+    fn update_spelling_panel_with_grammar_string(this, string: str, detail: string_map::StringMap[AnyObject]) {
+        let dict_detail: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_detail: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_detail: usize = detail.slot_capacity();
+        var dsi_detail: usize = 0 as usize;
+        while dsi_detail < dcap_detail {
+            match detail.value_ptr_at_slot(dsi_detail) {
+                option::Option[*AnyObject]::Some(dvp_detail) => {
+                    match detail.key_ptr_at_slot(dsi_detail) {
+                        option::Option[*text::Text]::Some(dkp_detail) => {
+                    let dval_detail: *u8 = (*dvp_detail).raw();
+                            rt::msg_void_id_id(dict_detail, dset_detail, dval_detail, bridge::nsstring((*dkp_detail).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_detail = dsi_detail +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("updateSpellingPanelWithGrammarString:detail:\0")), bridge::nsstring(string), dict_detail);
+    }
+
     fn update_panels(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updatePanels\0")));
     }
 
-    fn ignore_word_in_spell_document_with_tag(this, word_to_ignore: str, tag: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("ignoreWord:inSpellDocumentWithTag:\0")), bridge::nsstring(word_to_ignore), tag);
+    fn ignore_word(this, word_to_ignore: str, in_spell_document_with_tag: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("ignoreWord:inSpellDocumentWithTag:\0")), bridge::nsstring(word_to_ignore), in_spell_document_with_tag);
     }
 
     fn ignored_words_in_spell_document_with_tag(this, tag: i64) -> vec::Vec[text::Text] {
@@ -203,12 +236,12 @@ impl SpellChecker {
         return out;
     }
 
-    fn set_ignored_words_in_spell_document_with_tag(this, words: vec::Vec[text::Text], tag: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setIgnoredWords:inSpellDocumentWithTag:\0")), bridge::nsarray_of_text(words), tag);
+    fn set_ignored_words(this, words: vec::Vec[text::Text], in_spell_document_with_tag: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setIgnoredWords:inSpellDocumentWithTag:\0")), bridge::nsarray_of_text(words), in_spell_document_with_tag);
     }
 
-    fn guesses_for_word_range_in_string_language_in_spell_document_with_tag(this, range: rt::Range, string: str, language: str, tag: i64) -> vec::Vec[text::Text] {
-        let arr: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("guessesForWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(string), bridge::nsstring(language), tag);
+    fn guesses_for_word_range(this, range: rt::Range, in_string: str, language: str, in_spell_document_with_tag: i64) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("guessesForWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(in_string), bridge::nsstring(language), in_spell_document_with_tag);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
@@ -221,13 +254,13 @@ impl SpellChecker {
         return out;
     }
 
-    fn correction_for_word_range_in_string_language_in_spell_document_with_tag(this, range: rt::Range, string: str, language: str, tag: i64) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("correctionForWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(string), bridge::nsstring(language), tag);
+    fn correction_for_word_range(this, range: rt::Range, in_string: str, language: str, in_spell_document_with_tag: i64) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("correctionForWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(in_string), bridge::nsstring(language), in_spell_document_with_tag);
         return bridge::to_text_option(ns);
     }
 
-    fn completions_for_partial_word_range_in_string_language_in_spell_document_with_tag(this, range: rt::Range, string: str, language: str, tag: i64) -> vec::Vec[text::Text] {
-        let arr: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("completionsForPartialWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(string), bridge::nsstring(language), tag);
+    fn completions_for_partial_word_range(this, range: rt::Range, in_string: str, language: str, in_spell_document_with_tag: i64) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_range_id_id_i64(this._obj, rt::sel(#str_ptr("completionsForPartialWordRange:inString:language:inSpellDocumentWithTag:\0")), range, bridge::nsstring(in_string), bridge::nsstring(language), in_spell_document_with_tag);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
@@ -240,8 +273,8 @@ impl SpellChecker {
         return out;
     }
 
-    fn language_for_word_range_in_string_orthography(this, range: rt::Range, string: str, orthography: Orthography) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_range_id_id(this._obj, rt::sel(#str_ptr("languageForWordRange:inString:orthography:\0")), range, bridge::nsstring(string), orthography.raw());
+    fn language_for_word_range(this, range: rt::Range, in_string: str, orthography: Orthography) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_range_id_id(this._obj, rt::sel(#str_ptr("languageForWordRange:inString:orthography:\0")), range, bridge::nsstring(in_string), orthography.raw());
         return bridge::to_text_option(ns);
     }
 
@@ -249,8 +282,8 @@ impl SpellChecker {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("closeSpellDocumentWithTag:\0")), tag);
     }
 
-    fn record_response_to_correction_for_word_language_in_spell_document_with_tag(this, response: CorrectionResponse, correction: str, word: str, language: str, tag: i64) {
-        rt::msg_void_i64_id_id_id_i64(this._obj, rt::sel(#str_ptr("recordResponse:toCorrection:forWord:language:inSpellDocumentWithTag:\0")), correction_response_raw(response), bridge::nsstring(correction), bridge::nsstring(word), bridge::nsstring(language), tag);
+    fn record_response(this, response: CorrectionResponse, to_correction: str, for_word: str, language: str, in_spell_document_with_tag: i64) {
+        rt::msg_void_i64_id_id_id_i64(this._obj, rt::sel(#str_ptr("recordResponse:toCorrection:forWord:language:inSpellDocumentWithTag:\0")), correction_response_raw(response), bridge::nsstring(to_correction), bridge::nsstring(for_word), bridge::nsstring(language), in_spell_document_with_tag);
     }
 
     // SKIPPED `showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:`: block-method msgSend shape not modelled
@@ -259,12 +292,12 @@ impl SpellChecker {
     }
 
     // SKIPPED `showInlinePredictionForCandidates:client:`: param `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
-    fn prevents_autocorrection_before_string_language(this, string: str, language: str) -> bool {
+    fn prevents_autocorrection_before_string(this, string: str, language: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("preventsAutocorrectionBeforeString:language:\0")), bridge::nsstring(string), bridge::nsstring(language)) != (0 as i8);
     }
 
-    fn deletes_autospace_between_string_and_string_language(this, preceding_string: str, following_string: str, language: str) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("deletesAutospaceBetweenString:andString:language:\0")), bridge::nsstring(preceding_string), bridge::nsstring(following_string), bridge::nsstring(language)) != (0 as i8);
+    fn deletes_autospace_between_string(this, preceding_string: str, and_string: str, language: str) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("deletesAutospaceBetweenString:andString:language:\0")), bridge::nsstring(preceding_string), bridge::nsstring(and_string), bridge::nsstring(language)) != (0 as i8);
     }
 
     fn set_word_field_string_value(this, string: str) {

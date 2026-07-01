@@ -35,7 +35,7 @@ impl StepperTouchBarItem {
 
     fn from_raw(ptr: *u8) -> StepperTouchBarItem { return StepperTouchBarItem { _obj: ptr }; }
 
-    fn stepper_touch_bar_item_with_identifier_formatter(identifier: str, formatter: *u8) -> StepperTouchBarItem {
+    fn stepper_touch_bar_item_with_identifier(identifier: str, formatter: *u8) -> StepperTouchBarItem {
         return StepperTouchBarItem { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSStepperTouchBarItem\0")), rt::sel(#str_ptr("stepperTouchBarItemWithIdentifier:formatter:\0")), bridge::nsstring(identifier), formatter) };
     }
 

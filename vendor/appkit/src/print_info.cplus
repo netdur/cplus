@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSPaperOrientation` (NS_ENUM)
 enum PaperOrientation {
@@ -45,6 +46,17 @@ fn printing_pagination_mode_from_raw(raw: i64) -> PrintingPaginationMode {
     return PrintingPaginationMode::Automatic;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSPDFInfo` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct PDFInfo {
     opaque _obj: *u8,
@@ -79,20 +91,55 @@ impl PrintInfo {
 
     fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
 
-    // SKIPPED `initWithDictionary:`: param `NSDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — generic collection
+    fn new(attributes: string_map::StringMap[AnyObject]) -> PrintInfo {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return PrintInfo { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDictionary:\0")), dict_attributes) };
+    }
+
     fn new_with_coder(coder: *u8) -> PrintInfo {
         let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return PrintInfo { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn new() -> PrintInfo {
-        let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
-        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-        return PrintInfo { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn dictionary(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dictionary\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
     }
 
-    // SKIPPED `dictionary`: return `NSMutableDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn set_up_print_operation_default_values(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setUpPrintOperationDefaultValues\0")));
     }
@@ -260,7 +307,23 @@ impl PrintInfo {
         return option::some(Printer::from_raw(obj));
     }
 
-    // SKIPPED `printSettings`: return `API_AVAILABLE NSMutableDictionary<NSPrintInfoSettingKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn print_settings(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("printSettings\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn is_selection_only(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSelectionOnly\0"))) != (0 as i8);
     }

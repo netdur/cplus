@@ -173,8 +173,8 @@ impl PredicateEditorRowTemplate {
     // SKIPPED `initWithLeftExpressions:rightExpressions:modifier:operators:options:`: param `NSArray<NSExpression *> * _Nonnull` — generic collection
     // SKIPPED `initWithLeftExpressions:rightExpressionAttributeType:modifier:operators:options:`: param `NSArray<NSExpression *> * _Nonnull` — generic collection
     // SKIPPED `initWithCompoundTypes:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
-    fn templates_with_attribute_key_paths_in_entity_description(key_paths: vec::Vec[text::Text], entity_description: EntityDescription) -> vec::Vec[PredicateEditorRowTemplate] {
-        let arr: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSPredicateEditorRowTemplate\0")), rt::sel(#str_ptr("templatesWithAttributeKeyPaths:inEntityDescription:\0")), bridge::nsarray_of_text(key_paths), entity_description.raw());
+    fn templates_with_attribute_key_paths(key_paths: vec::Vec[text::Text], in_entity_description: EntityDescription) -> vec::Vec[PredicateEditorRowTemplate] {
+        let arr: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSPredicateEditorRowTemplate\0")), rt::sel(#str_ptr("templatesWithAttributeKeyPaths:inEntityDescription:\0")), bridge::nsarray_of_text(key_paths), in_entity_description.raw());
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[PredicateEditorRowTemplate] = vec::Vec[PredicateEditorRowTemplate]::with_capacity(n as usize);
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));

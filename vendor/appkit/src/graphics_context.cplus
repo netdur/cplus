@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSImageInterpolation` (NS_ENUM)
 enum ImageInterpolation {
@@ -159,6 +160,17 @@ fn color_rendering_intent_from_raw(raw: i64) -> ColorRenderingIntent {
     return ColorRenderingIntent::Default;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct String {
     opaque _obj: *u8,
@@ -205,7 +217,33 @@ impl GraphicsContext {
 
     fn from_raw(ptr: *u8) -> GraphicsContext { return GraphicsContext { _obj: ptr }; }
 
-    // SKIPPED `graphicsContextWithAttributes:`: param `NSDictionary<NSGraphicsContextAttributeKey,id> * _Nonnull` — generic collection
+    fn graphics_context_with_attributes(attributes: string_map::StringMap[AnyObject]) -> option::Option[GraphicsContext] {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithAttributes:\0")), dict_attributes);
+        if obj == { 0 as *u8 } {
+            return option::Option[GraphicsContext]::None;
+        }
+        return option::some(GraphicsContext::from_raw(obj));
+    }
+
     fn graphics_context_with_bitmap_image_rep(bitmap_rep: BitmapImageRep) -> option::Option[GraphicsContext] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithBitmapImageRep:\0")), bitmap_rep.raw());
         if obj == { 0 as *u8 } {
@@ -214,8 +252,8 @@ impl GraphicsContext {
         return option::some(GraphicsContext { _obj: obj });
     }
 
-    fn graphics_context_with_c_g_context_flipped(graphics_port: *u8, initial_flipped_state: bool) -> GraphicsContext {
-        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithCGContext:flipped:\0")), graphics_port, initial_flipped_state as i8) };
+    fn graphics_context_with_c_g_context(graphics_port: *u8, flipped: bool) -> GraphicsContext {
+        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithCGContext:flipped:\0")), graphics_port, flipped as i8) };
     }
 
     fn current_context_drawing_to_screen() -> bool {
@@ -246,7 +284,23 @@ impl GraphicsContext {
         rt::msg_void_id(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("setCurrentContext:\0")), current_context.raw());
     }
 
-    // SKIPPED `attributes`: return `NSDictionary<NSGraphicsContextAttributeKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn is_drawing_to_screen(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingToScreen\0"))) != (0 as i8);
     }
@@ -317,8 +371,8 @@ impl GraphicsContext {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFocusStack:\0")), stack);
     }
 
-    fn graphics_context_with_graphics_port_flipped(graphics_port: *u8, initial_flipped_state: bool) -> GraphicsContext {
-        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithGraphicsPort:flipped:\0")), graphics_port, initial_flipped_state as i8) };
+    fn graphics_context_with_graphics_port(graphics_port: *u8, flipped: bool) -> GraphicsContext {
+        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithGraphicsPort:flipped:\0")), graphics_port, flipped as i8) };
     }
 
     fn graphics_context_with_window(window: Window) -> GraphicsContext {

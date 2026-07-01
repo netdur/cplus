@@ -114,12 +114,12 @@ impl Scrubber {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItemsAtIndexes:\0")), indexes);
     }
 
-    fn move_item_at_index_to_index(this, old_index: i64, new_index: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveItemAtIndex:toIndex:\0")), old_index, new_index);
+    fn move_item_at_index(this, old_index: i64, to_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveItemAtIndex:toIndex:\0")), old_index, to_index);
     }
 
-    fn scroll_item_at_index_to_alignment(this, index: i64, alignment: ScrubberAlignment) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollItemAtIndex:toAlignment:\0")), index, scrubber_alignment_raw(alignment));
+    fn scroll_item_at_index(this, index: i64, to_alignment: ScrubberAlignment) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollItemAtIndex:toAlignment:\0")), index, scrubber_alignment_raw(to_alignment));
     }
 
     fn item_view_for_item_at_index(this, index: i64) -> option::Option[ScrubberItemView] {
@@ -130,15 +130,15 @@ impl Scrubber {
         return option::some(ScrubberItemView::from_raw(obj));
     }
 
-    fn register_class_for_item_identifier(this, item_view_class: *u8, item_identifier: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerClass:forItemIdentifier:\0")), item_view_class, bridge::nsstring(item_identifier));
+    fn register_class(this, item_view_class: *u8, for_item_identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerClass:forItemIdentifier:\0")), item_view_class, bridge::nsstring(for_item_identifier));
     }
 
-    fn register_nib_for_item_identifier(this, nib: Nib, item_identifier: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemIdentifier:\0")), nib.raw(), bridge::nsstring(item_identifier));
+    fn register_nib(this, nib: Nib, for_item_identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemIdentifier:\0")), nib.raw(), bridge::nsstring(for_item_identifier));
     }
 
-    fn make_item_with_identifier_owner(this, item_identifier: str, owner: *u8) -> option::Option[ScrubberItemView] {
+    fn make_item_with_identifier(this, item_identifier: str, owner: *u8) -> option::Option[ScrubberItemView] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeItemWithIdentifier:owner:\0")), bridge::nsstring(item_identifier), owner);
         if obj == { 0 as *u8 } {
             return option::Option[ScrubberItemView]::None;

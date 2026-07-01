@@ -160,7 +160,7 @@ fn CollectionLayoutSection_set_visible_items_invalidation_handler_invoke(block: 
 }
 
 #[repr(C)]
-struct CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block {
+struct CollectionLayoutGroup_custom_group_with_layout_size_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -170,8 +170,8 @@ struct CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block {
     opaque ctx: *u8,
 }
 
-fn CollectionLayoutGroup_custom_group_with_layout_size_item_provider_invoke(block: *u8, a0: i64) {
-    let bl: *CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block = { block as *CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block };
+fn CollectionLayoutGroup_custom_group_with_layout_size_invoke(block: *u8, a0: i64) {
+    let bl: *CollectionLayoutGroup_custom_group_with_layout_size_block = { block as *CollectionLayoutGroup_custom_group_with_layout_size_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -330,11 +330,11 @@ impl CollectionLayoutGroup {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutGroup { return CollectionLayoutGroup { _obj: ptr }; }
 
-    fn horizontal_group_with_layout_size_subitem_count(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
+    fn horizontal_group_with_layout_size_subitem(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
         return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("horizontalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
     }
 
-    fn horizontal_group_with_layout_size_subitems(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
+    fn horizontal_group_with_layout_size(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
         let arr_subitems: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_subitems: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_subitems: usize = subitems.count();
@@ -349,11 +349,11 @@ impl CollectionLayoutGroup {
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("horizontalGroupWithLayoutSize:subitems:\0")), layout_size.raw(), arr_subitems);
     }
 
-    fn vertical_group_with_layout_size_subitem_count(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
+    fn vertical_group_with_layout_size_subitem(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
         return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("verticalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
     }
 
-    fn vertical_group_with_layout_size_subitems(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
+    fn vertical_group_with_layout_size(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
         let arr_subitems: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_subitems: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_subitems: usize = subitems.count();
@@ -368,9 +368,9 @@ impl CollectionLayoutGroup {
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("verticalGroupWithLayoutSize:subitems:\0")), layout_size.raw(), arr_subitems);
     }
 
-    fn custom_group_with_layout_size_item_provider(layout_size: CollectionLayoutSize, cb: fn(*u8, i64), ctx: *u8) -> *u8 {
+    fn custom_group_with_layout_size(layout_size: CollectionLayoutSize, cb: fn(*u8, i64), ctx: *u8) -> *u8 {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block = CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutGroup_custom_group_with_layout_size_item_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: CollectionLayoutGroup_custom_group_with_layout_size_block = CollectionLayoutGroup_custom_group_with_layout_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutGroup_custom_group_with_layout_size_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("customGroupWithLayoutSize:itemProvider:\0")), layout_size.raw(), bp);
     }
@@ -533,11 +533,11 @@ impl CollectionLayoutSupplementaryItem {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutSupplementaryItem { return CollectionLayoutSupplementaryItem { _obj: ptr }; }
 
-    fn supplementary_item_with_layout_size_element_kind_container_anchor(layout_size: CollectionLayoutSize, element_kind: str, container_anchor: CollectionLayoutAnchor) -> CollectionLayoutSupplementaryItem {
+    fn supplementary_item_with_layout_size(layout_size: CollectionLayoutSize, element_kind: str, container_anchor: CollectionLayoutAnchor) -> CollectionLayoutSupplementaryItem {
         return CollectionLayoutSupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSupplementaryItem\0")), rt::sel(#str_ptr("supplementaryItemWithLayoutSize:elementKind:containerAnchor:\0")), layout_size.raw(), bridge::nsstring(element_kind), container_anchor.raw())) };
     }
 
-    fn supplementary_item_with_layout_size_element_kind_container_anchor_item_anchor(layout_size: CollectionLayoutSize, element_kind: str, container_anchor: CollectionLayoutAnchor, item_anchor: CollectionLayoutAnchor) -> CollectionLayoutSupplementaryItem {
+    fn supplementary_item_with_layout_size_element_kind(layout_size: CollectionLayoutSize, element_kind: str, container_anchor: CollectionLayoutAnchor, item_anchor: CollectionLayoutAnchor) -> CollectionLayoutSupplementaryItem {
         return CollectionLayoutSupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSupplementaryItem\0")), rt::sel(#str_ptr("supplementaryItemWithLayoutSize:elementKind:containerAnchor:itemAnchor:\0")), layout_size.raw(), bridge::nsstring(element_kind), container_anchor.raw(), item_anchor.raw())) };
     }
 
@@ -588,11 +588,11 @@ impl CollectionLayoutBoundarySupplementaryItem {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutBoundarySupplementaryItem { return CollectionLayoutBoundarySupplementaryItem { _obj: ptr }; }
 
-    fn boundary_supplementary_item_with_layout_size_element_kind_alignment(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment) -> CollectionLayoutBoundarySupplementaryItem {
+    fn boundary_supplementary_item_with_layout_size(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment) -> CollectionLayoutBoundarySupplementaryItem {
         return CollectionLayoutBoundarySupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0")), rt::sel(#str_ptr("boundarySupplementaryItemWithLayoutSize:elementKind:alignment:\0")), layout_size.raw(), bridge::nsstring(element_kind), rect_alignment_raw(alignment))) };
     }
 
-    fn boundary_supplementary_item_with_layout_size_element_kind_alignment_absolute_offset(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment, absolute_offset: rt::Point) -> CollectionLayoutBoundarySupplementaryItem {
+    fn boundary_supplementary_item_with_layout_size_element_kind(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment, absolute_offset: rt::Point) -> CollectionLayoutBoundarySupplementaryItem {
         return CollectionLayoutBoundarySupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_i64_point(rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0")), rt::sel(#str_ptr("boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:\0")), layout_size.raw(), bridge::nsstring(element_kind), rect_alignment_raw(alignment), absolute_offset)) };
     }
 
@@ -681,8 +681,8 @@ impl CollectionLayoutSize {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutSize { return CollectionLayoutSize { _obj: ptr }; }
 
-    fn size_with_width_dimension_height_dimension(width: CollectionLayoutDimension, height: CollectionLayoutDimension) -> CollectionLayoutSize {
-        return CollectionLayoutSize { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSize\0")), rt::sel(#str_ptr("sizeWithWidthDimension:heightDimension:\0")), width.raw(), height.raw())) };
+    fn size_with_width_dimension(width: CollectionLayoutDimension, height_dimension: CollectionLayoutDimension) -> CollectionLayoutSize {
+        return CollectionLayoutSize { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSize\0")), rt::sel(#str_ptr("sizeWithWidthDimension:heightDimension:\0")), width.raw(), height_dimension.raw())) };
     }
 
     fn new() -> CollectionLayoutSize {
@@ -815,7 +815,7 @@ impl CollectionLayoutEdgeSpacing {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutEdgeSpacing { return CollectionLayoutEdgeSpacing { _obj: ptr }; }
 
-    fn spacing_for_leading_top_trailing_bottom(leading: CollectionLayoutSpacing, top: CollectionLayoutSpacing, trailing: CollectionLayoutSpacing, bottom: CollectionLayoutSpacing) -> CollectionLayoutEdgeSpacing {
+    fn spacing_for_leading(leading: CollectionLayoutSpacing, top: CollectionLayoutSpacing, trailing: CollectionLayoutSpacing, bottom: CollectionLayoutSpacing) -> CollectionLayoutEdgeSpacing {
         return CollectionLayoutEdgeSpacing { _obj: rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutEdgeSpacing\0")), rt::sel(#str_ptr("spacingForLeading:top:trailing:bottom:\0")), leading.raw(), top.raw(), trailing.raw(), bottom.raw())) };
     }
 

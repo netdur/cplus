@@ -65,19 +65,19 @@ impl PopUpButton {
 
     fn from_raw(ptr: *u8) -> PopUpButton { return PopUpButton { _obj: ptr }; }
 
-    fn pop_up_button_with_menu_target_action(menu: Menu, target: *u8, action: *u8) -> PopUpButton {
+    fn pop_up_button_with_menu(menu: Menu, target: *u8, action: *u8) -> PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("popUpButtonWithMenu:target:action:\0")), menu.raw(), target, action)) };
     }
 
-    fn pull_down_button_with_title_menu(title: str, menu: Menu) -> PopUpButton {
+    fn pull_down_button_with_title(title: str, menu: Menu) -> PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:menu:\0")), bridge::nsstring(title), menu.raw())) };
     }
 
-    fn pull_down_button_with_image_menu(image: *u8, menu: Menu) -> PopUpButton {
+    fn pull_down_button_with_image(image: *u8, menu: Menu) -> PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithImage:menu:\0")), image, menu.raw())) };
     }
 
-    fn pull_down_button_with_title_image_menu(title: str, image: *u8, menu: Menu) -> PopUpButton {
+    fn pull_down_button_with_title_image(title: str, image: *u8, menu: Menu) -> PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:image:menu:\0")), bridge::nsstring(title), image, menu.raw())) };
     }
 
@@ -90,8 +90,8 @@ impl PopUpButton {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithTitles:\0")), bridge::nsarray_of_text(item_titles));
     }
 
-    fn insert_item_with_title_at_index(this, title: str, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:atIndex:\0")), bridge::nsstring(title), index);
+    fn insert_item_with_title(this, title: str, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:atIndex:\0")), bridge::nsstring(title), at_index);
     }
 
     fn remove_item_with_title(this, title: str) {
@@ -122,8 +122,8 @@ impl PopUpButton {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), obj);
     }
 
-    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    fn index_of_item_with_target(this, target: *u8, and_action: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, and_action);
     }
 
     fn item_at_index(this, index: i64) -> option::Option[*u8] {

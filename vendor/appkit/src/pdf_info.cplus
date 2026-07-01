@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSPaperOrientation` (NS_ENUM)
 enum PaperOrientation {
@@ -23,6 +24,17 @@ fn paper_orientation_raw(v: PaperOrientation) -> i64 {
 fn paper_orientation_from_raw(raw: i64) -> PaperOrientation {
     if raw == (1 as i64) { return PaperOrientation::Landscape; }
     return PaperOrientation::Portrait;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSURL` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -101,6 +113,22 @@ impl PDFInfo {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setPaperSize:\0")), paper_size);
     }
 
-    // SKIPPED `attributes`: return `NSMutableDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 

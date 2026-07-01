@@ -206,8 +206,8 @@ impl StackView {
         return rt::msg_id_id(rt::get_class(#str_ptr("NSStackView\0")), rt::sel(#str_ptr("stackViewWithViews:\0")), arr_views);
     }
 
-    fn set_custom_spacing_after_view(this, spacing: f64, view: View) {
-        rt::msg_void_f64_id(this._obj, rt::sel(#str_ptr("setCustomSpacing:afterView:\0")), spacing, view.raw());
+    fn set_custom_spacing(this, spacing: f64, after_view: View) {
+        rt::msg_void_f64_id(this._obj, rt::sel(#str_ptr("setCustomSpacing:afterView:\0")), spacing, after_view.raw());
     }
 
     fn custom_spacing_after_view(this, view: View) -> f64 {
@@ -218,16 +218,16 @@ impl StackView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view.raw());
     }
 
-    fn insert_arranged_subview_at_index(this, view: View, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view.raw(), index);
+    fn insert_arranged_subview(this, view: View, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view.raw(), at_index);
     }
 
     fn remove_arranged_subview(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
 
-    fn set_visibility_priority_for_view(this, priority: f32, view: View) {
-        rt::msg_void_f32_id(this._obj, rt::sel(#str_ptr("setVisibilityPriority:forView:\0")), priority, view.raw());
+    fn set_visibility_priority(this, priority: f32, for_view: View) {
+        rt::msg_void_f32_id(this._obj, rt::sel(#str_ptr("setVisibilityPriority:forView:\0")), priority, for_view.raw());
     }
 
     fn visibility_priority_for_view(this, view: View) -> f32 {
@@ -238,16 +238,16 @@ impl StackView {
         return rt::msg_f32_i64(this._obj, rt::sel(#str_ptr("clippingResistancePriorityForOrientation:\0")), layout_constraint_orientation_raw(orientation));
     }
 
-    fn set_clipping_resistance_priority_for_orientation(this, clipping_resistance_priority: f32, orientation: LayoutConstraintOrientation) {
-        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setClippingResistancePriority:forOrientation:\0")), clipping_resistance_priority, layout_constraint_orientation_raw(orientation));
+    fn set_clipping_resistance_priority(this, clipping_resistance_priority: f32, for_orientation: LayoutConstraintOrientation) {
+        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setClippingResistancePriority:forOrientation:\0")), clipping_resistance_priority, layout_constraint_orientation_raw(for_orientation));
     }
 
     fn hugging_priority_for_orientation(this, orientation: LayoutConstraintOrientation) -> f32 {
         return rt::msg_f32_i64(this._obj, rt::sel(#str_ptr("huggingPriorityForOrientation:\0")), layout_constraint_orientation_raw(orientation));
     }
 
-    fn set_hugging_priority_for_orientation(this, hugging_priority: f32, orientation: LayoutConstraintOrientation) {
-        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setHuggingPriority:forOrientation:\0")), hugging_priority, layout_constraint_orientation_raw(orientation));
+    fn set_hugging_priority(this, hugging_priority: f32, for_orientation: LayoutConstraintOrientation) {
+        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setHuggingPriority:forOrientation:\0")), hugging_priority, layout_constraint_orientation_raw(for_orientation));
     }
 
     fn delegate(this) -> option::Option[*u8] {
@@ -333,12 +333,12 @@ impl StackView {
         return out;
     }
 
-    fn add_view_in_gravity(this, view: View, gravity: StackViewGravity) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addView:inGravity:\0")), view.raw(), stack_view_gravity_raw(gravity));
+    fn add_view(this, view: View, in_gravity: StackViewGravity) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addView:inGravity:\0")), view.raw(), stack_view_gravity_raw(in_gravity));
     }
 
-    fn insert_view_at_index_in_gravity(this, view: View, index: u64, gravity: StackViewGravity) {
-        rt::msg_void_id_u64_i64(this._obj, rt::sel(#str_ptr("insertView:atIndex:inGravity:\0")), view.raw(), index, stack_view_gravity_raw(gravity));
+    fn insert_view(this, view: View, at_index: u64, in_gravity: StackViewGravity) {
+        rt::msg_void_id_u64_i64(this._obj, rt::sel(#str_ptr("insertView:atIndex:inGravity:\0")), view.raw(), at_index, stack_view_gravity_raw(in_gravity));
     }
 
     fn remove_view(this, view: View) {
@@ -358,7 +358,7 @@ impl StackView {
         return out;
     }
 
-    fn set_views_in_gravity(this, views: vec::Vec[View], gravity: StackViewGravity) {
+    fn set_views(this, views: vec::Vec[View], in_gravity: StackViewGravity) {
         let arr_views: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_views: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_views: usize = views.count();
@@ -370,7 +370,7 @@ impl StackView {
             }
             i_views = i_views +% (1 as usize);
         }
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setViews:inGravity:\0")), arr_views, stack_view_gravity_raw(gravity));
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setViews:inGravity:\0")), arr_views, stack_view_gravity_raw(in_gravity));
     }
 
     fn views(this) -> vec::Vec[View] {

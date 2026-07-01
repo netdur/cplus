@@ -139,24 +139,24 @@ impl PathCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setObjectValue:\0")), obj);
     }
 
-    fn rect_of_path_component_cell_with_frame_in_view(this, cell: PathComponentCell, frame: rt::Rect, view: *u8) -> rt::Rect {
-        return rt::msg_rect_id_rect_id(this._obj, rt::sel(#str_ptr("rectOfPathComponentCell:withFrame:inView:\0")), cell.raw(), frame, view);
+    fn rect_of_path_component_cell(this, cell: PathComponentCell, with_frame: rt::Rect, in_view: *u8) -> rt::Rect {
+        return rt::msg_rect_id_rect_id(this._obj, rt::sel(#str_ptr("rectOfPathComponentCell:withFrame:inView:\0")), cell.raw(), with_frame, in_view);
     }
 
-    fn path_component_cell_at_point_with_frame_in_view(this, point: rt::Point, frame: rt::Rect, view: *u8) -> option::Option[PathComponentCell] {
-        let obj: *u8 = rt::msg_id_point_rect_id(this._obj, rt::sel(#str_ptr("pathComponentCellAtPoint:withFrame:inView:\0")), point, frame, view);
+    fn path_component_cell_at_point(this, point: rt::Point, with_frame: rt::Rect, in_view: *u8) -> option::Option[PathComponentCell] {
+        let obj: *u8 = rt::msg_id_point_rect_id(this._obj, rt::sel(#str_ptr("pathComponentCellAtPoint:withFrame:inView:\0")), point, with_frame, in_view);
         if obj == { 0 as *u8 } {
             return option::Option[PathComponentCell]::None;
         }
         return option::some(PathComponentCell::from_raw(obj));
     }
 
-    fn mouse_entered_with_frame_in_view(this, event: *u8, frame: rt::Rect, view: *u8) {
-        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseEntered:withFrame:inView:\0")), event, frame, view);
+    fn mouse_entered(this, event: *u8, with_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseEntered:withFrame:inView:\0")), event, with_frame, in_view);
     }
 
-    fn mouse_exited_with_frame_in_view(this, event: *u8, frame: rt::Rect, view: *u8) {
-        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseExited:withFrame:inView:\0")), event, frame, view);
+    fn mouse_exited(this, event: *u8, with_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseExited:withFrame:inView:\0")), event, with_frame, in_view);
     }
 
     fn path_style(this) -> PathStyle {

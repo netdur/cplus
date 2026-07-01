@@ -41,28 +41,28 @@ impl LayoutDimension {
         return LayoutConstraint::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToConstant:\0")), c));
     }
 
-    fn constraint_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:multiplier:\0")), anchor.raw(), m));
+    fn constraint_equal_to_anchor(this, anchor: LayoutDimension, multiplier: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_greater_than_or_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:multiplier:\0")), anchor.raw(), m));
+    fn constraint_greater_than_or_equal_to_anchor(this, anchor: LayoutDimension, multiplier: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_less_than_or_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:multiplier:\0")), anchor.raw(), m));
+    fn constraint_less_than_or_equal_to_anchor(this, anchor: LayoutDimension, multiplier: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_equal_to_anchor_multiplier_constant(this, anchor: LayoutDimension, m: f64, c: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, c));
+    fn constraint_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64, constant: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, constant));
     }
 
-    fn constraint_greater_than_or_equal_to_anchor_multiplier_constant(this, anchor: LayoutDimension, m: f64, c: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, c));
+    fn constraint_greater_than_or_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64, constant: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, constant));
     }
 
-    fn constraint_less_than_or_equal_to_anchor_multiplier_constant(this, anchor: LayoutDimension, m: f64, c: f64) -> LayoutConstraint {
-        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, c));
+    fn constraint_less_than_or_equal_to_anchor_multiplier(this, anchor: LayoutDimension, m: f64, constant: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:multiplier:constant:\0")), anchor.raw(), m, constant));
     }
 
 }
@@ -125,15 +125,15 @@ impl LayoutXAxisAnchor {
         return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
-    fn constraint_equal_to_system_spacing_after_anchor_multiplier(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_equal_to_system_spacing_after_anchor(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToSystemSpacingAfterAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_greater_than_or_equal_to_system_spacing_after_anchor_multiplier(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_greater_than_or_equal_to_system_spacing_after_anchor(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToSystemSpacingAfterAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_less_than_or_equal_to_system_spacing_after_anchor_multiplier(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_less_than_or_equal_to_system_spacing_after_anchor(this, anchor: LayoutXAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToSystemSpacingAfterAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
@@ -153,15 +153,15 @@ impl LayoutYAxisAnchor {
         return LayoutDimension::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("anchorWithOffsetToAnchor:\0")), other_anchor.raw()));
     }
 
-    fn constraint_equal_to_system_spacing_below_anchor_multiplier(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_equal_to_system_spacing_below_anchor(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToSystemSpacingBelowAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_greater_than_or_equal_to_system_spacing_below_anchor_multiplier(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_greater_than_or_equal_to_system_spacing_below_anchor(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToSystemSpacingBelowAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 
-    fn constraint_less_than_or_equal_to_system_spacing_below_anchor_multiplier(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
+    fn constraint_less_than_or_equal_to_system_spacing_below_anchor(this, anchor: LayoutYAxisAnchor, multiplier: f64) -> LayoutConstraint {
         return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToSystemSpacingBelowAnchor:multiplier:\0")), anchor.raw(), multiplier));
     }
 

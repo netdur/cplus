@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSPrinterTableStatus` (NS_ENUM)
 enum PrinterTableStatus {
@@ -26,6 +27,17 @@ fn printer_table_status_from_raw(raw: i64) -> PrinterTableStatus {
     if raw == (1 as i64) { return PrinterTableStatus::NSPrinterTableNotFound; }
     if raw == (2 as i64) { return PrinterTableStatus::NSPrinterTableError; }
     return PrinterTableStatus::NSPrinterTableOK;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -112,42 +124,58 @@ impl Printer {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("languageLevel\0")));
     }
 
-    // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn device_description(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("deviceDescription\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn status_for_table(this, table_name: str) -> PrinterTableStatus {
         return printer_table_status_from_raw(rt::msg_i64_id(this._obj, rt::sel(#str_ptr("statusForTable:\0")), bridge::nsstring(table_name)));
     }
 
-    fn is_key_in_table(this, key: str, table: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("isKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
+    fn is_key(this, key: str, in_table: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("isKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table)) != (0 as i8);
     }
 
-    fn boolean_for_key_in_table(this, key: str, table: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("booleanForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
+    fn boolean_for_key(this, key: str, in_table: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("booleanForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table)) != (0 as i8);
     }
 
-    fn float_for_key_in_table(this, key: str, table: str) -> f32 {
-        return rt::msg_f32_id_id(this._obj, rt::sel(#str_ptr("floatForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn float_for_key(this, key: str, in_table: str) -> f32 {
+        return rt::msg_f32_id_id(this._obj, rt::sel(#str_ptr("floatForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
     }
 
-    fn int_for_key_in_table(this, key: str, table: str) -> i32 {
-        return rt::msg_i32_id_id(this._obj, rt::sel(#str_ptr("intForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn int_for_key(this, key: str, in_table: str) -> i32 {
+        return rt::msg_i32_id_id(this._obj, rt::sel(#str_ptr("intForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
     }
 
-    fn rect_for_key_in_table(this, key: str, table: str) -> rt::Rect {
-        return rt::msg_rect_id_id(this._obj, rt::sel(#str_ptr("rectForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn rect_for_key(this, key: str, in_table: str) -> rt::Rect {
+        return rt::msg_rect_id_id(this._obj, rt::sel(#str_ptr("rectForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
     }
 
-    fn size_for_key_in_table(this, key: str, table: str) -> rt::Size {
-        return rt::msg_size_id_id(this._obj, rt::sel(#str_ptr("sizeForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn size_for_key(this, key: str, in_table: str) -> rt::Size {
+        return rt::msg_size_id_id(this._obj, rt::sel(#str_ptr("sizeForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
     }
 
-    fn string_for_key_in_table(this, key: str, table: str) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn string_for_key(this, key: str, in_table: str) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
         return bridge::to_text_option(ns);
     }
 
-    fn string_list_for_key_in_table(this, key: str, table: str) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringListForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    fn string_list_for_key(this, key: str, in_table: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringListForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(in_table));
         return bridge::obj_option(obj);
     }
 
@@ -171,8 +199,8 @@ impl Printer {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isOutputStackInReverseOrder\0"))) != (0 as i8);
     }
 
-    fn printer_with_name_domain_include_unavailable(name: str, domain: str, flag: bool) -> option::Option[Printer] {
-        let obj: *u8 = rt::msg_id_id_id_i8(rt::get_class(#str_ptr("NSPrinter\0")), rt::sel(#str_ptr("printerWithName:domain:includeUnavailable:\0")), bridge::nsstring(name), bridge::nsstring(domain), flag as i8);
+    fn printer_with_name_domain(name: str, domain: str, include_unavailable: bool) -> option::Option[Printer] {
+        let obj: *u8 = rt::msg_id_id_id_i8(rt::get_class(#str_ptr("NSPrinter\0")), rt::sel(#str_ptr("printerWithName:domain:includeUnavailable:\0")), bridge::nsstring(name), bridge::nsstring(domain), include_unavailable as i8);
         if obj == { 0 as *u8 } {
             return option::Option[Printer]::None;
         }

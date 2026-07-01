@@ -90,8 +90,8 @@ impl ColorPanel {
 
     fn from_raw(ptr: *u8) -> ColorPanel { return ColorPanel { _obj: ptr }; }
 
-    fn drag_color_with_event_from_view(color: *u8, event: *u8, source_view: *u8) -> bool {
-        return rt::msg_i8_id_id_id(rt::get_class(#str_ptr("NSColorPanel\0")), rt::sel(#str_ptr("dragColor:withEvent:fromView:\0")), color, event, source_view) != (0 as i8);
+    fn drag_color(color: *u8, with_event: *u8, from_view: *u8) -> bool {
+        return rt::msg_i8_id_id_id(rt::get_class(#str_ptr("NSColorPanel\0")), rt::sel(#str_ptr("dragColor:withEvent:fromView:\0")), color, with_event, from_view) != (0 as i8);
     }
 
     fn set_picker_mask(mask: u64) {

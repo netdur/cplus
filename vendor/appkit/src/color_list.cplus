@@ -61,12 +61,12 @@ impl ColorList {
         return ColorList { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithName:fromFile:\0")), bridge::nsstring(name), bridge::nsstring(path)) };
     }
 
-    fn set_color_for_key(this, color: Color, key: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setColor:forKey:\0")), color.raw(), bridge::nsstring(key));
+    fn set_color(this, color: Color, for_key: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setColor:forKey:\0")), color.raw(), bridge::nsstring(for_key));
     }
 
-    fn insert_color_key_at_index(this, color: Color, key: str, loc: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertColor:key:atIndex:\0")), color.raw(), bridge::nsstring(key), loc);
+    fn insert_color(this, color: Color, key: str, at_index: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertColor:key:atIndex:\0")), color.raw(), bridge::nsstring(key), at_index);
     }
 
     fn remove_color_with_key(this, key: str) {
@@ -81,8 +81,8 @@ impl ColorList {
         return option::some(Color::from_raw(obj));
     }
 
-    fn write_to_u_r_l_error(this, url: *u8, err_ptr: *u8) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:error:\0")), url, err_ptr) != (0 as i8);
+    fn write_to_u_r_l(this, url: *u8, error: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:error:\0")), url, error) != (0 as i8);
     }
 
     fn write_to_file(this, path: str) -> bool {

@@ -83,11 +83,11 @@ impl PickerTouchBarItem {
 
     fn from_raw(ptr: *u8) -> PickerTouchBarItem { return PickerTouchBarItem { _obj: ptr }; }
 
-    fn picker_touch_bar_item_with_identifier_labels_selection_mode_target_action(identifier: str, labels: vec::Vec[text::Text], selection_mode: PickerTouchBarItemSelectionMode, target: *u8, action: *u8) -> PickerTouchBarItem {
+    fn picker_touch_bar_item_with_identifier(identifier: str, labels: vec::Vec[text::Text], selection_mode: PickerTouchBarItemSelectionMode, target: *u8, action: *u8) -> PickerTouchBarItem {
         return PickerTouchBarItem { _obj: rt::msg_id_id_id_i64_id_id(rt::get_class(#str_ptr("NSPickerTouchBarItem\0")), rt::sel(#str_ptr("pickerTouchBarItemWithIdentifier:labels:selectionMode:target:action:\0")), bridge::nsstring(identifier), bridge::nsarray_of_text(labels), picker_touch_bar_item_selection_mode_raw(selection_mode), target, action) };
     }
 
-    fn picker_touch_bar_item_with_identifier_images_selection_mode_target_action(identifier: str, images: vec::Vec[Image], selection_mode: PickerTouchBarItemSelectionMode, target: *u8, action: *u8) -> *u8 {
+    fn picker_touch_bar_item_with_identifier_images(identifier: str, images: vec::Vec[Image], selection_mode: PickerTouchBarItemSelectionMode, target: *u8, action: *u8) -> *u8 {
         let arr_images: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_images: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_images: usize = images.count();
@@ -102,8 +102,8 @@ impl PickerTouchBarItem {
         return rt::msg_id_id_id_i64_id_id(rt::get_class(#str_ptr("NSPickerTouchBarItem\0")), rt::sel(#str_ptr("pickerTouchBarItemWithIdentifier:images:selectionMode:target:action:\0")), bridge::nsstring(identifier), arr_images, picker_touch_bar_item_selection_mode_raw(selection_mode), target, action);
     }
 
-    fn set_image_at_index(this, image: Image, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:atIndex:\0")), image.raw(), index);
+    fn set_image(this, image: Image, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:atIndex:\0")), image.raw(), at_index);
     }
 
     fn image_at_index(this, index: i64) -> option::Option[Image] {
@@ -114,8 +114,8 @@ impl PickerTouchBarItem {
         return option::some(Image::from_raw(obj));
     }
 
-    fn set_label_at_index(this, label: str, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setLabel:atIndex:\0")), bridge::nsstring(label), index);
+    fn set_label(this, label: str, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setLabel:atIndex:\0")), bridge::nsstring(label), at_index);
     }
 
     fn label_at_index(this, index: i64) -> option::Option[text::Text] {

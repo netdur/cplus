@@ -138,8 +138,8 @@ impl TextContainer {
         return TextContainer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn line_fragment_rect_for_proposed_rect_at_index_writing_direction_remaining_rect(this, proposed_rect: rt::Rect, character_index: u64, base_writing_direction: WritingDirection, remaining_rect: *u8) -> rt::Rect {
-        return rt::msg_rect_rect_u64_i64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:\0")), proposed_rect, character_index, writing_direction_raw(base_writing_direction), remaining_rect);
+    fn line_fragment_rect_for_proposed_rect(this, proposed_rect: rt::Rect, at_index: u64, writing_direction: WritingDirection, remaining_rect: *u8) -> rt::Rect {
+        return rt::msg_rect_rect_u64_i64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:\0")), proposed_rect, at_index, writing_direction_raw(writing_direction), remaining_rect);
     }
 
     fn text_layout_manager(this) -> TextLayoutManager {
@@ -248,7 +248,7 @@ impl TextContainer {
     }
 
     // SKIPPED `initWithContainerSize:`: init arg shape not yet modelled
-    fn line_fragment_rect_for_proposed_rect_sweep_direction_movement_direction_remaining_rect(this, proposed_rect: rt::Rect, sweep_direction: LineSweepDirection, movement_direction: LineMovementDirection, remaining_rect: *u8) -> rt::Rect {
+    fn line_fragment_rect_for_proposed_rect_sweep_direction(this, proposed_rect: rt::Rect, sweep_direction: LineSweepDirection, movement_direction: LineMovementDirection, remaining_rect: *u8) -> rt::Rect {
         return rt::msg_rect_rect_i64_i64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:\0")), proposed_rect, line_sweep_direction_raw(sweep_direction), line_movement_direction_raw(movement_direction), remaining_rect);
     }
 

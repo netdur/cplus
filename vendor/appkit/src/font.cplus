@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSControlSize` (NS_ENUM)
 enum ControlSize {
@@ -57,6 +58,17 @@ fn font_rendering_mode_from_raw(raw: i64) -> FontRenderingMode {
     return FontRenderingMode::NSFontDefaultRenderingMode;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSFontDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FontDescriptor {
     opaque _obj: *u8,
@@ -103,8 +115,8 @@ impl Font {
 
     fn from_raw(ptr: *u8) -> Font { return Font { _obj: ptr }; }
 
-    fn font_with_name_size(font_name: str, font_size: f64) -> option::Option[Font] {
-        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithName:size:\0")), bridge::nsstring(font_name), font_size);
+    fn font_with_name(font_name: str, size: f64) -> option::Option[Font] {
+        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithName:size:\0")), bridge::nsstring(font_name), size);
         if obj == { 0 as *u8 } {
             return option::Option[Font]::None;
         }
@@ -119,8 +131,8 @@ impl Font {
         return option::some(Font { _obj: obj });
     }
 
-    fn font_with_descriptor_size(font_descriptor: FontDescriptor, font_size: f64) -> option::Option[Font] {
-        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithDescriptor:size:\0")), font_descriptor.raw(), font_size);
+    fn font_with_descriptor(font_descriptor: FontDescriptor, size: f64) -> option::Option[Font] {
+        let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("fontWithDescriptor:size:\0")), font_descriptor.raw(), size);
         if obj == { 0 as *u8 } {
             return option::Option[Font]::None;
         }
@@ -203,7 +215,7 @@ impl Font {
         return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontOfSize:weight:\0")), font_size, weight) };
     }
 
-    fn monospaced_digit_system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
+    fn monospaced_digit_system_font_of_size(font_size: f64, weight: f64) -> Font {
         return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedDigitSystemFontOfSize:weight:\0")), font_size, weight) };
     }
 
@@ -211,7 +223,7 @@ impl Font {
         return Font { _obj: rt::msg_id_f64_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontOfSize:weight:width:\0")), font_size, weight, width) };
     }
 
-    fn monospaced_system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
+    fn monospaced_system_font_of_size(font_size: f64, weight: f64) -> Font {
         return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedSystemFontOfSize:weight:\0")), font_size, weight) };
     }
 
@@ -225,12 +237,12 @@ impl Font {
 
     // SKIPPED `boundingRectForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `advancementForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
-    fn get_bounding_rects_for_c_g_glyphs_count(this, bounds: *u8, glyphs: *u8, glyph_count: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forCGGlyphs:count:\0")), bounds, glyphs, glyph_count);
+    fn get_bounding_rects(this, bounds: *u8, for_c_g_glyphs: *u8, count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forCGGlyphs:count:\0")), bounds, for_c_g_glyphs, count);
     }
 
-    fn get_advancements_for_c_g_glyphs_count(this, advancements: *u8, glyphs: *u8, glyph_count: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forCGGlyphs:count:\0")), advancements, glyphs, glyph_count);
+    fn get_advancements(this, advancements: *u8, for_c_g_glyphs: *u8, count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forCGGlyphs:count:\0")), advancements, for_c_g_glyphs, count);
     }
 
     fn set(this) {
@@ -360,15 +372,15 @@ impl Font {
         return rt::msg_size_u32(this._obj, rt::sel(#str_ptr("advancementForGlyph:\0")), glyph);
     }
 
-    fn get_bounding_rects_for_glyphs_count(this, bounds: *u8, glyphs: *u8, glyph_count: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forGlyphs:count:\0")), bounds, glyphs, glyph_count);
+    fn get_bounding_rects_for_glyphs(this, bounds: *u8, glyphs: *u8, count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forGlyphs:count:\0")), bounds, glyphs, count);
     }
 
-    fn get_advancements_for_glyphs_count(this, advancements: *u8, glyphs: *u8, glyph_count: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forGlyphs:count:\0")), advancements, glyphs, glyph_count);
+    fn get_advancements_for_glyphs(this, advancements: *u8, glyphs: *u8, count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forGlyphs:count:\0")), advancements, glyphs, count);
     }
 
-    fn get_advancements_for_packed_glyphs_length(this, advancements: *u8, packed_glyphs: *u8, length: u64) {
+    fn get_advancements_for_packed_glyphs(this, advancements: *u8, packed_glyphs: *u8, length: u64) {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forPackedGlyphs:length:\0")), advancements, packed_glyphs, length);
     }
 
@@ -388,6 +400,28 @@ impl Font {
         return font_rendering_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("renderingMode\0"))));
     }
 
-    // SKIPPED `preferredFontForTextStyle:options:`: param `NSDictionary<NSFontTextStyleOptionKey,id> * _Nonnull` — generic collection
+    fn preferred_font_for_text_style(style: str, options: string_map::StringMap[AnyObject]) -> Font {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return Font::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("preferredFontForTextStyle:options:\0")), bridge::nsstring(style), dict_options));
+    }
+
 }
 

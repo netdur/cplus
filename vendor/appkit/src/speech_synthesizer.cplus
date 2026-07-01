@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSSpeechBoundary` (NS_ENUM)
@@ -27,6 +28,17 @@ fn speech_boundary_from_raw(raw: i64) -> SpeechBoundary {
     if raw == (1 as i64) { return SpeechBoundary::NSSpeechWordBoundary; }
     if raw == (2 as i64) { return SpeechBoundary::NSSpeechSentenceBoundary; }
     return SpeechBoundary::NSSpeechImmediateBoundary;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -114,22 +126,60 @@ impl SpeechSynthesizer {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setVoice:\0")), bridge::nsstring(voice)) != (0 as i8);
     }
 
-    // SKIPPED `addSpeechDictionary:`: param `NSDictionary<NSSpeechDictionaryKey,id> * _Nonnull` — generic collection
+    fn add_speech_dictionary(this, speech_dictionary: string_map::StringMap[AnyObject]) {
+        let dict_speech_dictionary: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_speech_dictionary: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_speech_dictionary: usize = speech_dictionary.slot_capacity();
+        var dsi_speech_dictionary: usize = 0 as usize;
+        while dsi_speech_dictionary < dcap_speech_dictionary {
+            match speech_dictionary.value_ptr_at_slot(dsi_speech_dictionary) {
+                option::Option[*AnyObject]::Some(dvp_speech_dictionary) => {
+                    match speech_dictionary.key_ptr_at_slot(dsi_speech_dictionary) {
+                        option::Option[*text::Text]::Some(dkp_speech_dictionary) => {
+                    let dval_speech_dictionary: *u8 = (*dvp_speech_dictionary).raw();
+                            rt::msg_void_id_id(dict_speech_dictionary, dset_speech_dictionary, dval_speech_dictionary, bridge::nsstring((*dkp_speech_dictionary).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_speech_dictionary = dsi_speech_dictionary +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSpeechDictionary:\0")), dict_speech_dictionary);
+    }
+
     fn phonemes_from_text(this, text: str) -> text::Text {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("phonemesFromText:\0")), bridge::nsstring(text));
         return bridge::to_text(ns);
     }
 
-    fn object_for_property_error(this, property: str, out_error: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("objectForProperty:error:\0")), bridge::nsstring(property), out_error);
+    fn object_for_property(this, property: str, error: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("objectForProperty:error:\0")), bridge::nsstring(property), error);
         return bridge::obj_option(obj);
     }
 
-    fn set_object_for_property_error(this, object: *u8, property: str, out_error: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("setObject:forProperty:error:\0")), object, bridge::nsstring(property), out_error) != (0 as i8);
+    fn set_object(this, object: *u8, for_property: str, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("setObject:forProperty:error:\0")), object, bridge::nsstring(for_property), error) != (0 as i8);
     }
 
-    // SKIPPED `attributesForVoice:`: return `NSDictionary<NSVoiceAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn attributes_for_voice(voice: str) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSpeechSynthesizer\0")), rt::sel(#str_ptr("attributesForVoice:\0")), bridge::nsstring(voice));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn is_speaking(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isSpeaking\0"))) != (0 as i8);
     }

@@ -71,7 +71,7 @@ impl SliderCell {
     }
 
     // SKIPPED `drawKnob`: method `draw_knob` already defined
-    fn draw_bar_inside_flipped(this, rect: rt::Rect, flipped: bool) {
+    fn draw_bar_inside(this, rect: rt::Rect, flipped: bool) {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawBarInside:flipped:\0")), rect, flipped as i8);
     }
 

@@ -63,34 +63,66 @@ impl Gradient {
         return Gradient { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithStartingColor:endingColor:\0")), starting_color.raw(), ending_color.raw()) };
     }
 
-    // SKIPPED `initWithColors:`: init with an NSArray<id> param not modelled
+    fn new_with_colors(color_array: vec::Vec[Color]) -> Gradient {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGradient\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_color_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_color_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_color_array: usize = color_array.count();
+        var i_color_array: usize = 0 as usize;
+        while i_color_array < n_color_array {
+            match color_array.at_ptr(i_color_array) {
+                option::Option[*Color]::Some(e_color_array) => { rt::msg_void_id(arr_color_array, add_sel_color_array, (*e_color_array).raw()); }
+                option::Option[*Color]::None => {}
+            }
+            i_color_array = i_color_array +% (1 as usize);
+        }
+        return Gradient { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithColors:\0")), arr_color_array) };
+    }
+
     fn new_with_colors_and_locations(first_color: Color) -> Gradient {
         let cls: *u8 = rt::get_class(#str_ptr("NSGradient\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return Gradient { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithColorsAndLocations:\0")), first_color.raw()) };
     }
 
-    // SKIPPED `initWithColors:atLocations:colorSpace:`: init with an NSArray<id> param not modelled
+    fn new_with_colors_at_locations_color_space(color_array: vec::Vec[Color], locations: *u8, color_space: ColorSpace) -> Gradient {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGradient\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_color_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_color_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_color_array: usize = color_array.count();
+        var i_color_array: usize = 0 as usize;
+        while i_color_array < n_color_array {
+            match color_array.at_ptr(i_color_array) {
+                option::Option[*Color]::Some(e_color_array) => { rt::msg_void_id(arr_color_array, add_sel_color_array, (*e_color_array).raw()); }
+                option::Option[*Color]::None => {}
+            }
+            i_color_array = i_color_array +% (1 as usize);
+        }
+        return Gradient { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithColors:atLocations:colorSpace:\0")), arr_color_array, locations, color_space.raw()) };
+    }
+
     fn new_with_coder(coder: *u8) -> Gradient {
         let cls: *u8 = rt::get_class(#str_ptr("NSGradient\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return Gradient { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn draw_from_point_to_point_options(this, starting_point: rt::Point, ending_point: rt::Point, options: u64) {
-        rt::msg_void_point_point_u64(this._obj, rt::sel(#str_ptr("drawFromPoint:toPoint:options:\0")), starting_point, ending_point, options);
+    fn draw_from_point(this, starting_point: rt::Point, to_point: rt::Point, options: u64) {
+        rt::msg_void_point_point_u64(this._obj, rt::sel(#str_ptr("drawFromPoint:toPoint:options:\0")), starting_point, to_point, options);
     }
 
-    fn draw_in_rect_angle(this, rect: rt::Rect, angle: f64) {
+    fn draw_in_rect(this, rect: rt::Rect, angle: f64) {
         rt::msg_void_rect_f64(this._obj, rt::sel(#str_ptr("drawInRect:angle:\0")), rect, angle);
     }
 
-    fn draw_in_bezier_path_angle(this, path: BezierPath, angle: f64) {
+    fn draw_in_bezier_path(this, path: BezierPath, angle: f64) {
         rt::msg_void_id_f64(this._obj, rt::sel(#str_ptr("drawInBezierPath:angle:\0")), path.raw(), angle);
     }
 
-    fn draw_from_center_radius_to_center_radius_options(this, start_center: rt::Point, start_radius: f64, end_center: rt::Point, end_radius: f64, options: u64) {
-        rt::msg_void_point_f64_point_f64_u64(this._obj, rt::sel(#str_ptr("drawFromCenter:radius:toCenter:radius:options:\0")), start_center, start_radius, end_center, end_radius, options);
+    fn draw_from_center(this, start_center: rt::Point, radius: f64, to_center: rt::Point, radius: f64, options: u64) {
+        rt::msg_void_point_f64_point_f64_u64(this._obj, rt::sel(#str_ptr("drawFromCenter:radius:toCenter:radius:options:\0")), start_center, radius, to_center, radius, options);
     }
 
     fn draw_in_rect_relative_center_position(this, rect: rt::Rect, relative_center_position: rt::Point) {
@@ -101,8 +133,8 @@ impl Gradient {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("drawInBezierPath:relativeCenterPosition:\0")), path.raw(), relative_center_position);
     }
 
-    fn get_color_location_at_index(this, color: *u8, location: *u8, index: i64) {
-        rt::msg_void_id_id_i64(this._obj, rt::sel(#str_ptr("getColor:location:atIndex:\0")), color, location, index);
+    fn get_color(this, color: *u8, location: *u8, at_index: i64) {
+        rt::msg_void_id_id_i64(this._obj, rt::sel(#str_ptr("getColor:location:atIndex:\0")), color, location, at_index);
     }
 
     fn interpolated_color_at_location(this, location: f64) -> Color {

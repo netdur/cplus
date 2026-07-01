@@ -56,8 +56,8 @@ impl TabViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTabViewItem:\0")), tab_view_item);
     }
 
-    fn insert_tab_view_item_at_index(this, tab_view_item: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTabViewItem:atIndex:\0")), tab_view_item, index);
+    fn insert_tab_view_item(this, tab_view_item: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTabViewItem:atIndex:\0")), tab_view_item, at_index);
     }
 
     fn remove_tab_view_item(this, tab_view_item: *u8) {
@@ -85,8 +85,8 @@ impl TabViewController {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tabView:shouldSelectTabViewItem:\0")), tab_view, tab_view_item) != (0 as i8);
     }
 
-    fn toolbar_item_for_item_identifier_will_be_inserted_into_toolbar(this, toolbar: *u8, item_identifier: str, flag: bool) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id_i8(this._obj, rt::sel(#str_ptr("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:\0")), toolbar, bridge::nsstring(item_identifier), flag as i8);
+    fn toolbar(this, toolbar: *u8, item_for_item_identifier: str, will_be_inserted_into_toolbar: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_i8(this._obj, rt::sel(#str_ptr("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:\0")), toolbar, bridge::nsstring(item_for_item_identifier), will_be_inserted_into_toolbar as i8);
         return bridge::obj_option(obj);
     }
 

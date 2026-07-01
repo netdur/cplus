@@ -110,15 +110,15 @@ impl Responder {
         return Responder { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    fn try_to_perform(this, action: *u8, with: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, with) != (0 as i8);
     }
 
     fn perform_key_equivalent(this, event: Event) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("performKeyEquivalent:\0")), event.raw()) != (0 as i8);
     }
 
-    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+    fn valid_requestor_for_send_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
     }
@@ -310,7 +310,7 @@ impl Responder {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("wantsForwardedScrollEventsForAxis:\0")), event_gesture_axis_raw(axis)) != (0 as i8);
     }
 
-    fn supplemental_target_for_action_sender(this, action: *u8, sender: *u8) -> option::Option[*u8] {
+    fn supplemental_target_for_action(this, action: *u8, sender: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("supplementalTargetForAction:sender:\0")), action, sender);
         return bridge::obj_option(obj);
     }
@@ -351,11 +351,11 @@ impl Responder {
         return option::some(UndoManager::from_raw(obj));
     }
 
-    fn validate_proposed_first_responder_for_event(this, responder: Responder, event: Event) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")), responder.raw(), event.raw()) != (0 as i8);
+    fn validate_proposed_first_responder(this, responder: Responder, for_event: Event) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")), responder.raw(), for_event.raw()) != (0 as i8);
     }
 
-    fn present_error_modal_for_window_delegate_did_present_selector_context_info(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
+    fn present_error_modal_for_window(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("presentError:modalForWindow:delegate:didPresentSelector:contextInfo:\0")), error.raw(), window.raw(), delegate, did_present_selector, context_info);
     }
 

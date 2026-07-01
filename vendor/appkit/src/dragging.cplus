@@ -341,8 +341,8 @@ impl DraggingSource {
 
     fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
 
-    fn dragging_session_source_operation_mask_for_dragging_context(this, session: DraggingSession, context: DraggingContext) -> u64 {
-        return rt::msg_u64_id_i64(this._obj, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), session.raw(), dragging_context_raw(context));
+    fn dragging_session(this, session: DraggingSession, source_operation_mask_for_dragging_context: DraggingContext) -> u64 {
+        return rt::msg_u64_id_i64(this._obj, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), session.raw(), dragging_context_raw(source_operation_mask_for_dragging_context));
     }
 
     fn dragging_session_will_begin_at_point(this, session: DraggingSession, screen_point: rt::Point) {
@@ -353,7 +353,7 @@ impl DraggingSource {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("draggingSession:movedToPoint:\0")), session.raw(), screen_point);
     }
 
-    fn dragging_session_ended_at_point_operation(this, session: DraggingSession, screen_point: rt::Point, operation: u64) {
+    fn dragging_session_ended_at_point(this, session: DraggingSession, screen_point: rt::Point, operation: u64) {
         rt::msg_void_id_point_u64(this._obj, rt::sel(#str_ptr("draggingSession:endedAtPoint:operation:\0")), session.raw(), screen_point, operation);
     }
 
@@ -373,7 +373,7 @@ impl SpringLoadingDestination {
 
     fn from_raw(ptr: *u8) -> SpringLoadingDestination { return SpringLoadingDestination { _obj: ptr }; }
 
-    fn spring_loading_activated_dragging_info(this, activated: bool, dragging_info: DraggingInfo) {
+    fn spring_loading_activated(this, activated: bool, dragging_info: DraggingInfo) {
         rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("springLoadingActivated:draggingInfo:\0")), activated as i8, dragging_info.raw());
     }
 

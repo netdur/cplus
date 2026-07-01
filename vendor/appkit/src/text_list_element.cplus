@@ -6,6 +6,18 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSTextList` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextList {
@@ -29,15 +41,83 @@ impl TextListElement {
 
     fn from_raw(ptr: *u8) -> TextListElement { return TextListElement { _obj: ptr }; }
 
-    // SKIPPED `initWithParentElement:textList:contents:markerAttributes:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    fn new(parent: TextListElement, text_list: TextList, contents: *u8, marker_attributes: string_map::StringMap[AnyObject], children: vec::Vec[TextListElement]) -> TextListElement {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextListElement\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_marker_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_marker_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_marker_attributes: usize = marker_attributes.slot_capacity();
+        var dsi_marker_attributes: usize = 0 as usize;
+        while dsi_marker_attributes < dcap_marker_attributes {
+            match marker_attributes.value_ptr_at_slot(dsi_marker_attributes) {
+                option::Option[*AnyObject]::Some(dvp_marker_attributes) => {
+                    match marker_attributes.key_ptr_at_slot(dsi_marker_attributes) {
+                        option::Option[*text::Text]::Some(dkp_marker_attributes) => {
+                    let dval_marker_attributes: *u8 = (*dvp_marker_attributes).raw();
+                            rt::msg_void_id_id(dict_marker_attributes, dset_marker_attributes, dval_marker_attributes, bridge::nsstring((*dkp_marker_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_marker_attributes = dsi_marker_attributes +% (1 as usize);
+        }
+        let arr_children: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_children: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_children: usize = children.count();
+        var i_children: usize = 0 as usize;
+        while i_children < n_children {
+            match children.at_ptr(i_children) {
+                option::Option[*TextListElement]::Some(e_children) => { rt::msg_void_id(arr_children, add_sel_children, (*e_children).raw()); }
+                option::Option[*TextListElement]::None => {}
+            }
+            i_children = i_children +% (1 as usize);
+        }
+        return TextListElement { _obj: rt::msg_id_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithParentElement:textList:contents:markerAttributes:childElements:\0")), parent.raw(), text_list.raw(), contents, dict_marker_attributes, arr_children) };
+    }
+
     fn new_with_attributed_string(attributed_string: *u8) -> TextListElement {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextListElement\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextListElement { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithAttributedString:\0")), attributed_string) };
     }
 
-    // SKIPPED `textListElementWithContents:markerAttributes:textList:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    fn text_list_element_with_child_elements_text_list_nesting_level(children: vec::Vec[TextListElement], text_list: TextList, nesting_level: i64) -> *u8 {
+    fn text_list_element_with_contents(contents: *u8, marker_attributes: string_map::StringMap[AnyObject], text_list: TextList, child_elements: vec::Vec[TextListElement]) -> *u8 {
+        let dict_marker_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_marker_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_marker_attributes: usize = marker_attributes.slot_capacity();
+        var dsi_marker_attributes: usize = 0 as usize;
+        while dsi_marker_attributes < dcap_marker_attributes {
+            match marker_attributes.value_ptr_at_slot(dsi_marker_attributes) {
+                option::Option[*AnyObject]::Some(dvp_marker_attributes) => {
+                    match marker_attributes.key_ptr_at_slot(dsi_marker_attributes) {
+                        option::Option[*text::Text]::Some(dkp_marker_attributes) => {
+                    let dval_marker_attributes: *u8 = (*dvp_marker_attributes).raw();
+                            rt::msg_void_id_id(dict_marker_attributes, dset_marker_attributes, dval_marker_attributes, bridge::nsstring((*dkp_marker_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_marker_attributes = dsi_marker_attributes +% (1 as usize);
+        }
+        let arr_child_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_child_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_child_elements: usize = child_elements.count();
+        var i_child_elements: usize = 0 as usize;
+        while i_child_elements < n_child_elements {
+            match child_elements.at_ptr(i_child_elements) {
+                option::Option[*TextListElement]::Some(e_child_elements) => { rt::msg_void_id(arr_child_elements, add_sel_child_elements, (*e_child_elements).raw()); }
+                option::Option[*TextListElement]::None => {}
+            }
+            i_child_elements = i_child_elements +% (1 as usize);
+        }
+        return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSTextListElement\0")), rt::sel(#str_ptr("textListElementWithContents:markerAttributes:textList:childElements:\0")), contents, dict_marker_attributes, text_list.raw(), arr_child_elements);
+    }
+
+    fn text_list_element_with_child_elements(children: vec::Vec[TextListElement], text_list: TextList, nesting_level: i64) -> *u8 {
         let arr_children: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_children: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_children: usize = children.count();
@@ -61,7 +141,23 @@ impl TextListElement {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `markerAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn marker_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("markerAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn attributed_string(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));
     }

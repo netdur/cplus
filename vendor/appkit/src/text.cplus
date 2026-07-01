@@ -113,8 +113,8 @@ impl Text {
         return Text { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn replace_characters_in_range_with_string(this, range: rt::Range, string: str) {
-        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withString:\0")), range, bridge::nsstring(string));
+    fn replace_characters_in_range(this, range: rt::Range, with_string: str) {
+        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withString:\0")), range, bridge::nsstring(with_string));
     }
 
     fn replace_characters_in_range_with_r_t_f(this, range: rt::Range, rtf_data: *u8) {
@@ -135,8 +135,8 @@ impl Text {
         return bridge::obj_option(obj);
     }
 
-    fn write_r_t_f_d_to_file_atomically(this, path: str, flag: bool) -> bool {
-        return rt::msg_i8_id_i8(this._obj, rt::sel(#str_ptr("writeRTFDToFile:atomically:\0")), bridge::nsstring(path), flag as i8) != (0 as i8);
+    fn write_r_t_f_d_to_file(this, path: str, atomically: bool) -> bool {
+        return rt::msg_i8_id_i8(this._obj, rt::sel(#str_ptr("writeRTFDToFile:atomically:\0")), bridge::nsstring(path), atomically as i8) != (0 as i8);
     }
 
     fn read_r_t_f_d_from_file(this, path: str) -> bool {

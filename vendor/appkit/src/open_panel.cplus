@@ -113,16 +113,16 @@ impl OpenPanel {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("filenames\0")));
     }
 
-    fn begin_sheet_for_directory_file_types_modal_for_window_modal_delegate_did_end_selector_context_info(this, path: str, name: str, file_types: *u8, doc_window: Window, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
-        rt::msg_void_id_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(name), file_types, doc_window.raw(), delegate, did_end_selector, context_info);
+    fn begin_sheet_for_directory(this, path: str, file: str, types: *u8, modal_for_window: Window, modal_delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(file), types, modal_for_window.raw(), modal_delegate, did_end_selector, context_info);
     }
 
-    fn begin_for_directory_file_types_modeless_delegate_did_end_selector_context_info(this, path: str, name: str, file_types: *u8, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
-        rt::msg_void_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginForDirectory:file:types:modelessDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(name), file_types, delegate, did_end_selector, context_info);
+    fn begin_for_directory(this, path: str, file: str, types: *u8, modeless_delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginForDirectory:file:types:modelessDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(file), types, modeless_delegate, did_end_selector, context_info);
     }
 
-    fn run_modal_for_directory_file_types(this, path: str, name: str, file_types: *u8) -> i64 {
-        return rt::msg_i64_id_id_id(this._obj, rt::sel(#str_ptr("runModalForDirectory:file:types:\0")), bridge::nsstring(path), bridge::nsstring(name), file_types);
+    fn run_modal_for_directory(this, path: str, file: str, types: *u8) -> i64 {
+        return rt::msg_i64_id_id_id(this._obj, rt::sel(#str_ptr("runModalForDirectory:file:types:\0")), bridge::nsstring(path), bridge::nsstring(file), types);
     }
 
     fn run_modal_for_types(this, file_types: *u8) -> i64 {

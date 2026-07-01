@@ -67,15 +67,15 @@ impl ComboButton {
 
     fn from_raw(ptr: *u8) -> ComboButton { return ComboButton { _obj: ptr }; }
 
-    fn combo_button_with_title_menu_target_action(title: str, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+    fn combo_button_with_title(title: str, menu: *u8, target: *u8, action: *u8) -> ComboButton {
         return ComboButton { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithTitle:menu:target:action:\0")), bridge::nsstring(title), menu, target, action) };
     }
 
-    fn combo_button_with_image_menu_target_action(image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+    fn combo_button_with_image(image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
         return ComboButton { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithImage:menu:target:action:\0")), image, menu, target, action) };
     }
 
-    fn combo_button_with_title_image_menu_target_action(title: str, image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+    fn combo_button_with_title_image(title: str, image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
         return ComboButton { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithTitle:image:menu:target:action:\0")), bridge::nsstring(title), image, menu, target, action) };
     }
 

@@ -121,12 +121,12 @@ impl ArrayController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addObjects:\0")), objects);
     }
 
-    fn insert_object_at_arranged_object_index(this, object: *u8, index: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndex:\0")), object, index);
+    fn insert_object(this, object: *u8, at_arranged_object_index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndex:\0")), object, at_arranged_object_index);
     }
 
-    fn insert_objects_at_arranged_object_indexes(this, objects: *u8, indexes: IndexSet) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObjects:atArrangedObjectIndexes:\0")), objects, indexes.raw());
+    fn insert_objects(this, objects: *u8, at_arranged_object_indexes: IndexSet) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObjects:atArrangedObjectIndexes:\0")), objects, at_arranged_object_indexes.raw());
     }
 
     fn remove_object_at_arranged_object_index(this, index: u64) {

@@ -284,11 +284,11 @@ impl ImageView {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("removeAllSymbolEffectsWithOptions:animated:\0")), options, animated as i8);
     }
 
-    fn set_symbol_image_with_content_transition(this, symbol_image: *u8, transition: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:\0")), symbol_image, transition);
+    fn set_symbol_image(this, symbol_image: *u8, with_content_transition: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:\0")), symbol_image, with_content_transition);
     }
 
-    fn set_symbol_image_with_content_transition_options(this, symbol_image: *u8, transition: *u8, options: *u8) {
+    fn set_symbol_image_with_content_transition(this, symbol_image: *u8, transition: *u8, options: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:options:\0")), symbol_image, transition, options);
     }
 

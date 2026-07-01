@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSSaveOperationType` (NS_ENUM)
 enum SaveOperationType {
@@ -37,6 +38,17 @@ fn save_operation_type_from_raw(raw: i64) -> SaveOperationType {
     if raw == (5 as i64) { return SaveOperationType::NSAutosaveAsOperation; }
     if raw == (3 as i64) { return SaveOperationType::NSAutosaveOperation; }
     return SaveOperationType::NSSaveOperation;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSManagedObjectModel` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -73,22 +85,44 @@ impl PersistentDocument {
 
     fn from_raw(ptr: *u8) -> PersistentDocument { return PersistentDocument { _obj: ptr }; }
 
-    // SKIPPED `configurePersistentStoreCoordinatorForURL:ofType:modelConfiguration:storeOptions:error:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
+    fn configure_persistent_store_coordinator_for_u_r_l_of_type(this, url: *u8, file_type: str, model_configuration: str, store_options: string_map::StringMap[AnyObject], error: *u8) -> bool {
+        let dict_store_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_store_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_store_options: usize = store_options.slot_capacity();
+        var dsi_store_options: usize = 0 as usize;
+        while dsi_store_options < dcap_store_options {
+            match store_options.value_ptr_at_slot(dsi_store_options) {
+                option::Option[*AnyObject]::Some(dvp_store_options) => {
+                    match store_options.key_ptr_at_slot(dsi_store_options) {
+                        option::Option[*text::Text]::Some(dkp_store_options) => {
+                    let dval_store_options: *u8 = (*dvp_store_options).raw();
+                            rt::msg_void_id_id(dict_store_options, dset_store_options, dval_store_options, bridge::nsstring((*dkp_store_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_store_options = dsi_store_options +% (1 as usize);
+        }
+        return rt::msg_i8_id_id_id_id_id(this._obj, rt::sel(#str_ptr("configurePersistentStoreCoordinatorForURL:ofType:modelConfiguration:storeOptions:error:\0")), url, bridge::nsstring(file_type), bridge::nsstring(model_configuration), dict_store_options, error) != (0 as i8);
+    }
+
     fn persistent_store_type_for_file_type(this, file_type: str) -> text::Text {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("persistentStoreTypeForFileType:\0")), bridge::nsstring(file_type));
         return bridge::to_text(ns);
     }
 
-    fn write_to_u_r_l_of_type_for_save_operation_original_contents_u_r_l_error(this, absolute_u_r_l: *u8, type_name: str, save_operation: SaveOperationType, absolute_original_contents_u_r_l: *u8, error: *u8) -> bool {
-        return rt::msg_i8_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:forSaveOperation:originalContentsURL:error:\0")), absolute_u_r_l, bridge::nsstring(type_name), save_operation_type_raw(save_operation), absolute_original_contents_u_r_l, error) != (0 as i8);
+    fn write_to_u_r_l(this, absolute_u_r_l: *u8, of_type: str, for_save_operation: SaveOperationType, original_contents_u_r_l: *u8, error: *u8) -> bool {
+        return rt::msg_i8_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:forSaveOperation:originalContentsURL:error:\0")), absolute_u_r_l, bridge::nsstring(of_type), save_operation_type_raw(for_save_operation), original_contents_u_r_l, error) != (0 as i8);
     }
 
-    fn read_from_u_r_l_of_type_error(this, absolute_u_r_l: *u8, type_name: str, error: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromURL:ofType:error:\0")), absolute_u_r_l, bridge::nsstring(type_name), error) != (0 as i8);
+    fn read_from_u_r_l(this, absolute_u_r_l: *u8, of_type: str, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromURL:ofType:error:\0")), absolute_u_r_l, bridge::nsstring(of_type), error) != (0 as i8);
     }
 
-    fn revert_to_contents_of_u_r_l_of_type_error(this, in_absolute_u_r_l: *u8, in_type_name: str, out_error: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("revertToContentsOfURL:ofType:error:\0")), in_absolute_u_r_l, bridge::nsstring(in_type_name), out_error) != (0 as i8);
+    fn revert_to_contents_of_u_r_l(this, in_absolute_u_r_l: *u8, of_type: str, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("revertToContentsOfURL:ofType:error:\0")), in_absolute_u_r_l, bridge::nsstring(of_type), error) != (0 as i8);
     }
 
     fn managed_object_context(this) -> option::Option[ManagedObjectContext] {
@@ -111,8 +145,8 @@ impl PersistentDocument {
         return option::some(ManagedObjectModel::from_raw(obj));
     }
 
-    fn configure_persistent_store_coordinator_for_u_r_l_of_type_error(this, url: *u8, file_type: str, error: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("configurePersistentStoreCoordinatorForURL:ofType:error:\0")), url, bridge::nsstring(file_type), error) != (0 as i8);
+    fn configure_persistent_store_coordinator_for_u_r_l(this, url: *u8, of_type: str, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("configurePersistentStoreCoordinatorForURL:ofType:error:\0")), url, bridge::nsstring(of_type), error) != (0 as i8);
     }
 
 }

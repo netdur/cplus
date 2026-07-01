@@ -163,16 +163,16 @@ impl TextTable {
 
     fn from_raw(ptr: *u8) -> TextTable { return TextTable { _obj: ptr }; }
 
-    fn rect_for_block_layout_at_point_in_rect_text_container_character_range(this, block: TextTableBlock, starting_point: rt::Point, rect: rt::Rect, text_container: TextContainer, char_range: rt::Range) -> rt::Rect {
-        return rt::msg_rect_id_point_rect_id_range(this._obj, rt::sel(#str_ptr("rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:\0")), block.raw(), starting_point, rect, text_container.raw(), char_range);
+    fn rect_for_block(this, block: TextTableBlock, layout_at_point: rt::Point, in_rect: rt::Rect, text_container: TextContainer, character_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_id_point_rect_id_range(this._obj, rt::sel(#str_ptr("rectForBlock:layoutAtPoint:inRect:textContainer:characterRange:\0")), block.raw(), layout_at_point, in_rect, text_container.raw(), character_range);
     }
 
-    fn bounds_rect_for_block_content_rect_in_rect_text_container_character_range(this, block: TextTableBlock, content_rect: rt::Rect, rect: rt::Rect, text_container: TextContainer, char_range: rt::Range) -> rt::Rect {
-        return rt::msg_rect_id_rect_rect_id_range(this._obj, rt::sel(#str_ptr("boundsRectForBlock:contentRect:inRect:textContainer:characterRange:\0")), block.raw(), content_rect, rect, text_container.raw(), char_range);
+    fn bounds_rect_for_block(this, block: TextTableBlock, content_rect: rt::Rect, in_rect: rt::Rect, text_container: TextContainer, character_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_id_rect_rect_id_range(this._obj, rt::sel(#str_ptr("boundsRectForBlock:contentRect:inRect:textContainer:characterRange:\0")), block.raw(), content_rect, in_rect, text_container.raw(), character_range);
     }
 
-    fn draw_background_for_block_with_frame_in_view_character_range_layout_manager(this, block: TextTableBlock, frame_rect: rt::Rect, control_view: *u8, char_range: rt::Range, layout_manager: LayoutManager) {
-        rt::msg_void_id_rect_id_range_id(this._obj, rt::sel(#str_ptr("drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:\0")), block.raw(), frame_rect, control_view, char_range, layout_manager.raw());
+    fn draw_background_for_block(this, block: TextTableBlock, with_frame: rt::Rect, in_view: *u8, character_range: rt::Range, layout_manager: LayoutManager) {
+        rt::msg_void_id_rect_id_range_id(this._obj, rt::sel(#str_ptr("drawBackgroundForBlock:withFrame:inView:characterRange:layoutManager:\0")), block.raw(), with_frame, in_view, character_range, layout_manager.raw());
     }
 
     fn number_of_columns(this) -> u64 {
@@ -249,8 +249,8 @@ impl TextBlock {
         return TextBlock { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    fn set_value_type_for_dimension(this, val: f64, type_: TextBlockValueType, dimension: TextBlockDimension) {
-        rt::msg_void_f64_i64_i64(this._obj, rt::sel(#str_ptr("setValue:type:forDimension:\0")), val, text_block_value_type_raw(type_), text_block_dimension_raw(dimension));
+    fn set_value(this, val: f64, type_: TextBlockValueType, for_dimension: TextBlockDimension) {
+        rt::msg_void_f64_i64_i64(this._obj, rt::sel(#str_ptr("setValue:type:forDimension:\0")), val, text_block_value_type_raw(type_), text_block_dimension_raw(for_dimension));
     }
 
     fn value_for_dimension(this, dimension: TextBlockDimension) -> f64 {
@@ -261,23 +261,23 @@ impl TextBlock {
         return text_block_value_type_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("valueTypeForDimension:\0")), text_block_dimension_raw(dimension)));
     }
 
-    fn set_content_width_type(this, val: f64, type_: TextBlockValueType) {
+    fn set_content_width(this, val: f64, type_: TextBlockValueType) {
         rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setContentWidth:type:\0")), val, text_block_value_type_raw(type_));
     }
 
-    fn set_width_type_for_layer_edge(this, val: f64, type_: TextBlockValueType, layer: TextBlockLayer, edge: RectEdge) {
-        rt::msg_void_f64_i64_i64_i64(this._obj, rt::sel(#str_ptr("setWidth:type:forLayer:edge:\0")), val, text_block_value_type_raw(type_), text_block_layer_raw(layer), rect_edge_raw(edge));
+    fn set_width_type(this, val: f64, type_: TextBlockValueType, for_layer: TextBlockLayer, edge: RectEdge) {
+        rt::msg_void_f64_i64_i64_i64(this._obj, rt::sel(#str_ptr("setWidth:type:forLayer:edge:\0")), val, text_block_value_type_raw(type_), text_block_layer_raw(for_layer), rect_edge_raw(edge));
     }
 
-    fn set_width_type_for_layer(this, val: f64, type_: TextBlockValueType, layer: TextBlockLayer) {
-        rt::msg_void_f64_i64_i64(this._obj, rt::sel(#str_ptr("setWidth:type:forLayer:\0")), val, text_block_value_type_raw(type_), text_block_layer_raw(layer));
+    fn set_width(this, val: f64, type_: TextBlockValueType, for_layer: TextBlockLayer) {
+        rt::msg_void_f64_i64_i64(this._obj, rt::sel(#str_ptr("setWidth:type:forLayer:\0")), val, text_block_value_type_raw(type_), text_block_layer_raw(for_layer));
     }
 
-    fn width_for_layer_edge(this, layer: TextBlockLayer, edge: RectEdge) -> f64 {
+    fn width_for_layer(this, layer: TextBlockLayer, edge: RectEdge) -> f64 {
         return rt::msg_f64_i64_i64(this._obj, rt::sel(#str_ptr("widthForLayer:edge:\0")), text_block_layer_raw(layer), rect_edge_raw(edge));
     }
 
-    fn width_value_type_for_layer_edge(this, layer: TextBlockLayer, edge: RectEdge) -> TextBlockValueType {
+    fn width_value_type_for_layer(this, layer: TextBlockLayer, edge: RectEdge) -> TextBlockValueType {
         return text_block_value_type_from_raw(rt::msg_i64_i64_i64(this._obj, rt::sel(#str_ptr("widthValueTypeForLayer:edge:\0")), text_block_layer_raw(layer), rect_edge_raw(edge)));
     }
 
@@ -294,16 +294,16 @@ impl TextBlock {
         return bridge::obj_option(obj);
     }
 
-    fn rect_for_layout_at_point_in_rect_text_container_character_range(this, starting_point: rt::Point, rect: rt::Rect, text_container: TextContainer, char_range: rt::Range) -> rt::Rect {
-        return rt::msg_rect_point_rect_id_range(this._obj, rt::sel(#str_ptr("rectForLayoutAtPoint:inRect:textContainer:characterRange:\0")), starting_point, rect, text_container.raw(), char_range);
+    fn rect_for_layout_at_point(this, starting_point: rt::Point, in_rect: rt::Rect, text_container: TextContainer, character_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_point_rect_id_range(this._obj, rt::sel(#str_ptr("rectForLayoutAtPoint:inRect:textContainer:characterRange:\0")), starting_point, in_rect, text_container.raw(), character_range);
     }
 
-    fn bounds_rect_for_content_rect_in_rect_text_container_character_range(this, content_rect: rt::Rect, rect: rt::Rect, text_container: TextContainer, char_range: rt::Range) -> rt::Rect {
-        return rt::msg_rect_rect_rect_id_range(this._obj, rt::sel(#str_ptr("boundsRectForContentRect:inRect:textContainer:characterRange:\0")), content_rect, rect, text_container.raw(), char_range);
+    fn bounds_rect_for_content_rect(this, content_rect: rt::Rect, in_rect: rt::Rect, text_container: TextContainer, character_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_rect_rect_id_range(this._obj, rt::sel(#str_ptr("boundsRectForContentRect:inRect:textContainer:characterRange:\0")), content_rect, in_rect, text_container.raw(), character_range);
     }
 
-    fn draw_background_with_frame_in_view_character_range_layout_manager(this, frame_rect: rt::Rect, control_view: *u8, char_range: rt::Range, layout_manager: LayoutManager) {
-        rt::msg_void_rect_id_range_id(this._obj, rt::sel(#str_ptr("drawBackgroundWithFrame:inView:characterRange:layoutManager:\0")), frame_rect, control_view, char_range, layout_manager.raw());
+    fn draw_background_with_frame(this, frame_rect: rt::Rect, in_view: *u8, character_range: rt::Range, layout_manager: LayoutManager) {
+        rt::msg_void_rect_id_range_id(this._obj, rt::sel(#str_ptr("drawBackgroundWithFrame:inView:characterRange:layoutManager:\0")), frame_rect, in_view, character_range, layout_manager.raw());
     }
 
     fn content_width(this) -> f64 {

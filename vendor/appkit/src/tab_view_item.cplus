@@ -107,8 +107,8 @@ impl TabViewItem {
         return TabViewItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), identifier) };
     }
 
-    fn draw_label_in_rect(this, should_truncate_label: bool, label_rect: rt::Rect) {
-        rt::msg_void_i8_rect(this._obj, rt::sel(#str_ptr("drawLabel:inRect:\0")), should_truncate_label as i8, label_rect);
+    fn draw_label(this, should_truncate_label: bool, in_rect: rt::Rect) {
+        rt::msg_void_i8_rect(this._obj, rt::sel(#str_ptr("drawLabel:inRect:\0")), should_truncate_label as i8, in_rect);
     }
 
     fn size_of_label(this, compute_min: bool) -> rt::Size {

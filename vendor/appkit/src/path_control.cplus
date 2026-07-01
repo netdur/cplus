@@ -87,8 +87,8 @@ impl PathControl {
 
     fn from_raw(ptr: *u8) -> PathControl { return PathControl { _obj: ptr }; }
 
-    fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
-        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
+    fn set_dragging_source_operation_mask(this, mask: u64, for_local: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, for_local as i8);
     }
 
     fn is_editable(this) -> bool {

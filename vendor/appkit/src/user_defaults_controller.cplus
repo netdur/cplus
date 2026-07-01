@@ -5,6 +5,18 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSUserDefaults` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct UserDefaults {
@@ -28,7 +40,31 @@ impl UserDefaultsController {
 
     fn from_raw(ptr: *u8) -> UserDefaultsController { return UserDefaultsController { _obj: ptr }; }
 
-    // SKIPPED `initWithDefaults:initialValues:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
+    fn new(defaults: UserDefaults, initial_values: string_map::StringMap[AnyObject]) -> UserDefaultsController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSUserDefaultsController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_initial_values: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_initial_values: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_initial_values: usize = initial_values.slot_capacity();
+        var dsi_initial_values: usize = 0 as usize;
+        while dsi_initial_values < dcap_initial_values {
+            match initial_values.value_ptr_at_slot(dsi_initial_values) {
+                option::Option[*AnyObject]::Some(dvp_initial_values) => {
+                    match initial_values.key_ptr_at_slot(dsi_initial_values) {
+                        option::Option[*text::Text]::Some(dkp_initial_values) => {
+                    let dval_initial_values: *u8 = (*dvp_initial_values).raw();
+                            rt::msg_void_id_id(dict_initial_values, dset_initial_values, dval_initial_values, bridge::nsstring((*dkp_initial_values).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_initial_values = dsi_initial_values +% (1 as usize);
+        }
+        return UserDefaultsController { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithDefaults:initialValues:\0")), defaults.raw(), dict_initial_values) };
+    }
+
     fn new_with_coder(coder: *u8) -> UserDefaultsController {
         let cls: *u8 = rt::get_class(#str_ptr("NSUserDefaultsController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -55,8 +91,46 @@ impl UserDefaultsController {
         return UserDefaults::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("defaults\0"))));
     }
 
-    // SKIPPED `initialValues`: return `NSDictionary<NSString *,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setInitialValues:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
+    fn initial_values(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("initialValues\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_initial_values(this, initial_values: string_map::StringMap[AnyObject]) {
+        let dict_initial_values: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_initial_values: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_initial_values: usize = initial_values.slot_capacity();
+        var dsi_initial_values: usize = 0 as usize;
+        while dsi_initial_values < dcap_initial_values {
+            match initial_values.value_ptr_at_slot(dsi_initial_values) {
+                option::Option[*AnyObject]::Some(dvp_initial_values) => {
+                    match initial_values.key_ptr_at_slot(dsi_initial_values) {
+                        option::Option[*text::Text]::Some(dkp_initial_values) => {
+                    let dval_initial_values: *u8 = (*dvp_initial_values).raw();
+                            rt::msg_void_id_id(dict_initial_values, dset_initial_values, dval_initial_values, bridge::nsstring((*dkp_initial_values).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_initial_values = dsi_initial_values +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInitialValues:\0")), dict_initial_values);
+    }
+
     fn applies_immediately(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("appliesImmediately\0"))) != (0 as i8);
     }

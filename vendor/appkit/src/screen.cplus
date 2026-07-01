@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSDisplayGamut` (NS_ENUM)
 enum DisplayGamut {
@@ -79,6 +80,17 @@ struct EdgeInsets {
     right: f64,
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_screen_EdgeInsets(recv: *u8, sel: *u8) -> EdgeInsets;
 
@@ -128,7 +140,7 @@ impl Screen {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("convertRectFromBacking:\0")), rect);
     }
 
-    fn backing_aligned_rect_options(this, rect: rt::Rect, options: u64) -> rt::Rect {
+    fn backing_aligned_rect(this, rect: rt::Rect, options: u64) -> rt::Rect {
         return rt::msg_rect_rect_u64(this._obj, rt::sel(#str_ptr("backingAlignedRect:options:\0")), rect, options);
     }
 
@@ -177,7 +189,23 @@ impl Screen {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("visibleFrame\0")));
     }
 
-    // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn device_description(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("deviceDescription\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn color_space(this) -> ColorSpace {
         return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
@@ -243,7 +271,7 @@ impl Screen {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("lastDisplayUpdateTimestamp\0")));
     }
 
-    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
     }
 

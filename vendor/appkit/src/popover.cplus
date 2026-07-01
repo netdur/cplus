@@ -158,8 +158,8 @@ impl Popover {
         return Popover { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn show_relative_to_rect_of_view_preferred_edge(this, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge) {
-        rt::msg_void_rect_id_i64(this._obj, rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge));
+    fn show_relative_to_rect(this, positioning_rect: rt::Rect, of_view: View, preferred_edge: RectEdge) {
+        rt::msg_void_rect_id_i64(this._obj, rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")), positioning_rect, of_view.raw(), rect_edge_raw(preferred_edge));
     }
 
     fn show_relative_to_toolbar_item(this, toolbar_item: ToolbarItem) {

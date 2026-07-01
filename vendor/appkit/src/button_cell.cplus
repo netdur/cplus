@@ -319,11 +319,11 @@ impl ButtonCell {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setButtonType:\0")), button_type_raw(type_));
     }
 
-    fn set_periodic_delay_interval(this, delay: f32, interval: f32) {
+    fn set_periodic_delay(this, delay: f32, interval: f32) {
         rt::msg_void_f32_f32(this._obj, rt::sel(#str_ptr("setPeriodicDelay:interval:\0")), delay, interval);
     }
 
-    fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
+    fn get_periodic_delay(this, delay: *u8, interval: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
     }
 
@@ -339,16 +339,16 @@ impl ButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("mouseExited:\0")), event);
     }
 
-    fn draw_bezel_with_frame_in_view(this, frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBezelWithFrame:inView:\0")), frame, control_view);
+    fn draw_bezel_with_frame(this, frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBezelWithFrame:inView:\0")), frame, in_view);
     }
 
-    fn draw_image_with_frame_in_view(this, image: Image, frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("drawImage:withFrame:inView:\0")), image.raw(), frame, control_view);
+    fn draw_image(this, image: Image, with_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("drawImage:withFrame:inView:\0")), image.raw(), with_frame, in_view);
     }
 
-    fn draw_title_with_frame_in_view(this, title: AttributedString, frame: rt::Rect, control_view: *u8) -> rt::Rect {
-        return rt::msg_rect_id_rect_id(this._obj, rt::sel(#str_ptr("drawTitle:withFrame:inView:\0")), title.raw(), frame, control_view);
+    fn draw_title(this, title: AttributedString, with_frame: rt::Rect, in_view: *u8) -> rt::Rect {
+        return rt::msg_rect_id_rect_id(this._obj, rt::sel(#str_ptr("drawTitle:withFrame:inView:\0")), title.raw(), with_frame, in_view);
     }
 
     fn bezel_style(this) -> BezelStyle {

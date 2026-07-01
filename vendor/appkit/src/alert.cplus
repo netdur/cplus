@@ -30,7 +30,7 @@ fn alert_style_from_raw(raw: i64) -> AlertStyle {
 }
 
 #[repr(C)]
-struct Alert_begin_sheet_modal_for_window_completion_handler_block {
+struct Alert_begin_sheet_modal_for_window_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -40,8 +40,8 @@ struct Alert_begin_sheet_modal_for_window_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Alert_begin_sheet_modal_for_window_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *Alert_begin_sheet_modal_for_window_completion_handler_block = { block as *Alert_begin_sheet_modal_for_window_completion_handler_block };
+fn Alert_begin_sheet_modal_for_window_invoke(block: *u8, a0: i64) {
+    let bl: *Alert_begin_sheet_modal_for_window_block = { block as *Alert_begin_sheet_modal_for_window_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -146,9 +146,9 @@ impl Alert {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
     }
 
-    fn begin_sheet_modal_for_window_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_sheet_modal_for_window(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Alert_begin_sheet_modal_for_window_completion_handler_block = Alert_begin_sheet_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Alert_begin_sheet_modal_for_window_block = Alert_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), sheet_window.raw(), bp);
         return;
@@ -251,11 +251,11 @@ impl Alert {
         return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }
 
-    fn alert_with_message_text_default_button_alternate_button_other_button_informative_text_with_format(message: str, default_button: str, alternate_button: str, other_button: str, format: str) -> Alert {
-        return Alert { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSAlert\0")), rt::sel(#str_ptr("alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:\0")), bridge::nsstring(message), bridge::nsstring(default_button), bridge::nsstring(alternate_button), bridge::nsstring(other_button), bridge::nsstring(format)) };
+    fn alert_with_message_text(message: str, default_button: str, alternate_button: str, other_button: str, informative_text_with_format: str) -> Alert {
+        return Alert { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSAlert\0")), rt::sel(#str_ptr("alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:\0")), bridge::nsstring(message), bridge::nsstring(default_button), bridge::nsstring(alternate_button), bridge::nsstring(other_button), bridge::nsstring(informative_text_with_format)) };
     }
 
-    fn begin_sheet_modal_for_window_modal_delegate_did_end_selector_context_info(this, window: Window, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+    fn begin_sheet_modal_for_window_modal_delegate(this, window: Window, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), window.raw(), delegate, did_end_selector, context_info);
     }
 

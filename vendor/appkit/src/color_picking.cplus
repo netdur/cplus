@@ -135,8 +135,8 @@ impl ColorPickingDefault {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("provideNewButtonImage\0"))));
     }
 
-    fn insert_new_button_image_in(this, new_button_image: Image, button_cell: ButtonCell) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image.raw(), button_cell.raw());
+    fn insert_new_button_image(this, new_button_image: Image, in_: ButtonCell) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image.raw(), in_.raw());
     }
 
     fn view_size_changed(this, sender: *u8) {

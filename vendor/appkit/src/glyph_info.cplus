@@ -53,24 +53,24 @@ impl GlyphInfo {
         return bridge::to_text(ns);
     }
 
-    fn glyph_info_with_glyph_name_for_font_base_string(glyph_name: str, font: *u8, string: str) -> option::Option[GlyphInfo] {
-        let obj: *u8 = rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyphName:forFont:baseString:\0")), bridge::nsstring(glyph_name), font, bridge::nsstring(string));
+    fn glyph_info_with_glyph_name(glyph_name: str, for_font: *u8, base_string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyphName:forFont:baseString:\0")), bridge::nsstring(glyph_name), for_font, bridge::nsstring(base_string));
         if obj == { 0 as *u8 } {
             return option::Option[GlyphInfo]::None;
         }
         return option::some(GlyphInfo { _obj: obj });
     }
 
-    fn glyph_info_with_glyph_for_font_base_string(glyph: u32, font: *u8, string: str) -> option::Option[GlyphInfo] {
-        let obj: *u8 = rt::msg_id_u32_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyph:forFont:baseString:\0")), glyph, font, bridge::nsstring(string));
+    fn glyph_info_with_glyph(glyph: u32, for_font: *u8, base_string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_u32_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyph:forFont:baseString:\0")), glyph, for_font, bridge::nsstring(base_string));
         if obj == { 0 as *u8 } {
             return option::Option[GlyphInfo]::None;
         }
         return option::some(GlyphInfo { _obj: obj });
     }
 
-    fn glyph_info_with_character_identifier_collection_base_string(cid: u64, character_collection: CharacterCollection, string: str) -> option::Option[GlyphInfo] {
-        let obj: *u8 = rt::msg_id_u64_i64_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithCharacterIdentifier:collection:baseString:\0")), cid, character_collection_raw(character_collection), bridge::nsstring(string));
+    fn glyph_info_with_character_identifier(cid: u64, collection: CharacterCollection, base_string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_u64_i64_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithCharacterIdentifier:collection:baseString:\0")), cid, character_collection_raw(collection), bridge::nsstring(base_string));
         if obj == { 0 as *u8 } {
             return option::Option[GlyphInfo]::None;
         }

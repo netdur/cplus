@@ -12,7 +12,7 @@ const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u
 const text_storage_edit_actions_n_s_text_storage_edited_characters: u64 = 2 as u64;
 
 #[repr(C)]
-struct TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block {
+struct TextStorageObserving_perform_editing_transaction_for_text_storage_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -22,8 +22,8 @@ struct TextStorageObserving_perform_editing_transaction_for_text_storage_using_b
     opaque ctx: *u8,
 }
 
-fn TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_invoke(block: *u8) {
-    let bl: *TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block = { block as *TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block };
+fn TextStorageObserving_perform_editing_transaction_for_text_storage_invoke(block: *u8) {
+    let bl: *TextStorageObserving_perform_editing_transaction_for_text_storage_block = { block as *TextStorageObserving_perform_editing_transaction_for_text_storage_block };
     let f: fn(*u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx);
@@ -84,8 +84,8 @@ impl TextStorage {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeLayoutManager:\0")), a_layout_manager.raw());
     }
 
-    fn edited_range_change_in_length(this, edited_mask: u64, edited_range: rt::Range, delta: i64) {
-        rt::msg_void_u64_range_i64(this._obj, rt::sel(#str_ptr("edited:range:changeInLength:\0")), edited_mask, edited_range, delta);
+    fn edited(this, edited_mask: u64, range: rt::Range, change_in_length: i64) {
+        rt::msg_void_u64_range_i64(this._obj, rt::sel(#str_ptr("edited:range:changeInLength:\0")), edited_mask, range, change_in_length);
     }
 
     fn process_editing(this) {
@@ -158,13 +158,13 @@ impl TextStorageObserving {
 
     fn from_raw(ptr: *u8) -> TextStorageObserving { return TextStorageObserving { _obj: ptr }; }
 
-    fn process_editing_for_text_storage_edited_range_change_in_length_invalidated_range(this, text_storage: TextStorage, edit_mask: u64, new_char_range: rt::Range, delta: i64, invalidated_char_range: rt::Range) {
-        rt::msg_void_id_u64_range_i64_range(this._obj, rt::sel(#str_ptr("processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:\0")), text_storage.raw(), edit_mask, new_char_range, delta, invalidated_char_range);
+    fn process_editing_for_text_storage(this, text_storage: TextStorage, edited: u64, range: rt::Range, change_in_length: i64, invalidated_range: rt::Range) {
+        rt::msg_void_id_u64_range_i64_range(this._obj, rt::sel(#str_ptr("processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:\0")), text_storage.raw(), edited, range, change_in_length, invalidated_range);
     }
 
-    fn perform_editing_transaction_for_text_storage_using_block(this, text_storage: TextStorage, cb: fn(*u8), ctx: *u8) {
+    fn perform_editing_transaction_for_text_storage(this, text_storage: TextStorage, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block = TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextStorageObserving_perform_editing_transaction_for_text_storage_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextStorageObserving_perform_editing_transaction_for_text_storage_block = TextStorageObserving_perform_editing_transaction_for_text_storage_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextStorageObserving_perform_editing_transaction_for_text_storage_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performEditingTransactionForTextStorage:usingBlock:\0")), text_storage.raw(), bp);
         return;

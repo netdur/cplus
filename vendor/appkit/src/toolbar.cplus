@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSToolbarDisplayMode` (NS_ENUM)
@@ -51,6 +52,17 @@ fn toolbar_size_mode_from_raw(raw: i64) -> ToolbarSizeMode {
     if raw == (1 as i64) { return ToolbarSizeMode::Regular; }
     if raw == (2 as i64) { return ToolbarSizeMode::Small; }
     return ToolbarSizeMode::Default;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSToolbarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -106,8 +118,8 @@ impl Toolbar {
     }
 
     // SKIPPED `init`: `new` already defined (extra constructor)
-    fn insert_item_with_item_identifier_at_index(this, item_identifier: str, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithItemIdentifier:atIndex:\0")), bridge::nsstring(item_identifier), index);
+    fn insert_item_with_item_identifier(this, item_identifier: str, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithItemIdentifier:atIndex:\0")), bridge::nsstring(item_identifier), at_index);
     }
 
     fn remove_item_at_index(this, index: i64) {
@@ -247,7 +259,29 @@ impl Toolbar {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsExtensionItems:\0")), allows_extension_items as i8);
     }
 
-    // SKIPPED `setConfigurationFromDictionary:`: param `NSDictionary<NSString *,id> * _Nonnull` — generic collection
+    fn set_configuration_from_dictionary(this, config_dict: string_map::StringMap[AnyObject]) {
+        let dict_config_dict: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_config_dict: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_config_dict: usize = config_dict.slot_capacity();
+        var dsi_config_dict: usize = 0 as usize;
+        while dsi_config_dict < dcap_config_dict {
+            match config_dict.value_ptr_at_slot(dsi_config_dict) {
+                option::Option[*AnyObject]::Some(dvp_config_dict) => {
+                    match config_dict.key_ptr_at_slot(dsi_config_dict) {
+                        option::Option[*text::Text]::Some(dkp_config_dict) => {
+                    let dval_config_dict: *u8 = (*dvp_config_dict).raw();
+                            rt::msg_void_id_id(dict_config_dict, dset_config_dict, dval_config_dict, bridge::nsstring((*dkp_config_dict).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_config_dict = dsi_config_dict +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setConfigurationFromDictionary:\0")), dict_config_dict);
+    }
+
     fn size_mode(this) -> ToolbarSizeMode {
         return toolbar_size_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sizeMode\0"))));
     }
@@ -297,7 +331,23 @@ impl Toolbar {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setShowsBaselineSeparator:\0")), shows_baseline_separator as i8);
     }
 
-    // SKIPPED `configurationDictionary`: return `API_DEPRECATED NSDictionary<NSString *,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn configuration_dictionary(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("configurationDictionary\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

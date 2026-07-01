@@ -99,8 +99,8 @@ impl Browser {
         return bridge::obj_option(obj);
     }
 
-    fn item_at_row_in_column(this, row: i64, column: i64) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("itemAtRow:inColumn:\0")), row, column);
+    fn item_at_row(this, row: i64, in_column: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("itemAtRow:inColumn:\0")), row, in_column);
         return bridge::obj_option(obj);
     }
 
@@ -112,8 +112,8 @@ impl Browser {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isLeafItem:\0")), item) != (0 as i8);
     }
 
-    fn reload_data_for_row_indexes_in_column(this, row_indexes: IndexSet, column: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("reloadDataForRowIndexes:inColumn:\0")), row_indexes.raw(), column);
+    fn reload_data_for_row_indexes(this, row_indexes: IndexSet, in_column: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("reloadDataForRowIndexes:inColumn:\0")), row_indexes.raw(), in_column);
     }
 
     fn parent_for_items_in_column(this, column: i64) -> option::Option[*u8] {
@@ -121,12 +121,12 @@ impl Browser {
         return bridge::obj_option(obj);
     }
 
-    fn scroll_row_to_visible_in_column(this, row: i64, column: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollRowToVisible:inColumn:\0")), row, column);
+    fn scroll_row_to_visible(this, row: i64, in_column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollRowToVisible:inColumn:\0")), row, in_column);
     }
 
-    fn set_title_of_column(this, string: str, column: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setTitle:ofColumn:\0")), bridge::nsstring(string), column);
+    fn set_title(this, string: str, of_column: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setTitle:ofColumn:\0")), bridge::nsstring(string), of_column);
     }
 
     fn title_of_column(this, column: i64) -> option::Option[text::Text] {
@@ -153,16 +153,16 @@ impl Browser {
         return bridge::obj_option(obj);
     }
 
-    fn select_row_in_column(this, row: i64, column: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("selectRow:inColumn:\0")), row, column);
+    fn select_row(this, row: i64, in_column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("selectRow:inColumn:\0")), row, in_column);
     }
 
     fn selected_row_in_column(this, column: i64) -> i64 {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("selectedRowInColumn:\0")), column);
     }
 
-    fn select_row_indexes_in_column(this, indexes: IndexSet, column: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("selectRowIndexes:inColumn:\0")), indexes.raw(), column);
+    fn select_row_indexes(this, indexes: IndexSet, in_column: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("selectRowIndexes:inColumn:\0")), indexes.raw(), in_column);
     }
 
     fn selected_row_indexes_in_column(this, column: i64) -> option::Option[IndexSet] {
@@ -197,8 +197,8 @@ impl Browser {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addColumn\0")));
     }
 
-    fn loaded_cell_at_row_column(this, row: i64, col: i64) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("loadedCellAtRow:column:\0")), row, col);
+    fn loaded_cell_at_row(this, row: i64, column: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("loadedCellAtRow:column:\0")), row, column);
         return bridge::obj_option(obj);
     }
 
@@ -226,8 +226,8 @@ impl Browser {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("titleFrameOfColumn:\0")), column);
     }
 
-    fn draw_title_of_column_in_rect(this, column: i64, rect: rt::Rect) {
-        rt::msg_void_i64_rect(this._obj, rt::sel(#str_ptr("drawTitleOfColumn:inRect:\0")), column, rect);
+    fn draw_title_of_column(this, column: i64, in_rect: rt::Rect) {
+        rt::msg_void_i64_rect(this._obj, rt::sel(#str_ptr("drawTitleOfColumn:inRect:\0")), column, in_rect);
     }
 
     fn frame_of_column(this, column: i64) -> rt::Rect {
@@ -238,12 +238,12 @@ impl Browser {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("frameOfInsideOfColumn:\0")), column);
     }
 
-    fn frame_of_row_in_column(this, row: i64, column: i64) -> rt::Rect {
-        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfRow:inColumn:\0")), row, column);
+    fn frame_of_row(this, row: i64, in_column: i64) -> rt::Rect {
+        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfRow:inColumn:\0")), row, in_column);
     }
 
-    fn get_row_column_for_point(this, row: *u8, column: *u8, point: rt::Point) -> bool {
-        return rt::msg_i8_id_id_point(this._obj, rt::sel(#str_ptr("getRow:column:forPoint:\0")), row, column, point) != (0 as i8);
+    fn get_row(this, row: *u8, column: *u8, for_point: rt::Point) -> bool {
+        return rt::msg_i8_id_id_point(this._obj, rt::sel(#str_ptr("getRow:column:forPoint:\0")), row, column, for_point) != (0 as i8);
     }
 
     fn column_width_for_column_content_width(this, column_content_width: f64) -> f64 {
@@ -254,16 +254,16 @@ impl Browser {
         return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("columnContentWidthForColumnWidth:\0")), column_width);
     }
 
-    fn set_width_of_column(this, column_width: f64, column_index: i64) {
-        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:ofColumn:\0")), column_width, column_index);
+    fn set_width(this, column_width: f64, of_column: i64) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:ofColumn:\0")), column_width, of_column);
     }
 
     fn width_of_column(this, column: i64) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("widthOfColumn:\0")), column);
     }
 
-    fn note_height_of_rows_with_indexes_changed_in_column(this, index_set: IndexSet, column_index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:inColumn:\0")), index_set.raw(), column_index);
+    fn note_height_of_rows_with_indexes_changed(this, index_set: IndexSet, in_column: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:inColumn:\0")), index_set.raw(), in_column);
     }
 
     fn set_default_column_width(this, column_width: f64) {
@@ -278,21 +278,21 @@ impl Browser {
         rt::msg_void_id(rt::get_class(#str_ptr("NSBrowser\0")), rt::sel(#str_ptr("removeSavedColumnsWithAutosaveName:\0")), bridge::nsstring(name));
     }
 
-    fn can_drag_rows_with_indexes_in_column_with_event(this, row_indexes: IndexSet, column: i64, event: *u8) -> bool {
-        return rt::msg_i8_id_i64_id(this._obj, rt::sel(#str_ptr("canDragRowsWithIndexes:inColumn:withEvent:\0")), row_indexes.raw(), column, event) != (0 as i8);
+    fn can_drag_rows_with_indexes(this, row_indexes: IndexSet, in_column: i64, with_event: *u8) -> bool {
+        return rt::msg_i8_id_i64_id(this._obj, rt::sel(#str_ptr("canDragRowsWithIndexes:inColumn:withEvent:\0")), row_indexes.raw(), in_column, with_event) != (0 as i8);
     }
 
-    fn dragging_image_for_rows_with_indexes_in_column_with_event_offset(this, row_indexes: IndexSet, column: i64, event: *u8, drag_image_offset: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("draggingImageForRowsWithIndexes:inColumn:withEvent:offset:\0")), row_indexes.raw(), column, event, drag_image_offset);
+    fn dragging_image_for_rows_with_indexes(this, row_indexes: IndexSet, in_column: i64, with_event: *u8, offset: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("draggingImageForRowsWithIndexes:inColumn:withEvent:offset:\0")), row_indexes.raw(), in_column, with_event, offset);
         return bridge::obj_option(obj);
     }
 
-    fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
-        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
+    fn set_dragging_source_operation_mask(this, mask: u64, for_local: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, for_local as i8);
     }
 
-    fn edit_item_at_index_path_with_event_select(this, index_path: *u8, event: *u8, select: bool) {
-        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("editItemAtIndexPath:withEvent:select:\0")), index_path, event, select as i8);
+    fn edit_item_at_index_path(this, index_path: *u8, with_event: *u8, select: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("editItemAtIndexPath:withEvent:select:\0")), index_path, with_event, select as i8);
     }
 
     fn cell_class() -> *u8 {

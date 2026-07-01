@@ -182,12 +182,12 @@ impl CollectionViewDelegateFlowLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewDelegateFlowLayout { return CollectionViewDelegateFlowLayout { _obj: ptr }; }
 
-    fn collection_view_layout_size_for_item_at_index_path(this, collection_view: *u8, collection_view_layout: *u8, index_path: *u8) -> rt::Size {
-        return rt::msg_size_id_id_id(this._obj, rt::sel(#str_ptr("collectionView:layout:sizeForItemAtIndexPath:\0")), collection_view, collection_view_layout, index_path);
+    fn collection_view(this, collection_view: *u8, layout: *u8, size_for_item_at_index_path: *u8) -> rt::Size {
+        return rt::msg_size_id_id_id(this._obj, rt::sel(#str_ptr("collectionView:layout:sizeForItemAtIndexPath:\0")), collection_view, layout, size_for_item_at_index_path);
     }
 
-    fn collection_view_layout_inset_for_section_at_index(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> EdgeInsets {
-        return objc_msg_collection_view_flow_layout_EdgeInsets_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:insetForSectionAtIndex:\0")), collection_view, collection_view_layout, section);
+    fn collection_view_layout(this, collection_view: *u8, collection_view_layout: *u8, inset_for_section_at_index: i64) -> EdgeInsets {
+        return objc_msg_collection_view_flow_layout_EdgeInsets_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:insetForSectionAtIndex:\0")), collection_view, collection_view_layout, inset_for_section_at_index);
     }
 
     fn collection_view_layout_minimum_line_spacing_for_section_at_index(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> f64 {

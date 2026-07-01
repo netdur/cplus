@@ -29,8 +29,8 @@ impl FontPanel {
 
     fn from_raw(ptr: *u8) -> FontPanel { return FontPanel { _obj: ptr }; }
 
-    fn set_panel_font_is_multiple(this, font_obj: Font, flag: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setPanelFont:isMultiple:\0")), font_obj.raw(), flag as i8);
+    fn set_panel_font(this, font_obj: Font, is_multiple: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setPanelFont:isMultiple:\0")), font_obj.raw(), is_multiple as i8);
     }
 
     fn panel_convert_font(this, font_obj: Font) -> Font {

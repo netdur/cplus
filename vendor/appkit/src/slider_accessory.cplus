@@ -47,7 +47,7 @@ impl SliderAccessoryBehavior {
 
     fn from_raw(ptr: *u8) -> SliderAccessoryBehavior { return SliderAccessoryBehavior { _obj: ptr }; }
 
-    fn behavior_with_target_action(target: *u8, action: *u8) -> SliderAccessoryBehavior {
+    fn behavior_with_target(target: *u8, action: *u8) -> SliderAccessoryBehavior {
         return SliderAccessoryBehavior { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSliderAccessoryBehavior\0")), rt::sel(#str_ptr("behaviorWithTarget:action:\0")), target, action) };
     }
 

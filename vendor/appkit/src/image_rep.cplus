@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSCompositingOperation` (NS_ENUM)
 enum CompositingOperation {
@@ -127,6 +128,17 @@ fn image_layout_direction_from_raw(raw: i64) -> ImageLayoutDirection {
     return ImageLayoutDirection::Unspecified;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSPasteboard` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Pasteboard {
     opaque _obj: *u8,
@@ -197,7 +209,7 @@ impl ImageRep {
         return rt::msg_i8_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect) != (0 as i8);
     }
 
-    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
+    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: msgSend shape `i8_rect_rect_i64_f64_i8_id` not yet modelled
     fn register_image_rep_class(image_rep_class: *u8) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("registerImageRepClass:\0")), image_rep_class);
     }
@@ -349,7 +361,30 @@ impl ImageRep {
         return option::some(ImageRep { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
+    fn c_g_image_for_proposed_rect(this, proposed_dest_rect: *u8, context: GraphicsContext, hints: string_map::StringMap[AnyObject]) -> option::Option[*u8] {
+        let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_hints: usize = hints.slot_capacity();
+        var dsi_hints: usize = 0 as usize;
+        while dsi_hints < dcap_hints {
+            match hints.value_ptr_at_slot(dsi_hints) {
+                option::Option[*AnyObject]::Some(dvp_hints) => {
+                    match hints.key_ptr_at_slot(dsi_hints) {
+                        option::Option[*text::Text]::Some(dkp_hints) => {
+                    let dval_hints: *u8 = (*dvp_hints).raw();
+                            rt::msg_void_id_id(dict_hints, dset_hints, dval_hints, bridge::nsstring((*dkp_hints).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_hints = dsi_hints +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("CGImageForProposedRect:context:hints:\0")), proposed_dest_rect, context.raw(), dict_hints);
+        return bridge::obj_option(obj);
+    }
+
     fn size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("size\0")));
     }

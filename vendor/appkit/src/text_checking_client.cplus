@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSTextInputTraitType` (NS_ENUM)
 enum TextInputTraitType {
@@ -229,7 +230,7 @@ impl TextCheckingClient {
 
     fn from_raw(ptr: *u8) -> TextCheckingClient { return TextCheckingClient { _obj: ptr }; }
 
-    fn annotated_substring_for_proposed_range_actual_range(this, range: rt::Range, actual_range: *u8) -> option::Option[AttributedString] {
+    fn annotated_substring_for_proposed_range(this, range: rt::Range, actual_range: *u8) -> option::Option[AttributedString] {
         let obj: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("annotatedSubstringForProposedRange:actualRange:\0")), range, actual_range);
         if obj == { 0 as *u8 } {
             return option::Option[AttributedString]::None;
@@ -237,21 +238,65 @@ impl TextCheckingClient {
         return option::some(AttributedString::from_raw(obj));
     }
 
-    // SKIPPED `setAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
-    // SKIPPED `addAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
-    fn remove_annotation_range(this, annotation_name: str, range: rt::Range) {
+    fn set_annotations(this, annotations: string_map::StringMap[text::Text], range: rt::Range) {
+        let dict_annotations: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_annotations: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_annotations: usize = annotations.slot_capacity();
+        var dsi_annotations: usize = 0 as usize;
+        while dsi_annotations < dcap_annotations {
+            match annotations.value_ptr_at_slot(dsi_annotations) {
+                option::Option[*text::Text]::Some(dvp_annotations) => {
+                    match annotations.key_ptr_at_slot(dsi_annotations) {
+                        option::Option[*text::Text]::Some(dkp_annotations) => {
+                    let dval_annotations: *u8 = bridge::nsstring((*dvp_annotations).view());
+                            rt::msg_void_id_id(dict_annotations, dset_annotations, dval_annotations, bridge::nsstring((*dkp_annotations).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*text::Text]::None => {}
+            }
+            dsi_annotations = dsi_annotations +% (1 as usize);
+        }
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setAnnotations:range:\0")), dict_annotations, range);
+    }
+
+    fn add_annotations(this, annotations: string_map::StringMap[text::Text], range: rt::Range) {
+        let dict_annotations: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_annotations: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_annotations: usize = annotations.slot_capacity();
+        var dsi_annotations: usize = 0 as usize;
+        while dsi_annotations < dcap_annotations {
+            match annotations.value_ptr_at_slot(dsi_annotations) {
+                option::Option[*text::Text]::Some(dvp_annotations) => {
+                    match annotations.key_ptr_at_slot(dsi_annotations) {
+                        option::Option[*text::Text]::Some(dkp_annotations) => {
+                    let dval_annotations: *u8 = bridge::nsstring((*dvp_annotations).view());
+                            rt::msg_void_id_id(dict_annotations, dset_annotations, dval_annotations, bridge::nsstring((*dkp_annotations).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*text::Text]::None => {}
+            }
+            dsi_annotations = dsi_annotations +% (1 as usize);
+        }
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("addAnnotations:range:\0")), dict_annotations, range);
+    }
+
+    fn remove_annotation(this, annotation_name: str, range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("removeAnnotation:range:\0")), bridge::nsstring(annotation_name), range);
     }
 
-    fn replace_characters_in_range_with_annotated_string(this, range: rt::Range, annotated_string: AttributedString) {
-        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withAnnotatedString:\0")), range, annotated_string.raw());
+    fn replace_characters_in_range(this, range: rt::Range, with_annotated_string: AttributedString) {
+        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withAnnotatedString:\0")), range, with_annotated_string.raw());
     }
 
     fn select_and_show_range(this, range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("selectAndShowRange:\0")), range);
     }
 
-    fn view_for_range_first_rect_actual_range(this, range: rt::Range, first_rect: *u8, actual_range: *u8) -> option::Option[View] {
+    fn view_for_range(this, range: rt::Range, first_rect: *u8, actual_range: *u8) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_range_id_id(this._obj, rt::sel(#str_ptr("viewForRange:firstRect:actualRange:\0")), range, first_rect, actual_range);
         if obj == { 0 as *u8 } {
             return option::Option[View]::None;

@@ -50,7 +50,7 @@ fn TextContentManager_perform_editing_transaction_using_block_invoke(block: *u8)
 }
 
 #[repr(C)]
-struct TextElementProvider_enumerate_text_elements_from_location_options_using_block_block {
+struct TextElementProvider_enumerate_text_elements_from_location_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -60,8 +60,8 @@ struct TextElementProvider_enumerate_text_elements_from_location_options_using_b
     opaque ctx: *u8,
 }
 
-fn TextElementProvider_enumerate_text_elements_from_location_options_using_block_invoke(block: *u8, a0: *u8) {
-    let bl: *TextElementProvider_enumerate_text_elements_from_location_options_using_block_block = { block as *TextElementProvider_enumerate_text_elements_from_location_options_using_block_block };
+fn TextElementProvider_enumerate_text_elements_from_location_invoke(block: *u8, a0: *u8) {
+    let bl: *TextElementProvider_enumerate_text_elements_from_location_block = { block as *TextElementProvider_enumerate_text_elements_from_location_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -170,19 +170,19 @@ impl TextContentStorage {
         return option::some(TextElement::from_raw(obj));
     }
 
-    fn location_from_location_with_offset(this, location: TextLocation, offset: i64) -> option::Option[TextLocation] {
-        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), offset);
+    fn location_from_location(this, location: TextLocation, with_offset: i64) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), with_offset);
         if obj == { 0 as *u8 } {
             return option::Option[TextLocation]::None;
         }
         return option::some(TextLocation::from_raw(obj));
     }
 
-    fn offset_from_location_to_location(this, from: TextLocation, to: TextLocation) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to.raw());
+    fn offset_from_location(this, from: TextLocation, to_location: TextLocation) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to_location.raw());
     }
 
-    fn adjusted_range_from_range_for_editing_text_selection(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
+    fn adjusted_range_from_range(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("adjustedRangeFromRange:forEditingTextSelection:\0")), text_range.raw(), for_editing_text_selection as i8);
         if obj == { 0 as *u8 } {
             return option::Option[TextRange]::None;
@@ -277,7 +277,7 @@ impl TextContentManager {
         return;
     }
 
-    fn record_edit_action_in_range_new_text_range(this, original_text_range: TextRange, new_text_range: TextRange) {
+    fn record_edit_action_in_range(this, original_text_range: TextRange, new_text_range: TextRange) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("recordEditActionInRange:newTextRange:\0")), original_text_range.raw(), new_text_range.raw());
     }
 
@@ -374,9 +374,9 @@ impl TextElementProvider {
 
     fn from_raw(ptr: *u8) -> TextElementProvider { return TextElementProvider { _obj: ptr }; }
 
-    fn enumerate_text_elements_from_location_options_using_block(this, text_location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] {
+    fn enumerate_text_elements_from_location(this, text_location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextElementProvider_enumerate_text_elements_from_location_options_using_block_block = TextElementProvider_enumerate_text_elements_from_location_options_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_enumerate_text_elements_from_location_options_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextElementProvider_enumerate_text_elements_from_location_block = TextElementProvider_enumerate_text_elements_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextElementProvider_enumerate_text_elements_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextElementsFromLocation:options:usingBlock:\0")), text_location.raw(), options, bp);
         if obj == { 0 as *u8 } {
@@ -385,19 +385,19 @@ impl TextElementProvider {
         return option::some(TextLocation::from_raw(obj));
     }
 
-    fn replace_contents_in_range_with_text_elements(this, range: TextRange, text_elements: vec::Vec[TextElement]) {
-        let arr_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
-        let add_sel_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
-        let n_text_elements: usize = text_elements.count();
-        var i_text_elements: usize = 0 as usize;
-        while i_text_elements < n_text_elements {
-            match text_elements.at_ptr(i_text_elements) {
-                option::Option[*TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, (*e_text_elements).raw()); }
+    fn replace_contents_in_range(this, range: TextRange, with_text_elements: vec::Vec[TextElement]) {
+        let arr_with_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_with_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_with_text_elements: usize = with_text_elements.count();
+        var i_with_text_elements: usize = 0 as usize;
+        while i_with_text_elements < n_with_text_elements {
+            match with_text_elements.at_ptr(i_with_text_elements) {
+                option::Option[*TextElement]::Some(e_with_text_elements) => { rt::msg_void_id(arr_with_text_elements, add_sel_with_text_elements, (*e_with_text_elements).raw()); }
                 option::Option[*TextElement]::None => {}
             }
-            i_text_elements = i_text_elements +% (1 as usize);
+            i_with_text_elements = i_with_text_elements +% (1 as usize);
         }
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_text_elements);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_with_text_elements);
     }
 
     fn synchronize_to_backing_store(this, cb: fn(*u8, *u8), ctx: *u8) {
@@ -408,19 +408,19 @@ impl TextElementProvider {
         return;
     }
 
-    fn location_from_location_with_offset(this, location: TextLocation, offset: i64) -> option::Option[TextLocation] {
-        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), offset);
+    fn location_from_location(this, location: TextLocation, with_offset: i64) -> option::Option[TextLocation] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("locationFromLocation:withOffset:\0")), location.raw(), with_offset);
         if obj == { 0 as *u8 } {
             return option::Option[TextLocation]::None;
         }
         return option::some(TextLocation::from_raw(obj));
     }
 
-    fn offset_from_location_to_location(this, from: TextLocation, to: TextLocation) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to.raw());
+    fn offset_from_location(this, from: TextLocation, to_location: TextLocation) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("offsetFromLocation:toLocation:\0")), from.raw(), to_location.raw());
     }
 
-    fn adjusted_range_from_range_for_editing_text_selection(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
+    fn adjusted_range_from_range(this, text_range: TextRange, for_editing_text_selection: bool) -> option::Option[TextRange] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("adjustedRangeFromRange:forEditingTextSelection:\0")), text_range.raw(), for_editing_text_selection as i8);
         if obj == { 0 as *u8 } {
             return option::Option[TextRange]::None;

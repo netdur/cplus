@@ -47,8 +47,19 @@ const workspace_launch_options_n_s_workspace_launch_default: u64 = 65536 as u64;
 const workspace_launch_options_n_s_workspace_launch_allowing_classic_startup: u64 = 131072 as u64;
 const workspace_launch_options_n_s_workspace_launch_preferring_classic: u64 = 262144 as u64;
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[repr(C)]
-struct Workspace_open_u_r_l_configuration_completion_handler_block {
+struct Workspace_open_u_r_l_configuration_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -58,8 +69,8 @@ struct Workspace_open_u_r_l_configuration_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Workspace_open_u_r_l_configuration_completion_handler_invoke(block: *u8, a0: *u8, a1: *u8) {
-    let bl: *Workspace_open_u_r_l_configuration_completion_handler_block = { block as *Workspace_open_u_r_l_configuration_completion_handler_block };
+fn Workspace_open_u_r_l_configuration_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_open_u_r_l_configuration_block = { block as *Workspace_open_u_r_l_configuration_block };
     let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1);
@@ -67,7 +78,7 @@ fn Workspace_open_u_r_l_configuration_completion_handler_invoke(block: *u8, a0: 
 }
 
 #[repr(C)]
-struct Workspace_open_application_at_u_r_l_configuration_completion_handler_block {
+struct Workspace_open_application_at_u_r_l_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -77,8 +88,8 @@ struct Workspace_open_application_at_u_r_l_configuration_completion_handler_bloc
     opaque ctx: *u8,
 }
 
-fn Workspace_open_application_at_u_r_l_configuration_completion_handler_invoke(block: *u8, a0: *u8, a1: *u8) {
-    let bl: *Workspace_open_application_at_u_r_l_configuration_completion_handler_block = { block as *Workspace_open_application_at_u_r_l_configuration_completion_handler_block };
+fn Workspace_open_application_at_u_r_l_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_open_application_at_u_r_l_block = { block as *Workspace_open_application_at_u_r_l_block };
     let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1);
@@ -86,7 +97,7 @@ fn Workspace_open_application_at_u_r_l_configuration_completion_handler_invoke(b
 }
 
 #[repr(C)]
-struct Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block {
+struct Workspace_set_default_application_at_u_r_l_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -96,8 +107,8 @@ struct Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_a
     opaque ctx: *u8,
 }
 
-fn Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block };
+fn Workspace_set_default_application_at_u_r_l_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_block = { block as *Workspace_set_default_application_at_u_r_l_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -105,7 +116,7 @@ fn Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_
 }
 
 #[repr(C)]
-struct Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block {
+struct Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -115,8 +126,8 @@ struct Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_com
     opaque ctx: *u8,
 }
 
-fn Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block };
+fn Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -124,7 +135,7 @@ fn Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_complet
 }
 
 #[repr(C)]
-struct Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block {
+struct Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -134,8 +145,8 @@ struct Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completi
     opaque ctx: *u8,
 }
 
-fn Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block };
+fn Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -143,7 +154,7 @@ fn Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_h
 }
 
 #[repr(C)]
-struct Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block {
+struct Workspace_set_default_application_at_u_r_l_to_open_content_type_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -153,8 +164,8 @@ struct Workspace_set_default_application_at_u_r_l_to_open_content_type_completio
     opaque ctx: *u8,
 }
 
-fn Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block };
+fn Workspace_set_default_application_at_u_r_l_to_open_content_type_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_content_type_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_content_type_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -370,7 +381,29 @@ impl WorkspaceOpenConfiguration {
         return out;
     }
 
-    // SKIPPED `setEnvironment:`: param `NSDictionary<NSString *,NSString *> * _Nonnull` — generic collection
+    fn set_environment(this, environment: string_map::StringMap[text::Text]) {
+        let dict_environment: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_environment: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_environment: usize = environment.slot_capacity();
+        var dsi_environment: usize = 0 as usize;
+        while dsi_environment < dcap_environment {
+            match environment.value_ptr_at_slot(dsi_environment) {
+                option::Option[*text::Text]::Some(dvp_environment) => {
+                    match environment.key_ptr_at_slot(dsi_environment) {
+                        option::Option[*text::Text]::Some(dkp_environment) => {
+                    let dval_environment: *u8 = bridge::nsstring((*dvp_environment).view());
+                            rt::msg_void_id_id(dict_environment, dset_environment, dval_environment, bridge::nsstring((*dkp_environment).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*text::Text]::None => {}
+            }
+            dsi_environment = dsi_environment +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEnvironment:\0")), dict_environment);
+    }
+
     fn apple_event(this) -> option::Option[AppleEventDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("appleEvent\0")));
         if obj == { 0 as *u8 } {
@@ -439,25 +472,25 @@ impl Workspace {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openURL:\0")), url.raw()) != (0 as i8);
     }
 
-    fn open_u_r_l_configuration_completion_handler(this, url: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+    fn open_u_r_l_configuration(this, url: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_open_u_r_l_configuration_completion_handler_block = Workspace_open_u_r_l_configuration_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_l_configuration_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_open_u_r_l_configuration_block = Workspace_open_u_r_l_configuration_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_l_configuration_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openURL:configuration:completionHandler:\0")), url.raw(), configuration.raw(), bp);
         return;
     }
 
-    // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: block method with an NSArray<id> param not modelled
-    fn open_application_at_u_r_l_configuration_completion_handler(this, application_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+    // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: block method with a built-collection param not modelled
+    fn open_application_at_u_r_l(this, application_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_open_application_at_u_r_l_configuration_completion_handler_block = Workspace_open_application_at_u_r_l_configuration_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_configuration_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_open_application_at_u_r_l_block = Workspace_open_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openApplicationAtURL:configuration:completionHandler:\0")), application_u_r_l.raw(), configuration.raw(), bp);
         return;
     }
 
-    fn select_file_in_file_viewer_rooted_at_path(this, full_path: str, root_full_path: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("selectFile:inFileViewerRootedAtPath:\0")), bridge::nsstring(full_path), bridge::nsstring(root_full_path)) != (0 as i8);
+    fn select_file(this, full_path: str, in_file_viewer_rooted_at_path: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("selectFile:inFileViewerRootedAtPath:\0")), bridge::nsstring(full_path), bridge::nsstring(in_file_viewer_rooted_at_path)) != (0 as i8);
     }
 
     fn activate_file_viewer_selecting_u_r_ls(this, file_u_r_ls: vec::Vec[URL]) {
@@ -503,21 +536,21 @@ impl Workspace {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForContentType:\0")), content_type.raw()));
     }
 
-    fn set_icon_for_file_options(this, image: Image, full_path: str, options: u64) -> bool {
-        return rt::msg_i8_id_id_u64(this._obj, rt::sel(#str_ptr("setIcon:forFile:options:\0")), image.raw(), bridge::nsstring(full_path), options) != (0 as i8);
+    fn set_icon(this, image: Image, for_file: str, options: u64) -> bool {
+        return rt::msg_i8_id_id_u64(this._obj, rt::sel(#str_ptr("setIcon:forFile:options:\0")), image.raw(), bridge::nsstring(for_file), options) != (0 as i8);
     }
 
-    // SKIPPED `recycleURLs:completionHandler:`: block method with an NSArray<id> param not modelled
-    // SKIPPED `duplicateURLs:completionHandler:`: block method with an NSArray<id> param not modelled
-    fn get_file_system_info_for_path_is_removable_is_writable_is_unmountable_description_type(this, full_path: str, removable_flag: *u8, writable_flag: *u8, unmountable_flag: *u8, description: *u8, file_system_type: *u8) -> bool {
-        return rt::msg_i8_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:\0")), bridge::nsstring(full_path), removable_flag, writable_flag, unmountable_flag, description, file_system_type) != (0 as i8);
+    // SKIPPED `recycleURLs:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `duplicateURLs:completionHandler:`: block method with a built-collection param not modelled
+    fn get_file_system_info_for_path(this, full_path: str, is_removable: *u8, is_writable: *u8, is_unmountable: *u8, description: *u8, type_: *u8) -> bool {
+        return rt::msg_i8_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:\0")), bridge::nsstring(full_path), is_removable, is_writable, is_unmountable, description, type_) != (0 as i8);
     }
 
     fn unmount_and_eject_device_at_path(this, path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("unmountAndEjectDeviceAtPath:\0")), bridge::nsstring(path)) != (0 as i8);
     }
 
-    fn unmount_and_eject_device_at_u_r_l_error(this, url: URL, error: *u8) -> bool {
+    fn unmount_and_eject_device_at_u_r_l(this, url: URL, error: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("unmountAndEjectDeviceAtURL:error:\0")), url.raw(), error) != (0 as i8);
     }
 
@@ -571,25 +604,25 @@ impl Workspace {
         return out;
     }
 
-    fn set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
+    fn set_default_application_at_u_r_l(this, application_u_r_l: URL, to_open_content_type_of_file_at_u_r_l: URL, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
-        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:\0")), application_u_r_l.raw(), url.raw(), bp);
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:\0")), application_u_r_l.raw(), to_open_content_type_of_file_at_u_r_l.raw(), bp);
         return;
     }
 
-    fn set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler(this, application_u_r_l: URL, url_scheme: str, cb: fn(*u8, *u8), ctx: *u8) {
+    fn set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme(this, application_u_r_l: URL, url_scheme: str, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block = Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:\0")), application_u_r_l.raw(), bridge::nsstring(url_scheme), bp);
         return;
     }
 
-    fn set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
+    fn set_default_application_at_u_r_l_to_open_file_at_u_r_l(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block = Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:\0")), application_u_r_l.raw(), url.raw(), bp);
         return;
@@ -616,9 +649,9 @@ impl Workspace {
         return out;
     }
 
-    fn set_default_application_at_u_r_l_to_open_content_type_completion_handler(this, application_u_r_l: URL, content_type: UTType, cb: fn(*u8, *u8), ctx: *u8) {
+    fn set_default_application_at_u_r_l_to_open_content_type(this, application_u_r_l: URL, content_type: UTType, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentType:completionHandler:\0")), application_u_r_l.raw(), content_type.raw(), bp);
         return;
@@ -667,7 +700,7 @@ impl Workspace {
         return RunningApplication::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("menuBarOwningApplication\0"))));
     }
 
-    // SKIPPED `setDesktopImageURL:forScreen:options:error:`: param `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nonnull` — generic collection
+    // SKIPPED `setDesktopImageURL:forScreen:options:error:`: msgSend shape `i8_id_id_id_id` not yet modelled
     fn desktop_image_u_r_l_for_screen(this, screen: Screen) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("desktopImageURLForScreen:\0")), screen.raw());
         if obj == { 0 as *u8 } {
@@ -676,7 +709,23 @@ impl Workspace {
         return option::some(URL::from_raw(obj));
     }
 
-    // SKIPPED `desktopImageOptionsForScreen:`: return `NSDictionary<NSWorkspaceDesktopImageOptionKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn desktop_image_options_for_screen(this, screen: Screen) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("desktopImageOptionsForScreen:\0")), screen.raw());
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `requestAuthorizationOfType:completionHandler:`: block-method msgSend shape not modelled
     fn open_file(this, full_path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openFile:\0")), bridge::nsstring(full_path)) != (0 as i8);
@@ -694,10 +743,62 @@ impl Workspace {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("launchApplication:\0")), bridge::nsstring(app_name)) != (0 as i8);
     }
 
-    // SKIPPED `launchApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
-    // SKIPPED `openURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
-    // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
-    fn launch_application_show_icon_autolaunch(this, app_name: str, show_icon: bool, autolaunch: bool) -> bool {
+    fn launch_application_at_u_r_l(this, url: URL, options: u64, configuration: string_map::StringMap[AnyObject], error: *u8) -> option::Option[RunningApplication] {
+        let dict_configuration: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_configuration: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_configuration: usize = configuration.slot_capacity();
+        var dsi_configuration: usize = 0 as usize;
+        while dsi_configuration < dcap_configuration {
+            match configuration.value_ptr_at_slot(dsi_configuration) {
+                option::Option[*AnyObject]::Some(dvp_configuration) => {
+                    match configuration.key_ptr_at_slot(dsi_configuration) {
+                        option::Option[*text::Text]::Some(dkp_configuration) => {
+                    let dval_configuration: *u8 = (*dvp_configuration).raw();
+                            rt::msg_void_id_id(dict_configuration, dset_configuration, dval_configuration, bridge::nsstring((*dkp_configuration).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_configuration = dsi_configuration +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("launchApplicationAtURL:options:configuration:error:\0")), url.raw(), options, dict_configuration, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[RunningApplication]::None;
+        }
+        return option::some(RunningApplication::from_raw(obj));
+    }
+
+    fn open_u_r_l_options(this, url: URL, options: u64, configuration: string_map::StringMap[AnyObject], error: *u8) -> option::Option[RunningApplication] {
+        let dict_configuration: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_configuration: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_configuration: usize = configuration.slot_capacity();
+        var dsi_configuration: usize = 0 as usize;
+        while dsi_configuration < dcap_configuration {
+            match configuration.value_ptr_at_slot(dsi_configuration) {
+                option::Option[*AnyObject]::Some(dvp_configuration) => {
+                    match configuration.key_ptr_at_slot(dsi_configuration) {
+                        option::Option[*text::Text]::Some(dkp_configuration) => {
+                    let dval_configuration: *u8 = (*dvp_configuration).raw();
+                            rt::msg_void_id_id(dict_configuration, dset_configuration, dval_configuration, bridge::nsstring((*dkp_configuration).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_configuration = dsi_configuration +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("openURL:options:configuration:error:\0")), url.raw(), options, dict_configuration, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[RunningApplication]::None;
+        }
+        return option::some(RunningApplication::from_raw(obj));
+    }
+
+    // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: msgSend shape `id_id_id_u64_id_id` not yet modelled
+    fn launch_application_show_icon(this, app_name: str, show_icon: bool, autolaunch: bool) -> bool {
         return rt::msg_i8_id_i8_i8(this._obj, rt::sel(#str_ptr("launchApplication:showIcon:autolaunch:\0")), bridge::nsstring(app_name), show_icon as i8, autolaunch as i8) != (0 as i8);
     }
 
@@ -711,8 +812,8 @@ impl Workspace {
         return bridge::to_text_option(ns);
     }
 
-    fn launch_app_with_bundle_identifier_options_additional_event_param_descriptor_launch_identifier(this, bundle_identifier: str, options: u64, descriptor: AppleEventDescriptor, identifier: *u8) -> bool {
-        return rt::msg_i8_id_u64_id_id(this._obj, rt::sel(#str_ptr("launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:\0")), bridge::nsstring(bundle_identifier), options, descriptor.raw(), identifier) != (0 as i8);
+    fn launch_app_with_bundle_identifier(this, bundle_identifier: str, options: u64, additional_event_param_descriptor: AppleEventDescriptor, launch_identifier: *u8) -> bool {
+        return rt::msg_i8_id_u64_id_id(this._obj, rt::sel(#str_ptr("launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:\0")), bridge::nsstring(bundle_identifier), options, additional_event_param_descriptor.raw(), launch_identifier) != (0 as i8);
     }
 
     // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSNumber *> * _Nullable * _Nullable` — generic collection
@@ -728,8 +829,8 @@ impl Workspace {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteUserDefaultsChanged\0")));
     }
 
-    fn slide_image_from_to(this, image: Image, from_point: rt::Point, to_point: rt::Point) {
-        rt::msg_void_id_point_point(this._obj, rt::sel(#str_ptr("slideImage:from:to:\0")), image.raw(), from_point, to_point);
+    fn slide_image(this, image: Image, from: rt::Point, to: rt::Point) {
+        rt::msg_void_id_point_point(this._obj, rt::sel(#str_ptr("slideImage:from:to:\0")), image.raw(), from, to);
     }
 
     fn check_for_removable_media(this) {
@@ -770,24 +871,24 @@ impl Workspace {
         return bridge::obj_option(obj);
     }
 
-    fn open_file_from_image_at_in_view(this, full_path: str, image: Image, point: rt::Point, view: View) -> bool {
-        return rt::msg_i8_id_id_point_id(this._obj, rt::sel(#str_ptr("openFile:fromImage:at:inView:\0")), bridge::nsstring(full_path), image.raw(), point, view.raw()) != (0 as i8);
+    fn open_file_from_image(this, full_path: str, image: Image, at: rt::Point, in_view: View) -> bool {
+        return rt::msg_i8_id_id_point_id(this._obj, rt::sel(#str_ptr("openFile:fromImage:at:inView:\0")), bridge::nsstring(full_path), image.raw(), at, in_view.raw()) != (0 as i8);
     }
 
-    fn perform_file_operation_source_destination_files_tag(this, operation: str, source: str, destination: str, files: *u8, tag: *u8) -> bool {
+    fn perform_file_operation(this, operation: str, source: str, destination: str, files: *u8, tag: *u8) -> bool {
         return rt::msg_i8_id_id_id_id_id(this._obj, rt::sel(#str_ptr("performFileOperation:source:destination:files:tag:\0")), bridge::nsstring(operation), bridge::nsstring(source), bridge::nsstring(destination), files, tag) != (0 as i8);
     }
 
-    fn get_info_for_file_application_type(this, full_path: str, app_name: *u8, type_: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getInfoForFile:application:type:\0")), bridge::nsstring(full_path), app_name, type_) != (0 as i8);
+    fn get_info_for_file(this, full_path: str, application: *u8, type_: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getInfoForFile:application:type:\0")), bridge::nsstring(full_path), application, type_) != (0 as i8);
     }
 
     fn icon_for_file_type(this, file_type: str) -> Image {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForFileType:\0")), bridge::nsstring(file_type)));
     }
 
-    fn type_of_file_error(this, absolute_file_path: str, out_error: *u8) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeOfFile:error:\0")), bridge::nsstring(absolute_file_path), out_error);
+    fn type_of_file(this, absolute_file_path: str, error: *u8) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeOfFile:error:\0")), bridge::nsstring(absolute_file_path), error);
         return bridge::to_text_option(ns);
     }
 
@@ -801,12 +902,12 @@ impl Workspace {
         return bridge::to_text_option(ns);
     }
 
-    fn filename_extension_is_valid_for_type(this, filename_extension: str, type_name: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("filenameExtension:isValidForType:\0")), bridge::nsstring(filename_extension), bridge::nsstring(type_name)) != (0 as i8);
+    fn filename_extension(this, filename_extension: str, is_valid_for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("filenameExtension:isValidForType:\0")), bridge::nsstring(filename_extension), bridge::nsstring(is_valid_for_type)) != (0 as i8);
     }
 
-    fn type_conforms_to_type(this, first_type_name: str, second_type_name: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("type:conformsToType:\0")), bridge::nsstring(first_type_name), bridge::nsstring(second_type_name)) != (0 as i8);
+    fn type_(this, first_type_name: str, conforms_to_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("type:conformsToType:\0")), bridge::nsstring(first_type_name), bridge::nsstring(conforms_to_type)) != (0 as i8);
     }
 
 }

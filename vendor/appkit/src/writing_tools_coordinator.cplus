@@ -100,8 +100,8 @@ impl WritingToolsCoordinator {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopWritingTools\0")));
     }
 
-    fn update_range_with_text_reason_for_context_with_identifier(this, range: rt::Range, replacement_text: AttributedString, reason: WritingToolsCoordinatorTextUpdateReason, context_i_d: UUID) {
-        rt::msg_void_range_id_i64_id(this._obj, rt::sel(#str_ptr("updateRange:withText:reason:forContextWithIdentifier:\0")), range, replacement_text.raw(), writing_tools_coordinator_text_update_reason_raw(reason), context_i_d.raw());
+    fn update_range(this, range: rt::Range, with_text: AttributedString, reason: WritingToolsCoordinatorTextUpdateReason, for_context_with_identifier: UUID) {
+        rt::msg_void_range_id_i64_id(this._obj, rt::sel(#str_ptr("updateRange:withText:reason:forContextWithIdentifier:\0")), range, with_text.raw(), writing_tools_coordinator_text_update_reason_raw(reason), for_context_with_identifier.raw());
     }
 
     fn update_for_reflowed_text_in_context_with_identifier(this, context_i_d: UUID) {

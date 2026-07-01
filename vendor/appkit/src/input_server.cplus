@@ -37,20 +37,20 @@ impl InputServiceProvider {
 
     fn from_raw(ptr: *u8) -> InputServiceProvider { return InputServiceProvider { _obj: ptr }; }
 
-    fn insert_text_client(this, string: *u8, sender: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertText:client:\0")), string, sender);
+    fn insert_text(this, string: *u8, client: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertText:client:\0")), string, client);
     }
 
-    fn do_command_by_selector_client(this, selector: *u8, sender: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:client:\0")), selector, sender);
+    fn do_command_by_selector(this, selector: *u8, client: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:client:\0")), selector, client);
     }
 
     fn marked_text_abandoned(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("markedTextAbandoned:\0")), sender);
     }
 
-    fn marked_text_selection_changed_client(this, new_sel: rt::Range, sender: *u8) {
-        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("markedTextSelectionChanged:client:\0")), new_sel, sender);
+    fn marked_text_selection_changed(this, new_sel: rt::Range, client: *u8) {
+        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("markedTextSelectionChanged:client:\0")), new_sel, client);
     }
 
     fn terminate(this, sender: *u8) {
@@ -89,12 +89,12 @@ impl InputServiceProvider {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("inputClientDisabled:\0")), sender);
     }
 
-    fn active_conversation_will_change_from_old_conversation(this, sender: *u8, old_conversation: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("activeConversationWillChange:fromOldConversation:\0")), sender, old_conversation);
+    fn active_conversation_will_change(this, sender: *u8, from_old_conversation: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("activeConversationWillChange:fromOldConversation:\0")), sender, from_old_conversation);
     }
 
-    fn active_conversation_changed_to_new_conversation(this, sender: *u8, new_conversation: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("activeConversationChanged:toNewConversation:\0")), sender, new_conversation);
+    fn active_conversation_changed(this, sender: *u8, to_new_conversation: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("activeConversationChanged:toNewConversation:\0")), sender, to_new_conversation);
     }
 
 }
@@ -109,16 +109,16 @@ impl InputServerMouseTracker {
 
     fn from_raw(ptr: *u8) -> InputServerMouseTracker { return InputServerMouseTracker { _obj: ptr }; }
 
-    fn mouse_down_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) -> bool {
-        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDownOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender) != (0 as i8);
+    fn mouse_down_on_character_index(this, index: u64, at_coordinate: rt::Point, with_modifier: u64, client: *u8) -> bool {
+        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDownOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, at_coordinate, with_modifier, client) != (0 as i8);
     }
 
-    fn mouse_dragged_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) -> bool {
-        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender) != (0 as i8);
+    fn mouse_dragged_on_character_index(this, index: u64, at_coordinate: rt::Point, with_modifier: u64, client: *u8) -> bool {
+        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, at_coordinate, with_modifier, client) != (0 as i8);
     }
 
-    fn mouse_up_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) {
-        rt::msg_void_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseUpOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender);
+    fn mouse_up_on_character_index(this, index: u64, at_coordinate: rt::Point, with_modifier: u64, client: *u8) {
+        rt::msg_void_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseUpOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, at_coordinate, with_modifier, client);
     }
 
 }

@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSAnimationCurve` (NS_ENUM)
@@ -51,6 +52,17 @@ fn animation_blocking_mode_from_raw(raw: i64) -> AnimationBlockingMode {
     if raw == (1 as i64) { return AnimationBlockingMode::NSAnimationNonblocking; }
     if raw == (2 as i64) { return AnimationBlockingMode::NSAnimationNonblockingThreaded; }
     return AnimationBlockingMode::NSAnimationBlocking;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -110,12 +122,12 @@ impl Animation {
         rt::msg_void_f32(this._obj, rt::sel(#str_ptr("removeProgressMark:\0")), progress_mark);
     }
 
-    fn start_when_animation_reaches_progress(this, animation: Animation, start_progress: f32) {
-        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("startWhenAnimation:reachesProgress:\0")), animation.raw(), start_progress);
+    fn start_when_animation(this, animation: Animation, reaches_progress: f32) {
+        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("startWhenAnimation:reachesProgress:\0")), animation.raw(), reaches_progress);
     }
 
-    fn stop_when_animation_reaches_progress(this, animation: Animation, stop_progress: f32) {
-        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("stopWhenAnimation:reachesProgress:\0")), animation.raw(), stop_progress);
+    fn stop_when_animation(this, animation: Animation, reaches_progress: f32) {
+        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("stopWhenAnimation:reachesProgress:\0")), animation.raw(), reaches_progress);
     }
 
     fn clear_start_animation(this) {
@@ -318,7 +330,45 @@ impl AnimatablePropertyContainer {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `animations`: return `API_AVAILABLE NSDictionary<NSAnimatablePropertyKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setAnimations:`: param `API_AVAILABLE NSDictionary<NSAnimatablePropertyKey,id> *` — generic collection
+    fn animations(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("animations\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_animations(this, animations: string_map::StringMap[AnyObject]) {
+        let dict_animations: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_animations: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_animations: usize = animations.slot_capacity();
+        var dsi_animations: usize = 0 as usize;
+        while dsi_animations < dcap_animations {
+            match animations.value_ptr_at_slot(dsi_animations) {
+                option::Option[*AnyObject]::Some(dvp_animations) => {
+                    match animations.key_ptr_at_slot(dsi_animations) {
+                        option::Option[*text::Text]::Some(dkp_animations) => {
+                    let dval_animations: *u8 = (*dvp_animations).raw();
+                            rt::msg_void_id_id(dict_animations, dset_animations, dval_animations, bridge::nsstring((*dkp_animations).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_animations = dsi_animations +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAnimations:\0")), dict_animations);
+    }
+
 }
 

@@ -16,8 +16,8 @@ impl TableHeaderCell {
 
     fn from_raw(ptr: *u8) -> TableHeaderCell { return TableHeaderCell { _obj: ptr }; }
 
-    fn draw_sort_indicator_with_frame_in_view_ascending_priority(this, cell_frame: rt::Rect, control_view: *u8, ascending: bool, priority: i64) {
-        rt::msg_void_rect_id_i8_i64(this._obj, rt::sel(#str_ptr("drawSortIndicatorWithFrame:inView:ascending:priority:\0")), cell_frame, control_view, ascending as i8, priority);
+    fn draw_sort_indicator_with_frame(this, cell_frame: rt::Rect, in_view: *u8, ascending: bool, priority: i64) {
+        rt::msg_void_rect_id_i8_i64(this._obj, rt::sel(#str_ptr("drawSortIndicatorWithFrame:inView:ascending:priority:\0")), cell_frame, in_view, ascending as i8, priority);
     }
 
     fn sort_indicator_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {

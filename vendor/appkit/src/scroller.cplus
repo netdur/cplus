@@ -218,8 +218,8 @@ impl Scroller {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawKnob\0")));
     }
 
-    fn draw_knob_slot_in_rect_highlight(this, slot_rect: rt::Rect, flag: bool) {
-        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawKnobSlotInRect:highlight:\0")), slot_rect, flag as i8);
+    fn draw_knob_slot_in_rect(this, slot_rect: rt::Rect, highlight: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawKnobSlotInRect:highlight:\0")), slot_rect, highlight as i8);
     }
 
     fn test_part(this, point: rt::Point) -> ScrollerPart {
@@ -286,8 +286,8 @@ impl Scroller {
         return rt::msg_f64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidth\0")));
     }
 
-    fn set_float_value_knob_proportion(this, value: f32, proportion: f64) {
-        rt::msg_void_f32_f64(this._obj, rt::sel(#str_ptr("setFloatValue:knobProportion:\0")), value, proportion);
+    fn set_float_value(this, value: f32, knob_proportion: f64) {
+        rt::msg_void_f32_f64(this._obj, rt::sel(#str_ptr("setFloatValue:knobProportion:\0")), value, knob_proportion);
     }
 
     fn highlight(this, flag: bool) {
@@ -302,8 +302,8 @@ impl Scroller {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawParts\0")));
     }
 
-    fn draw_arrow_highlight(this, which_arrow: ScrollerArrow, flag: bool) {
-        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("drawArrow:highlight:\0")), scroller_arrow_raw(which_arrow), flag as i8);
+    fn draw_arrow(this, which_arrow: ScrollerArrow, highlight: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("drawArrow:highlight:\0")), scroller_arrow_raw(which_arrow), highlight as i8);
     }
 
     fn arrows_position(this) -> ScrollArrowPosition {

@@ -74,7 +74,7 @@ impl HapticFeedbackPerformer {
 
     fn from_raw(ptr: *u8) -> HapticFeedbackPerformer { return HapticFeedbackPerformer { _obj: ptr }; }
 
-    fn perform_feedback_pattern_performance_time(this, pattern: HapticFeedbackPattern, performance_time: HapticFeedbackPerformanceTime) {
+    fn perform_feedback_pattern(this, pattern: HapticFeedbackPattern, performance_time: HapticFeedbackPerformanceTime) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("performFeedbackPattern:performanceTime:\0")), haptic_feedback_pattern_raw(pattern), haptic_feedback_performance_time_raw(performance_time));
     }
 

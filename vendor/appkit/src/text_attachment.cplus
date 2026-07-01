@@ -5,6 +5,18 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSTextContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextContainer {
@@ -88,7 +100,7 @@ impl TextAttachmentViewProvider {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadView\0")));
     }
 
-    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
+    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: msgSend shape `rect_id_id_id_rect_point` not yet modelled
     fn text_attachment(this) -> option::Option[TextAttachment] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textAttachment\0")));
         if obj == { 0 as *u8 } {
@@ -184,8 +196,8 @@ impl TextAttachment {
         return rt::msg_id_id(rt::get_class(#str_ptr("NSTextAttachment\0")), rt::sel(#str_ptr("textAttachmentViewProviderClassForFileType:\0")), bridge::nsstring(file_type));
     }
 
-    fn register_text_attachment_view_provider_class_for_file_type(text_attachment_view_provider_class: *u8, file_type: str) {
-        rt::msg_void_id_id(rt::get_class(#str_ptr("NSTextAttachment\0")), rt::sel(#str_ptr("registerTextAttachmentViewProviderClass:forFileType:\0")), text_attachment_view_provider_class, bridge::nsstring(file_type));
+    fn register_text_attachment_view_provider_class(text_attachment_view_provider_class: *u8, for_file_type: str) {
+        rt::msg_void_id_id(rt::get_class(#str_ptr("NSTextAttachment\0")), rt::sel(#str_ptr("registerTextAttachmentViewProviderClass:forFileType:\0")), text_attachment_view_provider_class, bridge::nsstring(for_file_type));
     }
 
     fn contents(this) -> option::Option[*u8] {
@@ -305,9 +317,9 @@ impl TextAttachmentLayout {
 
     fn from_raw(ptr: *u8) -> TextAttachmentLayout { return TextAttachmentLayout { _obj: ptr }; }
 
-    // SKIPPED `imageForBounds:attributes:location:textContainer:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    fn view_provider_for_parent_view_location_text_container(this, parent_view: View, location: TextLocation, text_container: TextContainer) -> option::Option[TextAttachmentViewProvider] {
+    // SKIPPED `imageForBounds:attributes:location:textContainer:`: msgSend shape `id_rect_id_id_id` not yet modelled
+    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: msgSend shape `rect_id_id_id_rect_point` not yet modelled
+    fn view_provider_for_parent_view(this, parent_view: View, location: TextLocation, text_container: TextContainer) -> option::Option[TextAttachmentViewProvider] {
         let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("viewProviderForParentView:location:textContainer:\0")), parent_view.raw(), location.raw(), text_container.raw());
         if obj == { 0 as *u8 } {
             return option::Option[TextAttachmentViewProvider]::None;
@@ -327,16 +339,16 @@ impl TextAttachmentContainer {
 
     fn from_raw(ptr: *u8) -> TextAttachmentContainer { return TextAttachmentContainer { _obj: ptr }; }
 
-    fn image_for_bounds_text_container_character_index(this, image_bounds: rt::Rect, text_container: TextContainer, char_index: u64) -> option::Option[Image] {
-        let obj: *u8 = rt::msg_id_rect_id_u64(this._obj, rt::sel(#str_ptr("imageForBounds:textContainer:characterIndex:\0")), image_bounds, text_container.raw(), char_index);
+    fn image_for_bounds(this, image_bounds: rt::Rect, text_container: TextContainer, character_index: u64) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_rect_id_u64(this._obj, rt::sel(#str_ptr("imageForBounds:textContainer:characterIndex:\0")), image_bounds, text_container.raw(), character_index);
         if obj == { 0 as *u8 } {
             return option::Option[Image]::None;
         }
         return option::some(Image::from_raw(obj));
     }
 
-    fn attachment_bounds_for_text_container_proposed_line_fragment_glyph_position_character_index(this, text_container: TextContainer, line_frag: rt::Rect, position: rt::Point, char_index: u64) -> rt::Rect {
-        return rt::msg_rect_id_rect_point_u64(this._obj, rt::sel(#str_ptr("attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:\0")), text_container.raw(), line_frag, position, char_index);
+    fn attachment_bounds_for_text_container(this, text_container: TextContainer, proposed_line_fragment: rt::Rect, glyph_position: rt::Point, character_index: u64) -> rt::Rect {
+        return rt::msg_rect_id_rect_point_u64(this._obj, rt::sel(#str_ptr("attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:\0")), text_container.raw(), proposed_line_fragment, glyph_position, character_index);
     }
 
 }

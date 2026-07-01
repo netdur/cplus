@@ -40,8 +40,8 @@ impl HelpManager {
 
     fn from_raw(ptr: *u8) -> HelpManager { return HelpManager { _obj: ptr }; }
 
-    fn set_context_help_for_object(this, attr_string: AttributedString, object: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setContextHelp:forObject:\0")), attr_string.raw(), object);
+    fn set_context_help(this, attr_string: AttributedString, for_object: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setContextHelp:forObject:\0")), attr_string.raw(), for_object);
     }
 
     fn remove_context_help_for_object(this, object: *u8) {
@@ -56,16 +56,16 @@ impl HelpManager {
         return option::some(AttributedString::from_raw(obj));
     }
 
-    fn show_context_help_for_object_location_hint(this, object: *u8, pt: rt::Point) -> bool {
-        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("showContextHelpForObject:locationHint:\0")), object, pt) != (0 as i8);
+    fn show_context_help_for_object(this, object: *u8, location_hint: rt::Point) -> bool {
+        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("showContextHelpForObject:locationHint:\0")), object, location_hint) != (0 as i8);
     }
 
-    fn open_help_anchor_in_book(this, anchor: str, book: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("openHelpAnchor:inBook:\0")), bridge::nsstring(anchor), bridge::nsstring(book));
+    fn open_help_anchor(this, anchor: str, in_book: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("openHelpAnchor:inBook:\0")), bridge::nsstring(anchor), bridge::nsstring(in_book));
     }
 
-    fn find_string_in_book(this, query: str, book: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("findString:inBook:\0")), bridge::nsstring(query), bridge::nsstring(book));
+    fn find_string(this, query: str, in_book: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("findString:inBook:\0")), bridge::nsstring(query), bridge::nsstring(in_book));
     }
 
     fn register_books_in_bundle(this, bundle: *u8) -> bool {

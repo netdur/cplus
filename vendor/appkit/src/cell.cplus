@@ -533,8 +533,8 @@ impl Cell {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("cellAttribute:\0")), cell_attribute_raw(parameter));
     }
 
-    fn set_cell_attribute_to(this, parameter: CellAttribute, value: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setCellAttribute:to:\0")), cell_attribute_raw(parameter), value);
+    fn set_cell_attribute(this, parameter: CellAttribute, to: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setCellAttribute:to:\0")), cell_attribute_raw(parameter), to);
     }
 
     fn image_rect_for_bounds(this, rect: rt::Rect) -> rt::Rect {
@@ -554,8 +554,8 @@ impl Cell {
         return rt::msg_size_rect(this._obj, rt::sel(#str_ptr("cellSizeForBounds:\0")), rect);
     }
 
-    fn highlight_color_with_frame_in_view(this, cell_frame: rt::Rect, control_view: View) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("highlightColorWithFrame:inView:\0")), cell_frame, control_view.raw());
+    fn highlight_color_with_frame(this, cell_frame: rt::Rect, in_view: View) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("highlightColorWithFrame:inView:\0")), cell_frame, in_view.raw());
         return bridge::obj_option(obj);
     }
 
@@ -567,56 +567,56 @@ impl Cell {
         return Text::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("setUpFieldEditorAttributes:\0")), text_obj.raw()));
     }
 
-    fn draw_interior_with_frame_in_view(this, cell_frame: rt::Rect, control_view: View) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawInteriorWithFrame:inView:\0")), cell_frame, control_view.raw());
+    fn draw_interior_with_frame(this, cell_frame: rt::Rect, in_view: View) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawInteriorWithFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
-    fn draw_with_frame_in_view(this, cell_frame: rt::Rect, control_view: View) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:\0")), cell_frame, control_view.raw());
+    fn draw_with_frame(this, cell_frame: rt::Rect, in_view: View) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
-    fn highlight_with_frame_in_view(this, flag: bool, cell_frame: rt::Rect, control_view: View) {
-        rt::msg_void_i8_rect_id(this._obj, rt::sel(#str_ptr("highlight:withFrame:inView:\0")), flag as i8, cell_frame, control_view.raw());
+    fn highlight(this, flag: bool, with_frame: rt::Rect, in_view: View) {
+        rt::msg_void_i8_rect_id(this._obj, rt::sel(#str_ptr("highlight:withFrame:inView:\0")), flag as i8, with_frame, in_view.raw());
     }
 
-    fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
+    fn get_periodic_delay(this, delay: *u8, interval: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
     }
 
-    fn start_tracking_at_in_view(this, start_point: rt::Point, control_view: View) -> bool {
-        return rt::msg_i8_point_id(this._obj, rt::sel(#str_ptr("startTrackingAt:inView:\0")), start_point, control_view.raw()) != (0 as i8);
+    fn start_tracking_at(this, start_point: rt::Point, in_view: View) -> bool {
+        return rt::msg_i8_point_id(this._obj, rt::sel(#str_ptr("startTrackingAt:inView:\0")), start_point, in_view.raw()) != (0 as i8);
     }
 
-    fn continue_tracking_at_in_view(this, last_point: rt::Point, current_point: rt::Point, control_view: View) -> bool {
-        return rt::msg_i8_point_point_id(this._obj, rt::sel(#str_ptr("continueTracking:at:inView:\0")), last_point, current_point, control_view.raw()) != (0 as i8);
+    fn continue_tracking(this, last_point: rt::Point, at: rt::Point, in_view: View) -> bool {
+        return rt::msg_i8_point_point_id(this._obj, rt::sel(#str_ptr("continueTracking:at:inView:\0")), last_point, at, in_view.raw()) != (0 as i8);
     }
 
-    fn stop_tracking_at_in_view_mouse_is_up(this, last_point: rt::Point, stop_point: rt::Point, control_view: View, flag: bool) {
-        rt::msg_void_point_point_id_i8(this._obj, rt::sel(#str_ptr("stopTracking:at:inView:mouseIsUp:\0")), last_point, stop_point, control_view.raw(), flag as i8);
+    fn stop_tracking(this, last_point: rt::Point, at: rt::Point, in_view: View, mouse_is_up: bool) {
+        rt::msg_void_point_point_id_i8(this._obj, rt::sel(#str_ptr("stopTracking:at:inView:mouseIsUp:\0")), last_point, at, in_view.raw(), mouse_is_up as i8);
     }
 
-    fn track_mouse_in_rect_of_view_until_mouse_up(this, event: Event, cell_frame: rt::Rect, control_view: View, flag: bool) -> bool {
-        return rt::msg_i8_id_rect_id_i8(this._obj, rt::sel(#str_ptr("trackMouse:inRect:ofView:untilMouseUp:\0")), event.raw(), cell_frame, control_view.raw(), flag as i8) != (0 as i8);
+    fn track_mouse(this, event: Event, in_rect: rt::Rect, of_view: View, until_mouse_up: bool) -> bool {
+        return rt::msg_i8_id_rect_id_i8(this._obj, rt::sel(#str_ptr("trackMouse:inRect:ofView:untilMouseUp:\0")), event.raw(), in_rect, of_view.raw(), until_mouse_up as i8) != (0 as i8);
     }
 
-    fn edit_with_frame_in_view_editor_delegate_event(this, rect: rt::Rect, control_view: View, text_obj: Text, delegate: *u8, event: Event) {
-        rt::msg_void_rect_id_id_id_id(this._obj, rt::sel(#str_ptr("editWithFrame:inView:editor:delegate:event:\0")), rect, control_view.raw(), text_obj.raw(), delegate, event.raw());
+    fn edit_with_frame(this, rect: rt::Rect, in_view: View, editor: Text, delegate: *u8, event: Event) {
+        rt::msg_void_rect_id_id_id_id(this._obj, rt::sel(#str_ptr("editWithFrame:inView:editor:delegate:event:\0")), rect, in_view.raw(), editor.raw(), delegate, event.raw());
     }
 
-    fn select_with_frame_in_view_editor_delegate_start_length(this, rect: rt::Rect, control_view: View, text_obj: Text, delegate: *u8, sel_start: i64, sel_length: i64) {
-        rt::msg_void_rect_id_id_id_i64_i64(this._obj, rt::sel(#str_ptr("selectWithFrame:inView:editor:delegate:start:length:\0")), rect, control_view.raw(), text_obj.raw(), delegate, sel_start, sel_length);
+    fn select_with_frame(this, rect: rt::Rect, in_view: View, editor: Text, delegate: *u8, start: i64, length: i64) {
+        rt::msg_void_rect_id_id_id_i64_i64(this._obj, rt::sel(#str_ptr("selectWithFrame:inView:editor:delegate:start:length:\0")), rect, in_view.raw(), editor.raw(), delegate, start, length);
     }
 
     fn end_editing(this, text_obj: Text) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditing:\0")), text_obj.raw());
     }
 
-    fn reset_cursor_rect_in_view(this, cell_frame: rt::Rect, control_view: View) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("resetCursorRect:inView:\0")), cell_frame, control_view.raw());
+    fn reset_cursor_rect(this, cell_frame: rt::Rect, in_view: View) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("resetCursorRect:inView:\0")), cell_frame, in_view.raw());
     }
 
-    fn menu_for_event_in_rect_of_view(this, event: Event, cell_frame: rt::Rect, view: View) -> option::Option[Menu] {
-        let obj: *u8 = rt::msg_id_id_rect_id(this._obj, rt::sel(#str_ptr("menuForEvent:inRect:ofView:\0")), event.raw(), cell_frame, view.raw());
+    fn menu_for_event(this, event: Event, in_rect: rt::Rect, of_view: View) -> option::Option[Menu] {
+        let obj: *u8 = rt::msg_id_id_rect_id(this._obj, rt::sel(#str_ptr("menuForEvent:inRect:ofView:\0")), event.raw(), in_rect, of_view.raw());
         if obj == { 0 as *u8 } {
             return option::Option[Menu]::None;
         }
@@ -631,8 +631,8 @@ impl Cell {
         return option::some(TextView::from_raw(obj));
     }
 
-    fn dragging_image_components_with_frame_in_view(this, frame: rt::Rect, view: View) -> vec::Vec[DraggingImageComponent] {
-        let arr: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("draggingImageComponentsWithFrame:inView:\0")), frame, view.raw());
+    fn dragging_image_components_with_frame(this, frame: rt::Rect, in_view: View) -> vec::Vec[DraggingImageComponent] {
+        let arr: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("draggingImageComponentsWithFrame:inView:\0")), frame, in_view.raw());
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[DraggingImageComponent] = vec::Vec[DraggingImageComponent]::with_capacity(n as usize);
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
@@ -994,12 +994,12 @@ impl Cell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("performClick:\0")), sender);
     }
 
-    fn draw_focus_ring_mask_with_frame_in_view(this, cell_frame: rt::Rect, control_view: View) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawFocusRingMaskWithFrame:inView:\0")), cell_frame, control_view.raw());
+    fn draw_focus_ring_mask_with_frame(this, cell_frame: rt::Rect, in_view: View) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawFocusRingMaskWithFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
-    fn focus_ring_mask_bounds_for_frame_in_view(this, cell_frame: rt::Rect, control_view: View) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("focusRingMaskBoundsForFrame:inView:\0")), cell_frame, control_view.raw());
+    fn focus_ring_mask_bounds_for_frame(this, cell_frame: rt::Rect, in_view: View) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("focusRingMaskBoundsForFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
     fn refuses_first_responder(this) -> bool {
@@ -1078,16 +1078,16 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("nextState\0")));
     }
 
-    fn hit_test_for_event_in_rect_of_view(this, event: Event, cell_frame: rt::Rect, control_view: View) -> u64 {
-        return rt::msg_u64_id_rect_id(this._obj, rt::sel(#str_ptr("hitTestForEvent:inRect:ofView:\0")), event.raw(), cell_frame, control_view.raw());
+    fn hit_test_for_event(this, event: Event, in_rect: rt::Rect, of_view: View) -> u64 {
+        return rt::msg_u64_id_rect_id(this._obj, rt::sel(#str_ptr("hitTestForEvent:inRect:ofView:\0")), event.raw(), in_rect, of_view.raw());
     }
 
-    fn expansion_frame_with_frame_in_view(this, cell_frame: rt::Rect, view: View) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:inView:\0")), cell_frame, view.raw());
+    fn expansion_frame_with_frame(this, cell_frame: rt::Rect, in_view: View) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
-    fn draw_with_expansion_frame_in_view(this, cell_frame: rt::Rect, view: View) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithExpansionFrame:inView:\0")), cell_frame, view.raw());
+    fn draw_with_expansion_frame(this, cell_frame: rt::Rect, in_view: View) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithExpansionFrame:inView:\0")), cell_frame, in_view.raw());
     }
 
     fn background_style(this) -> BackgroundStyle {
@@ -1114,8 +1114,8 @@ impl Cell {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isEntryAcceptable:\0")), bridge::nsstring(string)) != (0 as i8);
     }
 
-    fn set_floating_point_format_left_right(this, auto_range: bool, left_digits: u64, right_digits: u64) {
-        rt::msg_void_i8_u64_u64(this._obj, rt::sel(#str_ptr("setFloatingPointFormat:left:right:\0")), auto_range as i8, left_digits, right_digits);
+    fn set_floating_point_format(this, auto_range: bool, left: u64, right: u64) {
+        rt::msg_void_i8_u64_u64(this._obj, rt::sel(#str_ptr("setFloatingPointFormat:left:right:\0")), auto_range as i8, left, right);
     }
 
     fn set_mnemonic_location(this, location: u64) {

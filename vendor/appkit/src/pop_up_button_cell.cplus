@@ -86,8 +86,8 @@ impl PopUpButtonCell {
 
     fn from_raw(ptr: *u8) -> PopUpButtonCell { return PopUpButtonCell { _obj: ptr }; }
 
-    fn init_text_cell_pulls_down(this, string_value: str, pull_down: bool) -> *u8 {
-        return rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("initTextCell:pullsDown:\0")), bridge::nsstring(string_value), pull_down as i8);
+    fn init_text_cell(this, string_value: str, pulls_down: bool) -> *u8 {
+        return rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("initTextCell:pullsDown:\0")), bridge::nsstring(string_value), pulls_down as i8);
     }
 
     fn new(coder: *u8) -> PopUpButtonCell {
@@ -104,8 +104,8 @@ impl PopUpButtonCell {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithTitles:\0")), bridge::nsarray_of_text(item_titles));
     }
 
-    fn insert_item_with_title_at_index(this, title: str, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:atIndex:\0")), bridge::nsstring(title), index);
+    fn insert_item_with_title(this, title: str, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:atIndex:\0")), bridge::nsstring(title), at_index);
     }
 
     fn remove_item_with_title(this, title: str) {
@@ -136,8 +136,8 @@ impl PopUpButtonCell {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithRepresentedObject:\0")), obj);
     }
 
-    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    fn index_of_item_with_target(this, target: *u8, and_action: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, and_action);
     }
 
     fn item_at_index(this, index: i64) -> option::Option[*u8] {
@@ -179,16 +179,16 @@ impl PopUpButtonCell {
         return bridge::to_text(ns);
     }
 
-    fn attach_pop_up_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("attachPopUpWithFrame:inView:\0")), cell_frame, control_view);
+    fn attach_pop_up_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("attachPopUpWithFrame:inView:\0")), cell_frame, in_view);
     }
 
     fn dismiss_pop_up(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("dismissPopUp\0")));
     }
 
-    fn perform_click_with_frame_in_view(this, frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("performClickWithFrame:inView:\0")), frame, control_view);
+    fn perform_click_with_frame(this, frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("performClickWithFrame:inView:\0")), frame, in_view);
     }
 
     fn menu(this) -> option::Option[Menu] {

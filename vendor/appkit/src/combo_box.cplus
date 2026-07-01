@@ -49,8 +49,8 @@ impl ComboBox {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemsWithObjectValues:\0")), objects);
     }
 
-    fn insert_item_with_object_value_at_index(this, object: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithObjectValue:atIndex:\0")), object, index);
+    fn insert_item_with_object_value(this, object: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithObjectValue:atIndex:\0")), object, at_index);
     }
 
     fn remove_item_with_object_value(this, object: *u8) {

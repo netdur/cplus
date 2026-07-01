@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSLayoutFormatOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const layout_format_options_n_s_layout_format_align_all_left: u64 = 2 as u64;
@@ -100,6 +101,17 @@ fn layout_relation_from_raw(raw: i64) -> LayoutRelation {
     return LayoutRelation::LessThanOrEqual;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSLayoutConstraint` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct LayoutConstraint {
     opaque _obj: *u8,
@@ -110,9 +122,9 @@ impl LayoutConstraint {
 
     fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
 
-    // SKIPPED `constraintsWithVisualFormat:options:metrics:views:`: param `NSDictionary<NSString *,id> * _Nullable` — generic collection
-    fn constraint_with_item_attribute_related_by_to_item_attribute_multiplier_constant(view1: *u8, attr1: LayoutAttribute, relation: LayoutRelation, view2: *u8, attr2: LayoutAttribute, multiplier: f64, c: f64) -> LayoutConstraint {
-        return LayoutConstraint { _obj: rt::msg_id_id_i64_i64_id_i64_f64_f64(rt::get_class(#str_ptr("NSLayoutConstraint\0")), rt::sel(#str_ptr("constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:\0")), view1, layout_attribute_raw(attr1), layout_relation_raw(relation), view2, layout_attribute_raw(attr2), multiplier, c) };
+    // SKIPPED `constraintsWithVisualFormat:options:metrics:views:`: NSArray<id> param with a collection return not modelled
+    fn constraint_with_item(view1: *u8, attribute: LayoutAttribute, related_by: LayoutRelation, to_item: *u8, attribute: LayoutAttribute, multiplier: f64, constant: f64) -> LayoutConstraint {
+        return LayoutConstraint { _obj: rt::msg_id_id_i64_i64_id_i64_f64_f64(rt::get_class(#str_ptr("NSLayoutConstraint\0")), rt::sel(#str_ptr("constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:\0")), view1, layout_attribute_raw(attribute), layout_relation_raw(related_by), to_item, layout_attribute_raw(attribute), multiplier, constant) };
     }
 
     fn activate_constraints(constraints: vec::Vec[LayoutConstraint]) {

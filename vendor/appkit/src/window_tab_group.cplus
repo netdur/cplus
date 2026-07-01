@@ -20,8 +20,8 @@ impl WindowTabGroup {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addWindow:\0")), window);
     }
 
-    fn insert_window_at_index(this, window: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertWindow:atIndex:\0")), window, index);
+    fn insert_window(this, window: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertWindow:atIndex:\0")), window, at_index);
     }
 
     fn remove_window(this, window: *u8) {

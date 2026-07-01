@@ -202,8 +202,8 @@ impl StatusItem {
         return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("sendActionOn:\0")), mask);
     }
 
-    fn draw_status_bar_background_in_rect_with_highlight(this, rect: rt::Rect, highlight: bool) {
-        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawStatusBarBackgroundInRect:withHighlight:\0")), rect, highlight as i8);
+    fn draw_status_bar_background_in_rect(this, rect: rt::Rect, with_highlight: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawStatusBarBackgroundInRect:withHighlight:\0")), rect, with_highlight as i8);
     }
 
     fn pop_up_status_item_menu(this, menu: Menu) {

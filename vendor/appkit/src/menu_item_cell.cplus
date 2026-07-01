@@ -42,28 +42,28 @@ impl MenuItemCell {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("keyEquivalentRectForBounds:\0")), cell_frame);
     }
 
-    fn draw_separator_item_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawSeparatorItemWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_separator_item_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawSeparatorItemWithFrame:inView:\0")), cell_frame, in_view);
     }
 
-    fn draw_state_image_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawStateImageWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_state_image_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawStateImageWithFrame:inView:\0")), cell_frame, in_view);
     }
 
-    fn draw_image_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawImageWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_image_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawImageWithFrame:inView:\0")), cell_frame, in_view);
     }
 
-    fn draw_title_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawTitleWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_title_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawTitleWithFrame:inView:\0")), cell_frame, in_view);
     }
 
-    fn draw_key_equivalent_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawKeyEquivalentWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_key_equivalent_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawKeyEquivalentWithFrame:inView:\0")), cell_frame, in_view);
     }
 
-    fn draw_border_and_background_with_frame_in_view(this, cell_frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBorderAndBackgroundWithFrame:inView:\0")), cell_frame, control_view);
+    fn draw_border_and_background_with_frame(this, cell_frame: rt::Rect, in_view: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBorderAndBackgroundWithFrame:inView:\0")), cell_frame, in_view);
     }
 
     fn menu_item(this) -> option::Option[*u8] {

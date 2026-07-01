@@ -98,7 +98,7 @@ impl RunningApplication {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("unhide\0"))) != (0 as i8);
     }
 
-    fn activate_from_application_options(this, application: RunningApplication, options: u64) -> bool {
+    fn activate_from_application(this, application: RunningApplication, options: u64) -> bool {
         return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("activateFromApplication:options:\0")), application.raw(), options) != (0 as i8);
     }
 

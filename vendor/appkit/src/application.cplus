@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSRequestUserAttentionType` (NS_ENUM)
@@ -151,8 +152,19 @@ const remote_notification_type_badge: u64 = 1 as u64;
 const remote_notification_type_sound: u64 = 2 as u64;
 const remote_notification_type_alert: u64 = 4 as u64;
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[repr(C)]
-struct Application_enumerate_windows_with_options_using_block_block {
+struct Application_enumerate_windows_with_options_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -162,8 +174,8 @@ struct Application_enumerate_windows_with_options_using_block_block {
     opaque ctx: *u8,
 }
 
-fn Application_enumerate_windows_with_options_using_block_invoke(block: *u8, a0: *u8, a1: *u8) {
-    let bl: *Application_enumerate_windows_with_options_using_block_block = { block as *Application_enumerate_windows_with_options_using_block_block };
+fn Application_enumerate_windows_with_options_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Application_enumerate_windows_with_options_block = { block as *Application_enumerate_windows_with_options_block };
     let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1);
@@ -436,9 +448,9 @@ impl Application {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("cancelUserAttentionRequest:\0")), request);
     }
 
-    fn enumerate_windows_with_options_using_block(this, options: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+    fn enumerate_windows_with_options(this, options: u64, cb: fn(*u8, *u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Application_enumerate_windows_with_options_using_block_block = Application_enumerate_windows_with_options_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_enumerate_windows_with_options_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Application_enumerate_windows_with_options_block = Application_enumerate_windows_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_enumerate_windows_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("enumerateWindowsWithOptions:usingBlock:\0")), options, bp);
         return;
@@ -468,8 +480,8 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("reportException:\0")), exception.raw());
     }
 
-    fn detach_drawing_thread_to_target_with_object(selector: *u8, target: *u8, argument: *u8) {
-        rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSApplication\0")), rt::sel(#str_ptr("detachDrawingThread:toTarget:withObject:\0")), selector, target, argument);
+    fn detach_drawing_thread(selector: *u8, to_target: *u8, with_object: *u8) {
+        rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSApplication\0")), rt::sel(#str_ptr("detachDrawingThread:toTarget:withObject:\0")), selector, to_target, with_object);
     }
 
     fn reply_to_application_should_terminate(this, should_terminate: bool) {
@@ -615,17 +627,17 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("sendEvent:\0")), event);
     }
 
-    fn post_event_at_start(this, event: *u8, at_start: bool) {
+    fn post_event(this, event: *u8, at_start: bool) {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event, at_start as i8);
     }
 
-    fn next_event_matching_mask_until_date_in_mode_dequeue(this, mask: u64, expiration: Date, mode: str, deq_flag: bool) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, expiration.raw(), bridge::nsstring(mode), deq_flag as i8);
+    fn next_event_matching_mask(this, mask: u64, until_date: Date, in_mode: str, dequeue: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, until_date.raw(), bridge::nsstring(in_mode), dequeue as i8);
         return bridge::obj_option(obj);
     }
 
-    fn discard_events_matching_mask_before_event(this, mask: u64, last_event: *u8) {
-        rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, last_event);
+    fn discard_events_matching_mask(this, mask: u64, before_event: *u8) {
+        rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, before_event);
     }
 
     fn current_event(this) -> option::Option[*u8] {
@@ -633,8 +645,8 @@ impl Application {
         return bridge::obj_option(obj);
     }
 
-    fn send_action_to_from(this, action: *u8, target: *u8, sender: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("sendAction:to:from:\0")), action, target, sender) != (0 as i8);
+    fn send_action(this, action: *u8, to: *u8, from: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("sendAction:to:from:\0")), action, to, from) != (0 as i8);
     }
 
     fn target_for_action(this, action: *u8) -> option::Option[*u8] {
@@ -642,16 +654,16 @@ impl Application {
         return bridge::obj_option(obj);
     }
 
-    fn target_for_action_to_from(this, action: *u8, target: *u8, sender: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("targetForAction:to:from:\0")), action, target, sender);
+    fn target_for_action_to(this, action: *u8, target: *u8, from: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("targetForAction:to:from:\0")), action, target, from);
         return bridge::obj_option(obj);
     }
 
-    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    fn try_to_perform(this, action: *u8, with: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, with) != (0 as i8);
     }
 
-    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+    fn valid_requestor_for_send_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
     }
@@ -664,12 +676,12 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeWindowsItem:\0")), win.raw());
     }
 
-    fn add_windows_item_title_filename(this, win: Window, string: str, is_filename: bool) {
-        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("addWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(string), is_filename as i8);
+    fn add_windows_item(this, win: Window, title: str, filename: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("addWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(title), filename as i8);
     }
 
-    fn change_windows_item_title_filename(this, win: Window, string: str, is_filename: bool) {
-        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("changeWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(string), is_filename as i8);
+    fn change_windows_item(this, win: Window, title: str, filename: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("changeWindowsItem:title:filename:\0")), win.raw(), bridge::nsstring(title), filename as i8);
     }
 
     fn update_windows_item(this, win: Window) {
@@ -693,7 +705,7 @@ impl Application {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFullKeyboardAccessEnabled\0"))) != (0 as i8);
     }
 
-    fn register_services_menu_send_types_return_types(this, send_types: vec::Vec[text::Text], return_types: vec::Vec[text::Text]) {
+    fn register_services_menu_send_types(this, send_types: vec::Vec[text::Text], return_types: vec::Vec[text::Text]) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerServicesMenuSendTypes:returnTypes:\0")), bridge::nsarray_of_text(send_types), bridge::nsarray_of_text(return_types));
     }
 
@@ -719,7 +731,29 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontStandardAboutPanel:\0")), sender);
     }
 
-    // SKIPPED `orderFrontStandardAboutPanelWithOptions:`: param `NSDictionary<NSAboutPanelOptionKey,id> * _Nonnull` — generic collection
+    fn order_front_standard_about_panel_with_options(this, options_dictionary: string_map::StringMap[AnyObject]) {
+        let dict_options_dictionary: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options_dictionary: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options_dictionary: usize = options_dictionary.slot_capacity();
+        var dsi_options_dictionary: usize = 0 as usize;
+        while dsi_options_dictionary < dcap_options_dictionary {
+            match options_dictionary.value_ptr_at_slot(dsi_options_dictionary) {
+                option::Option[*AnyObject]::Some(dvp_options_dictionary) => {
+                    match options_dictionary.key_ptr_at_slot(dsi_options_dictionary) {
+                        option::Option[*text::Text]::Some(dkp_options_dictionary) => {
+                    let dval_options_dictionary: *u8 = (*dvp_options_dictionary).raw();
+                            rt::msg_void_id_id(dict_options_dictionary, dset_options_dictionary, dval_options_dictionary, bridge::nsstring((*dkp_options_dictionary).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options_dictionary = dsi_options_dictionary +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontStandardAboutPanelWithOptions:\0")), dict_options_dictionary);
+    }
+
     fn user_interface_layout_direction(this) -> UserInterfaceLayoutDirection {
         return user_interface_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("userInterfaceLayoutDirection\0"))));
     }
@@ -760,12 +794,12 @@ impl Application {
         return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("beginModalSessionForWindow:relativeToWindow:\0")), window.raw(), doc_window.raw());
     }
 
-    fn application_print_files(this, sender: Application, filenames: vec::Vec[text::Text]) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("application:printFiles:\0")), sender.raw(), bridge::nsarray_of_text(filenames));
+    fn application(this, sender: Application, print_files: vec::Vec[text::Text]) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("application:printFiles:\0")), sender.raw(), bridge::nsarray_of_text(print_files));
     }
 
-    fn begin_sheet_modal_for_window_modal_delegate_did_end_selector_context_info(this, sheet: Window, doc_window: Window, modal_delegate: *u8, did_end_selector: *u8, context_info: *u8) {
-        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), sheet.raw(), doc_window.raw(), modal_delegate, did_end_selector, context_info);
+    fn begin_sheet(this, sheet: Window, modal_for_window: Window, modal_delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), sheet.raw(), modal_for_window.raw(), modal_delegate, did_end_selector, context_info);
     }
 
     fn end_sheet(this, sheet: Window) {
@@ -776,7 +810,7 @@ impl Application {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("endSheet:returnCode:\0")), sheet.raw(), return_code);
     }
 
-    fn make_windows_perform_in_order(this, selector: *u8, in_order: bool) -> option::Option[Window] {
+    fn make_windows_perform(this, selector: *u8, in_order: bool) -> option::Option[Window] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("makeWindowsPerform:inOrder:\0")), selector, in_order as i8);
         if obj == { 0 as *u8 } {
             return option::Option[Window]::None;
@@ -1423,7 +1457,7 @@ impl ServicesMenuRequestor {
 
     fn from_raw(ptr: *u8) -> ServicesMenuRequestor { return ServicesMenuRequestor { _obj: ptr }; }
 
-    fn write_selection_to_pasteboard_types(this, pboard: Pasteboard, types: vec::Vec[text::Text]) -> bool {
+    fn write_selection_to_pasteboard(this, pboard: Pasteboard, types: vec::Vec[text::Text]) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:types:\0")), pboard.raw(), bridge::nsarray_of_text(types)) != (0 as i8);
     }
 

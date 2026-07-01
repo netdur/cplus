@@ -61,8 +61,8 @@ impl ColorPicker {
         return ColorPicker { _obj: rt::msg_id_u64_id(alloced, rt::sel(#str_ptr("initWithPickerMask:colorPanel:\0")), mask, owning_color_panel) };
     }
 
-    fn insert_new_button_image_in(this, new_button_image: *u8, button_cell: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image, button_cell);
+    fn insert_new_button_image(this, new_button_image: *u8, in_: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image, in_);
     }
 
     fn view_size_changed(this, sender: *u8) {

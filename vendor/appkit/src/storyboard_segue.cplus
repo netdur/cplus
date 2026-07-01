@@ -7,7 +7,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 
 #[repr(C)]
-struct StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block {
+struct StoryboardSegue_segue_with_identifier_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -17,8 +17,8 @@ struct StoryboardSegue_segue_with_identifier_source_destination_perform_handler_
     opaque ctx: *u8,
 }
 
-fn StoryboardSegue_segue_with_identifier_source_destination_perform_handler_invoke(block: *u8) {
-    let bl: *StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block = { block as *StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block };
+fn StoryboardSegue_segue_with_identifier_invoke(block: *u8) {
+    let bl: *StoryboardSegue_segue_with_identifier_block = { block as *StoryboardSegue_segue_with_identifier_block };
     let f: fn(*u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx);
@@ -35,11 +35,11 @@ impl StoryboardSegue {
 
     fn from_raw(ptr: *u8) -> StoryboardSegue { return StoryboardSegue { _obj: ptr }; }
 
-    fn segue_with_identifier_source_destination_perform_handler(identifier: str, source_controller: *u8, destination_controller: *u8, cb: fn(*u8), ctx: *u8) -> *u8 {
+    fn segue_with_identifier(identifier: str, source: *u8, destination: *u8, cb: fn(*u8), ctx: *u8) -> *u8 {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block = StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StoryboardSegue_segue_with_identifier_source_destination_perform_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: StoryboardSegue_segue_with_identifier_block = StoryboardSegue_segue_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StoryboardSegue_segue_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
-        return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSStoryboardSegue\0")), rt::sel(#str_ptr("segueWithIdentifier:source:destination:performHandler:\0")), bridge::nsstring(identifier), source_controller, destination_controller, bp);
+        return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSStoryboardSegue\0")), rt::sel(#str_ptr("segueWithIdentifier:source:destination:performHandler:\0")), bridge::nsstring(identifier), source, destination, bp);
     }
 
     fn new(identifier: str, source_controller: *u8, destination_controller: *u8) -> StoryboardSegue {
@@ -80,15 +80,15 @@ impl SeguePerforming {
 
     fn from_raw(ptr: *u8) -> SeguePerforming { return SeguePerforming { _obj: ptr }; }
 
-    fn prepare_for_segue_sender(this, segue: StoryboardSegue, sender: *u8) {
+    fn prepare_for_segue(this, segue: StoryboardSegue, sender: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("prepareForSegue:sender:\0")), segue.raw(), sender);
     }
 
-    fn perform_segue_with_identifier_sender(this, identifier: str, sender: *u8) {
+    fn perform_segue_with_identifier(this, identifier: str, sender: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("performSegueWithIdentifier:sender:\0")), bridge::nsstring(identifier), sender);
     }
 
-    fn should_perform_segue_with_identifier_sender(this, identifier: str, sender: *u8) -> bool {
+    fn should_perform_segue_with_identifier(this, identifier: str, sender: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("shouldPerformSegueWithIdentifier:sender:\0")), bridge::nsstring(identifier), sender) != (0 as i8);
     }
 

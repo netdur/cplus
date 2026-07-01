@@ -164,24 +164,24 @@ impl RuleEditor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRow:\0")), sender);
     }
 
-    fn insert_row_at_index_with_type_as_subrow_of_row_animate(this, row_index: i64, row_type: RuleEditorRowType, parent_row: i64, should_animate: bool) {
-        rt::msg_void_i64_i64_i64_i8(this._obj, rt::sel(#str_ptr("insertRowAtIndex:withType:asSubrowOfRow:animate:\0")), row_index, rule_editor_row_type_raw(row_type), parent_row, should_animate as i8);
+    fn insert_row_at_index(this, row_index: i64, with_type: RuleEditorRowType, as_subrow_of_row: i64, animate: bool) {
+        rt::msg_void_i64_i64_i64_i8(this._obj, rt::sel(#str_ptr("insertRowAtIndex:withType:asSubrowOfRow:animate:\0")), row_index, rule_editor_row_type_raw(with_type), as_subrow_of_row, animate as i8);
     }
 
-    fn set_criteria_and_display_values_for_row_at_index(this, criteria: *u8, values: *u8, row_index: i64) {
-        rt::msg_void_id_id_i64(this._obj, rt::sel(#str_ptr("setCriteria:andDisplayValues:forRowAtIndex:\0")), criteria, values, row_index);
+    fn set_criteria(this, criteria: *u8, and_display_values: *u8, for_row_at_index: i64) {
+        rt::msg_void_id_id_i64(this._obj, rt::sel(#str_ptr("setCriteria:andDisplayValues:forRowAtIndex:\0")), criteria, and_display_values, for_row_at_index);
     }
 
     fn remove_row_at_index(this, row_index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), row_index);
     }
 
-    fn remove_rows_at_indexes_include_subrows(this, row_indexes: IndexSet, include_subrows: bool) {
+    fn remove_rows_at_indexes(this, row_indexes: IndexSet, include_subrows: bool) {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:includeSubrows:\0")), row_indexes.raw(), include_subrows as i8);
     }
 
-    fn select_row_indexes_by_extending_selection(this, indexes: IndexSet, extend: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), indexes.raw(), extend as i8);
+    fn select_row_indexes(this, indexes: IndexSet, by_extending_selection: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), indexes.raw(), by_extending_selection as i8);
     }
 
     fn delegate(this) -> option::Option[*u8] {
@@ -219,7 +219,29 @@ impl RuleEditor {
         return out;
     }
 
-    // SKIPPED `setFormattingDictionary:`: param `NSDictionary<NSString *,NSString *> * _Nullable` — generic collection
+    fn set_formatting_dictionary(this, formatting_dictionary: string_map::StringMap[text::Text]) {
+        let dict_formatting_dictionary: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_formatting_dictionary: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_formatting_dictionary: usize = formatting_dictionary.slot_capacity();
+        var dsi_formatting_dictionary: usize = 0 as usize;
+        while dsi_formatting_dictionary < dcap_formatting_dictionary {
+            match formatting_dictionary.value_ptr_at_slot(dsi_formatting_dictionary) {
+                option::Option[*text::Text]::Some(dvp_formatting_dictionary) => {
+                    match formatting_dictionary.key_ptr_at_slot(dsi_formatting_dictionary) {
+                        option::Option[*text::Text]::Some(dkp_formatting_dictionary) => {
+                    let dval_formatting_dictionary: *u8 = bridge::nsstring((*dvp_formatting_dictionary).view());
+                            rt::msg_void_id_id(dict_formatting_dictionary, dset_formatting_dictionary, dval_formatting_dictionary, bridge::nsstring((*dkp_formatting_dictionary).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*text::Text]::None => {}
+            }
+            dsi_formatting_dictionary = dsi_formatting_dictionary +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFormattingDictionary:\0")), dict_formatting_dictionary);
+    }
+
     fn nesting_mode(this) -> RuleEditorNestingMode {
         return rule_editor_nesting_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("nestingMode\0"))));
     }

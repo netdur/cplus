@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSDragOperation` (NS_OPTIONS) — bitfield; combine with `|`.
@@ -349,8 +350,8 @@ impl TableView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTableColumn:\0")), table_column.raw());
     }
 
-    fn move_column_to_column(this, old_index: i64, new_index: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveColumn:toColumn:\0")), old_index, new_index);
+    fn move_column(this, old_index: i64, to_column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveColumn:toColumn:\0")), old_index, to_column);
     }
 
     fn column_with_identifier(this, identifier: str) -> i64 {
@@ -393,12 +394,12 @@ impl TableView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteNumberOfRowsChanged\0")));
     }
 
-    fn reload_data_for_row_indexes_column_indexes(this, row_indexes: IndexSet, column_indexes: IndexSet) {
+    fn reload_data_for_row_indexes(this, row_indexes: IndexSet, column_indexes: IndexSet) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("reloadDataForRowIndexes:columnIndexes:\0")), row_indexes.raw(), column_indexes.raw());
     }
 
-    fn set_indicator_image_in_table_column(this, image: *u8, table_column: TableColumn) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setIndicatorImage:inTableColumn:\0")), image, table_column.raw());
+    fn set_indicator_image(this, image: *u8, in_table_column: TableColumn) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setIndicatorImage:inTableColumn:\0")), image, in_table_column.raw());
     }
 
     fn indicator_image_in_table_column(this, table_column: TableColumn) -> option::Option[*u8] {
@@ -406,11 +407,11 @@ impl TableView {
         return bridge::obj_option(obj);
     }
 
-    fn can_drag_rows_with_indexes_at_point(this, row_indexes: IndexSet, mouse_down_point: rt::Point) -> bool {
-        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("canDragRowsWithIndexes:atPoint:\0")), row_indexes.raw(), mouse_down_point) != (0 as i8);
+    fn can_drag_rows_with_indexes(this, row_indexes: IndexSet, at_point: rt::Point) -> bool {
+        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("canDragRowsWithIndexes:atPoint:\0")), row_indexes.raw(), at_point) != (0 as i8);
     }
 
-    fn drag_image_for_rows_with_indexes_table_columns_event_offset(this, drag_rows: IndexSet, table_columns: vec::Vec[TableColumn], drag_event: *u8, drag_image_offset: *u8) -> *u8 {
+    fn drag_image_for_rows_with_indexes(this, drag_rows: IndexSet, table_columns: vec::Vec[TableColumn], event: *u8, offset: *u8) -> *u8 {
         let arr_table_columns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_table_columns: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_table_columns: usize = table_columns.count();
@@ -422,14 +423,14 @@ impl TableView {
             }
             i_table_columns = i_table_columns +% (1 as usize);
         }
-        return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRowsWithIndexes:tableColumns:event:offset:\0")), drag_rows.raw(), arr_table_columns, drag_event, drag_image_offset);
+        return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRowsWithIndexes:tableColumns:event:offset:\0")), drag_rows.raw(), arr_table_columns, event, offset);
     }
 
-    fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
-        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
+    fn set_dragging_source_operation_mask(this, mask: u64, for_local: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, for_local as i8);
     }
 
-    fn set_drop_row_drop_operation(this, row: i64, drop_operation: TableViewDropOperation) {
+    fn set_drop_row(this, row: i64, drop_operation: TableViewDropOperation) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setDropRow:dropOperation:\0")), row, table_view_drop_operation_raw(drop_operation));
     }
 
@@ -441,12 +442,12 @@ impl TableView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("deselectAll:\0")), sender);
     }
 
-    fn select_column_indexes_by_extending_selection(this, indexes: IndexSet, extend: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectColumnIndexes:byExtendingSelection:\0")), indexes.raw(), extend as i8);
+    fn select_column_indexes(this, indexes: IndexSet, by_extending_selection: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectColumnIndexes:byExtendingSelection:\0")), indexes.raw(), by_extending_selection as i8);
     }
 
-    fn select_row_indexes_by_extending_selection(this, indexes: IndexSet, extend: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), indexes.raw(), extend as i8);
+    fn select_row_indexes(this, indexes: IndexSet, by_extending_selection: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), indexes.raw(), by_extending_selection as i8);
     }
 
     fn deselect_column(this, column: i64) {
@@ -489,15 +490,15 @@ impl TableView {
         return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("rowAtPoint:\0")), point);
     }
 
-    fn frame_of_cell_at_column_row(this, column: i64, row: i64) -> rt::Rect {
+    fn frame_of_cell_at_column(this, column: i64, row: i64) -> rt::Rect {
         return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfCellAtColumn:row:\0")), column, row);
     }
 
-    fn edit_column_row_with_event_select(this, column: i64, row: i64, event: *u8, select: bool) {
-        rt::msg_void_i64_i64_id_i8(this._obj, rt::sel(#str_ptr("editColumn:row:withEvent:select:\0")), column, row, event, select as i8);
+    fn edit_column(this, column: i64, row: i64, with_event: *u8, select: bool) {
+        rt::msg_void_i64_i64_id_i8(this._obj, rt::sel(#str_ptr("editColumn:row:withEvent:select:\0")), column, row, with_event, select as i8);
     }
 
-    fn draw_row_clip_rect(this, row: i64, clip_rect: rt::Rect) {
+    fn draw_row(this, row: i64, clip_rect: rt::Rect) {
         rt::msg_void_i64_rect(this._obj, rt::sel(#str_ptr("drawRow:clipRect:\0")), row, clip_rect);
     }
 
@@ -513,12 +514,12 @@ impl TableView {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawBackgroundInClipRect:\0")), clip_rect);
     }
 
-    fn view_at_column_row_make_if_necessary(this, column: i64, row: i64, make_if_necessary: bool) -> option::Option[*u8] {
+    fn view_at_column(this, column: i64, row: i64, make_if_necessary: bool) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")), column, row, make_if_necessary as i8);
         return bridge::obj_option(obj);
     }
 
-    fn row_view_at_row_make_if_necessary(this, row: i64, make_if_necessary: bool) -> option::Option[TableRowView] {
+    fn row_view_at_row(this, row: i64, make_if_necessary: bool) -> option::Option[TableRowView] {
         let obj: *u8 = rt::msg_id_i64_i8(this._obj, rt::sel(#str_ptr("rowViewAtRow:makeIfNecessary:\0")), row, make_if_necessary as i8);
         if obj == { 0 as *u8 } {
             return option::Option[TableRowView]::None;
@@ -534,7 +535,7 @@ impl TableView {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("columnForView:\0")), view);
     }
 
-    fn make_view_with_identifier_owner(this, identifier: str, owner: *u8) -> option::Option[*u8] {
+    fn make_view_with_identifier(this, identifier: str, owner: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")), bridge::nsstring(identifier), owner);
         return bridge::obj_option(obj);
     }
@@ -555,36 +556,36 @@ impl TableView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("endUpdates\0")));
     }
 
-    fn insert_rows_at_indexes_with_animation(this, indexes: IndexSet, animation_options: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes.raw(), animation_options);
+    fn insert_rows_at_indexes(this, indexes: IndexSet, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes.raw(), with_animation);
     }
 
-    fn remove_rows_at_indexes_with_animation(this, indexes: IndexSet, animation_options: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")), indexes.raw(), animation_options);
+    fn remove_rows_at_indexes(this, indexes: IndexSet, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")), indexes.raw(), with_animation);
     }
 
-    fn move_row_at_index_to_index(this, old_index: i64, new_index: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), old_index, new_index);
+    fn move_row_at_index(this, old_index: i64, to_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), old_index, to_index);
     }
 
-    fn hide_rows_at_indexes_with_animation(this, indexes: IndexSet, row_animation: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("hideRowsAtIndexes:withAnimation:\0")), indexes.raw(), row_animation);
+    fn hide_rows_at_indexes(this, indexes: IndexSet, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("hideRowsAtIndexes:withAnimation:\0")), indexes.raw(), with_animation);
     }
 
-    fn unhide_rows_at_indexes_with_animation(this, indexes: IndexSet, row_animation: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("unhideRowsAtIndexes:withAnimation:\0")), indexes.raw(), row_animation);
+    fn unhide_rows_at_indexes(this, indexes: IndexSet, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("unhideRowsAtIndexes:withAnimation:\0")), indexes.raw(), with_animation);
     }
 
-    fn register_nib_for_identifier(this, nib: Nib, identifier: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forIdentifier:\0")), nib.raw(), bridge::nsstring(identifier));
+    fn register_nib(this, nib: Nib, for_identifier: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forIdentifier:\0")), nib.raw(), bridge::nsstring(for_identifier));
     }
 
-    fn did_add_row_view_for_row(this, row_view: TableRowView, row: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("didAddRowView:forRow:\0")), row_view.raw(), row);
+    fn did_add_row_view(this, row_view: TableRowView, for_row: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("didAddRowView:forRow:\0")), row_view.raw(), for_row);
     }
 
-    fn did_remove_row_view_for_row(this, row_view: TableRowView, row: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("didRemoveRowView:forRow:\0")), row_view.raw(), row);
+    fn did_remove_row_view(this, row_view: TableRowView, for_row: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("didRemoveRowView:forRow:\0")), row_view.raw(), for_row);
     }
 
     fn data_source(this) -> option::Option[*u8] {
@@ -924,7 +925,23 @@ impl TableView {
         return IndexSet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("hiddenRowIndexes\0"))));
     }
 
-    // SKIPPED `registeredNibsByIdentifier`: return `API_AVAILABLE NSDictionary<NSUserInterfaceItemIdentifier,NSNib *> *` — NSDictionary value `NSNib *` not modelled (NSString / NSNumber only)
+    fn registered_nibs_by_identifier(this) -> string_map::StringMap[Nib] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("registeredNibsByIdentifier\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[Nib] = string_map::new::[Nib]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), Nib::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn uses_static_contents(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesStaticContents\0"))) != (0 as i8);
     }
@@ -957,12 +974,12 @@ impl TableView {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("drawsGrid\0"))) != (0 as i8);
     }
 
-    fn select_column_by_extending_selection(this, column: i64, extend: bool) {
-        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectColumn:byExtendingSelection:\0")), column, extend as i8);
+    fn select_column(this, column: i64, by_extending_selection: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectColumn:byExtendingSelection:\0")), column, by_extending_selection as i8);
     }
 
-    fn select_row_by_extending_selection(this, row: i64, extend: bool) {
-        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectRow:byExtendingSelection:\0")), row, extend as i8);
+    fn select_row(this, row: i64, by_extending_selection: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectRow:byExtendingSelection:\0")), row, by_extending_selection as i8);
     }
 
     fn selected_column_enumerator(this) -> *u8 {
@@ -973,8 +990,8 @@ impl TableView {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowEnumerator\0")));
     }
 
-    fn drag_image_for_rows_event_drag_image_offset(this, drag_rows: *u8, drag_event: *u8, drag_image_offset: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRows:event:dragImageOffset:\0")), drag_rows, drag_event, drag_image_offset);
+    fn drag_image_for_rows(this, drag_rows: *u8, event: *u8, drag_image_offset: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRows:event:dragImageOffset:\0")), drag_rows, event, drag_image_offset);
         return bridge::obj_option(obj);
     }
 
@@ -990,7 +1007,7 @@ impl TableView {
         return rt::msg_range_rect(this._obj, rt::sel(#str_ptr("columnsInRect:\0")), rect);
     }
 
-    fn prepared_cell_at_column_row(this, column: i64, row: i64) -> option::Option[*u8] {
+    fn prepared_cell_at_column(this, column: i64, row: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("preparedCellAtColumn:row:\0")), column, row);
         return bridge::obj_option(obj);
     }
@@ -1015,8 +1032,8 @@ impl TableView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidChange:\0")), notification);
     }
 
-    fn should_focus_cell_at_column_row(this, cell: *u8, column: i64, row: i64) -> bool {
-        return rt::msg_i8_id_i64_i64(this._obj, rt::sel(#str_ptr("shouldFocusCell:atColumn:row:\0")), cell, column, row) != (0 as i8);
+    fn should_focus_cell(this, cell: *u8, at_column: i64, row: i64) -> bool {
+        return rt::msg_i8_id_i64_i64(this._obj, rt::sel(#str_ptr("shouldFocusCell:atColumn:row:\0")), cell, at_column, row) != (0 as i8);
     }
 
     fn focused_column(this) -> i64 {
@@ -1027,7 +1044,7 @@ impl TableView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setFocusedColumn:\0")), focused_column);
     }
 
-    fn perform_click_on_cell_at_column_row(this, column: i64, row: i64) {
+    fn perform_click_on_cell_at_column(this, column: i64, row: i64) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("performClickOnCellAtColumn:row:\0")), column, row);
     }
 

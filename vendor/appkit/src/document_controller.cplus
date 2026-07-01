@@ -27,7 +27,7 @@ fn DocumentController_begin_open_panel_with_completion_handler_invoke(block: *u8
 }
 
 #[repr(C)]
-struct DocumentController_begin_open_panel_for_types_completion_handler_block {
+struct DocumentController_begin_open_panel_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -37,8 +37,8 @@ struct DocumentController_begin_open_panel_for_types_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn DocumentController_begin_open_panel_for_types_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *DocumentController_begin_open_panel_for_types_completion_handler_block = { block as *DocumentController_begin_open_panel_for_types_completion_handler_block };
+fn DocumentController_begin_open_panel_invoke(block: *u8, a0: i64) {
+    let bl: *DocumentController_begin_open_panel_block = { block as *DocumentController_begin_open_panel_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -179,8 +179,8 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("newDocument:\0")), sender);
     }
 
-    fn open_untitled_document_and_display_error(this, display_document: bool, out_error: *u8) -> option::Option[Document] {
-        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("openUntitledDocumentAndDisplay:error:\0")), display_document as i8, out_error);
+    fn open_untitled_document_and_display(this, display_document: bool, error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("openUntitledDocumentAndDisplay:error:\0")), display_document as i8, error);
         if obj == { 0 as *u8 } {
             return option::Option[Document]::None;
         }
@@ -212,8 +212,8 @@ impl DocumentController {
         return out;
     }
 
-    fn run_modal_open_panel_for_types(this, open_panel: OpenPanel, types: vec::Vec[text::Text]) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalOpenPanel:forTypes:\0")), open_panel.raw(), bridge::nsarray_of_text(types));
+    fn run_modal_open_panel(this, open_panel: OpenPanel, for_types: vec::Vec[text::Text]) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalOpenPanel:forTypes:\0")), open_panel.raw(), bridge::nsarray_of_text(for_types));
     }
 
     fn begin_open_panel_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
@@ -224,17 +224,17 @@ impl DocumentController {
         return;
     }
 
-    fn begin_open_panel_for_types_completion_handler(this, open_panel: OpenPanel, in_types: vec::Vec[text::Text], cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_open_panel(this, open_panel: OpenPanel, for_types: vec::Vec[text::Text], cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: DocumentController_begin_open_panel_for_types_completion_handler_block = DocumentController_begin_open_panel_for_types_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_for_types_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: DocumentController_begin_open_panel_block = DocumentController_begin_open_panel_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
-        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginOpenPanel:forTypes:completionHandler:\0")), open_panel.raw(), bridge::nsarray_of_text(in_types), bp);
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginOpenPanel:forTypes:completionHandler:\0")), open_panel.raw(), bridge::nsarray_of_text(for_types), bp);
         return;
     }
 
     // SKIPPED `openDocumentWithContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
-    fn make_document_with_contents_of_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> option::Option[Document] {
-        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error);
+    fn make_document_with_contents_of_u_r_l_of_type(this, url: URL, type_name: str, error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), error);
         if obj == { 0 as *u8 } {
             return option::Option[Document]::None;
         }
@@ -242,8 +242,8 @@ impl DocumentController {
     }
 
     // SKIPPED `reopenDocumentForURL:withContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
-    fn make_document_for_u_r_l_with_contents_of_u_r_l_of_type_error(this, url_or_nil: URL, contents_u_r_l: URL, type_name: str, out_error: *u8) -> option::Option[Document] {
-        let obj: *u8 = rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), contents_u_r_l.raw(), bridge::nsstring(type_name), out_error);
+    fn make_document_for_u_r_l(this, url_or_nil: URL, with_contents_of_u_r_l: URL, of_type: str, error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), with_contents_of_u_r_l.raw(), bridge::nsstring(of_type), error);
         if obj == { 0 as *u8 } {
             return option::Option[Document]::None;
         }
@@ -254,16 +254,16 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveAllDocuments:\0")), sender);
     }
 
-    fn review_unsaved_documents_with_alert_title_cancellable_delegate_did_review_all_selector_context_info(this, title: str, cancellable: bool, delegate: *u8, did_review_all_selector: *u8, context_info: *u8) {
+    fn review_unsaved_documents_with_alert_title(this, title: str, cancellable: bool, delegate: *u8, did_review_all_selector: *u8, context_info: *u8) {
         rt::msg_void_id_i8_id_id_id(this._obj, rt::sel(#str_ptr("reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:\0")), bridge::nsstring(title), cancellable as i8, delegate, did_review_all_selector, context_info);
     }
 
-    fn close_all_documents_with_delegate_did_close_all_selector_context_info(this, delegate: *u8, did_close_all_selector: *u8, context_info: *u8) {
+    fn close_all_documents_with_delegate(this, delegate: *u8, did_close_all_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:\0")), delegate, did_close_all_selector, context_info);
     }
 
-    fn duplicate_document_with_contents_of_u_r_l_copying_display_name_error(this, url: URL, duplicate_by_copying: bool, display_name_or_nil: str, out_error: *u8) -> option::Option[Document] {
-        let obj: *u8 = rt::msg_id_id_i8_id_id(this._obj, rt::sel(#str_ptr("duplicateDocumentWithContentsOfURL:copying:displayName:error:\0")), url.raw(), duplicate_by_copying as i8, bridge::nsstring(display_name_or_nil), out_error);
+    fn duplicate_document_with_contents_of_u_r_l(this, url: URL, copying: bool, display_name: str, error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_i8_id_id(this._obj, rt::sel(#str_ptr("duplicateDocumentWithContentsOfURL:copying:displayName:error:\0")), url.raw(), copying as i8, bridge::nsstring(display_name), error);
         if obj == { 0 as *u8 } {
             return option::Option[Document]::None;
         }
@@ -274,7 +274,7 @@ impl DocumentController {
         return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
-    fn present_error_modal_for_window_delegate_did_present_selector_context_info(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
+    fn present_error_modal_for_window(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("presentError:modalForWindow:delegate:didPresentSelector:contextInfo:\0")), error.raw(), window.raw(), delegate, did_present_selector, context_info);
     }
 
@@ -298,8 +298,8 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteNewRecentDocumentURL:\0")), url.raw());
     }
 
-    fn type_for_contents_of_u_r_l_error(this, url: URL, out_error: *u8) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeForContentsOfURL:error:\0")), url.raw(), out_error);
+    fn type_for_contents_of_u_r_l(this, url: URL, error: *u8) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("typeForContentsOfURL:error:\0")), url.raw(), error);
         return bridge::to_text_option(ns);
     }
 
@@ -403,8 +403,8 @@ impl DocumentController {
         return bridge::obj_option(obj);
     }
 
-    fn reopen_document_for_u_r_l_with_contents_of_u_r_l_error(this, url: URL, contents_u_r_l: URL, out_error: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:error:\0")), url.raw(), contents_u_r_l.raw(), out_error) != (0 as i8);
+    fn reopen_document_for_u_r_l(this, url: URL, with_contents_of_u_r_l: URL, error: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:error:\0")), url.raw(), with_contents_of_u_r_l.raw(), error) != (0 as i8);
     }
 
     fn file_extensions_from_type(this, type_name: str) -> option::Option[*u8] {
@@ -427,13 +427,13 @@ impl DocumentController {
         return bridge::obj_option(obj);
     }
 
-    fn make_document_with_contents_of_file_of_type(this, file_name: str, type_: str) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_));
+    fn make_document_with_contents_of_file(this, file_name: str, of_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(of_type));
         return bridge::obj_option(obj);
     }
 
-    fn make_document_with_contents_of_u_r_l_of_type(this, url: URL, type_: str) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:\0")), url.raw(), bridge::nsstring(type_));
+    fn make_document_with_contents_of_u_r_l(this, url: URL, of_type: str) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:\0")), url.raw(), bridge::nsstring(of_type));
         return bridge::obj_option(obj);
     }
 
@@ -442,17 +442,17 @@ impl DocumentController {
         return bridge::obj_option(obj);
     }
 
-    fn open_document_with_contents_of_file_display(this, file_name: str, display: bool) -> option::Option[*u8] {
+    fn open_document_with_contents_of_file(this, file_name: str, display: bool) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfFile:display:\0")), bridge::nsstring(file_name), display as i8);
         return bridge::obj_option(obj);
     }
 
-    fn open_document_with_contents_of_u_r_l_display(this, url: URL, display: bool) -> option::Option[*u8] {
+    fn open_document_with_contents_of_u_r_l(this, url: URL, display: bool) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfURL:display:\0")), url.raw(), display as i8);
         return bridge::obj_option(obj);
     }
 
-    fn open_untitled_document_of_type_display(this, type_: str, display: bool) -> option::Option[*u8] {
+    fn open_untitled_document_of_type(this, type_: str, display: bool) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("openUntitledDocumentOfType:display:\0")), bridge::nsstring(type_), display as i8);
         return bridge::obj_option(obj);
     }

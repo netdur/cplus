@@ -136,8 +136,8 @@ impl OutlineView {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("numberOfChildrenOfItem:\0")), item);
     }
 
-    fn child_of_item(this, index: i64, item: *u8) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64_id(this._obj, rt::sel(#str_ptr("child:ofItem:\0")), index, item);
+    fn child(this, index: i64, of_item: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_id(this._obj, rt::sel(#str_ptr("child:ofItem:\0")), index, of_item);
         return bridge::obj_option(obj);
     }
 
@@ -199,36 +199,36 @@ impl OutlineView {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("frameOfOutlineCellAtRow:\0")), row);
     }
 
-    fn set_drop_item_drop_child_index(this, item: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setDropItem:dropChildIndex:\0")), item, index);
+    fn set_drop_item(this, item: *u8, drop_child_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setDropItem:dropChildIndex:\0")), item, drop_child_index);
     }
 
     fn should_collapse_auto_expanded_items_for_deposited(this, deposited: bool) -> bool {
         return rt::msg_i8_i8(this._obj, rt::sel(#str_ptr("shouldCollapseAutoExpandedItemsForDeposited:\0")), deposited as i8) != (0 as i8);
     }
 
-    fn insert_items_at_indexes_in_parent_with_animation(this, indexes: *u8, parent: *u8, animation_options: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
+    fn insert_items_at_indexes(this, indexes: *u8, in_parent: *u8, with_animation: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertItemsAtIndexes:inParent:withAnimation:\0")), indexes, in_parent, with_animation);
     }
 
-    fn remove_items_at_indexes_in_parent_with_animation(this, indexes: *u8, parent: *u8, animation_options: u64) {
-        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("removeItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
+    fn remove_items_at_indexes(this, indexes: *u8, in_parent: *u8, with_animation: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("removeItemsAtIndexes:inParent:withAnimation:\0")), indexes, in_parent, with_animation);
     }
 
-    fn move_item_at_index_in_parent_to_index_in_parent(this, from_index: i64, old_parent: *u8, to_index: i64, new_parent: *u8) {
-        rt::msg_void_i64_id_i64_id(this._obj, rt::sel(#str_ptr("moveItemAtIndex:inParent:toIndex:inParent:\0")), from_index, old_parent, to_index, new_parent);
+    fn move_item_at_index(this, from_index: i64, in_parent: *u8, to_index: i64, in_parent: *u8) {
+        rt::msg_void_i64_id_i64_id(this._obj, rt::sel(#str_ptr("moveItemAtIndex:inParent:toIndex:inParent:\0")), from_index, in_parent, to_index, in_parent);
     }
 
-    fn insert_rows_at_indexes_with_animation(this, indexes: *u8, animation_options: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes, animation_options);
+    fn insert_rows_at_indexes(this, indexes: *u8, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes, with_animation);
     }
 
-    fn remove_rows_at_indexes_with_animation(this, indexes: *u8, animation_options: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")), indexes, animation_options);
+    fn remove_rows_at_indexes(this, indexes: *u8, with_animation: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")), indexes, with_animation);
     }
 
-    fn move_row_at_index_to_index(this, old_index: i64, new_index: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), old_index, new_index);
+    fn move_row_at_index(this, old_index: i64, to_index: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), old_index, to_index);
     }
 
     fn delegate(this) -> option::Option[*u8] {

@@ -194,11 +194,11 @@ impl Slider {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsTickMarkValuesOnly:\0")), allows_tick_mark_values_only as i8);
     }
 
-    fn slider_with_target_action(target: *u8, action: *u8) -> Slider {
+    fn slider_with_target(target: *u8, action: *u8) -> Slider {
         return Slider { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSlider\0")), rt::sel(#str_ptr("sliderWithTarget:action:\0")), target, action) };
     }
 
-    fn slider_with_value_min_value_max_value_target_action(value: f64, min_value: f64, max_value: f64, target: *u8, action: *u8) -> Slider {
+    fn slider_with_value(value: f64, min_value: f64, max_value: f64, target: *u8, action: *u8) -> Slider {
         return Slider { _obj: rt::msg_id_f64_f64_f64_id_id(rt::get_class(#str_ptr("NSSlider\0")), rt::sel(#str_ptr("sliderWithValue:minValue:maxValue:target:action:\0")), value, min_value, max_value, target, action) };
     }
 

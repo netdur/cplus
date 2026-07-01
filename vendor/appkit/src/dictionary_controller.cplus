@@ -144,7 +144,29 @@ impl DictionaryController {
         return out;
     }
 
-    // SKIPPED `setLocalizedKeyDictionary:`: param `NSDictionary<NSString *,NSString *> * _Nonnull` — generic collection
+    fn set_localized_key_dictionary(this, localized_key_dictionary: string_map::StringMap[text::Text]) {
+        let dict_localized_key_dictionary: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_localized_key_dictionary: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_localized_key_dictionary: usize = localized_key_dictionary.slot_capacity();
+        var dsi_localized_key_dictionary: usize = 0 as usize;
+        while dsi_localized_key_dictionary < dcap_localized_key_dictionary {
+            match localized_key_dictionary.value_ptr_at_slot(dsi_localized_key_dictionary) {
+                option::Option[*text::Text]::Some(dvp_localized_key_dictionary) => {
+                    match localized_key_dictionary.key_ptr_at_slot(dsi_localized_key_dictionary) {
+                        option::Option[*text::Text]::Some(dkp_localized_key_dictionary) => {
+                    let dval_localized_key_dictionary: *u8 = bridge::nsstring((*dvp_localized_key_dictionary).view());
+                            rt::msg_void_id_id(dict_localized_key_dictionary, dset_localized_key_dictionary, dval_localized_key_dictionary, bridge::nsstring((*dkp_localized_key_dictionary).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*text::Text]::None => {}
+            }
+            dsi_localized_key_dictionary = dsi_localized_key_dictionary +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLocalizedKeyDictionary:\0")), dict_localized_key_dictionary);
+    }
+
     fn localized_key_table(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("localizedKeyTable\0")));
         return bridge::to_text_option(ns);

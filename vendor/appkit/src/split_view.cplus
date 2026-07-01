@@ -70,16 +70,16 @@ impl SplitView {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("maxPossiblePositionOfDividerAtIndex:\0")), divider_index);
     }
 
-    fn set_position_of_divider_at_index(this, position: f64, divider_index: i64) {
-        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setPosition:ofDividerAtIndex:\0")), position, divider_index);
+    fn set_position(this, position: f64, of_divider_at_index: i64) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setPosition:ofDividerAtIndex:\0")), position, of_divider_at_index);
     }
 
     fn holding_priority_for_subview_at_index(this, subview_index: i64) -> f32 {
         return rt::msg_f32_i64(this._obj, rt::sel(#str_ptr("holdingPriorityForSubviewAtIndex:\0")), subview_index);
     }
 
-    fn set_holding_priority_for_subview_at_index(this, priority: f32, subview_index: i64) {
-        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setHoldingPriority:forSubviewAtIndex:\0")), priority, subview_index);
+    fn set_holding_priority(this, priority: f32, for_subview_at_index: i64) {
+        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setHoldingPriority:forSubviewAtIndex:\0")), priority, for_subview_at_index);
     }
 
     fn is_vertical(this) -> bool {
@@ -128,8 +128,8 @@ impl SplitView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
-    fn insert_arranged_subview_at_index(this, view: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view, index);
+    fn insert_arranged_subview(this, view: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertArrangedSubview:atIndex:\0")), view, at_index);
     }
 
     fn remove_arranged_subview(this, view: *u8) {

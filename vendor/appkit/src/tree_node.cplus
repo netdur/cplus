@@ -71,7 +71,7 @@ impl TreeNode {
         return option::some(TreeNode::from_raw(obj));
     }
 
-    fn sort_with_sort_descriptors_recursively(this, sort_descriptors: vec::Vec[SortDescriptor], recursively: bool) {
+    fn sort_with_sort_descriptors(this, sort_descriptors: vec::Vec[SortDescriptor], recursively: bool) {
         let arr_sort_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_sort_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_sort_descriptors: usize = sort_descriptors.count();

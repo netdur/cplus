@@ -141,7 +141,7 @@ impl ScrubberLayout {
     }
 
     // SKIPPED `layoutAttributesForItemsInRect:`: return `NSSet<__kindof NSScrubberLayoutAttributes *> * _Nonnull` — generic collection
-    fn should_invalidate_layout_for_change_from_visible_rect_to_visible_rect(this, from_visible_rect: rt::Rect, to_visible_rect: rt::Rect) -> bool {
+    fn should_invalidate_layout_for_change_from_visible_rect(this, from_visible_rect: rt::Rect, to_visible_rect: rt::Rect) -> bool {
         return rt::msg_i8_rect_rect(this._obj, rt::sel(#str_ptr("shouldInvalidateLayoutForChangeFromVisibleRect:toVisibleRect:\0")), from_visible_rect, to_visible_rect) != (0 as i8);
     }
 

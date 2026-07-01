@@ -6,6 +6,18 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSTextCheckingController` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TextCheckingController {
@@ -44,7 +56,7 @@ impl TextCheckingController {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("considerTextCheckingForRange:\0")), range);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nonnull` — generic collection
+    // SKIPPED `checkTextInRange:types:options:`: msgSend shape `void_range_u64_id` not yet modelled
     fn check_text_in_selection(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("checkTextInSelection:\0")), sender);
     }
@@ -91,7 +103,7 @@ impl TextCheckingController {
         return out;
     }
 
-    fn menu_at_index_clicked_on_selection_effective_range(this, location: u64, clicked_on_selection: bool, effective_range: *u8) -> option::Option[*u8] {
+    fn menu_at_index(this, location: u64, clicked_on_selection: bool, effective_range: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_u64_i8_id(this._obj, rt::sel(#str_ptr("menuAtIndex:clickedOnSelection:effectiveRange:\0")), location, clicked_on_selection as i8, effective_range);
         return bridge::obj_option(obj);
     }

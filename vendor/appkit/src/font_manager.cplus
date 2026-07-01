@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSFontTraitMask` (NS_OPTIONS) — bitfield; combine with `|`.
 const font_trait_mask_n_s_italic_font_mask: u64 = 1 as u64;
@@ -58,6 +59,17 @@ fn font_action_from_raw(raw: i64) -> FontAction {
     if raw == (6 as i64) { return FontAction::NSLighterFontAction; }
     if raw == (7 as i64) { return FontAction::NSRemoveTraitFontAction; }
     return FontAction::NSNoFontChangeAction;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSFont` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -126,8 +138,8 @@ impl FontManager {
         rt::msg_void_id(rt::get_class(#str_ptr("NSFontManager\0")), rt::sel(#str_ptr("setFontManagerFactory:\0")), factory_id);
     }
 
-    fn set_selected_font_is_multiple(this, font_obj: Font, flag: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setSelectedFont:isMultiple:\0")), font_obj.raw(), flag as i8);
+    fn set_selected_font(this, font_obj: Font, is_multiple: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setSelectedFont:isMultiple:\0")), font_obj.raw(), is_multiple as i8);
     }
 
     fn set_font_menu(this, new_menu: Menu) {
@@ -150,7 +162,7 @@ impl FontManager {
         return option::some(FontPanel::from_raw(obj));
     }
 
-    fn font_with_family_traits_weight_size(this, family: str, traits: u64, weight: i64, size: f64) -> option::Option[Font] {
+    fn font_with_family(this, family: str, traits: u64, weight: i64, size: f64) -> option::Option[Font] {
         let obj: *u8 = rt::msg_id_id_u64_i64_f64(this._obj, rt::sel(#str_ptr("fontWithFamily:traits:weight:size:\0")), bridge::nsstring(family), traits, weight, size);
         if obj == { 0 as *u8 } {
             return option::Option[Font]::None;
@@ -195,21 +207,43 @@ impl FontManager {
         return Font::from_raw(rt::msg_id_id_u64(this._obj, rt::sel(#str_ptr("convertFont:toNotHaveTrait:\0")), font_obj.raw(), trait_));
     }
 
-    fn convert_weight_of_font(this, up_flag: bool, font_obj: Font) -> Font {
-        return Font::from_raw(rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("convertWeight:ofFont:\0")), up_flag as i8, font_obj.raw()));
+    fn convert_weight(this, up_flag: bool, of_font: Font) -> Font {
+        return Font::from_raw(rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("convertWeight:ofFont:\0")), up_flag as i8, of_font.raw()));
     }
 
     fn send_action(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
 
-    fn localized_name_for_family_face(this, family: str, face_key: str) -> text::Text {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("localizedNameForFamily:face:\0")), bridge::nsstring(family), bridge::nsstring(face_key));
+    fn localized_name_for_family(this, family: str, face: str) -> text::Text {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("localizedNameForFamily:face:\0")), bridge::nsstring(family), bridge::nsstring(face));
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `setSelectedAttributes:isMultiple:`: param `NSDictionary<NSString *,id> * _Nonnull` — generic collection
-    // SKIPPED `convertAttributes:`: param `NSDictionary<NSString *,id> * _Nonnull` — generic collection
+    fn set_selected_attributes(this, attributes: string_map::StringMap[AnyObject], is_multiple: bool) {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setSelectedAttributes:isMultiple:\0")), dict_attributes, is_multiple as i8);
+    }
+
+    // SKIPPED `convertAttributes:`: NSArray<id> param with a collection return not modelled
     fn available_font_names_matching_font_descriptor(this, descriptor: FontDescriptor) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("availableFontNamesMatchingFontDescriptor:\0")), descriptor.raw());
         return bridge::obj_option(obj);
@@ -220,20 +254,20 @@ impl FontManager {
         return bridge::obj_option(obj);
     }
 
-    fn add_collection_options(this, collection_name: str, collection_options: u64) -> bool {
-        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("addCollection:options:\0")), bridge::nsstring(collection_name), collection_options) != (0 as i8);
+    fn add_collection(this, collection_name: str, options: u64) -> bool {
+        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("addCollection:options:\0")), bridge::nsstring(collection_name), options) != (0 as i8);
     }
 
     fn remove_collection(this, collection_name: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("removeCollection:\0")), bridge::nsstring(collection_name)) != (0 as i8);
     }
 
-    fn add_font_descriptors_to_collection(this, descriptors: *u8, collection_name: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("addFontDescriptors:toCollection:\0")), descriptors, bridge::nsstring(collection_name));
+    fn add_font_descriptors(this, descriptors: *u8, to_collection: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("addFontDescriptors:toCollection:\0")), descriptors, bridge::nsstring(to_collection));
     }
 
-    fn remove_font_descriptor_from_collection(this, descriptor: FontDescriptor, collection: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeFontDescriptor:fromCollection:\0")), descriptor.raw(), bridge::nsstring(collection));
+    fn remove_font_descriptor(this, descriptor: FontDescriptor, from_collection: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeFontDescriptor:fromCollection:\0")), descriptor.raw(), bridge::nsstring(from_collection));
     }
 
     fn convert_font_traits(this, traits: u64) -> u64 {
@@ -324,8 +358,8 @@ impl FontManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    fn font_named_has_traits(this, f_name: str, some_traits: u64) -> bool {
-        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("fontNamed:hasTraits:\0")), bridge::nsstring(f_name), some_traits) != (0 as i8);
+    fn font_named(this, f_name: str, has_traits: u64) -> bool {
+        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("fontNamed:hasTraits:\0")), bridge::nsstring(f_name), has_traits) != (0 as i8);
     }
 
     fn available_font_names_with_traits(this, some_traits: u64) -> vec::Vec[text::Text] {

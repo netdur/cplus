@@ -12,7 +12,7 @@ const p_d_f_panel_options_n_s_p_d_f_panel_shows_orientation: u64 = 8 as u64;
 const p_d_f_panel_options_n_s_p_d_f_panel_requests_parent_directory: u64 = 16777216 as u64;
 
 #[repr(C)]
-struct PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_block {
+struct PDFPanel_begin_sheet_with_p_d_f_info_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -22,8 +22,8 @@ struct PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_
     opaque ctx: *u8,
 }
 
-fn PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_block = { block as *PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_block };
+fn PDFPanel_begin_sheet_with_p_d_f_info_invoke(block: *u8, a0: i64) {
+    let bl: *PDFPanel_begin_sheet_with_p_d_f_info_block = { block as *PDFPanel_begin_sheet_with_p_d_f_info_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -104,11 +104,11 @@ impl PDFPanel {
         return PDFPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPDFPanel\0")), rt::sel(#str_ptr("panel\0"))) };
     }
 
-    fn begin_sheet_with_p_d_f_info_modal_for_window_completion_handler(this, pdf_info: PDFInfo, doc_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_sheet_with_p_d_f_info(this, pdf_info: PDFInfo, modal_for_window: Window, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_block = PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PDFPanel_begin_sheet_with_p_d_f_info_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: PDFPanel_begin_sheet_with_p_d_f_info_block = PDFPanel_begin_sheet_with_p_d_f_info_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PDFPanel_begin_sheet_with_p_d_f_info_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
-        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetWithPDFInfo:modalForWindow:completionHandler:\0")), pdf_info.raw(), doc_window.raw(), bp);
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetWithPDFInfo:modalForWindow:completionHandler:\0")), pdf_info.raw(), modal_for_window.raw(), bp);
         return;
     }
 

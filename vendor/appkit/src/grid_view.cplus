@@ -346,8 +346,8 @@ impl GridView {
         return GridView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn grid_view_with_number_of_columns_rows(column_count: i64, row_count: i64) -> GridView {
-        return GridView { _obj: rt::retain(rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSGridView\0")), rt::sel(#str_ptr("gridViewWithNumberOfColumns:rows:\0")), column_count, row_count)) };
+    fn grid_view_with_number_of_columns(column_count: i64, rows: i64) -> GridView {
+        return GridView { _obj: rt::retain(rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSGridView\0")), rt::sel(#str_ptr("gridViewWithNumberOfColumns:rows:\0")), column_count, rows)) };
     }
 
     // SKIPPED `gridViewWithViews:`: param `NSArray<NSArray<NSView *> *> * _Nonnull` — generic collection
@@ -367,7 +367,7 @@ impl GridView {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfColumn:\0")), column.raw());
     }
 
-    fn cell_at_column_index_row_index(this, column_index: i64, row_index: i64) -> GridCell {
+    fn cell_at_column_index(this, column_index: i64, row_index: i64) -> GridCell {
         return GridCell::from_raw(rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("cellAtColumnIndex:rowIndex:\0")), column_index, row_index));
     }
 
@@ -381,7 +381,7 @@ impl GridView {
 
     // SKIPPED `addRowWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertRowAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    fn move_row_at_index_to_index(this, from_index: i64, to_index: i64) {
+    fn move_row_at_index(this, from_index: i64, to_index: i64) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveRowAtIndex:toIndex:\0")), from_index, to_index);
     }
 
@@ -391,7 +391,7 @@ impl GridView {
 
     // SKIPPED `addColumnWithViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
     // SKIPPED `insertColumnAtIndex:withViews:`: param `NSArray<NSView *> * _Nonnull` — generic collection
-    fn move_column_at_index_to_index(this, from_index: i64, to_index: i64) {
+    fn move_column_at_index(this, from_index: i64, to_index: i64) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveColumnAtIndex:toIndex:\0")), from_index, to_index);
     }
 
@@ -399,8 +399,8 @@ impl GridView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumnAtIndex:\0")), index);
     }
 
-    fn merge_cells_in_horizontal_range_vertical_range(this, h_range: rt::Range, v_range: rt::Range) {
-        rt::msg_void_range_range(this._obj, rt::sel(#str_ptr("mergeCellsInHorizontalRange:verticalRange:\0")), h_range, v_range);
+    fn merge_cells_in_horizontal_range(this, h_range: rt::Range, vertical_range: rt::Range) {
+        rt::msg_void_range_range(this._obj, rt::sel(#str_ptr("mergeCellsInHorizontalRange:verticalRange:\0")), h_range, vertical_range);
     }
 
     fn number_of_rows(this) -> i64 {

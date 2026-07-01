@@ -24,12 +24,12 @@ impl OpenGLLayer {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("openGLContextForPixelFormat:\0")), pixel_format);
     }
 
-    fn can_draw_in_open_g_l_context_pixel_format_for_layer_time_display_time(this, context: *u8, pixel_format: *u8, t: f64, ts: *u8) -> bool {
-        return rt::msg_i8_id_id_f64_id(this._obj, rt::sel(#str_ptr("canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, t, ts) != (0 as i8);
+    fn can_draw_in_open_g_l_context(this, context: *u8, pixel_format: *u8, for_layer_time: f64, display_time: *u8) -> bool {
+        return rt::msg_i8_id_id_f64_id(this._obj, rt::sel(#str_ptr("canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, for_layer_time, display_time) != (0 as i8);
     }
 
-    fn draw_in_open_g_l_context_pixel_format_for_layer_time_display_time(this, context: *u8, pixel_format: *u8, t: f64, ts: *u8) {
-        rt::msg_void_id_id_f64_id(this._obj, rt::sel(#str_ptr("drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, t, ts);
+    fn draw_in_open_g_l_context(this, context: *u8, pixel_format: *u8, for_layer_time: f64, display_time: *u8) {
+        rt::msg_void_id_id_f64_id(this._obj, rt::sel(#str_ptr("drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, for_layer_time, display_time);
     }
 
     fn view(this) -> option::Option[*u8] {

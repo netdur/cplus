@@ -138,7 +138,7 @@ impl TextLayoutFragment {
     }
 
     // SKIPPED `init`: `new` already defined (extra constructor)
-    fn text_line_fragment_for_vertical_offset_requires_exact_match(this, vertical_offset: f64, requires_exact_match: bool) -> option::Option[TextLineFragment] {
+    fn text_line_fragment_for_vertical_offset(this, vertical_offset: f64, requires_exact_match: bool) -> option::Option[TextLineFragment] {
         let obj: *u8 = rt::msg_id_f64_i8(this._obj, rt::sel(#str_ptr("textLineFragmentForVerticalOffset:requiresExactMatch:\0")), vertical_offset, requires_exact_match as i8);
         if obj == { 0 as *u8 } {
             return option::Option[TextLineFragment]::None;
@@ -146,7 +146,7 @@ impl TextLayoutFragment {
         return option::some(TextLineFragment::from_raw(obj));
     }
 
-    fn text_line_fragment_for_text_location_is_upstream_affinity(this, text_location: TextLocation, is_upstream_affinity: bool) -> option::Option[TextLineFragment] {
+    fn text_line_fragment_for_text_location(this, text_location: TextLocation, is_upstream_affinity: bool) -> option::Option[TextLineFragment] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("textLineFragmentForTextLocation:isUpstreamAffinity:\0")), text_location.raw(), is_upstream_affinity as i8);
         if obj == { 0 as *u8 } {
             return option::Option[TextLineFragment]::None;
@@ -158,8 +158,8 @@ impl TextLayoutFragment {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }
 
-    fn draw_at_point_in_context(this, point: rt::Point, context: *u8) {
-        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:inContext:\0")), point, context);
+    fn draw_at_point(this, point: rt::Point, in_context: *u8) {
+        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:inContext:\0")), point, in_context);
     }
 
     fn frame_for_text_attachment_at_location(this, location: TextLocation) -> rt::Rect {

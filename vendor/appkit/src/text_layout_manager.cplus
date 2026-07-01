@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSTextLayoutFragmentEnumerationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const text_layout_fragment_enumeration_options_none: u64 = 0 as u64;
@@ -43,8 +44,19 @@ const text_layout_manager_segment_options_head_segment_extended: u64 = 4 as u64;
 const text_layout_manager_segment_options_tail_segment_extended: u64 = 8 as u64;
 const text_layout_manager_segment_options_upstream_affinity: u64 = 16 as u64;
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[repr(C)]
-struct TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block {
+struct TextLayoutManager_enumerate_text_layout_fragments_from_location_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -54,8 +66,8 @@ struct TextLayoutManager_enumerate_text_layout_fragments_from_location_options_u
     opaque ctx: *u8,
 }
 
-fn TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_invoke(block: *u8, a0: *u8) {
-    let bl: *TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block = { block as *TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block };
+fn TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke(block: *u8, a0: *u8) {
+    let bl: *TextLayoutManager_enumerate_text_layout_fragments_from_location_block = { block as *TextLayoutManager_enumerate_text_layout_fragments_from_location_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -213,9 +225,9 @@ impl TextLayoutManager {
         return bridge::obj_option(obj);
     }
 
-    fn enumerate_text_layout_fragments_from_location_options_using_block(this, location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] {
+    fn enumerate_text_layout_fragments_from_location(this, location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block = TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: TextLayoutManager_enumerate_text_layout_fragments_from_location_block = TextLayoutManager_enumerate_text_layout_fragments_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextLayoutFragmentsFromLocation:options:usingBlock:\0")), location.raw(), options, bp);
         if obj == { 0 as *u8 } {
@@ -225,34 +237,72 @@ impl TextLayoutManager {
     }
 
     // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `setRenderingAttributes:forTextRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    fn add_rendering_attribute_value_for_text_range(this, rendering_attribute: str, value: *u8, text_range: TextRange) {
-        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("addRenderingAttribute:value:forTextRange:\0")), bridge::nsstring(rendering_attribute), value, text_range.raw());
+    fn set_rendering_attributes(this, rendering_attributes: string_map::StringMap[AnyObject], for_text_range: TextRange) {
+        let dict_rendering_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_rendering_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_rendering_attributes: usize = rendering_attributes.slot_capacity();
+        var dsi_rendering_attributes: usize = 0 as usize;
+        while dsi_rendering_attributes < dcap_rendering_attributes {
+            match rendering_attributes.value_ptr_at_slot(dsi_rendering_attributes) {
+                option::Option[*AnyObject]::Some(dvp_rendering_attributes) => {
+                    match rendering_attributes.key_ptr_at_slot(dsi_rendering_attributes) {
+                        option::Option[*text::Text]::Some(dkp_rendering_attributes) => {
+                    let dval_rendering_attributes: *u8 = (*dvp_rendering_attributes).raw();
+                            rt::msg_void_id_id(dict_rendering_attributes, dset_rendering_attributes, dval_rendering_attributes, bridge::nsstring((*dkp_rendering_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_rendering_attributes = dsi_rendering_attributes +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setRenderingAttributes:forTextRange:\0")), dict_rendering_attributes, for_text_range.raw());
     }
 
-    fn remove_rendering_attribute_for_text_range(this, rendering_attribute: str, text_range: TextRange) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRenderingAttribute:forTextRange:\0")), bridge::nsstring(rendering_attribute), text_range.raw());
+    fn add_rendering_attribute(this, rendering_attribute: str, value: *u8, for_text_range: TextRange) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("addRenderingAttribute:value:forTextRange:\0")), bridge::nsstring(rendering_attribute), value, for_text_range.raw());
+    }
+
+    fn remove_rendering_attribute(this, rendering_attribute: str, for_text_range: TextRange) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRenderingAttribute:forTextRange:\0")), bridge::nsstring(rendering_attribute), for_text_range.raw());
     }
 
     fn invalidate_rendering_attributes_for_text_range(this, text_range: TextRange) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateRenderingAttributesForTextRange:\0")), text_range.raw());
     }
 
-    // SKIPPED `renderingAttributesForLink:atLocation:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn rendering_attributes_for_link(this, link: *u8, at_location: TextLocation) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("renderingAttributesForLink:atLocation:\0")), link, at_location.raw());
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `enumerateTextSegmentsInRange:type:options:usingBlock:`: block-method msgSend shape not modelled
-    fn replace_contents_in_range_with_text_elements(this, range: TextRange, text_elements: vec::Vec[TextElement]) {
-        let arr_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
-        let add_sel_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
-        let n_text_elements: usize = text_elements.count();
-        var i_text_elements: usize = 0 as usize;
-        while i_text_elements < n_text_elements {
-            match text_elements.at_ptr(i_text_elements) {
-                option::Option[*TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, (*e_text_elements).raw()); }
+    fn replace_contents_in_range(this, range: TextRange, with_text_elements: vec::Vec[TextElement]) {
+        let arr_with_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_with_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_with_text_elements: usize = with_text_elements.count();
+        var i_with_text_elements: usize = 0 as usize;
+        while i_with_text_elements < n_with_text_elements {
+            match with_text_elements.at_ptr(i_with_text_elements) {
+                option::Option[*TextElement]::Some(e_with_text_elements) => { rt::msg_void_id(arr_with_text_elements, add_sel_with_text_elements, (*e_with_text_elements).raw()); }
                 option::Option[*TextElement]::None => {}
             }
-            i_text_elements = i_text_elements +% (1 as usize);
+            i_with_text_elements = i_with_text_elements +% (1 as usize);
         }
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_text_elements);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceContentsInRange:withTextElements:\0")), range.raw(), arr_with_text_elements);
     }
 
     fn replace_contents_in_range_with_attributed_string(this, range: TextRange, attributed_string: *u8) {
@@ -382,7 +432,23 @@ impl TextLayoutManager {
         return;
     }
 
-    // SKIPPED `linkRenderingAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn link_rendering_attributes() -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSTextLayoutManager\0")), rt::sel(#str_ptr("linkRenderingAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

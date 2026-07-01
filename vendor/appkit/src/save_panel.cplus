@@ -9,7 +9,7 @@ import "stdlib/vec" as vec;
 import "objc/synthesis" as synth;
 
 #[repr(C)]
-struct SavePanel_begin_sheet_modal_for_window_completion_handler_block {
+struct SavePanel_begin_sheet_modal_for_window_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -19,8 +19,8 @@ struct SavePanel_begin_sheet_modal_for_window_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn SavePanel_begin_sheet_modal_for_window_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *SavePanel_begin_sheet_modal_for_window_completion_handler_block = { block as *SavePanel_begin_sheet_modal_for_window_completion_handler_block };
+fn SavePanel_begin_sheet_modal_for_window_invoke(block: *u8, a0: i64) {
+    let bl: *SavePanel_begin_sheet_modal_for_window_block = { block as *SavePanel_begin_sheet_modal_for_window_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -168,9 +168,9 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("cancel:\0")), sender);
     }
 
-    fn begin_sheet_modal_for_window_completion_handler(this, window: *u8, cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_sheet_modal_for_window(this, window: *u8, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: SavePanel_begin_sheet_modal_for_window_completion_handler_block = SavePanel_begin_sheet_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_sheet_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: SavePanel_begin_sheet_modal_for_window_block = SavePanel_begin_sheet_modal_for_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SavePanel_begin_sheet_modal_for_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:completionHandler:\0")), window, bp);
         return;
@@ -424,12 +424,12 @@ impl SavePanel {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRequiredFileType:\0")), bridge::nsstring(type_));
     }
 
-    fn begin_sheet_for_directory_file_modal_for_window_modal_delegate_did_end_selector_context_info(this, path: str, name: str, doc_window: *u8, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
-        rt::msg_void_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(name), doc_window, delegate, did_end_selector, context_info);
+    fn begin_sheet_for_directory(this, path: str, file: str, modal_for_window: *u8, modal_delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), bridge::nsstring(path), bridge::nsstring(file), modal_for_window, modal_delegate, did_end_selector, context_info);
     }
 
-    fn run_modal_for_directory_file(this, path: str, name: str) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalForDirectory:file:\0")), bridge::nsstring(path), bridge::nsstring(name));
+    fn run_modal_for_directory(this, path: str, file: str) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalForDirectory:file:\0")), bridge::nsstring(path), bridge::nsstring(file));
     }
 
     fn select_text(this, sender: *u8) {

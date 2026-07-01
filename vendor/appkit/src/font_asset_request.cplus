@@ -57,7 +57,23 @@ impl FontAssetRequest {
         return FontAssetRequest { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithFontDescriptors:options:`: init with an NSArray<id> param not modelled
+    fn new_with_font_descriptors_options(font_descriptors: vec::Vec[FontDescriptor], options: u64) -> FontAssetRequest {
+        let cls: *u8 = rt::get_class(#str_ptr("NSFontAssetRequest\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_font_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_font_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_font_descriptors: usize = font_descriptors.count();
+        var i_font_descriptors: usize = 0 as usize;
+        while i_font_descriptors < n_font_descriptors {
+            match font_descriptors.at_ptr(i_font_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_font_descriptors) => { rt::msg_void_id(arr_font_descriptors, add_sel_font_descriptors, (*e_font_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
+            }
+            i_font_descriptors = i_font_descriptors +% (1 as usize);
+        }
+        return FontAssetRequest { _obj: rt::msg_id_id_u64(alloced, rt::sel(#str_ptr("initWithFontDescriptors:options:\0")), arr_font_descriptors, options) };
+    }
+
     fn download_font_assets_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: FontAssetRequest_download_font_assets_with_completion_handler_block = FontAssetRequest_download_font_assets_with_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FontAssetRequest_download_font_assets_with_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };

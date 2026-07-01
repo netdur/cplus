@@ -20,8 +20,8 @@ impl PanGestureRecognizer {
         return rt::msg_point_id(this._obj, rt::sel(#str_ptr("translationInView:\0")), view);
     }
 
-    fn set_translation_in_view(this, translation: rt::Point, view: *u8) {
-        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("setTranslation:inView:\0")), translation, view);
+    fn set_translation(this, translation: rt::Point, in_view: *u8) {
+        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("setTranslation:inView:\0")), translation, in_view);
     }
 
     fn velocity_in_view(this, view: *u8) -> rt::Point {

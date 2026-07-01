@@ -28,7 +28,7 @@ impl Nib {
         return Nib { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithNibData:bundle:\0")), nib_data, bundle) };
     }
 
-    fn instantiate_with_owner_top_level_objects(this, owner: *u8, top_level_objects: *u8) -> bool {
+    fn instantiate_with_owner(this, owner: *u8, top_level_objects: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("instantiateWithOwner:topLevelObjects:\0")), owner, top_level_objects) != (0 as i8);
     }
 
@@ -42,7 +42,7 @@ impl Nib {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("instantiateNibWithExternalNameTable:\0")), external_name_table) != (0 as i8);
     }
 
-    fn instantiate_nib_with_owner_top_level_objects(this, owner: *u8, top_level_objects: *u8) -> bool {
+    fn instantiate_nib_with_owner(this, owner: *u8, top_level_objects: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("instantiateNibWithOwner:topLevelObjects:\0")), owner, top_level_objects) != (0 as i8);
     }
 

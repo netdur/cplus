@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSTextAlignment` (NS_ENUM)
 enum TextAlignment {
@@ -115,6 +116,17 @@ const line_break_strategy_push_out: u64 = 1 as u64;
 const line_break_strategy_hangul_word_priority: u64 = 2 as u64;
 const line_break_strategy_standard: u64 = 65535 as u64;
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 // `NSTextList` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TextList {
     opaque _obj: *u8,
@@ -145,8 +157,24 @@ impl TextTab {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("location\0")));
     }
 
-    // SKIPPED `options`: return `NSDictionary<NSTextTabOptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `initWithTextAlignment:location:options:`: param `NSDictionary<NSTextTabOptionKey,id> * _Nonnull` — generic collection
+    fn options(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("options\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    // SKIPPED `initWithTextAlignment:location:options:`: init arg shape not yet modelled
     fn alignment(this) -> TextAlignment {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }

@@ -8,7 +8,7 @@ import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 
 #[repr(C)]
-struct UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_block {
+struct UserInterfaceItemSearching_search_for_items_with_search_string_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -18,8 +18,8 @@ struct UserInterfaceItemSearching_search_for_items_with_search_string_result_lim
     opaque ctx: *u8,
 }
 
-fn UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_block = { block as *UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_block };
+fn UserInterfaceItemSearching_search_for_items_with_search_string_invoke(block: *u8, a0: *u8) {
+    let bl: *UserInterfaceItemSearching_search_for_items_with_search_string_block = { block as *UserInterfaceItemSearching_search_for_items_with_search_string_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -36,9 +36,9 @@ impl UserInterfaceItemSearching {
 
     fn from_raw(ptr: *u8) -> UserInterfaceItemSearching { return UserInterfaceItemSearching { _obj: ptr }; }
 
-    fn search_for_items_with_search_string_result_limit_matched_item_handler(this, search_string: str, result_limit: i64, cb: fn(*u8, *u8), ctx: *u8) {
+    fn search_for_items_with_search_string(this, search_string: str, result_limit: i64, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_block = UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserInterfaceItemSearching_search_for_items_with_search_string_result_limit_matched_item_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: UserInterfaceItemSearching_search_for_items_with_search_string_block = UserInterfaceItemSearching_search_for_items_with_search_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: UserInterfaceItemSearching_search_for_items_with_search_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("searchForItemsWithSearchString:resultLimit:matchedItemHandler:\0")), bridge::nsstring(search_string), result_limit, bp);
         return;

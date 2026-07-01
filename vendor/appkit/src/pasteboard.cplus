@@ -134,12 +134,12 @@ impl Pasteboard {
     }
 
     // SKIPPED `canReadObjectForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
-    fn declare_types_owner(this, new_types: vec::Vec[text::Text], new_owner: *u8) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("declareTypes:owner:\0")), bridge::nsarray_of_text(new_types), new_owner);
+    fn declare_types(this, new_types: vec::Vec[text::Text], owner: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("declareTypes:owner:\0")), bridge::nsarray_of_text(new_types), owner);
     }
 
-    fn add_types_owner(this, new_types: vec::Vec[text::Text], new_owner: *u8) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("addTypes:owner:\0")), bridge::nsarray_of_text(new_types), new_owner);
+    fn add_types(this, new_types: vec::Vec[text::Text], owner: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("addTypes:owner:\0")), bridge::nsarray_of_text(new_types), owner);
     }
 
     fn available_type_from_array(this, types: vec::Vec[text::Text]) -> option::Option[text::Text] {
@@ -147,16 +147,16 @@ impl Pasteboard {
         return bridge::to_text_option(ns);
     }
 
-    fn set_data_for_type(this, data: Data, data_type: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setData:forType:\0")), data.raw(), bridge::nsstring(data_type)) != (0 as i8);
+    fn set_data(this, data: Data, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setData:forType:\0")), data.raw(), bridge::nsstring(for_type)) != (0 as i8);
     }
 
-    fn set_property_list_for_type(this, plist: *u8, data_type: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setPropertyList:forType:\0")), plist, bridge::nsstring(data_type)) != (0 as i8);
+    fn set_property_list(this, plist: *u8, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setPropertyList:forType:\0")), plist, bridge::nsstring(for_type)) != (0 as i8);
     }
 
-    fn set_string_for_type(this, string: str, data_type: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setString:forType:\0")), bridge::nsstring(string), bridge::nsstring(data_type)) != (0 as i8);
+    fn set_string(this, string: str, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setString:forType:\0")), bridge::nsstring(string), bridge::nsstring(for_type)) != (0 as i8);
     }
 
     fn data_for_type(this, data_type: str) -> option::Option[Data] {
@@ -242,8 +242,8 @@ impl Pasteboard {
         return Pasteboard { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringFile:\0")), bridge::nsstring(filename)) };
     }
 
-    fn pasteboard_by_filtering_data_of_type(data: Data, type_: str) -> Pasteboard {
-        return Pasteboard { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringData:ofType:\0")), data.raw(), bridge::nsstring(type_)) };
+    fn pasteboard_by_filtering_data(data: Data, of_type: str) -> Pasteboard {
+        return Pasteboard { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("pasteboardByFilteringData:ofType:\0")), data.raw(), bridge::nsstring(of_type)) };
     }
 
     fn pasteboard_by_filtering_types_in_pasteboard(pboard: Pasteboard) -> Pasteboard {
@@ -254,8 +254,8 @@ impl Pasteboard {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeFileContents:\0")), bridge::nsstring(filename)) != (0 as i8);
     }
 
-    fn read_file_contents_type_to_file(this, type_: str, filename: str) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("readFileContentsType:toFile:\0")), bridge::nsstring(type_), bridge::nsstring(filename));
+    fn read_file_contents_type(this, type_: str, to_file: str) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("readFileContentsType:toFile:\0")), bridge::nsstring(type_), bridge::nsstring(to_file));
         return bridge::to_text_option(ns);
     }
 
@@ -309,7 +309,7 @@ impl PasteboardWriting {
         return out;
     }
 
-    fn writing_options_for_type_pasteboard(this, type_: str, pasteboard: Pasteboard) -> u64 {
+    fn writing_options_for_type(this, type_: str, pasteboard: Pasteboard) -> u64 {
         return rt::msg_u64_id_id(this._obj, rt::sel(#str_ptr("writingOptionsForType:pasteboard:\0")), bridge::nsstring(type_), pasteboard.raw());
     }
 
@@ -330,8 +330,8 @@ impl PasteboardTypeOwner {
 
     fn from_raw(ptr: *u8) -> PasteboardTypeOwner { return PasteboardTypeOwner { _obj: ptr }; }
 
-    fn pasteboard_provide_data_for_type(this, sender: Pasteboard, type_: str) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("pasteboard:provideDataForType:\0")), sender.raw(), bridge::nsstring(type_));
+    fn pasteboard(this, sender: Pasteboard, provide_data_for_type: str) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("pasteboard:provideDataForType:\0")), sender.raw(), bridge::nsstring(provide_data_for_type));
     }
 
     fn pasteboard_changed_owner(this, sender: Pasteboard) {
@@ -364,7 +364,7 @@ impl PasteboardReading {
         return out;
     }
 
-    fn reading_options_for_type_pasteboard(type_: str, pasteboard: Pasteboard) -> u64 {
+    fn reading_options_for_type(type_: str, pasteboard: Pasteboard) -> u64 {
         return rt::msg_u64_id_id(rt::get_class(#str_ptr("NSPasteboardReading\0")), rt::sel(#str_ptr("readingOptionsForType:pasteboard:\0")), bridge::nsstring(type_), pasteboard.raw());
     }
 

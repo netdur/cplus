@@ -157,16 +157,16 @@ impl SegmentedCell {
         rt::msg_void(this._obj, rt::sel(#str_ptr("makePreviousSegmentKey\0")));
     }
 
-    fn set_width_for_segment(this, width: f64, segment: i64) {
-        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:forSegment:\0")), width, segment);
+    fn set_width(this, width: f64, for_segment: i64) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:forSegment:\0")), width, for_segment);
     }
 
     fn width_for_segment(this, segment: i64) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("widthForSegment:\0")), segment);
     }
 
-    fn set_image_for_segment(this, image: *u8, segment: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:forSegment:\0")), image, segment);
+    fn set_image(this, image: *u8, for_segment: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setImage:forSegment:\0")), image, for_segment);
     }
 
     fn image_for_segment(this, segment: i64) -> option::Option[*u8] {
@@ -174,16 +174,16 @@ impl SegmentedCell {
         return bridge::obj_option(obj);
     }
 
-    fn set_image_scaling_for_segment(this, scaling: ImageScaling, segment: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setImageScaling:forSegment:\0")), image_scaling_raw(scaling), segment);
+    fn set_image_scaling(this, scaling: ImageScaling, for_segment: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setImageScaling:forSegment:\0")), image_scaling_raw(scaling), for_segment);
     }
 
     fn image_scaling_for_segment(this, segment: i64) -> ImageScaling {
         return image_scaling_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("imageScalingForSegment:\0")), segment));
     }
 
-    fn set_label_for_segment(this, label: str, segment: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setLabel:forSegment:\0")), bridge::nsstring(label), segment);
+    fn set_label(this, label: str, for_segment: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setLabel:forSegment:\0")), bridge::nsstring(label), for_segment);
     }
 
     fn label_for_segment(this, segment: i64) -> option::Option[text::Text] {
@@ -191,24 +191,24 @@ impl SegmentedCell {
         return bridge::to_text_option(ns);
     }
 
-    fn set_selected_for_segment(this, selected: bool, segment: i64) {
-        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setSelected:forSegment:\0")), selected as i8, segment);
+    fn set_selected(this, selected: bool, for_segment: i64) {
+        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setSelected:forSegment:\0")), selected as i8, for_segment);
     }
 
     fn is_selected_for_segment(this, segment: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isSelectedForSegment:\0")), segment) != (0 as i8);
     }
 
-    fn set_enabled_for_segment(this, enabled: bool, segment: i64) {
-        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setEnabled:forSegment:\0")), enabled as i8, segment);
+    fn set_enabled(this, enabled: bool, for_segment: i64) {
+        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setEnabled:forSegment:\0")), enabled as i8, for_segment);
     }
 
     fn is_enabled_for_segment(this, segment: i64) -> bool {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("isEnabledForSegment:\0")), segment) != (0 as i8);
     }
 
-    fn set_menu_for_segment(this, menu: *u8, segment: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setMenu:forSegment:\0")), menu, segment);
+    fn set_menu(this, menu: *u8, for_segment: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setMenu:forSegment:\0")), menu, for_segment);
     }
 
     fn menu_for_segment(this, segment: i64) -> option::Option[*u8] {
@@ -216,8 +216,8 @@ impl SegmentedCell {
         return bridge::obj_option(obj);
     }
 
-    fn set_tool_tip_for_segment(this, tool_tip: str, segment: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setToolTip:forSegment:\0")), bridge::nsstring(tool_tip), segment);
+    fn set_tool_tip(this, tool_tip: str, for_segment: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setToolTip:forSegment:\0")), bridge::nsstring(tool_tip), for_segment);
     }
 
     fn tool_tip_for_segment(this, segment: i64) -> option::Option[text::Text] {
@@ -225,16 +225,16 @@ impl SegmentedCell {
         return bridge::to_text_option(ns);
     }
 
-    fn set_tag_for_segment(this, tag: i64, segment: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setTag:forSegment:\0")), tag, segment);
+    fn set_tag(this, tag: i64, for_segment: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setTag:forSegment:\0")), tag, for_segment);
     }
 
     fn tag_for_segment(this, segment: i64) -> i64 {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("tagForSegment:\0")), segment);
     }
 
-    fn draw_segment_in_frame_with_view(this, segment: i64, frame: rt::Rect, control_view: *u8) {
-        rt::msg_void_i64_rect_id(this._obj, rt::sel(#str_ptr("drawSegment:inFrame:withView:\0")), segment, frame, control_view);
+    fn draw_segment(this, segment: i64, in_frame: rt::Rect, with_view: *u8) {
+        rt::msg_void_i64_rect_id(this._obj, rt::sel(#str_ptr("drawSegment:inFrame:withView:\0")), segment, in_frame, with_view);
     }
 
     fn segment_count(this) -> i64 {

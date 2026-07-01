@@ -80,12 +80,12 @@ impl RulerView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeMarker:\0")), marker.raw());
     }
 
-    fn track_marker_with_mouse_event(this, marker: RulerMarker, event: *u8) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("trackMarker:withMouseEvent:\0")), marker.raw(), event) != (0 as i8);
+    fn track_marker(this, marker: RulerMarker, with_mouse_event: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("trackMarker:withMouseEvent:\0")), marker.raw(), with_mouse_event) != (0 as i8);
     }
 
-    fn move_rulerline_from_location_to_location(this, old_location: f64, new_location: f64) {
-        rt::msg_void_f64_f64(this._obj, rt::sel(#str_ptr("moveRulerlineFromLocation:toLocation:\0")), old_location, new_location);
+    fn move_rulerline_from_location(this, old_location: f64, to_location: f64) {
+        rt::msg_void_f64_f64(this._obj, rt::sel(#str_ptr("moveRulerlineFromLocation:toLocation:\0")), old_location, to_location);
     }
 
     fn invalidate_hash_marks(this) {

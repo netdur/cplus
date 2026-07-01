@@ -65,8 +65,8 @@ impl TreeController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertChild:\0")), sender);
     }
 
-    fn insert_object_at_arranged_object_index_path(this, object: *u8, index_path: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndexPath:\0")), object, index_path);
+    fn insert_object(this, object: *u8, at_arranged_object_index_path: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertObject:atArrangedObjectIndexPath:\0")), object, at_arranged_object_index_path);
     }
 
     // SKIPPED `insertObjects:atArrangedObjectIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
@@ -82,11 +82,11 @@ impl TreeController {
 
     // SKIPPED `addSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `removeSelectionIndexPaths:`: param `NSArray<NSIndexPath *> * _Nonnull` — generic collection
-    fn move_node_to_index_path(this, node: TreeNode, index_path: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveNode:toIndexPath:\0")), node.raw(), index_path);
+    fn move_node(this, node: TreeNode, to_index_path: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveNode:toIndexPath:\0")), node.raw(), to_index_path);
     }
 
-    fn move_nodes_to_index_path(this, nodes: vec::Vec[TreeNode], starting_index_path: *u8) {
+    fn move_nodes(this, nodes: vec::Vec[TreeNode], to_index_path: *u8) {
         let arr_nodes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_nodes: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_nodes: usize = nodes.count();
@@ -98,7 +98,7 @@ impl TreeController {
             }
             i_nodes = i_nodes +% (1 as usize);
         }
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveNodes:toIndexPath:\0")), arr_nodes, starting_index_path);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveNodes:toIndexPath:\0")), arr_nodes, to_index_path);
     }
 
     fn children_key_path_for_node(this, node: TreeNode) -> option::Option[text::Text] {

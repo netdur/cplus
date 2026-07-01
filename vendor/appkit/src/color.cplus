@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSColorType` (NS_ENUM)
 enum ColorType {
@@ -79,8 +80,19 @@ fn color_system_effect_from_raw(raw: i64) -> ColorSystemEffect {
     return ColorSystemEffect::None;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[repr(C)]
-struct Color_color_with_name_dynamic_provider_block {
+struct Color_color_with_name_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -90,8 +102,8 @@ struct Color_color_with_name_dynamic_provider_block {
     opaque ctx: *u8,
 }
 
-fn Color_color_with_name_dynamic_provider_invoke(block: *u8, a0: *u8) {
-    let bl: *Color_color_with_name_dynamic_provider_block = { block as *Color_color_with_name_dynamic_provider_block };
+fn Color_color_with_name_invoke(block: *u8, a0: *u8) {
+    let bl: *Color_color_with_name_block = { block as *Color_color_with_name_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -156,39 +168,39 @@ impl Color {
         return Color { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn color_with_color_space_components_count(space: ColorSpace, components: *u8, number_of_components: i64) -> Color {
-        return Color { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:components:count:\0")), space.raw(), components, number_of_components)) };
+    fn color_with_color_space(space: ColorSpace, components: *u8, count: i64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:components:count:\0")), space.raw(), components, count)) };
     }
 
-    fn color_with_s_r_g_b_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
+    fn color_with_s_r_g_b_red(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithSRGBRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    fn color_with_generic_gamma22_white_alpha(white: f64, alpha: f64) -> Color {
+    fn color_with_generic_gamma22_white(white: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithGenericGamma22White:alpha:\0")), white, alpha)) };
     }
 
-    fn color_with_display_p3_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
+    fn color_with_display_p3_red(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDisplayP3Red:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    fn color_with_white_alpha(white: f64, alpha: f64) -> Color {
+    fn color_with_white(white: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithWhite:alpha:\0")), white, alpha)) };
     }
 
-    fn color_with_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
+    fn color_with_red(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    fn color_with_hue_saturation_brightness_alpha(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
+    fn color_with_hue(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha)) };
     }
 
-    fn color_with_color_space_hue_saturation_brightness_alpha(space: ColorSpace, hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
+    fn color_with_color_space_hue(space: ColorSpace, hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:hue:saturation:brightness:alpha:\0")), space.raw(), hue, saturation, brightness, alpha)) };
     }
 
-    fn color_with_catalog_name_color_name(list_name: str, color_name: str) -> option::Option[Color] {
+    fn color_with_catalog_name(list_name: str, color_name: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCatalogName:colorName:\0")), bridge::nsstring(list_name), bridge::nsstring(color_name));
         if obj == { 0 as *u8 } {
             return option::Option[Color]::None;
@@ -212,38 +224,38 @@ impl Color {
         return option::some(Color { _obj: rt::retain(obj) });
     }
 
-    fn color_with_name_dynamic_provider(color_name: str, cb: fn(*u8, *u8), ctx: *u8) -> Color {
+    fn color_with_name(color_name: str, cb: fn(*u8, *u8), ctx: *u8) -> Color {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Color_color_with_name_dynamic_provider_block = Color_color_with_name_dynamic_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Color_color_with_name_dynamic_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Color_color_with_name_block = Color_color_with_name_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Color_color_with_name_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         return Color::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithName:dynamicProvider:\0")), bridge::nsstring(color_name), bp));
     }
 
-    fn color_with_device_white_alpha(white: f64, alpha: f64) -> Color {
+    fn color_with_device_white(white: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceWhite:alpha:\0")), white, alpha)) };
     }
 
-    fn color_with_device_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
+    fn color_with_device_red(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    fn color_with_device_hue_saturation_brightness_alpha(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
+    fn color_with_device_hue(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha)) };
     }
 
-    fn color_with_device_cyan_magenta_yellow_black_alpha(cyan: f64, magenta: f64, yellow: f64, black: f64, alpha: f64) -> Color {
+    fn color_with_device_cyan(cyan: f64, magenta: f64, yellow: f64, black: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceCyan:magenta:yellow:black:alpha:\0")), cyan, magenta, yellow, black, alpha)) };
     }
 
-    fn color_with_calibrated_white_alpha(white: f64, alpha: f64) -> Color {
+    fn color_with_calibrated_white(white: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCalibratedWhite:alpha:\0")), white, alpha)) };
     }
 
-    fn color_with_calibrated_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
+    fn color_with_calibrated_red(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    fn color_with_calibrated_hue_saturation_brightness_alpha(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
+    fn color_with_calibrated_hue(hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCalibratedHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha)) };
     }
 
@@ -267,11 +279,11 @@ impl Color {
         return option::some(Color::from_raw(obj));
     }
 
-    fn color_with_red_green_blue_alpha_exposure(red: f64, green: f64, blue: f64, alpha: f64, exposure: f64) -> Color {
+    fn color_with_red_green(red: f64, green: f64, blue: f64, alpha: f64, exposure: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:exposure:\0")), red, green, blue, alpha, exposure)) };
     }
 
-    fn color_with_red_green_blue_alpha_linear_exposure(red: f64, green: f64, blue: f64, alpha: f64, linear_exposure: f64) -> Color {
+    fn color_with_red_green_blue(red: f64, green: f64, blue: f64, alpha: f64, linear_exposure: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:linearExposure:\0")), red, green, blue, alpha, linear_exposure)) };
     }
 
@@ -315,8 +327,8 @@ impl Color {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setStroke\0")));
     }
 
-    fn blended_color_with_fraction_of_color(this, fraction: f64, color: Color) -> option::Option[Color] {
-        let obj: *u8 = rt::msg_id_f64_id(this._obj, rt::sel(#str_ptr("blendedColorWithFraction:ofColor:\0")), fraction, color.raw());
+    fn blended_color_with_fraction(this, fraction: f64, of_color: Color) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_f64_id(this._obj, rt::sel(#str_ptr("blendedColorWithFraction:ofColor:\0")), fraction, of_color.raw());
         if obj == { 0 as *u8 } {
             return option::Option[Color]::None;
         }
@@ -327,19 +339,19 @@ impl Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha));
     }
 
-    fn get_red_green_blue_alpha(this, red: *u8, green: *u8, blue: *u8, alpha: *u8) {
+    fn get_red(this, red: *u8, green: *u8, blue: *u8, alpha: *u8) {
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("getRed:green:blue:alpha:\0")), red, green, blue, alpha);
     }
 
-    fn get_hue_saturation_brightness_alpha(this, hue: *u8, saturation: *u8, brightness: *u8, alpha: *u8) {
+    fn get_hue(this, hue: *u8, saturation: *u8, brightness: *u8, alpha: *u8) {
         rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("getHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha);
     }
 
-    fn get_white_alpha(this, white: *u8, alpha: *u8) {
+    fn get_white(this, white: *u8, alpha: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getWhite:alpha:\0")), white, alpha);
     }
 
-    fn get_cyan_magenta_yellow_black_alpha(this, cyan: *u8, magenta: *u8, yellow: *u8, black: *u8, alpha: *u8) {
+    fn get_cyan(this, cyan: *u8, magenta: *u8, yellow: *u8, black: *u8, alpha: *u8) {
         rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getCyan:magenta:yellow:black:alpha:\0")), cyan, magenta, yellow, black, alpha);
     }
 
@@ -765,7 +777,33 @@ impl Color {
         rt::msg_void_i8(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("setIgnoresAlpha:\0")), ignores_alpha as i8);
     }
 
-    // SKIPPED `colorUsingColorSpaceName:device:`: param `NSDictionary<NSDeviceDescriptionKey,id> * _Nullable` — generic collection
+    fn color_using_color_space_name_device(this, name: str, device_description: string_map::StringMap[AnyObject]) -> option::Option[Color] {
+        let dict_device_description: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_device_description: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_device_description: usize = device_description.slot_capacity();
+        var dsi_device_description: usize = 0 as usize;
+        while dsi_device_description < dcap_device_description {
+            match device_description.value_ptr_at_slot(dsi_device_description) {
+                option::Option[*AnyObject]::Some(dvp_device_description) => {
+                    match device_description.key_ptr_at_slot(dsi_device_description) {
+                        option::Option[*text::Text]::Some(dkp_device_description) => {
+                    let dval_device_description: *u8 = (*dvp_device_description).raw();
+                            rt::msg_void_id_id(dict_device_description, dset_device_description, dval_device_description, bridge::nsstring((*dkp_device_description).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_device_description = dsi_device_description +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("colorUsingColorSpaceName:device:\0")), bridge::nsstring(name), dict_device_description);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
+    }
+
     fn color_using_color_space_name(this, name: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("colorUsingColorSpaceName:\0")), bridge::nsstring(name));
         if obj == { 0 as *u8 } {

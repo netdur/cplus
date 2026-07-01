@@ -130,7 +130,7 @@ impl BezierPath {
         return BezierPath { _obj: rt::msg_id_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("bezierPathWithOvalInRect:\0")), rect) };
     }
 
-    fn bezier_path_with_rounded_rect_x_radius_y_radius(rect: rt::Rect, x_radius: f64, y_radius: f64) -> BezierPath {
+    fn bezier_path_with_rounded_rect(rect: rt::Rect, x_radius: f64, y_radius: f64) -> BezierPath {
         return BezierPath { _obj: rt::msg_id_rect_f64_f64(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("bezierPathWithRoundedRect:xRadius:yRadius:\0")), rect, x_radius, y_radius) };
     }
 
@@ -150,12 +150,12 @@ impl BezierPath {
         rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("clipRect:\0")), rect);
     }
 
-    fn stroke_line_from_point_to_point(point1: rt::Point, point2: rt::Point) {
-        rt::msg_void_point_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("strokeLineFromPoint:toPoint:\0")), point1, point2);
+    fn stroke_line_from_point(point1: rt::Point, to_point: rt::Point) {
+        rt::msg_void_point_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("strokeLineFromPoint:toPoint:\0")), point1, to_point);
     }
 
-    fn draw_packed_glyphs_at_point(packed_glyphs: *u8, point: rt::Point) {
-        rt::msg_void_id_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("drawPackedGlyphs:atPoint:\0")), packed_glyphs, point);
+    fn draw_packed_glyphs(packed_glyphs: *u8, at_point: rt::Point) {
+        rt::msg_void_id_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("drawPackedGlyphs:atPoint:\0")), packed_glyphs, at_point);
     }
 
     fn move_to_point(this, point: rt::Point) {
@@ -166,11 +166,11 @@ impl BezierPath {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("lineToPoint:\0")), point);
     }
 
-    fn curve_to_point_control_point1_control_point2(this, end_point: rt::Point, control_point1: rt::Point, control_point2: rt::Point) {
+    fn curve_to_point_control_point1(this, end_point: rt::Point, control_point1: rt::Point, control_point2: rt::Point) {
         rt::msg_void_point_point_point(this._obj, rt::sel(#str_ptr("curveToPoint:controlPoint1:controlPoint2:\0")), end_point, control_point1, control_point2);
     }
 
-    fn curve_to_point_control_point(this, end_point: rt::Point, control_point: rt::Point) {
+    fn curve_to_point(this, end_point: rt::Point, control_point: rt::Point) {
         rt::msg_void_point_point(this._obj, rt::sel(#str_ptr("curveToPoint:controlPoint:\0")), end_point, control_point);
     }
 
@@ -190,19 +190,19 @@ impl BezierPath {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("relativeLineToPoint:\0")), point);
     }
 
-    fn relative_curve_to_point_control_point1_control_point2(this, end_point: rt::Point, control_point1: rt::Point, control_point2: rt::Point) {
+    fn relative_curve_to_point_control_point1(this, end_point: rt::Point, control_point1: rt::Point, control_point2: rt::Point) {
         rt::msg_void_point_point_point(this._obj, rt::sel(#str_ptr("relativeCurveToPoint:controlPoint1:controlPoint2:\0")), end_point, control_point1, control_point2);
     }
 
-    fn relative_curve_to_point_control_point(this, end_point: rt::Point, control_point: rt::Point) {
+    fn relative_curve_to_point(this, end_point: rt::Point, control_point: rt::Point) {
         rt::msg_void_point_point(this._obj, rt::sel(#str_ptr("relativeCurveToPoint:controlPoint:\0")), end_point, control_point);
     }
 
-    fn get_line_dash_count_phase(this, pattern: *u8, count: *u8, phase: *u8) {
+    fn get_line_dash(this, pattern: *u8, count: *u8, phase: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("getLineDash:count:phase:\0")), pattern, count, phase);
     }
 
-    fn set_line_dash_count_phase(this, pattern: *u8, count: i64, phase: f64) {
+    fn set_line_dash(this, pattern: *u8, count: i64, phase: f64) {
         rt::msg_void_id_i64_f64(this._obj, rt::sel(#str_ptr("setLineDash:count:phase:\0")), pattern, count, phase);
     }
 
@@ -234,8 +234,8 @@ impl BezierPath {
         return bezier_path_element_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("elementAtIndex:\0")), index));
     }
 
-    fn set_associated_points_at_index(this, points: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setAssociatedPoints:atIndex:\0")), points, index);
+    fn set_associated_points(this, points: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setAssociatedPoints:atIndex:\0")), points, at_index);
     }
 
     fn append_bezier_path(this, path: BezierPath) {
@@ -246,7 +246,7 @@ impl BezierPath {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
     }
 
-    fn append_bezier_path_with_points_count(this, points: *u8, count: i64) {
+    fn append_bezier_path_with_points(this, points: *u8, count: i64) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("appendBezierPathWithPoints:count:\0")), points, count);
     }
 
@@ -254,24 +254,24 @@ impl BezierPath {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
 
-    fn append_bezier_path_with_arc_with_center_radius_start_angle_end_angle_clockwise(this, center: rt::Point, radius: f64, start_angle: f64, end_angle: f64, clockwise: bool) {
+    fn append_bezier_path_with_arc_with_center_radius(this, center: rt::Point, radius: f64, start_angle: f64, end_angle: f64, clockwise: bool) {
         rt::msg_void_point_f64_f64_f64_i8(this._obj, rt::sel(#str_ptr("appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:clockwise:\0")), center, radius, start_angle, end_angle, clockwise as i8);
     }
 
-    fn append_bezier_path_with_arc_with_center_radius_start_angle_end_angle(this, center: rt::Point, radius: f64, start_angle: f64, end_angle: f64) {
+    fn append_bezier_path_with_arc_with_center(this, center: rt::Point, radius: f64, start_angle: f64, end_angle: f64) {
         rt::msg_void_point_f64_f64_f64(this._obj, rt::sel(#str_ptr("appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:\0")), center, radius, start_angle, end_angle);
     }
 
-    fn append_bezier_path_with_arc_from_point_to_point_radius(this, point1: rt::Point, point2: rt::Point, radius: f64) {
-        rt::msg_void_point_point_f64(this._obj, rt::sel(#str_ptr("appendBezierPathWithArcFromPoint:toPoint:radius:\0")), point1, point2, radius);
+    fn append_bezier_path_with_arc_from_point(this, point1: rt::Point, to_point: rt::Point, radius: f64) {
+        rt::msg_void_point_point_f64(this._obj, rt::sel(#str_ptr("appendBezierPathWithArcFromPoint:toPoint:radius:\0")), point1, to_point, radius);
     }
 
     // SKIPPED `appendBezierPathWithCGGlyph:inFont:`: param `CGGlyph` — unmapped type `CGGlyph`
-    fn append_bezier_path_with_c_g_glyphs_count_in_font(this, glyphs: *u8, count: i64, font: *u8) {
-        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithCGGlyphs:count:inFont:\0")), glyphs, count, font);
+    fn append_bezier_path_with_c_g_glyphs(this, glyphs: *u8, count: i64, in_font: *u8) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithCGGlyphs:count:inFont:\0")), glyphs, count, in_font);
     }
 
-    fn append_bezier_path_with_rounded_rect_x_radius_y_radius(this, rect: rt::Rect, x_radius: f64, y_radius: f64) {
+    fn append_bezier_path_with_rounded_rect(this, rect: rt::Rect, x_radius: f64, y_radius: f64) {
         rt::msg_void_rect_f64_f64(this._obj, rt::sel(#str_ptr("appendBezierPathWithRoundedRect:xRadius:yRadius:\0")), rect, x_radius, y_radius);
     }
 
@@ -419,12 +419,12 @@ impl BezierPath {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCachesBezierPath:\0")), flag as i8);
     }
 
-    fn append_bezier_path_with_glyph_in_font(this, glyph: u32, font: *u8) {
-        rt::msg_void_u32_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyph:inFont:\0")), glyph, font);
+    fn append_bezier_path_with_glyph(this, glyph: u32, in_font: *u8) {
+        rt::msg_void_u32_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyph:inFont:\0")), glyph, in_font);
     }
 
-    fn append_bezier_path_with_glyphs_count_in_font(this, glyphs: *u8, count: i64, font: *u8) {
-        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyphs:count:inFont:\0")), glyphs, count, font);
+    fn append_bezier_path_with_glyphs(this, glyphs: *u8, count: i64, in_font: *u8) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyphs:count:inFont:\0")), glyphs, count, in_font);
     }
 
     fn append_bezier_path_with_packed_glyphs(this, packed_glyphs: *u8) {

@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 
 // `NSWindowOrderingMode` (NS_ENUM)
 enum WindowOrderingMode {
@@ -186,6 +187,17 @@ struct EdgeInsets {
     left: f64,
     bottom: f64,
     right: f64,
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 #[link_name = "objc_msgSend"]
@@ -443,7 +455,7 @@ impl View {
         return option::some(View::from_raw(obj));
     }
 
-    fn get_rects_being_drawn_count(this, rects: *u8, count: *u8) {
+    fn get_rects_being_drawn(this, rects: *u8, count: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getRectsBeingDrawn:count:\0")), rects, count);
     }
 
@@ -463,8 +475,8 @@ impl View {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSubview:\0")), view.raw());
     }
 
-    fn add_subview_positioned_relative_to(this, view: View, place: WindowOrderingMode, other_view: View) {
-        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("addSubview:positioned:relativeTo:\0")), view.raw(), window_ordering_mode_raw(place), other_view.raw());
+    fn add_subview_positioned(this, view: View, place: WindowOrderingMode, relative_to: View) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("addSubview:positioned:relativeTo:\0")), view.raw(), window_ordering_mode_raw(place), relative_to.raw());
     }
 
     // SKIPPED `sortSubviewsUsingFunction:context:`: param `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)` — unmapped type `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)`
@@ -496,8 +508,8 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFromSuperview\0")));
     }
 
-    fn replace_subview_with(this, old_view: View, new_view: View) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceSubview:with:\0")), old_view.raw(), new_view.raw());
+    fn replace_subview(this, old_view: View, with: View) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("replaceSubview:with:\0")), old_view.raw(), with.raw());
     }
 
     fn remove_from_superview_without_needing_display(this) {
@@ -544,31 +556,31 @@ impl View {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("rotateByAngle:\0")), angle);
     }
 
-    fn convert_point_from_view(this, point: rt::Point, view: View) -> rt::Point {
-        return rt::msg_point_point_id(this._obj, rt::sel(#str_ptr("convertPoint:fromView:\0")), point, view.raw());
+    fn convert_point(this, point: rt::Point, from_view: View) -> rt::Point {
+        return rt::msg_point_point_id(this._obj, rt::sel(#str_ptr("convertPoint:fromView:\0")), point, from_view.raw());
     }
 
     fn convert_point_to_view(this, point: rt::Point, view: View) -> rt::Point {
         return rt::msg_point_point_id(this._obj, rt::sel(#str_ptr("convertPoint:toView:\0")), point, view.raw());
     }
 
-    fn convert_size_from_view(this, size: rt::Size, view: View) -> rt::Size {
-        return rt::msg_size_size_id(this._obj, rt::sel(#str_ptr("convertSize:fromView:\0")), size, view.raw());
+    fn convert_size(this, size: rt::Size, from_view: View) -> rt::Size {
+        return rt::msg_size_size_id(this._obj, rt::sel(#str_ptr("convertSize:fromView:\0")), size, from_view.raw());
     }
 
     fn convert_size_to_view(this, size: rt::Size, view: View) -> rt::Size {
         return rt::msg_size_size_id(this._obj, rt::sel(#str_ptr("convertSize:toView:\0")), size, view.raw());
     }
 
-    fn convert_rect_from_view(this, rect: rt::Rect, view: View) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:fromView:\0")), rect, view.raw());
+    fn convert_rect(this, rect: rt::Rect, from_view: View) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:fromView:\0")), rect, from_view.raw());
     }
 
     fn convert_rect_to_view(this, rect: rt::Rect, view: View) -> rt::Rect {
         return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:toView:\0")), rect, view.raw());
     }
 
-    fn backing_aligned_rect_options(this, rect: rt::Rect, options: u64) -> rt::Rect {
+    fn backing_aligned_rect(this, rect: rt::Rect, options: u64) -> rt::Rect {
         return rt::msg_rect_rect_u64(this._obj, rt::sel(#str_ptr("backingAlignedRect:options:\0")), rect, options);
     }
 
@@ -688,8 +700,8 @@ impl View {
         return option::some(BitmapImageRep::from_raw(obj));
     }
 
-    fn cache_display_in_rect_to_bitmap_image_rep(this, rect: rt::Rect, bitmap_image_rep: BitmapImageRep) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), rect, bitmap_image_rep.raw());
+    fn cache_display_in_rect(this, rect: rt::Rect, to_bitmap_image_rep: BitmapImageRep) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("cacheDisplayInRect:toBitmapImageRep:\0")), rect, to_bitmap_image_rep.raw());
     }
 
     fn view_will_draw(this) {
@@ -712,12 +724,12 @@ impl View {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("adjustScroll:\0")), new_visible);
     }
 
-    fn scroll_rect_by(this, rect: rt::Rect, delta: rt::Size) {
-        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("scrollRect:by:\0")), rect, delta);
+    fn scroll_rect(this, rect: rt::Rect, by: rt::Size) {
+        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("scrollRect:by:\0")), rect, by);
     }
 
-    fn translate_rects_needing_display_in_rect_by(this, clip_rect: rt::Rect, delta: rt::Size) {
-        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("translateRectsNeedingDisplayInRect:by:\0")), clip_rect, delta);
+    fn translate_rects_needing_display_in_rect(this, clip_rect: rt::Rect, by: rt::Size) {
+        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("translateRectsNeedingDisplayInRect:by:\0")), clip_rect, by);
     }
 
     fn hit_test(this, point: rt::Point) -> option::Option[View] {
@@ -728,8 +740,8 @@ impl View {
         return option::some(View::from_raw(obj));
     }
 
-    fn mouse_in_rect(this, point: rt::Point, rect: rt::Rect) -> bool {
-        return rt::msg_i8_point_rect(this._obj, rt::sel(#str_ptr("mouse:inRect:\0")), point, rect) != (0 as i8);
+    fn mouse(this, point: rt::Point, in_rect: rt::Rect) -> bool {
+        return rt::msg_i8_point_rect(this._obj, rt::sel(#str_ptr("mouse:inRect:\0")), point, in_rect) != (0 as i8);
     }
 
     fn view_with_tag(this, tag: i64) -> option::Option[View] {
@@ -773,16 +785,16 @@ impl View {
         return bridge::obj_option(obj);
     }
 
-    fn will_open_menu_with_event(this, menu: *u8, event: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("willOpenMenu:withEvent:\0")), menu, event);
+    fn will_open_menu(this, menu: *u8, with_event: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("willOpenMenu:withEvent:\0")), menu, with_event);
     }
 
-    fn did_close_menu_with_event(this, menu: *u8, event: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("didCloseMenu:withEvent:\0")), menu, event);
+    fn did_close_menu(this, menu: *u8, with_event: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("didCloseMenu:withEvent:\0")), menu, with_event);
     }
 
-    fn add_tool_tip_rect_owner_user_data(this, rect: rt::Rect, owner: *u8, data: *u8) -> i64 {
-        return rt::msg_i64_rect_id_id(this._obj, rt::sel(#str_ptr("addToolTipRect:owner:userData:\0")), rect, owner, data);
+    fn add_tool_tip_rect(this, rect: rt::Rect, owner: *u8, user_data: *u8) -> i64 {
+        return rt::msg_i64_rect_id_id(this._obj, rt::sel(#str_ptr("addToolTipRect:owner:userData:\0")), rect, owner, user_data);
     }
 
     fn remove_tool_tip(this, tag: i64) {
@@ -801,12 +813,12 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidEndLiveResize\0")));
     }
 
-    fn get_rects_exposed_during_live_resize_count(this, exposed_rects: *u8, count: *u8) {
+    fn get_rects_exposed_during_live_resize(this, exposed_rects: *u8, count: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getRectsExposedDuringLiveResize:count:\0")), exposed_rects, count);
     }
 
-    fn rect_for_smart_magnification_at_point_in_rect(this, location: rt::Point, visible_rect: rt::Rect) -> rt::Rect {
-        return rt::msg_rect_point_rect(this._obj, rt::sel(#str_ptr("rectForSmartMagnificationAtPoint:inRect:\0")), location, visible_rect);
+    fn rect_for_smart_magnification_at_point(this, location: rt::Point, in_rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_point_rect(this._obj, rt::sel(#str_ptr("rectForSmartMagnificationAtPoint:inRect:\0")), location, in_rect);
     }
 
     fn prepare_for_reuse(this) {
@@ -1315,16 +1327,16 @@ impl View {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("focusRingMaskBounds\0")));
     }
 
-    fn write_e_p_s_inside_rect_to_pasteboard(this, rect: rt::Rect, pasteboard: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writeEPSInsideRect:toPasteboard:\0")), rect, pasteboard);
+    fn write_e_p_s_inside_rect(this, rect: rt::Rect, to_pasteboard: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writeEPSInsideRect:toPasteboard:\0")), rect, to_pasteboard);
     }
 
     fn data_with_e_p_s_inside_rect(this, rect: rt::Rect) -> *u8 {
         return rt::msg_id_rect(this._obj, rt::sel(#str_ptr("dataWithEPSInsideRect:\0")), rect);
     }
 
-    fn write_p_d_f_inside_rect_to_pasteboard(this, rect: rt::Rect, pasteboard: *u8) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writePDFInsideRect:toPasteboard:\0")), rect, pasteboard);
+    fn write_p_d_f_inside_rect(this, rect: rt::Rect, to_pasteboard: *u8) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("writePDFInsideRect:toPasteboard:\0")), rect, to_pasteboard);
     }
 
     fn data_with_p_d_f_inside_rect(this, rect: rt::Rect) -> *u8 {
@@ -1339,12 +1351,12 @@ impl View {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("knowsPageRange:\0")), range) != (0 as i8);
     }
 
-    fn adjust_page_width_new_left_right_limit(this, new_right: *u8, old_left: f64, old_right: f64, right_limit: f64) {
-        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageWidthNew:left:right:limit:\0")), new_right, old_left, old_right, right_limit);
+    fn adjust_page_width_new(this, new_right: *u8, left: f64, right: f64, limit: f64) {
+        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageWidthNew:left:right:limit:\0")), new_right, left, right, limit);
     }
 
-    fn adjust_page_height_new_top_bottom_limit(this, new_bottom: *u8, old_top: f64, old_bottom: f64, bottom_limit: f64) {
-        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageHeightNew:top:bottom:limit:\0")), new_bottom, old_top, old_bottom, bottom_limit);
+    fn adjust_page_height_new(this, new_bottom: *u8, top: f64, bottom: f64, limit: f64) {
+        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageHeightNew:top:bottom:limit:\0")), new_bottom, top, bottom, limit);
     }
 
     fn rect_for_page(this, page: i64) -> rt::Rect {
@@ -1371,8 +1383,8 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("endDocument\0")));
     }
 
-    fn begin_page_in_rect_at_placement(this, rect: rt::Rect, location: rt::Point) {
-        rt::msg_void_rect_point(this._obj, rt::sel(#str_ptr("beginPageInRect:atPlacement:\0")), rect, location);
+    fn begin_page_in_rect(this, rect: rt::Rect, at_placement: rt::Point) {
+        rt::msg_void_rect_point(this._obj, rt::sel(#str_ptr("beginPageInRect:atPlacement:\0")), rect, at_placement);
     }
 
     fn end_page(this) {
@@ -1423,17 +1435,61 @@ impl View {
         return out;
     }
 
-    // SKIPPED `enterFullScreenMode:withOptions:`: param `NSDictionary<NSViewFullScreenModeOptionKey,id> * _Nullable` — generic collection
-    // SKIPPED `exitFullScreenModeWithOptions:`: param `NSDictionary<NSViewFullScreenModeOptionKey,id> * _Nullable` — generic collection
+    fn enter_full_screen_mode(this, screen: Screen, with_options: string_map::StringMap[AnyObject]) -> bool {
+        let dict_with_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_with_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_with_options: usize = with_options.slot_capacity();
+        var dsi_with_options: usize = 0 as usize;
+        while dsi_with_options < dcap_with_options {
+            match with_options.value_ptr_at_slot(dsi_with_options) {
+                option::Option[*AnyObject]::Some(dvp_with_options) => {
+                    match with_options.key_ptr_at_slot(dsi_with_options) {
+                        option::Option[*text::Text]::Some(dkp_with_options) => {
+                    let dval_with_options: *u8 = (*dvp_with_options).raw();
+                            rt::msg_void_id_id(dict_with_options, dset_with_options, dval_with_options, bridge::nsstring((*dkp_with_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_with_options = dsi_with_options +% (1 as usize);
+        }
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("enterFullScreenMode:withOptions:\0")), screen.raw(), dict_with_options) != (0 as i8);
+    }
+
+    fn exit_full_screen_mode_with_options(this, options: string_map::StringMap[AnyObject]) {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("exitFullScreenModeWithOptions:\0")), dict_options);
+    }
+
     fn is_in_full_screen_mode(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isInFullScreenMode\0"))) != (0 as i8);
     }
 
-    fn show_definition_for_attributed_string_at_point(this, attr_string: AttributedString, text_baseline_origin: rt::Point) {
-        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("showDefinitionForAttributedString:atPoint:\0")), attr_string.raw(), text_baseline_origin);
+    fn show_definition_for_attributed_string(this, attr_string: AttributedString, at_point: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("showDefinitionForAttributedString:atPoint:\0")), attr_string.raw(), at_point);
     }
 
-    // SKIPPED `showDefinitionForAttributedString:range:options:baselineOriginProvider:`: leading param `NSDictionary<NSDefinitionOptionKey,id> * _Nullable` — generic collection
+    // SKIPPED `showDefinitionForAttributedString:range:options:baselineOriginProvider:`: block method with a built-collection param not modelled
     fn is_drawing_find_indicator(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingFindIndicator\0"))) != (0 as i8);
     }
@@ -1526,12 +1582,12 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateTrackingAreas\0")));
     }
 
-    fn add_cursor_rect_cursor(this, rect: rt::Rect, object: Cursor) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("addCursorRect:cursor:\0")), rect, object.raw());
+    fn add_cursor_rect(this, rect: rt::Rect, cursor: Cursor) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("addCursorRect:cursor:\0")), rect, cursor.raw());
     }
 
-    fn remove_cursor_rect_cursor(this, rect: rt::Rect, object: Cursor) {
-        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("removeCursorRect:cursor:\0")), rect, object.raw());
+    fn remove_cursor_rect(this, rect: rt::Rect, cursor: Cursor) {
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("removeCursorRect:cursor:\0")), rect, cursor.raw());
     }
 
     fn discard_cursor_rects(this) {
@@ -1542,8 +1598,8 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }
 
-    fn add_tracking_rect_owner_user_data_assume_inside(this, rect: rt::Rect, owner: *u8, data: *u8, flag: bool) -> i64 {
-        return rt::msg_i64_rect_id_id_i8(this._obj, rt::sel(#str_ptr("addTrackingRect:owner:userData:assumeInside:\0")), rect, owner, data, flag as i8);
+    fn add_tracking_rect(this, rect: rt::Rect, owner: *u8, user_data: *u8, assume_inside: bool) -> i64 {
+        return rt::msg_i64_rect_id_id_i8(this._obj, rt::sel(#str_ptr("addTrackingRect:owner:userData:assumeInside:\0")), rect, owner, user_data, assume_inside as i8);
     }
 
     fn remove_tracking_rect(this, tag: i64) {
@@ -1563,20 +1619,20 @@ impl View {
         return out;
     }
 
-    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
     }
 
-    fn drag_image_at_offset_event_pasteboard_source_slide_back(this, image: Image, view_location: rt::Point, initial_offset: rt::Size, event: *u8, pboard: *u8, source_obj: *u8, slide_flag: bool) {
-        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), view_location, initial_offset, event, pboard, source_obj, slide_flag as i8);
+    fn drag_image(this, image: Image, at: rt::Point, offset: rt::Size, event: *u8, pasteboard: *u8, source: *u8, slide_back: bool) {
+        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), at, offset, event, pasteboard, source, slide_back as i8);
     }
 
-    fn drag_file_from_rect_slide_back_event(this, filename: str, rect: rt::Rect, flag: bool, event: *u8) -> bool {
-        return rt::msg_i8_id_rect_i8_id(this._obj, rt::sel(#str_ptr("dragFile:fromRect:slideBack:event:\0")), bridge::nsstring(filename), rect, flag as i8, event) != (0 as i8);
+    fn drag_file(this, filename: str, from_rect: rt::Rect, slide_back: bool, event: *u8) -> bool {
+        return rt::msg_i8_id_rect_i8_id(this._obj, rt::sel(#str_ptr("dragFile:fromRect:slideBack:event:\0")), bridge::nsstring(filename), from_rect, slide_back as i8, event) != (0 as i8);
     }
 
-    fn drag_promised_files_of_types_from_rect_source_slide_back_event(this, type_array: vec::Vec[text::Text], rect: rt::Rect, source_object: *u8, flag: bool, event: *u8) -> bool {
-        return rt::msg_i8_id_rect_id_i8_id(this._obj, rt::sel(#str_ptr("dragPromisedFilesOfTypes:fromRect:source:slideBack:event:\0")), bridge::nsarray_of_text(type_array), rect, source_object, flag as i8, event) != (0 as i8);
+    fn drag_promised_files_of_types(this, type_array: vec::Vec[text::Text], from_rect: rt::Rect, source: *u8, slide_back: bool, event: *u8) -> bool {
+        return rt::msg_i8_id_rect_id_i8_id(this._obj, rt::sel(#str_ptr("dragPromisedFilesOfTypes:fromRect:source:slideBack:event:\0")), bridge::nsarray_of_text(type_array), from_rect, source, slide_back as i8, event) != (0 as i8);
     }
 
     fn convert_point_to_base(this, point: rt::Point) -> rt::Point {
@@ -1670,8 +1726,8 @@ impl ViewToolTipOwner {
 
     fn from_raw(ptr: *u8) -> ViewToolTipOwner { return ViewToolTipOwner { _obj: ptr }; }
 
-    fn view_string_for_tool_tip_point_user_data(this, view: View, tag: i64, point: rt::Point, data: *u8) -> text::Text {
-        let ns: *u8 = rt::msg_id_id_i64_point_id(this._obj, rt::sel(#str_ptr("view:stringForToolTip:point:userData:\0")), view.raw(), tag, point, data);
+    fn view(this, view: View, string_for_tool_tip: i64, point: rt::Point, user_data: *u8) -> text::Text {
+        let ns: *u8 = rt::msg_id_id_i64_point_id(this._obj, rt::sel(#str_ptr("view:stringForToolTip:point:userData:\0")), view.raw(), string_for_tool_tip, point, user_data);
         return bridge::to_text(ns);
     }
 

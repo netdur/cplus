@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSTextAlignment` (NS_ENUM)
@@ -176,6 +177,17 @@ fn text_input_trait_type_from_raw(raw: i64) -> TextInputTraitType {
     if raw == (1 as i64) { return TextInputTraitType::No; }
     if raw == (2 as i64) { return TextInputTraitType::Yes; }
     return TextInputTraitType::Default;
+}
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
 }
 
 // `NSTextContainer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -398,11 +410,11 @@ impl TextView {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setConstrainedFrameSize:\0")), desired_size);
     }
 
-    fn set_alignment_range(this, alignment: TextAlignment, range: rt::Range) {
+    fn set_alignment(this, alignment: TextAlignment, range: rt::Range) {
         rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setAlignment:range:\0")), text_alignment_raw(alignment), range);
     }
 
-    fn set_base_writing_direction_range(this, writing_direction: WritingDirection, range: rt::Range) {
+    fn set_base_writing_direction(this, writing_direction: WritingDirection, range: rt::Range) {
         rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:range:\0")), writing_direction_raw(writing_direction), range);
     }
 
@@ -486,8 +498,8 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontTablePanel:\0")), sender);
     }
 
-    fn ruler_view_did_move_marker(this, ruler: RulerView, marker: RulerMarker) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:didMoveMarker:\0")), ruler.raw(), marker.raw());
+    fn ruler_view(this, ruler: RulerView, did_move_marker: RulerMarker) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:didMoveMarker:\0")), ruler.raw(), did_move_marker.raw());
     }
 
     fn ruler_view_did_remove_marker(this, ruler: RulerView, marker: RulerMarker) {
@@ -506,28 +518,28 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldAddMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
     }
 
-    fn ruler_view_will_move_marker_to_location(this, ruler: RulerView, marker: RulerMarker, location: f64) -> f64 {
-        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willMoveMarker:toLocation:\0")), ruler.raw(), marker.raw(), location);
+    fn ruler_view_will_move_marker(this, ruler: RulerView, marker: RulerMarker, to_location: f64) -> f64 {
+        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willMoveMarker:toLocation:\0")), ruler.raw(), marker.raw(), to_location);
     }
 
     fn ruler_view_should_remove_marker(this, ruler: RulerView, marker: RulerMarker) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldRemoveMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
     }
 
-    fn ruler_view_will_add_marker_at_location(this, ruler: RulerView, marker: RulerMarker, location: f64) -> f64 {
-        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willAddMarker:atLocation:\0")), ruler.raw(), marker.raw(), location);
+    fn ruler_view_will_add_marker(this, ruler: RulerView, marker: RulerMarker, at_location: f64) -> f64 {
+        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willAddMarker:atLocation:\0")), ruler.raw(), marker.raw(), at_location);
     }
 
     fn ruler_view_handle_mouse_down(this, ruler: RulerView, event: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:handleMouseDown:\0")), ruler.raw(), event);
     }
 
-    fn set_needs_display_in_rect_avoid_additional_layout(this, rect: rt::Rect, flag: bool) {
-        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setNeedsDisplayInRect:avoidAdditionalLayout:\0")), rect, flag as i8);
+    fn set_needs_display_in_rect(this, rect: rt::Rect, avoid_additional_layout: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setNeedsDisplayInRect:avoidAdditionalLayout:\0")), rect, avoid_additional_layout as i8);
     }
 
-    fn draw_insertion_point_in_rect_color_turned_on(this, rect: rt::Rect, color: *u8, flag: bool) {
-        rt::msg_void_rect_id_i8(this._obj, rt::sel(#str_ptr("drawInsertionPointInRect:color:turnedOn:\0")), rect, color, flag as i8);
+    fn draw_insertion_point_in_rect(this, rect: rt::Rect, color: *u8, turned_on: bool) {
+        rt::msg_void_rect_id_i8(this._obj, rt::sel(#str_ptr("drawInsertionPointInRect:color:turnedOn:\0")), rect, color, turned_on as i8);
     }
 
     fn draw_view_background_in_rect(this, rect: rt::Rect) {
@@ -546,12 +558,12 @@ impl TextView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateDragTypeRegistration\0")));
     }
 
-    fn selection_range_for_proposed_range_granularity(this, proposed_char_range: rt::Range, granularity: SelectionGranularity) -> rt::Range {
+    fn selection_range_for_proposed_range(this, proposed_char_range: rt::Range, granularity: SelectionGranularity) -> rt::Range {
         return rt::msg_range_range_i64(this._obj, rt::sel(#str_ptr("selectionRangeForProposedRange:granularity:\0")), proposed_char_range, selection_granularity_raw(granularity));
     }
 
-    fn clicked_on_link_at_index(this, link: *u8, char_index: u64) {
-        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("clickedOnLink:atIndex:\0")), link, char_index);
+    fn clicked_on_link(this, link: *u8, at_index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("clickedOnLink:atIndex:\0")), link, at_index);
     }
 
     fn start_speaking(this, sender: *u8) {
@@ -574,8 +586,8 @@ impl TextView {
         return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForInsertionAtPoint:\0")), point);
     }
 
-    fn perform_validated_replacement_in_range_with_attributed_string(this, range: rt::Range, attributed_string: *u8) -> bool {
-        return rt::msg_i8_range_id(this._obj, rt::sel(#str_ptr("performValidatedReplacementInRange:withAttributedString:\0")), range, attributed_string) != (0 as i8);
+    fn perform_validated_replacement_in_range(this, range: rt::Range, with_attributed_string: *u8) -> bool {
+        return rt::msg_i8_range_id(this._obj, rt::sel(#str_ptr("performValidatedReplacementInRange:withAttributedString:\0")), range, with_attributed_string) != (0 as i8);
     }
 
     fn text_container(this) -> option::Option[TextContainer] {
@@ -646,8 +658,8 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("complete:\0")), sender);
     }
 
-    fn completions_for_partial_word_range_index_of_selected_item(this, char_range: rt::Range, index: *u8) -> vec::Vec[text::Text] {
-        let arr: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("completionsForPartialWordRange:indexOfSelectedItem:\0")), char_range, index);
+    fn completions_for_partial_word_range(this, char_range: rt::Range, index_of_selected_item: *u8) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("completionsForPartialWordRange:indexOfSelectedItem:\0")), char_range, index_of_selected_item);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
         var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
@@ -660,15 +672,15 @@ impl TextView {
         return out;
     }
 
-    fn insert_completion_for_partial_word_range_movement_is_final(this, word: str, char_range: rt::Range, movement: i64, flag: bool) {
-        rt::msg_void_id_range_i64_i8(this._obj, rt::sel(#str_ptr("insertCompletion:forPartialWordRange:movement:isFinal:\0")), bridge::nsstring(word), char_range, movement, flag as i8);
+    fn insert_completion(this, word: str, for_partial_word_range: rt::Range, movement: i64, is_final: bool) {
+        rt::msg_void_id_range_i64_i8(this._obj, rt::sel(#str_ptr("insertCompletion:forPartialWordRange:movement:isFinal:\0")), bridge::nsstring(word), for_partial_word_range, movement, is_final as i8);
     }
 
     fn range_for_user_completion(this) -> rt::Range {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("rangeForUserCompletion\0")));
     }
 
-    fn write_selection_to_pasteboard_type(this, pboard: *u8, type_: str) -> bool {
+    fn write_selection_to_pasteboard(this, pboard: *u8, type_: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:type:\0")), pboard, bridge::nsstring(type_)) != (0 as i8);
     }
 
@@ -676,8 +688,8 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeSelectionToPasteboard:types:\0")), pboard, bridge::nsarray_of_text(types)) != (0 as i8);
     }
 
-    fn preferred_pasteboard_type_from_array_restricted_to_types_from_array(this, available_types: vec::Vec[text::Text], allowed_types: vec::Vec[text::Text]) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("preferredPasteboardTypeFromArray:restrictedToTypesFromArray:\0")), bridge::nsarray_of_text(available_types), bridge::nsarray_of_text(allowed_types));
+    fn preferred_pasteboard_type_from_array(this, available_types: vec::Vec[text::Text], restricted_to_types_from_array: vec::Vec[text::Text]) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("preferredPasteboardTypeFromArray:restrictedToTypesFromArray:\0")), bridge::nsarray_of_text(available_types), bridge::nsarray_of_text(restricted_to_types_from_array));
         return bridge::to_text_option(ns);
     }
 
@@ -693,7 +705,7 @@ impl TextView {
         rt::msg_void(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("registerForServices\0")));
     }
 
-    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+    fn valid_requestor_for_send_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
     }
@@ -734,16 +746,16 @@ impl TextView {
         return out;
     }
 
-    fn drag_selection_with_event_offset_slide_back(this, event: *u8, mouse_offset: rt::Size, slide_back: bool) -> bool {
-        return rt::msg_i8_id_size_i8(this._obj, rt::sel(#str_ptr("dragSelectionWithEvent:offset:slideBack:\0")), event, mouse_offset, slide_back as i8) != (0 as i8);
+    fn drag_selection_with_event(this, event: *u8, offset: rt::Size, slide_back: bool) -> bool {
+        return rt::msg_i8_id_size_i8(this._obj, rt::sel(#str_ptr("dragSelectionWithEvent:offset:slideBack:\0")), event, offset, slide_back as i8) != (0 as i8);
     }
 
-    fn drag_image_for_selection_with_event_origin(this, event: *u8, origin: *u8) -> option::Option[*u8] {
+    fn drag_image_for_selection_with_event(this, event: *u8, origin: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForSelectionWithEvent:origin:\0")), event, origin);
         return bridge::obj_option(obj);
     }
 
-    fn drag_operation_for_dragging_info_type(this, drag_info: *u8, type_: str) -> u64 {
+    fn drag_operation_for_dragging_info(this, drag_info: *u8, type_: str) -> u64 {
         return rt::msg_u64_id_id(this._obj, rt::sel(#str_ptr("dragOperationForDraggingInfo:type:\0")), drag_info, bridge::nsstring(type_));
     }
 
@@ -765,7 +777,7 @@ impl TextView {
         return out;
     }
 
-    fn set_selected_ranges_affinity_still_selecting(this, ranges: vec::Vec[Value], affinity: SelectionAffinity, still_selecting_flag: bool) {
+    fn set_selected_ranges_affinity(this, ranges: vec::Vec[Value], affinity: SelectionAffinity, still_selecting: bool) {
         let arr_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_ranges: usize = ranges.count();
@@ -777,11 +789,11 @@ impl TextView {
             }
             i_ranges = i_ranges +% (1 as usize);
         }
-        rt::msg_void_id_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRanges:affinity:stillSelecting:\0")), arr_ranges, selection_affinity_raw(affinity), still_selecting_flag as i8);
+        rt::msg_void_id_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRanges:affinity:stillSelecting:\0")), arr_ranges, selection_affinity_raw(affinity), still_selecting as i8);
     }
 
-    fn set_selected_range_affinity_still_selecting(this, char_range: rt::Range, affinity: SelectionAffinity, still_selecting_flag: bool) {
-        rt::msg_void_range_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRange:affinity:stillSelecting:\0")), char_range, selection_affinity_raw(affinity), still_selecting_flag as i8);
+    fn set_selected_range_affinity(this, char_range: rt::Range, affinity: SelectionAffinity, still_selecting: bool) {
+        rt::msg_void_range_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRange:affinity:stillSelecting:\0")), char_range, selection_affinity_raw(affinity), still_selecting as i8);
     }
 
     fn update_insertion_point_state_and_restart_timer(this, restart_flag: bool) {
@@ -796,11 +808,11 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleGrammarChecking:\0")), sender);
     }
 
-    fn set_spelling_state_range(this, value: i64, char_range: rt::Range) {
-        rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setSpellingState:range:\0")), value, char_range);
+    fn set_spelling_state(this, value: i64, range: rt::Range) {
+        rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setSpellingState:range:\0")), value, range);
     }
 
-    fn should_change_text_in_ranges_replacement_strings(this, affected_ranges: vec::Vec[Value], replacement_strings: vec::Vec[text::Text]) -> bool {
+    fn should_change_text_in_ranges(this, affected_ranges: vec::Vec[Value], replacement_strings: vec::Vec[text::Text]) -> bool {
         let arr_affected_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_affected_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
         let n_affected_ranges: usize = affected_ranges.count();
@@ -815,7 +827,7 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("shouldChangeTextInRanges:replacementStrings:\0")), arr_affected_ranges, bridge::nsarray_of_text(replacement_strings)) != (0 as i8);
     }
 
-    fn should_change_text_in_range_replacement_string(this, affected_char_range: rt::Range, replacement_string: str) -> bool {
+    fn should_change_text_in_range(this, affected_char_range: rt::Range, replacement_string: str) -> bool {
         return rt::msg_i8_range_id(this._obj, rt::sel(#str_ptr("shouldChangeTextInRange:replacementString:\0")), affected_char_range, bridge::nsstring(replacement_string)) != (0 as i8);
     }
 
@@ -863,8 +875,46 @@ impl TextView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setSelectionGranularity:\0")), selection_granularity_raw(selection_granularity));
     }
 
-    // SKIPPED `selectedTextAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setSelectedTextAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
+    fn selected_text_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectedTextAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_selected_text_attributes(this, selected_text_attributes: string_map::StringMap[AnyObject]) {
+        let dict_selected_text_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_selected_text_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_selected_text_attributes: usize = selected_text_attributes.slot_capacity();
+        var dsi_selected_text_attributes: usize = 0 as usize;
+        while dsi_selected_text_attributes < dcap_selected_text_attributes {
+            match selected_text_attributes.value_ptr_at_slot(dsi_selected_text_attributes) {
+                option::Option[*AnyObject]::Some(dvp_selected_text_attributes) => {
+                    match selected_text_attributes.key_ptr_at_slot(dsi_selected_text_attributes) {
+                        option::Option[*text::Text]::Some(dkp_selected_text_attributes) => {
+                    let dval_selected_text_attributes: *u8 = (*dvp_selected_text_attributes).raw();
+                            rt::msg_void_id_id(dict_selected_text_attributes, dset_selected_text_attributes, dval_selected_text_attributes, bridge::nsstring((*dkp_selected_text_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_selected_text_attributes = dsi_selected_text_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectedTextAttributes:\0")), dict_selected_text_attributes);
+    }
+
     fn insertion_point_color(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("insertionPointColor\0")));
     }
@@ -873,10 +923,86 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInsertionPointColor:\0")), insertion_point_color);
     }
 
-    // SKIPPED `markedTextAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setMarkedTextAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `linkTextAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setLinkTextAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    fn marked_text_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("markedTextAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_marked_text_attributes(this, marked_text_attributes: string_map::StringMap[AnyObject]) {
+        let dict_marked_text_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_marked_text_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_marked_text_attributes: usize = marked_text_attributes.slot_capacity();
+        var dsi_marked_text_attributes: usize = 0 as usize;
+        while dsi_marked_text_attributes < dcap_marked_text_attributes {
+            match marked_text_attributes.value_ptr_at_slot(dsi_marked_text_attributes) {
+                option::Option[*AnyObject]::Some(dvp_marked_text_attributes) => {
+                    match marked_text_attributes.key_ptr_at_slot(dsi_marked_text_attributes) {
+                        option::Option[*text::Text]::Some(dkp_marked_text_attributes) => {
+                    let dval_marked_text_attributes: *u8 = (*dvp_marked_text_attributes).raw();
+                            rt::msg_void_id_id(dict_marked_text_attributes, dset_marked_text_attributes, dval_marked_text_attributes, bridge::nsstring((*dkp_marked_text_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_marked_text_attributes = dsi_marked_text_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMarkedTextAttributes:\0")), dict_marked_text_attributes);
+    }
+
+    fn link_text_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("linkTextAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_link_text_attributes(this, link_text_attributes: string_map::StringMap[AnyObject]) {
+        let dict_link_text_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_link_text_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_link_text_attributes: usize = link_text_attributes.slot_capacity();
+        var dsi_link_text_attributes: usize = 0 as usize;
+        while dsi_link_text_attributes < dcap_link_text_attributes {
+            match link_text_attributes.value_ptr_at_slot(dsi_link_text_attributes) {
+                option::Option[*AnyObject]::Some(dvp_link_text_attributes) => {
+                    match link_text_attributes.key_ptr_at_slot(dsi_link_text_attributes) {
+                        option::Option[*text::Text]::Some(dkp_link_text_attributes) => {
+                    let dval_link_text_attributes: *u8 = (*dvp_link_text_attributes).raw();
+                            rt::msg_void_id_id(dict_link_text_attributes, dset_link_text_attributes, dval_link_text_attributes, bridge::nsstring((*dkp_link_text_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_link_text_attributes = dsi_link_text_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLinkTextAttributes:\0")), dict_link_text_attributes);
+    }
+
     fn displays_link_tool_tips(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("displaysLinkToolTips\0"))) != (0 as i8);
     }
@@ -929,8 +1055,46 @@ impl TextView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setGrammarCheckingEnabled:\0")), grammar_checking_enabled as i8);
     }
 
-    // SKIPPED `typingAttributes`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setTypingAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
+    fn typing_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("typingAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_typing_attributes(this, typing_attributes: string_map::StringMap[AnyObject]) {
+        let dict_typing_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_typing_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_typing_attributes: usize = typing_attributes.slot_capacity();
+        var dsi_typing_attributes: usize = 0 as usize;
+        while dsi_typing_attributes < dcap_typing_attributes {
+            match typing_attributes.value_ptr_at_slot(dsi_typing_attributes) {
+                option::Option[*AnyObject]::Some(dvp_typing_attributes) => {
+                    match typing_attributes.key_ptr_at_slot(dsi_typing_attributes) {
+                        option::Option[*text::Text]::Some(dkp_typing_attributes) => {
+                    let dval_typing_attributes: *u8 = (*dvp_typing_attributes).raw();
+                            rt::msg_void_id_id(dict_typing_attributes, dset_typing_attributes, dval_typing_attributes, bridge::nsstring((*dkp_typing_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_typing_attributes = dsi_typing_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTypingAttributes:\0")), dict_typing_attributes);
+    }
+
     // SKIPPED `rangesForUserTextChange`: NSArray return needs a single NSRange arg
     // SKIPPED `rangesForUserCharacterAttributeChange`: NSArray return needs a single NSRange arg
     // SKIPPED `rangesForUserParagraphAttributeChange`: NSArray return needs a single NSRange arg
@@ -1121,17 +1285,17 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleSmartInsertDelete:\0")), sender);
     }
 
-    fn smart_insert_for_string_replacing_range_before_string_after_string(this, paste_string: str, char_range_to_replace: rt::Range, before_string: *u8, after_string: *u8) {
-        rt::msg_void_id_range_id_id(this._obj, rt::sel(#str_ptr("smartInsertForString:replacingRange:beforeString:afterString:\0")), bridge::nsstring(paste_string), char_range_to_replace, before_string, after_string);
+    fn smart_insert_for_string(this, paste_string: str, replacing_range: rt::Range, before_string: *u8, after_string: *u8) {
+        rt::msg_void_id_range_id_id(this._obj, rt::sel(#str_ptr("smartInsertForString:replacingRange:beforeString:afterString:\0")), bridge::nsstring(paste_string), replacing_range, before_string, after_string);
     }
 
-    fn smart_insert_before_string_for_string_replacing_range(this, paste_string: str, char_range_to_replace: rt::Range) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertBeforeStringForString:replacingRange:\0")), bridge::nsstring(paste_string), char_range_to_replace);
+    fn smart_insert_before_string_for_string(this, paste_string: str, replacing_range: rt::Range) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertBeforeStringForString:replacingRange:\0")), bridge::nsstring(paste_string), replacing_range);
         return bridge::to_text_option(ns);
     }
 
-    fn smart_insert_after_string_for_string_replacing_range(this, paste_string: str, char_range_to_replace: rt::Range) -> option::Option[text::Text] {
-        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertAfterStringForString:replacingRange:\0")), bridge::nsstring(paste_string), char_range_to_replace);
+    fn smart_insert_after_string_for_string(this, paste_string: str, replacing_range: rt::Range) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertAfterStringForString:replacingRange:\0")), bridge::nsstring(paste_string), replacing_range);
         return bridge::to_text_option(ns);
     }
 
@@ -1159,7 +1323,7 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleAutomaticSpellingCorrection:\0")), sender);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nonnull` — generic collection
+    // SKIPPED `checkTextInRange:types:options:`: msgSend shape `void_range_u64_id` not yet modelled
     // SKIPPED `handleTextCheckingResults:forRange:types:options:orthography:wordCount:`: param `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     fn order_front_substitutions_panel(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontSubstitutionsPanel:\0")), sender);
@@ -1342,7 +1506,7 @@ impl TextView {
         return rt::msg_id(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("scrollablePlainDocumentContentTextView\0")));
     }
 
-    fn draw_text_highlight_background_for_text_range_origin(this, text_range: TextRange, origin: rt::Point) {
+    fn draw_text_highlight_background_for_text_range(this, text_range: TextRange, origin: rt::Point) {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("drawTextHighlightBackgroundForTextRange:origin:\0")), text_range.raw(), origin);
     }
 
@@ -1350,8 +1514,46 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("highlight:\0")), sender);
     }
 
-    // SKIPPED `textHighlightAttributes`: return `API_AVAILABLE NSDictionary<NSAttributedStringKey,id> *` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `setTextHighlightAttributes:`: param `API_AVAILABLE NSDictionary<NSAttributedStringKey,id> *` — generic collection
+    fn text_highlight_attributes(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textHighlightAttributes\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_text_highlight_attributes(this, text_highlight_attributes: string_map::StringMap[AnyObject]) {
+        let dict_text_highlight_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_text_highlight_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_text_highlight_attributes: usize = text_highlight_attributes.slot_capacity();
+        var dsi_text_highlight_attributes: usize = 0 as usize;
+        while dsi_text_highlight_attributes < dcap_text_highlight_attributes {
+            match text_highlight_attributes.value_ptr_at_slot(dsi_text_highlight_attributes) {
+                option::Option[*AnyObject]::Some(dvp_text_highlight_attributes) => {
+                    match text_highlight_attributes.key_ptr_at_slot(dsi_text_highlight_attributes) {
+                        option::Option[*text::Text]::Some(dkp_text_highlight_attributes) => {
+                    let dval_text_highlight_attributes: *u8 = (*dvp_text_highlight_attributes).raw();
+                            rt::msg_void_id_id(dict_text_highlight_attributes, dset_text_highlight_attributes, dval_text_highlight_attributes, bridge::nsstring((*dkp_text_highlight_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_text_highlight_attributes = dsi_text_highlight_attributes +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextHighlightAttributes:\0")), dict_text_highlight_attributes);
+    }
+
     fn toggle_base_writing_direction(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleBaseWritingDirection:\0")), sender);
     }

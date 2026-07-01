@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as string_map;
 import "objc/synthesis" as synth;
 
 // `NSWindowStyleMask` (NS_OPTIONS) — bitfield; combine with `|`.
@@ -483,8 +484,19 @@ fn window_backing_location_from_raw(raw: i64) -> WindowBackingLocation {
     return WindowBackingLocation::Default;
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[repr(C)]
-struct Window_begin_sheet_completion_handler_block {
+struct Window_begin_sheet_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -494,8 +506,8 @@ struct Window_begin_sheet_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Window_begin_sheet_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *Window_begin_sheet_completion_handler_block = { block as *Window_begin_sheet_completion_handler_block };
+fn Window_begin_sheet_invoke(block: *u8, a0: i64) {
+    let bl: *Window_begin_sheet_block = { block as *Window_begin_sheet_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -503,7 +515,7 @@ fn Window_begin_sheet_completion_handler_invoke(block: *u8, a0: i64) {
 }
 
 #[repr(C)]
-struct Window_begin_critical_sheet_completion_handler_block {
+struct Window_begin_critical_sheet_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -513,8 +525,8 @@ struct Window_begin_critical_sheet_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Window_begin_critical_sheet_completion_handler_invoke(block: *u8, a0: i64) {
-    let bl: *Window_begin_critical_sheet_completion_handler_block = { block as *Window_begin_critical_sheet_completion_handler_block };
+fn Window_begin_critical_sheet_invoke(block: *u8, a0: i64) {
+    let bl: *Window_begin_critical_sheet_block = { block as *Window_begin_critical_sheet_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -522,7 +534,7 @@ fn Window_begin_critical_sheet_completion_handler_invoke(block: *u8, a0: i64) {
 }
 
 #[repr(C)]
-struct Window_transfer_window_sharing_to_window_completion_handler_block {
+struct Window_transfer_window_sharing_to_window_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -532,8 +544,8 @@ struct Window_transfer_window_sharing_to_window_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Window_transfer_window_sharing_to_window_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Window_transfer_window_sharing_to_window_completion_handler_block = { block as *Window_transfer_window_sharing_to_window_completion_handler_block };
+fn Window_transfer_window_sharing_to_window_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_transfer_window_sharing_to_window_block = { block as *Window_transfer_window_sharing_to_window_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -541,7 +553,7 @@ fn Window_transfer_window_sharing_to_window_completion_handler_invoke(block: *u8
 }
 
 #[repr(C)]
-struct Window_request_sharing_of_window_completion_handler_block {
+struct Window_request_sharing_of_window_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -551,8 +563,8 @@ struct Window_request_sharing_of_window_completion_handler_block {
     opaque ctx: *u8,
 }
 
-fn Window_request_sharing_of_window_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Window_request_sharing_of_window_completion_handler_block = { block as *Window_request_sharing_of_window_completion_handler_block };
+fn Window_request_sharing_of_window_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_request_sharing_of_window_block = { block as *Window_request_sharing_of_window_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -560,7 +572,7 @@ fn Window_request_sharing_of_window_completion_handler_invoke(block: *u8, a0: *u
 }
 
 #[repr(C)]
-struct Window_request_sharing_of_window_using_preview_title_completion_handler_block {
+struct Window_request_sharing_of_window_using_preview_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
@@ -570,8 +582,8 @@ struct Window_request_sharing_of_window_using_preview_title_completion_handler_b
     opaque ctx: *u8,
 }
 
-fn Window_request_sharing_of_window_using_preview_title_completion_handler_invoke(block: *u8, a0: *u8) {
-    let bl: *Window_request_sharing_of_window_using_preview_title_completion_handler_block = { block as *Window_request_sharing_of_window_using_preview_title_completion_handler_block };
+fn Window_request_sharing_of_window_using_preview_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_request_sharing_of_window_using_preview_block = { block as *Window_request_sharing_of_window_using_preview_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -872,8 +884,8 @@ impl Window {
         return rt::msg_rect_rect_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("contentRectForFrameRect:styleMask:\0")), f_rect, style);
     }
 
-    fn min_frame_width_with_title_style_mask(title: str, style: u64) -> f64 {
-        return rt::msg_f64_id_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("minFrameWidthWithTitle:styleMask:\0")), bridge::nsstring(title), style);
+    fn min_frame_width_with_title(title: str, style_mask: u64) -> f64 {
+        return rt::msg_f64_id_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("minFrameWidthWithTitle:styleMask:\0")), bridge::nsstring(title), style_mask);
     }
 
     fn frame_rect_for_content_rect(this, content_rect: rt::Rect) -> rt::Rect {
@@ -901,8 +913,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller.raw());
     }
 
-    fn insert_titlebar_accessory_view_controller_at_index(this, child_view_controller: TitlebarAccessoryViewController, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTitlebarAccessoryViewController:atIndex:\0")), child_view_controller.raw(), index);
+    fn insert_titlebar_accessory_view_controller(this, child_view_controller: TitlebarAccessoryViewController, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertTitlebarAccessoryViewController:atIndex:\0")), child_view_controller.raw(), at_index);
     }
 
     fn remove_titlebar_accessory_view_controller_at_index(this, index: i64) {
@@ -913,8 +925,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleWithRepresentedFilename:\0")), bridge::nsstring(filename));
     }
 
-    fn field_editor_for_object(this, create_flag: bool, object: *u8) -> option::Option[Text] {
-        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("fieldEditor:forObject:\0")), create_flag as i8, object);
+    fn field_editor(this, create_flag: bool, for_object: *u8) -> option::Option[Text] {
+        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("fieldEditor:forObject:\0")), create_flag as i8, for_object);
         if obj == { 0 as *u8 } {
             return option::Option[Text]::None;
         }
@@ -925,12 +937,12 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditingFor:\0")), object);
     }
 
-    fn constrain_frame_rect_to_screen(this, frame_rect: rt::Rect, screen: Screen) -> rt::Rect {
-        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("constrainFrameRect:toScreen:\0")), frame_rect, screen.raw());
+    fn constrain_frame_rect(this, frame_rect: rt::Rect, to_screen: Screen) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("constrainFrameRect:toScreen:\0")), frame_rect, to_screen.raw());
     }
 
-    fn set_frame_display(this, frame_rect: rt::Rect, flag: bool) {
-        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setFrame:display:\0")), frame_rect, flag as i8);
+    fn set_frame(this, frame_rect: rt::Rect, display: bool) {
+        rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setFrame:display:\0")), frame_rect, display as i8);
     }
 
     fn set_content_size(this, size: rt::Size) {
@@ -953,8 +965,8 @@ impl Window {
         return rt::msg_f64_rect(this._obj, rt::sel(#str_ptr("animationResizeTime:\0")), new_frame);
     }
 
-    fn set_frame_display_animate(this, frame_rect: rt::Rect, display_flag: bool, animate_flag: bool) {
-        rt::msg_void_rect_i8_i8(this._obj, rt::sel(#str_ptr("setFrame:display:animate:\0")), frame_rect, display_flag as i8, animate_flag as i8);
+    fn set_frame_display(this, frame_rect: rt::Rect, display_flag: bool, animate: bool) {
+        rt::msg_void_rect_i8_i8(this._obj, rt::sel(#str_ptr("setFrame:display:animate:\0")), frame_rect, display_flag as i8, animate as i8);
     }
 
     fn display_if_needed(this) {
@@ -989,25 +1001,25 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("zoom:\0")), sender);
     }
 
-    fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
+    fn try_to_perform(this, action: *u8, with: *u8) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, with) != (0 as i8);
     }
 
-    fn valid_requestor_for_send_type_return_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
+    fn valid_requestor_for_send_type(this, send_type: str, return_type: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("validRequestorForSendType:returnType:\0")), bridge::nsstring(send_type), bridge::nsstring(return_type));
         return bridge::obj_option(obj);
     }
 
-    fn set_content_border_thickness_for_edge(this, thickness: f64, edge: RectEdge) {
-        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setContentBorderThickness:forEdge:\0")), thickness, rect_edge_raw(edge));
+    fn set_content_border_thickness(this, thickness: f64, for_edge: RectEdge) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setContentBorderThickness:forEdge:\0")), thickness, rect_edge_raw(for_edge));
     }
 
     fn content_border_thickness_for_edge(this, edge: RectEdge) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("contentBorderThicknessForEdge:\0")), rect_edge_raw(edge));
     }
 
-    fn set_autorecalculates_content_border_thickness_for_edge(this, flag: bool, edge: RectEdge) {
-        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setAutorecalculatesContentBorderThickness:forEdge:\0")), flag as i8, rect_edge_raw(edge));
+    fn set_autorecalculates_content_border_thickness(this, flag: bool, for_edge: RectEdge) {
+        rt::msg_void_i8_i64(this._obj, rt::sel(#str_ptr("setAutorecalculatesContentBorderThickness:forEdge:\0")), flag as i8, rect_edge_raw(for_edge));
     }
 
     fn autorecalculates_content_border_thickness_for_edge(this, edge: RectEdge) -> bool {
@@ -1034,8 +1046,8 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderOut:\0")), sender);
     }
 
-    fn order_window_relative_to(this, place: WindowOrderingMode, other_win: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("orderWindow:relativeTo:\0")), window_ordering_mode_raw(place), other_win);
+    fn order_window(this, place: WindowOrderingMode, relative_to: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("orderWindow:relativeTo:\0")), window_ordering_mode_raw(place), relative_to);
     }
 
     fn order_front_regardless(this) {
@@ -1098,7 +1110,7 @@ impl Window {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointFromBacking:\0")), point);
     }
 
-    fn backing_aligned_rect_options(this, rect: rt::Rect, options: u64) -> rt::Rect {
+    fn backing_aligned_rect(this, rect: rt::Rect, options: u64) -> rt::Rect {
         return rt::msg_rect_rect_u64(this._obj, rt::sel(#str_ptr("backingAlignedRect:options:\0")), rect, options);
     }
 
@@ -1162,17 +1174,17 @@ impl Window {
         rt::msg_void_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("removeFrameUsingName:\0")), bridge::nsstring(name));
     }
 
-    fn begin_sheet_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_sheet(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_begin_sheet_completion_handler_block = Window_begin_sheet_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_sheet_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_begin_sheet_block = Window_begin_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_sheet_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginSheet:completionHandler:\0")), sheet_window.raw(), bp);
         return;
     }
 
-    fn begin_critical_sheet_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+    fn begin_critical_sheet(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_begin_critical_sheet_completion_handler_block = Window_begin_critical_sheet_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_critical_sheet_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_begin_critical_sheet_block = Window_begin_critical_sheet_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_begin_critical_sheet_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("beginCriticalSheet:completionHandler:\0")), sheet_window.raw(), bp);
         return;
@@ -1202,8 +1214,8 @@ impl Window {
         return option::some(Button::from_raw(obj));
     }
 
-    fn add_child_window_ordered(this, child_win: Window, place: WindowOrderingMode) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addChildWindow:ordered:\0")), child_win.raw(), window_ordering_mode_raw(place));
+    fn add_child_window(this, child_win: Window, ordered: WindowOrderingMode) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addChildWindow:ordered:\0")), child_win.raw(), window_ordering_mode_raw(ordered));
     }
 
     fn remove_child_window(this, child_win: Window) {
@@ -1215,8 +1227,8 @@ impl Window {
     }
 
     // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
-    fn window_number_at_point_below_window_with_window_number(point: rt::Point, window_number: i64) -> i64 {
-        return rt::msg_i64_point_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowNumberAtPoint:belowWindowWithWindowNumber:\0")), point, window_number);
+    fn window_number_at_point(point: rt::Point, below_window_with_window_number: i64) -> i64 {
+        return rt::msg_i64_point_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowNumberAtPoint:belowWindowWithWindowNumber:\0")), point, below_window_with_window_number);
     }
 
     fn window_with_content_view_controller(content_view_controller: ViewController) -> Window {
@@ -1287,29 +1299,29 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleTabOverview:\0")), sender);
     }
 
-    fn add_tabbed_window_ordered(this, window: Window, ordered: WindowOrderingMode) {
+    fn add_tabbed_window(this, window: Window, ordered: WindowOrderingMode) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addTabbedWindow:ordered:\0")), window.raw(), window_ordering_mode_raw(ordered));
     }
 
-    fn transfer_window_sharing_to_window_completion_handler(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
+    fn transfer_window_sharing_to_window(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_transfer_window_sharing_to_window_completion_handler_block = Window_transfer_window_sharing_to_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_transfer_window_sharing_to_window_block = Window_transfer_window_sharing_to_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_transfer_window_sharing_to_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("transferWindowSharingToWindow:completionHandler:\0")), window.raw(), bp);
         return;
     }
 
-    fn request_sharing_of_window_completion_handler(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
+    fn request_sharing_of_window(this, window: Window, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_request_sharing_of_window_completion_handler_block = Window_request_sharing_of_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_request_sharing_of_window_block = Window_request_sharing_of_window_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindow:completionHandler:\0")), window.raw(), bp);
         return;
     }
 
-    fn request_sharing_of_window_using_preview_title_completion_handler(this, image: Image, title: str, cb: fn(*u8, *u8), ctx: *u8) {
+    fn request_sharing_of_window_using_preview(this, image: Image, title: str, cb: fn(*u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
-        var blk: Window_request_sharing_of_window_using_preview_title_completion_handler_block = Window_request_sharing_of_window_using_preview_title_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_using_preview_title_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        var blk: Window_request_sharing_of_window_using_preview_block = Window_request_sharing_of_window_using_preview_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_using_preview_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
         let bp: *u8 = { #addr_of(blk) as *u8 };
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindowUsingPreview:title:completionHandler:\0")), image.raw(), bridge::nsstring(title), bp);
         return;
@@ -1835,7 +1847,23 @@ impl Window {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxFullScreenContentSize:\0")), max_full_screen_content_size);
     }
 
-    // SKIPPED `deviceDescription`: return `NSDictionary<NSDeviceDescriptionKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
+    fn device_description(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("deviceDescription\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn window_controller(this) -> option::Option[WindowController] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("windowController\0")));
         if obj == { 0 as *u8 } {
@@ -2055,20 +2083,20 @@ impl Window {
         return option::some(Event::from_raw(obj));
     }
 
-    fn next_event_matching_mask_until_date_in_mode_dequeue(this, mask: u64, expiration: Date, mode: str, deq_flag: bool) -> option::Option[Event] {
-        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, expiration.raw(), bridge::nsstring(mode), deq_flag as i8);
+    fn next_event_matching_mask_until_date(this, mask: u64, expiration: Date, in_mode: str, dequeue: bool) -> option::Option[Event] {
+        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, expiration.raw(), bridge::nsstring(in_mode), dequeue as i8);
         if obj == { 0 as *u8 } {
             return option::Option[Event]::None;
         }
         return option::some(Event::from_raw(obj));
     }
 
-    fn discard_events_matching_mask_before_event(this, mask: u64, last_event: Event) {
-        rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, last_event.raw());
+    fn discard_events_matching_mask(this, mask: u64, before_event: Event) {
+        rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, before_event.raw());
     }
 
-    fn post_event_at_start(this, event: Event, flag: bool) {
-        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event.raw(), flag as i8);
+    fn post_event(this, event: Event, at_start: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event.raw(), at_start as i8);
     }
 
     fn send_event(this, event: Event) {
@@ -2128,8 +2156,8 @@ impl Window {
     }
 
     // SKIPPED `beginDraggingSessionWithItems:event:source:`: param `NSArray<NSDraggingItem *> * _Nonnull` — generic collection
-    fn drag_image_at_offset_event_pasteboard_source_slide_back(this, image: Image, base_location: rt::Point, initial_offset: rt::Size, event: Event, pboard: *u8, source_obj: *u8, slide_flag: bool) {
-        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), base_location, initial_offset, event.raw(), pboard, source_obj, slide_flag as i8);
+    fn drag_image(this, image: Image, at: rt::Point, offset: rt::Size, event: Event, pasteboard: *u8, source: *u8, slide_back: bool) {
+        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), at, offset, event.raw(), pasteboard, source, slide_back as i8);
     }
 
     fn register_for_dragged_types(this, new_types: vec::Vec[text::Text]) {
@@ -2140,7 +2168,7 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unregisterDraggedTypes\0")));
     }
 
-    fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
     }
 

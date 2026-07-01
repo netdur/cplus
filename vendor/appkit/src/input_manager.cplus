@@ -107,8 +107,8 @@ impl InputManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("markedTextAbandoned:\0")), cli);
     }
 
-    fn marked_text_selection_changed_client(this, new_sel: rt::Range, cli: *u8) {
-        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("markedTextSelectionChanged:client:\0")), new_sel, cli);
+    fn marked_text_selection_changed(this, new_sel: rt::Range, client: *u8) {
+        rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("markedTextSelectionChanged:client:\0")), new_sel, client);
     }
 
     fn wants_to_interpret_all_keystrokes(this) -> bool {
@@ -171,8 +171,8 @@ impl TextInput {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
     }
 
-    fn set_marked_text_selected_range(this, string: *u8, sel_range: rt::Range) {
-        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:\0")), string, sel_range);
+    fn set_marked_text(this, string: *u8, selected_range: rt::Range) {
+        rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:\0")), string, selected_range);
     }
 
     fn unmark_text(this) {

@@ -125,8 +125,8 @@ impl Form {
         return FormCell::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("addEntry:\0")), bridge::nsstring(title)));
     }
 
-    fn insert_entry_at_index(this, title: str, index: i64) -> option::Option[FormCell] {
-        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("insertEntry:atIndex:\0")), bridge::nsstring(title), index);
+    fn insert_entry(this, title: str, at_index: i64) -> option::Option[FormCell] {
+        let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("insertEntry:atIndex:\0")), bridge::nsstring(title), at_index);
         if obj == { 0 as *u8 } {
             return option::Option[FormCell]::None;
         }

@@ -34,20 +34,20 @@ impl PasteboardItem {
         return bridge::to_text_option(ns);
     }
 
-    fn set_data_provider_for_types(this, data_provider: PasteboardItemDataProvider, types: vec::Vec[text::Text]) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setDataProvider:forTypes:\0")), data_provider.raw(), bridge::nsarray_of_text(types)) != (0 as i8);
+    fn set_data_provider(this, data_provider: PasteboardItemDataProvider, for_types: vec::Vec[text::Text]) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setDataProvider:forTypes:\0")), data_provider.raw(), bridge::nsarray_of_text(for_types)) != (0 as i8);
     }
 
-    fn set_data_for_type(this, data: *u8, type_: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setData:forType:\0")), data, bridge::nsstring(type_)) != (0 as i8);
+    fn set_data(this, data: *u8, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setData:forType:\0")), data, bridge::nsstring(for_type)) != (0 as i8);
     }
 
-    fn set_string_for_type(this, string: str, type_: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setString:forType:\0")), bridge::nsstring(string), bridge::nsstring(type_)) != (0 as i8);
+    fn set_string(this, string: str, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setString:forType:\0")), bridge::nsstring(string), bridge::nsstring(for_type)) != (0 as i8);
     }
 
-    fn set_property_list_for_type(this, property_list: *u8, type_: str) -> bool {
-        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setPropertyList:forType:\0")), property_list, bridge::nsstring(type_)) != (0 as i8);
+    fn set_property_list(this, property_list: *u8, for_type: str) -> bool {
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("setPropertyList:forType:\0")), property_list, bridge::nsstring(for_type)) != (0 as i8);
     }
 
     fn data_for_type(this, type_: str) -> option::Option[*u8] {
@@ -94,8 +94,8 @@ impl PasteboardItemDataProvider {
 
     fn from_raw(ptr: *u8) -> PasteboardItemDataProvider { return PasteboardItemDataProvider { _obj: ptr }; }
 
-    fn pasteboard_item_provide_data_for_type(this, pasteboard: Pasteboard, item: PasteboardItem, type_: str) {
-        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("pasteboard:item:provideDataForType:\0")), pasteboard.raw(), item.raw(), bridge::nsstring(type_));
+    fn pasteboard(this, pasteboard: Pasteboard, item: PasteboardItem, provide_data_for_type: str) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("pasteboard:item:provideDataForType:\0")), pasteboard.raw(), item.raw(), bridge::nsstring(provide_data_for_type));
     }
 
     fn pasteboard_finished_with_data_provider(this, pasteboard: Pasteboard) {

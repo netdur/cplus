@@ -5,6 +5,18 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSTextLineFragment` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct TextLineFragment {
@@ -28,10 +40,10 @@ impl TextLineFragment {
         return TextLineFragment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), a_decoder) };
     }
 
-    // SKIPPED `initWithString:attributes:range:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
+    // SKIPPED `initWithString:attributes:range:`: init arg shape not yet modelled
     // SKIPPED `init`: `new` already defined (extra constructor)
-    fn draw_at_point_in_context(this, point: rt::Point, context: *u8) {
-        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:inContext:\0")), point, context);
+    fn draw_at_point(this, point: rt::Point, in_context: *u8) {
+        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:inContext:\0")), point, in_context);
     }
 
     fn location_for_character_at_index(this, index: i64) -> rt::Point {

@@ -80,7 +80,7 @@ impl TextInputClient {
 
     fn from_raw(ptr: *u8) -> TextInputClient { return TextInputClient { _obj: ptr }; }
 
-    fn insert_text_replacement_range(this, string: *u8, replacement_range: rt::Range) {
+    fn insert_text(this, string: *u8, replacement_range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("insertText:replacementRange:\0")), string, replacement_range);
     }
 
@@ -88,7 +88,7 @@ impl TextInputClient {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
     }
 
-    fn set_marked_text_selected_range_replacement_range(this, string: *u8, selected_range: rt::Range, replacement_range: rt::Range) {
+    fn set_marked_text(this, string: *u8, selected_range: rt::Range, replacement_range: rt::Range) {
         rt::msg_void_id_range_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:replacementRange:\0")), string, selected_range, replacement_range);
     }
 
@@ -108,7 +108,7 @@ impl TextInputClient {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasMarkedText\0"))) != (0 as i8);
     }
 
-    fn attributed_substring_for_proposed_range_actual_range(this, range: rt::Range, actual_range: *u8) -> option::Option[AttributedString] {
+    fn attributed_substring_for_proposed_range(this, range: rt::Range, actual_range: *u8) -> option::Option[AttributedString] {
         let obj: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("attributedSubstringForProposedRange:actualRange:\0")), range, actual_range);
         if obj == { 0 as *u8 } {
             return option::Option[AttributedString]::None;
@@ -130,7 +130,7 @@ impl TextInputClient {
         return out;
     }
 
-    fn first_rect_for_character_range_actual_range(this, range: rt::Range, actual_range: *u8) -> rt::Rect {
+    fn first_rect_for_character_range(this, range: rt::Range, actual_range: *u8) -> rt::Rect {
         return rt::msg_rect_range_id(this._obj, rt::sel(#str_ptr("firstRectForCharacterRange:actualRange:\0")), range, actual_range);
     }
 
@@ -162,7 +162,7 @@ impl TextInputClient {
         return text_cursor_accessory_placement_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("preferredTextAccessoryPlacement\0"))));
     }
 
-    fn insert_adaptive_image_glyph_replacement_range(this, adaptive_image_glyph: AdaptiveImageGlyph, replacement_range: rt::Range) {
+    fn insert_adaptive_image_glyph(this, adaptive_image_glyph: AdaptiveImageGlyph, replacement_range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("insertAdaptiveImageGlyph:replacementRange:\0")), adaptive_image_glyph.raw(), replacement_range);
     }
 

@@ -60,12 +60,12 @@ impl Matrix {
 
     // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
     // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
-    fn make_cell_at_row_column(this, row: i64, col: i64) -> *u8 {
-        return rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, col);
+    fn make_cell_at_row(this, row: i64, column: i64) -> *u8 {
+        return rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, column);
     }
 
-    fn send_action_to_for_all_cells(this, selector: *u8, object: *u8, flag: bool) {
-        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("sendAction:to:forAllCells:\0")), selector, object, flag as i8);
+    fn send_action_to(this, selector: *u8, object: *u8, for_all_cells: bool) {
+        rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("sendAction:to:forAllCells:\0")), selector, object, for_all_cells as i8);
     }
 
     fn sort_using_selector(this, comparator: *u8) {
@@ -73,8 +73,8 @@ impl Matrix {
     }
 
     // SKIPPED `sortUsingFunction:context:`: param `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)` — unmapped type `NSInteger (* _Nonnull)(id _Nonnull, id _Nonnull, void * _Nullable)`
-    fn set_selection_from_to_anchor_highlight(this, start_pos: i64, end_pos: i64, anchor_pos: i64, lit: bool) {
-        rt::msg_void_i64_i64_i64_i8(this._obj, rt::sel(#str_ptr("setSelectionFrom:to:anchor:highlight:\0")), start_pos, end_pos, anchor_pos, lit as i8);
+    fn set_selection_from(this, start_pos: i64, to: i64, anchor: i64, highlight: bool) {
+        rt::msg_void_i64_i64_i64_i8(this._obj, rt::sel(#str_ptr("setSelectionFrom:to:anchor:highlight:\0")), start_pos, to, anchor, highlight as i8);
     }
 
     fn deselect_selected_cell(this) {
@@ -85,8 +85,8 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deselectAllCells\0")));
     }
 
-    fn select_cell_at_row_column(this, row: i64, col: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("selectCellAtRow:column:\0")), row, col);
+    fn select_cell_at_row(this, row: i64, column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("selectCellAtRow:column:\0")), row, column);
     }
 
     fn select_all(this, sender: *u8) {
@@ -101,37 +101,37 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setScrollable:\0")), flag as i8);
     }
 
-    fn set_state_at_row_column(this, value: i64, row: i64, col: i64) {
-        rt::msg_void_i64_i64_i64(this._obj, rt::sel(#str_ptr("setState:atRow:column:\0")), value, row, col);
+    fn set_state(this, value: i64, at_row: i64, column: i64) {
+        rt::msg_void_i64_i64_i64(this._obj, rt::sel(#str_ptr("setState:atRow:column:\0")), value, at_row, column);
     }
 
-    fn get_number_of_rows_columns(this, row_count: *u8, col_count: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getNumberOfRows:columns:\0")), row_count, col_count);
+    fn get_number_of_rows(this, row_count: *u8, columns: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getNumberOfRows:columns:\0")), row_count, columns);
     }
 
-    fn cell_at_row_column(this, row: i64, col: i64) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("cellAtRow:column:\0")), row, col);
+    fn cell_at_row(this, row: i64, column: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("cellAtRow:column:\0")), row, column);
         return bridge::obj_option(obj);
     }
 
-    fn cell_frame_at_row_column(this, row: i64, col: i64) -> rt::Rect {
-        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("cellFrameAtRow:column:\0")), row, col);
+    fn cell_frame_at_row(this, row: i64, column: i64) -> rt::Rect {
+        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("cellFrameAtRow:column:\0")), row, column);
     }
 
-    fn get_row_column_of_cell(this, row: *u8, col: *u8, cell: *u8) -> bool {
-        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getRow:column:ofCell:\0")), row, col, cell) != (0 as i8);
+    fn get_row(this, row: *u8, column: *u8, of_cell: *u8) -> bool {
+        return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getRow:column:ofCell:\0")), row, column, of_cell) != (0 as i8);
     }
 
-    fn get_row_column_for_point(this, row: *u8, col: *u8, point: rt::Point) -> bool {
-        return rt::msg_i8_id_id_point(this._obj, rt::sel(#str_ptr("getRow:column:forPoint:\0")), row, col, point) != (0 as i8);
+    fn get_row_column(this, row: *u8, col: *u8, for_point: rt::Point) -> bool {
+        return rt::msg_i8_id_id_point(this._obj, rt::sel(#str_ptr("getRow:column:forPoint:\0")), row, col, for_point) != (0 as i8);
     }
 
-    fn renew_rows_columns(this, new_rows: i64, new_cols: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("renewRows:columns:\0")), new_rows, new_cols);
+    fn renew_rows(this, new_rows: i64, columns: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("renewRows:columns:\0")), new_rows, columns);
     }
 
-    fn put_cell_at_row_column(this, new_cell: *u8, row: i64, col: i64) {
-        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("putCell:atRow:column:\0")), new_cell, row, col);
+    fn put_cell(this, new_cell: *u8, at_row: i64, column: i64) {
+        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("putCell:atRow:column:\0")), new_cell, at_row, column);
     }
 
     fn add_row(this) {
@@ -175,16 +175,16 @@ impl Matrix {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setValidateSize:\0")), flag as i8);
     }
 
-    fn draw_cell_at_row_column(this, row: i64, col: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("drawCellAtRow:column:\0")), row, col);
+    fn draw_cell_at_row(this, row: i64, column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("drawCellAtRow:column:\0")), row, column);
     }
 
-    fn highlight_cell_at_row_column(this, flag: bool, row: i64, col: i64) {
-        rt::msg_void_i8_i64_i64(this._obj, rt::sel(#str_ptr("highlightCell:atRow:column:\0")), flag as i8, row, col);
+    fn highlight_cell(this, flag: bool, at_row: i64, column: i64) {
+        rt::msg_void_i8_i64_i64(this._obj, rt::sel(#str_ptr("highlightCell:atRow:column:\0")), flag as i8, at_row, column);
     }
 
-    fn scroll_cell_to_visible_at_row_column(this, row: i64, col: i64) {
-        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollCellToVisibleAtRow:column:\0")), row, col);
+    fn scroll_cell_to_visible_at_row(this, row: i64, column: i64) {
+        rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("scrollCellToVisibleAtRow:column:\0")), row, column);
     }
 
     fn mouse_down(this, event: *u8) {
@@ -227,8 +227,8 @@ impl Matrix {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectText:\0")), sender);
     }
 
-    fn select_text_at_row_column(this, row: i64, col: i64) -> option::Option[*u8] {
-        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("selectTextAtRow:column:\0")), row, col);
+    fn select_text_at_row(this, row: i64, column: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("selectTextAtRow:column:\0")), row, column);
         return bridge::obj_option(obj);
     }
 
@@ -240,8 +240,8 @@ impl Matrix {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }
 
-    fn set_tool_tip_for_cell(this, tool_tip_string: str, cell: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setToolTip:forCell:\0")), bridge::nsstring(tool_tip_string), cell);
+    fn set_tool_tip(this, tool_tip_string: str, for_cell: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setToolTip:forCell:\0")), bridge::nsstring(tool_tip_string), for_cell);
     }
 
     fn tool_tip_for_cell(this, cell: *u8) -> option::Option[text::Text] {

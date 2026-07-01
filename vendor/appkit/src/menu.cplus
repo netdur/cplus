@@ -130,16 +130,16 @@ impl Menu {
         return Menu { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn pop_up_context_menu_with_event_for_view(menu: Menu, event: Event, view: View) {
-        rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:\0")), menu.raw(), event.raw(), view.raw());
+    fn pop_up_context_menu(menu: Menu, with_event: Event, for_view: View) {
+        rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:\0")), menu.raw(), with_event.raw(), for_view.raw());
     }
 
-    fn pop_up_context_menu_with_event_for_view_with_font(menu: Menu, event: Event, view: View, font: Font) {
-        rt::msg_void_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:withFont:\0")), menu.raw(), event.raw(), view.raw(), font.raw());
+    fn pop_up_context_menu_with_event(menu: Menu, event: Event, for_view: View, with_font: Font) {
+        rt::msg_void_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:withFont:\0")), menu.raw(), event.raw(), for_view.raw(), with_font.raw());
     }
 
-    fn pop_up_menu_positioning_item_at_location_in_view(this, item: *u8, location: rt::Point, view: View) -> bool {
-        return rt::msg_i8_id_point_id(this._obj, rt::sel(#str_ptr("popUpMenuPositioningItem:atLocation:inView:\0")), item, location, view.raw()) != (0 as i8);
+    fn pop_up_menu_positioning_item(this, item: *u8, at_location: rt::Point, in_view: View) -> bool {
+        return rt::msg_i8_id_point_id(this._obj, rt::sel(#str_ptr("popUpMenuPositioningItem:atLocation:inView:\0")), item, at_location, in_view.raw()) != (0 as i8);
     }
 
     fn set_menu_bar_visible(visible: bool) {
@@ -150,20 +150,20 @@ impl Menu {
         return rt::msg_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("menuBarVisible\0"))) != (0 as i8);
     }
 
-    fn insert_item_at_index(this, new_item: *u8, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItem:atIndex:\0")), new_item, index);
+    fn insert_item(this, new_item: *u8, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItem:atIndex:\0")), new_item, at_index);
     }
 
     fn add_item(this, new_item: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItem:\0")), new_item);
     }
 
-    fn insert_item_with_title_action_key_equivalent_at_index(this, string: str, selector: *u8, char_code: str, index: i64) -> *u8 {
-        return rt::msg_id_id_id_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:action:keyEquivalent:atIndex:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code), index);
+    fn insert_item_with_title(this, string: str, action: *u8, key_equivalent: str, at_index: i64) -> *u8 {
+        return rt::msg_id_id_id_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:action:keyEquivalent:atIndex:\0")), bridge::nsstring(string), action, bridge::nsstring(key_equivalent), at_index);
     }
 
-    fn add_item_with_title_action_key_equivalent(this, string: str, selector: *u8, char_code: str) -> *u8 {
-        return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:action:keyEquivalent:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code));
+    fn add_item_with_title(this, string: str, action: *u8, key_equivalent: str) -> *u8 {
+        return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:action:keyEquivalent:\0")), bridge::nsstring(string), action, bridge::nsstring(key_equivalent));
     }
 
     fn remove_item_at_index(this, index: i64) {
@@ -174,8 +174,8 @@ impl Menu {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeItem:\0")), item);
     }
 
-    fn set_submenu_for_item(this, menu: Menu, item: *u8) {
-        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSubmenu:forItem:\0")), menu.raw(), item);
+    fn set_submenu(this, menu: Menu, for_item: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSubmenu:forItem:\0")), menu.raw(), for_item);
     }
 
     fn remove_all_items(this) {
@@ -207,8 +207,8 @@ impl Menu {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemWithSubmenu:\0")), submenu.raw());
     }
 
-    fn index_of_item_with_target_and_action(this, target: *u8, action_selector: *u8) -> i64 {
-        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, action_selector);
+    fn index_of_item_with_target(this, target: *u8, and_action: *u8) -> i64 {
+        return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("indexOfItemWithTarget:andAction:\0")), target, and_action);
     }
 
     fn item_with_title(this, title: str) -> option::Option[*u8] {

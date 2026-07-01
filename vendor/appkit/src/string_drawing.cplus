@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 
 // `NSStringDrawingOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const string_drawing_options_n_s_string_drawing_uses_line_fragment_origin: u64 = 1 as u64;
@@ -14,6 +15,17 @@ const string_drawing_options_n_s_string_drawing_truncates_last_visible_line: u64
 const string_drawing_options_resolves_natural_alignment_with_base_writing_direction: u64 = 512 as u64;
 const string_drawing_options_n_s_string_drawing_disable_screen_font_substitution: u64 = 4 as u64;
 const string_drawing_options_n_s_string_drawing_one_shot: u64 = 16 as u64;
+
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
 
 // `NSAttributedString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct AttributedString {
@@ -37,19 +49,19 @@ impl AttributedString {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
     }
 
-    fn draw_with_rect_options_context(this, rect: rt::Rect, options: u64, context: StringDrawingContext) {
+    fn draw_with_rect_options(this, rect: rt::Rect, options: u64, context: StringDrawingContext) {
         rt::msg_void_rect_u64_id(this._obj, rt::sel(#str_ptr("drawWithRect:options:context:\0")), rect, options, context.raw());
     }
 
-    fn bounding_rect_with_size_options_context(this, size: rt::Size, options: u64, context: StringDrawingContext) -> rt::Rect {
+    fn bounding_rect_with_size_options(this, size: rt::Size, options: u64, context: StringDrawingContext) -> rt::Rect {
         return rt::msg_rect_size_u64_id(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:context:\0")), size, options, context.raw());
     }
 
-    fn draw_with_rect_options(this, rect: rt::Rect, options: u64) {
+    fn draw_with_rect(this, rect: rt::Rect, options: u64) {
         rt::msg_void_rect_u64(this._obj, rt::sel(#str_ptr("drawWithRect:options:\0")), rect, options);
     }
 
-    fn bounding_rect_with_size_options(this, size: rt::Size, options: u64) -> rt::Rect {
+    fn bounding_rect_with_size(this, size: rt::Size, options: u64) -> rt::Rect {
         return rt::msg_rect_size_u64(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:\0")), size, options);
     }
 
@@ -65,13 +77,123 @@ impl String {
 
     fn from_raw(ptr: *u8) -> String { return String { _obj: ptr }; }
 
-    // SKIPPED `sizeWithAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawAtPoint:withAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawInRect:withAttributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawWithRect:options:attributes:context:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `boundingRectWithSize:options:attributes:context:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawWithRect:options:attributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `boundingRectWithSize:options:attributes:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
+    fn size_with_attributes(this, attrs: string_map::StringMap[AnyObject]) -> rt::Size {
+        let dict_attrs: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attrs: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attrs: usize = attrs.slot_capacity();
+        var dsi_attrs: usize = 0 as usize;
+        while dsi_attrs < dcap_attrs {
+            match attrs.value_ptr_at_slot(dsi_attrs) {
+                option::Option[*AnyObject]::Some(dvp_attrs) => {
+                    match attrs.key_ptr_at_slot(dsi_attrs) {
+                        option::Option[*text::Text]::Some(dkp_attrs) => {
+                    let dval_attrs: *u8 = (*dvp_attrs).raw();
+                            rt::msg_void_id_id(dict_attrs, dset_attrs, dval_attrs, bridge::nsstring((*dkp_attrs).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attrs = dsi_attrs +% (1 as usize);
+        }
+        return rt::msg_size_id(this._obj, rt::sel(#str_ptr("sizeWithAttributes:\0")), dict_attrs);
+    }
+
+    fn draw_at_point(this, point: rt::Point, with_attributes: string_map::StringMap[AnyObject]) {
+        let dict_with_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_with_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_with_attributes: usize = with_attributes.slot_capacity();
+        var dsi_with_attributes: usize = 0 as usize;
+        while dsi_with_attributes < dcap_with_attributes {
+            match with_attributes.value_ptr_at_slot(dsi_with_attributes) {
+                option::Option[*AnyObject]::Some(dvp_with_attributes) => {
+                    match with_attributes.key_ptr_at_slot(dsi_with_attributes) {
+                        option::Option[*text::Text]::Some(dkp_with_attributes) => {
+                    let dval_with_attributes: *u8 = (*dvp_with_attributes).raw();
+                            rt::msg_void_id_id(dict_with_attributes, dset_with_attributes, dval_with_attributes, bridge::nsstring((*dkp_with_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_with_attributes = dsi_with_attributes +% (1 as usize);
+        }
+        rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:withAttributes:\0")), point, dict_with_attributes);
+    }
+
+    fn draw_in_rect(this, rect: rt::Rect, with_attributes: string_map::StringMap[AnyObject]) {
+        let dict_with_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_with_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_with_attributes: usize = with_attributes.slot_capacity();
+        var dsi_with_attributes: usize = 0 as usize;
+        while dsi_with_attributes < dcap_with_attributes {
+            match with_attributes.value_ptr_at_slot(dsi_with_attributes) {
+                option::Option[*AnyObject]::Some(dvp_with_attributes) => {
+                    match with_attributes.key_ptr_at_slot(dsi_with_attributes) {
+                        option::Option[*text::Text]::Some(dkp_with_attributes) => {
+                    let dval_with_attributes: *u8 = (*dvp_with_attributes).raw();
+                            rt::msg_void_id_id(dict_with_attributes, dset_with_attributes, dval_with_attributes, bridge::nsstring((*dkp_with_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_with_attributes = dsi_with_attributes +% (1 as usize);
+        }
+        rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawInRect:withAttributes:\0")), rect, dict_with_attributes);
+    }
+
+    // SKIPPED `drawWithRect:options:attributes:context:`: msgSend shape `void_rect_u64_id_id` not yet modelled
+    // SKIPPED `boundingRectWithSize:options:attributes:context:`: msgSend shape `rect_size_u64_id_id` not yet modelled
+    fn draw_with_rect(this, rect: rt::Rect, options: u64, attributes: string_map::StringMap[AnyObject]) {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        rt::msg_void_rect_u64_id(this._obj, rt::sel(#str_ptr("drawWithRect:options:attributes:\0")), rect, options, dict_attributes);
+    }
+
+    fn bounding_rect_with_size(this, size: rt::Size, options: u64, attributes: string_map::StringMap[AnyObject]) -> rt::Rect {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return rt::msg_rect_size_u64_id(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:attributes:\0")), size, options, dict_attributes);
+    }
+
 }
 
 // `NSStringDrawingContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

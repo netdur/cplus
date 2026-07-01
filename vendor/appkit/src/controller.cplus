@@ -80,7 +80,7 @@ impl Controller {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("commitEditing\0"))) != (0 as i8);
     }
 
-    fn commit_editing_with_delegate_did_commit_selector_context_info(this, delegate: *u8, did_commit_selector: *u8, context_info: *u8) {
+    fn commit_editing_with_delegate(this, delegate: *u8, did_commit_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("commitEditingWithDelegate:didCommitSelector:contextInfo:\0")), delegate, did_commit_selector, context_info);
     }
 

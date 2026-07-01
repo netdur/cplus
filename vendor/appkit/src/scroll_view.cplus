@@ -243,20 +243,20 @@ impl ScrollView {
         return ScrollView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    fn frame_size_for_content_size_horizontal_scroller_class_vertical_scroller_class_border_type_control_size_scroller_style(c_size: rt::Size, horizontal_scroller_class: *u8, vertical_scroller_class: *u8, type_: BorderType, control_size: ControlSize, scroller_style: ScrollerStyle) -> rt::Size {
-        return rt::msg_size_size_id_id_i64_i64_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:\0")), c_size, horizontal_scroller_class, vertical_scroller_class, border_type_raw(type_), control_size_raw(control_size), scroller_style_raw(scroller_style));
+    fn frame_size_for_content_size_horizontal_scroller_class(c_size: rt::Size, horizontal_scroller_class: *u8, vertical_scroller_class: *u8, border_type: BorderType, control_size: ControlSize, scroller_style: ScrollerStyle) -> rt::Size {
+        return rt::msg_size_size_id_id_i64_i64_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:\0")), c_size, horizontal_scroller_class, vertical_scroller_class, border_type_raw(border_type), control_size_raw(control_size), scroller_style_raw(scroller_style));
     }
 
-    fn content_size_for_frame_size_horizontal_scroller_class_vertical_scroller_class_border_type_control_size_scroller_style(f_size: rt::Size, horizontal_scroller_class: *u8, vertical_scroller_class: *u8, type_: BorderType, control_size: ControlSize, scroller_style: ScrollerStyle) -> rt::Size {
-        return rt::msg_size_size_id_id_i64_i64_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:\0")), f_size, horizontal_scroller_class, vertical_scroller_class, border_type_raw(type_), control_size_raw(control_size), scroller_style_raw(scroller_style));
+    fn content_size_for_frame_size_horizontal_scroller_class(f_size: rt::Size, horizontal_scroller_class: *u8, vertical_scroller_class: *u8, border_type: BorderType, control_size: ControlSize, scroller_style: ScrollerStyle) -> rt::Size {
+        return rt::msg_size_size_id_id_i64_i64_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:\0")), f_size, horizontal_scroller_class, vertical_scroller_class, border_type_raw(border_type), control_size_raw(control_size), scroller_style_raw(scroller_style));
     }
 
-    fn frame_size_for_content_size_has_horizontal_scroller_has_vertical_scroller_border_type(c_size: rt::Size, h_flag: bool, v_flag: bool, type_: BorderType) -> rt::Size {
-        return rt::msg_size_size_i8_i8_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:\0")), c_size, h_flag as i8, v_flag as i8, border_type_raw(type_));
+    fn frame_size_for_content_size(c_size: rt::Size, has_horizontal_scroller: bool, has_vertical_scroller: bool, border_type: BorderType) -> rt::Size {
+        return rt::msg_size_size_i8_i8_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:\0")), c_size, has_horizontal_scroller as i8, has_vertical_scroller as i8, border_type_raw(border_type));
     }
 
-    fn content_size_for_frame_size_has_horizontal_scroller_has_vertical_scroller_border_type(f_size: rt::Size, h_flag: bool, v_flag: bool, type_: BorderType) -> rt::Size {
-        return rt::msg_size_size_i8_i8_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:\0")), f_size, h_flag as i8, v_flag as i8, border_type_raw(type_));
+    fn content_size_for_frame_size(f_size: rt::Size, has_horizontal_scroller: bool, has_vertical_scroller: bool, border_type: BorderType) -> rt::Size {
+        return rt::msg_size_size_i8_i8_i64(rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("contentSizeForFrameSize:hasHorizontalScroller:hasVerticalScroller:borderType:\0")), f_size, has_horizontal_scroller as i8, has_vertical_scroller as i8, border_type_raw(border_type));
     }
 
     fn tile(this) {
@@ -283,8 +283,8 @@ impl ScrollView {
         rt::msg_void_f64_point(this._obj, rt::sel(#str_ptr("setMagnification:centeredAtPoint:\0")), magnification, point);
     }
 
-    fn add_floating_subview_for_axis(this, view: *u8, axis: EventGestureAxis) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addFloatingSubview:forAxis:\0")), view, event_gesture_axis_raw(axis));
+    fn add_floating_subview(this, view: *u8, for_axis: EventGestureAxis) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addFloatingSubview:forAxis:\0")), view, event_gesture_axis_raw(for_axis));
     }
 
     fn document_visible_rect(this) -> rt::Rect {

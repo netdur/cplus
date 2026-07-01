@@ -141,7 +141,7 @@ impl ViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadViewIfNeeded\0")));
     }
 
-    fn commit_editing_with_delegate_did_commit_selector_context_info(this, delegate: *u8, did_commit_selector: *u8, context_info: *u8) {
+    fn commit_editing_with_delegate(this, delegate: *u8, did_commit_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("commitEditingWithDelegate:didCommitSelector:contextInfo:\0")), delegate, did_commit_selector, context_info);
     }
 
@@ -240,7 +240,7 @@ impl ViewController {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setPreferredContentSize:\0")), preferred_content_size);
     }
 
-    fn present_view_controller_animator(this, view_controller: ViewController, animator: ViewControllerPresentationAnimator) {
+    fn present_view_controller(this, view_controller: ViewController, animator: ViewControllerPresentationAnimator) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("presentViewController:animator:\0")), view_controller.raw(), animator.raw());
     }
 
@@ -277,11 +277,11 @@ impl ViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentViewControllerAsModalWindow:\0")), view_controller.raw());
     }
 
-    fn present_view_controller_as_popover_relative_to_rect_of_view_preferred_edge_behavior(this, view_controller: ViewController, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior) {
-        rt::msg_void_id_rect_id_i64_i64(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:\0")), view_controller.raw(), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior));
+    fn present_view_controller_as_popover_relative_to_rect(this, view_controller: ViewController, positioning_rect: rt::Rect, of_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior) {
+        rt::msg_void_id_rect_id_i64_i64(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:\0")), view_controller.raw(), positioning_rect, of_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior));
     }
 
-    fn present_view_controller_as_popover_relative_to_rect_of_view_preferred_edge_behavior_has_full_size_content(this, view_controller: ViewController, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior, has_full_size_content: bool) {
+    fn present_view_controller_as_popover_relative_to_rect_of_view(this, view_controller: ViewController, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior, has_full_size_content: bool) {
         rt::msg_void_id_rect_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:\0")), view_controller.raw(), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior), has_full_size_content as i8);
     }
 
@@ -294,8 +294,8 @@ impl ViewController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeFromParentViewController\0")));
     }
 
-    fn insert_child_view_controller_at_index(this, child_view_controller: ViewController, index: i64) {
-        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertChildViewController:atIndex:\0")), child_view_controller.raw(), index);
+    fn insert_child_view_controller(this, child_view_controller: ViewController, at_index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertChildViewController:atIndex:\0")), child_view_controller.raw(), at_index);
     }
 
     fn remove_child_view_controller_at_index(this, index: i64) {
@@ -401,11 +401,11 @@ impl ViewControllerPresentationAnimator {
 
     fn from_raw(ptr: *u8) -> ViewControllerPresentationAnimator { return ViewControllerPresentationAnimator { _obj: ptr }; }
 
-    fn animate_presentation_of_view_controller_from_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
+    fn animate_presentation_of_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("animatePresentationOfViewController:fromViewController:\0")), view_controller.raw(), from_view_controller.raw());
     }
 
-    fn animate_dismissal_of_view_controller_from_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
+    fn animate_dismissal_of_view_controller(this, view_controller: ViewController, from_view_controller: ViewController) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("animateDismissalOfViewController:fromViewController:\0")), view_controller.raw(), from_view_controller.raw());
     }
 
