@@ -6249,6 +6249,10 @@ extern fn objc_msg_id_i64_id_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64_id_id_id_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_point_u64_f64_i64_id_i16_i64_i64(recv: *u8, sel: *u8, a0: i64, a1: rt::Point, a2: u64, a3: f64, a4: i64, a5: *u8, a6: i16, a7: i64, a8: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_point_u64_f64_i64_id_id_id_i8_u16(recv: *u8, sel: *u8, a0: i64, a1: rt::Point, a2: u64, a3: f64, a4: i64, a5: *u8, a6: *u8, a7: *u8, a8: i8, a9: u16) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_f64_id_point(recv: *u8, sel: *u8, a0: *u8, a1: f64, a2: *u8, a3: rt::Point) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_i64_f32(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: f32) -> *u8;
@@ -6277,6 +6281,8 @@ extern fn objc_msg_id_id_rect(recv: *u8, sel: *u8, a0: *u8, a1: rt::Rect) -> *u8
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_size(recv: *u8, sel: *u8, a0: *u8, a1: rt::Size) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u16(recv: *u8, sel: *u8, a0: *u8, a1: u16) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64_i64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i64) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: *u8, a3: *u8, a4: *u8) -> *u8;
@@ -6299,6 +6305,8 @@ extern fn objc_msg_id_size_i64_i8_i8(recv: *u8, sel: *u8, a0: rt::Size, a1: i64,
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_size_i8_id(recv: *u8, sel: *u8, a0: rt::Size, a1: i8, a2: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u16_id_id(recv: *u8, sel: *u8, a0: u16, a1: *u8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_u32_u32_i32_i32_i32(recv: *u8, sel: *u8, a0: u32, a1: u32, a2: i32, a3: i32, a4: i32) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_u64_id_id(recv: *u8, sel: *u8, a0: u64, a1: *u8, a2: *u8) -> *u8;
@@ -6317,7 +6325,17 @@ extern fn objc_msg_rect_id_id_id_rect_point(recv: *u8, sel: *u8, a0: *u8, a1: *u
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_rect_size_u64_id_id(recv: *u8, sel: *u8, a0: rt::Size, a1: u64, a2: *u8, a3: *u8) -> rt::Rect;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_u16(recv: *u8, sel: *u8, a0: u16) -> rt::Rect;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_size_id_range_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: *u8, a3: u64) -> rt::Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_size_u16(recv: *u8, sel: *u8, a0: u16) -> rt::Size;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u16(recv: *u8, sel: *u8) -> u16;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u16_u64(recv: *u8, sel: *u8, a0: u64) -> u16;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u16_u64_id(recv: *u8, sel: *u8, a0: u64, a1: *u8) -> u16;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_AffineTransformStruct(recv: *u8, sel: *u8, a0: AffineTransformStruct);
 #[link_name = "objc_msgSend"]
@@ -6362,6 +6380,8 @@ extern fn objc_msg_void_rect_range_rect_f64(recv: *u8, sel: *u8, a0: rt::Rect, a
 extern fn objc_msg_void_rect_rect_i64_f64_i8_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: i64, a3: f64, a4: i8, a5: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_rect_u64_id_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: u64, a2: *u8, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u16_id(recv: *u8, sel: *u8, a0: u16, a1: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_u64_f64_f64_id(recv: *u8, sel: *u8, a0: u64, a1: f64, a2: f64, a3: *u8);
 #[link_name = "objc_msgSend"]
@@ -17339,7 +17359,14 @@ impl Event {
         return option::some(Event { _obj: obj });
     }
 
-    // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `unsigned short` — unmapped type `unsigned short`
+    fn key_event_with_type(type_: EventType, location: rt::Point, modifier_flags: u64, timestamp: f64, window_number: i64, context: GraphicsContext, characters: str, characters_ignoring_modifiers: str, is_a_repeat: bool, key_code: u16) -> option::Option[Event] {
+        let obj: *u8 = objc_msg_id_i64_point_u64_f64_i64_id_id_id_i8_u16(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")), event_type_raw(type_), location, modifier_flags, timestamp, window_number, context.raw(), bridge::nsstring(characters), bridge::nsstring(characters_ignoring_modifiers), is_a_repeat as i8, key_code);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event { _obj: obj });
+    }
+
     fn enter_exit_event_with_type(type_: EventType, location: rt::Point, modifier_flags: u64, timestamp: f64, window_number: i64, context: GraphicsContext, event_number: i64, tracking_number: i64, user_data: *u8) -> option::Option[Event] {
         let obj: *u8 = rt::msg_id_i64_point_u64_f64_i64_id_i64_i64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:\0")), event_type_raw(type_), location, modifier_flags, timestamp, window_number, context.raw(), event_number, tracking_number, user_data);
         if obj == { 0 as *u8 } {
@@ -17348,7 +17375,14 @@ impl Event {
         return option::some(Event { _obj: obj });
     }
 
-    // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `short` — unmapped type `short`
+    fn other_event_with_type(type_: EventType, location: rt::Point, modifier_flags: u64, timestamp: f64, window_number: i64, context: GraphicsContext, subtype: i16, data1: i64, data2: i64) -> option::Option[Event] {
+        let obj: *u8 = objc_msg_id_i64_point_u64_f64_i64_id_i16_i64_i64(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:\0")), event_type_raw(type_), location, modifier_flags, timestamp, window_number, context.raw(), subtype, data1, data2);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event { _obj: obj });
+    }
+
     fn add_global_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Event_add_global_monitor_for_events_matching_mask_block = Event_add_global_monitor_for_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_global_monitor_for_events_matching_mask_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -17463,7 +17497,10 @@ impl Event {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isARepeat\0"))) != (0 as i8);
     }
 
-    // SKIPPED `keyCode`: return `unsigned short` — unmapped type `unsigned short`
+    fn key_code(this) -> u16 {
+        return objc_msg_u16(this._obj, rt::sel(#str_ptr("keyCode\0")));
+    }
+
     fn tracking_number(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("trackingNumber\0")));
     }
@@ -20590,8 +20627,14 @@ impl Font {
         return rt::msg_f64_i64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontSizeForControlSize:\0")), control_size_raw(control_size));
     }
 
-    // SKIPPED `boundingRectForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `advancementForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
+    fn bounding_rect_for_c_g_glyph(this, glyph: u16) -> rt::Rect {
+        return objc_msg_rect_u16(this._obj, rt::sel(#str_ptr("boundingRectForCGGlyph:\0")), glyph);
+    }
+
+    fn advancement_for_c_g_glyph(this, glyph: u16) -> rt::Size {
+        return objc_msg_size_u16(this._obj, rt::sel(#str_ptr("advancementForCGGlyph:\0")), glyph);
+    }
+
     fn get_bounding_rects(this, bounds: *u8, for_c_g_glyphs: *u8, count: u64) {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forCGGlyphs:count:\0")), bounds, for_c_g_glyphs, count);
     }
@@ -23148,7 +23191,11 @@ impl Cell {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("drawingRectForBounds:\0")), rect);
     }
 
-    // SKIPPED `_bulletStringForString:bulletCharacter:`: param `unichar` — unmapped type `unichar`
+    fn _bullet_string_for_string(string: str, bullet_character: u16) -> text::Text {
+        let ns: *u8 = objc_msg_id_id_u16(rt::get_class(#str_ptr("NSCell\0")), rt::sel(#str_ptr("_bulletStringForString:bulletCharacter:\0")), bridge::nsstring(string), bullet_character);
+        return bridge::to_text(ns);
+    }
+
     fn cell_size_for_bounds(this, rect: rt::Rect) -> rt::Size {
         return rt::msg_size_rect(this._obj, rt::sel(#str_ptr("cellSizeForBounds:\0")), rect);
     }
@@ -38839,7 +38886,10 @@ impl BezierPath {
         rt::msg_void_point_point_f64(this._obj, rt::sel(#str_ptr("appendBezierPathWithArcFromPoint:toPoint:radius:\0")), point1, to_point, radius);
     }
 
-    // SKIPPED `appendBezierPathWithCGGlyph:inFont:`: param `CGGlyph` — unmapped type `CGGlyph`
+    fn append_bezier_path_with_c_g_glyph(this, glyph: u16, in_font: Font) {
+        objc_msg_void_u16_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithCGGlyph:inFont:\0")), glyph, in_font.raw());
+    }
+
     fn append_bezier_path_with_c_g_glyphs(this, glyphs: *u8, count: i64, in_font: Font) {
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithCGGlyphs:count:inFont:\0")), glyphs, count, in_font.raw());
     }
@@ -45528,8 +45578,14 @@ impl LayoutManager {
         rt::msg_void_id_id_id_id_range(this._obj, rt::sel(#str_ptr("setGlyphs:properties:characterIndexes:font:forGlyphRange:\0")), glyphs, properties, character_indexes, font.raw(), for_glyph_range);
     }
 
-    // SKIPPED `CGGlyphAtIndex:isValidIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `CGGlyphAtIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
+    fn c_g_glyph_at_index_is_valid_index(this, glyph_index: u64, is_valid_index: *u8) -> u16 {
+        return objc_msg_u16_u64_id(this._obj, rt::sel(#str_ptr("CGGlyphAtIndex:isValidIndex:\0")), glyph_index, is_valid_index);
+    }
+
+    fn c_g_glyph_at_index(this, glyph_index: u64) -> u16 {
+        return objc_msg_u16_u64(this._obj, rt::sel(#str_ptr("CGGlyphAtIndex:\0")), glyph_index);
+    }
+
     fn is_valid_glyph_index(this, glyph_index: u64) -> bool {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("isValidGlyphIndex:\0")), glyph_index) != (0 as i8);
     }
@@ -50399,8 +50455,18 @@ impl GlyphInfo {
 
     fn from_raw(ptr: *u8) -> GlyphInfo { return GlyphInfo { _obj: ptr }; }
 
-    // SKIPPED `glyphInfoWithCGGlyph:forFont:baseString:`: param `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `glyphID`: return `CGGlyph` — unmapped type `CGGlyph`
+    fn glyph_info_with_c_g_glyph(glyph: u16, for_font: Font, base_string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = objc_msg_id_u16_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithCGGlyph:forFont:baseString:\0")), glyph, for_font.raw(), bridge::nsstring(base_string));
+        if obj == { 0 as *u8 } {
+            return option::Option[GlyphInfo]::None;
+        }
+        return option::some(GlyphInfo { _obj: obj });
+    }
+
+    fn glyph_i_d(this) -> u16 {
+        return objc_msg_u16(this._obj, rt::sel(#str_ptr("glyphID\0")));
+    }
+
     fn base_string(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("baseString\0")));
         return bridge::to_text(ns);
