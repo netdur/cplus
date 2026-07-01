@@ -1806,6 +1806,19 @@ impl ObjcEmitter {
             self.mark_value_struct_used(base_ty);
             return Ret::Struct(self.cplus_type_name(base_ty));
         }
+        // Last resort: follow the typedef chain to a supported scalar / pointer.
+        match self.typedef_canon(base_ty) {
+            Some(TdCanon::I64) => return Ret::ScalarI64,
+            Some(TdCanon::U64) => return Ret::ScalarU64,
+            Some(TdCanon::F64) => return Ret::ScalarF64,
+            Some(TdCanon::F32) => return Ret::ScalarF32,
+            Some(TdCanon::I32) => return Ret::ScalarI32,
+            Some(TdCanon::U32) => return Ret::ScalarU32,
+            Some(TdCanon::Ptr) => {
+                return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) }
+            }
+            None => {}
+        }
         Ret::Unsupported(format!("unmapped type `{base_ty}`"))
     }
 
@@ -1897,6 +1910,19 @@ impl ObjcEmitter {
             self.mark_value_struct_used(base_ty);
             return Arg::Struct(self.cplus_type_name(base_ty), pname.to_string());
         }
+        // Last resort: follow the typedef chain to a supported scalar / pointer.
+        // Must mirror map_ret + param_sig_type so the wire type and the public
+        // signature never disagree.
+        match self.typedef_canon(base_ty) {
+            Some(TdCanon::I64) => return Arg::ScalarI64(pname.to_string()),
+            Some(TdCanon::U64) => return Arg::ScalarU64(pname.to_string()),
+            Some(TdCanon::F64) => return Arg::ScalarF64(pname.to_string()),
+            Some(TdCanon::F32) => return Arg::ScalarF32(pname.to_string()),
+            Some(TdCanon::I32) => return Arg::ScalarI32(pname.to_string()),
+            Some(TdCanon::U32) => return Arg::ScalarU32(pname.to_string()),
+            Some(TdCanon::Ptr) => return Arg::Id(pname.to_string()),
+            None => {}
+        }
         Arg::Unsupported(format!("unmapped type `{base_ty}`"))
     }
 
@@ -1956,8 +1982,53 @@ impl ObjcEmitter {
             // A by-value C struct (after the explicit scalar typedefs above, so
             // single-integer wrappers like MTLResourceID stay u64, matching map_arg).
             _ if self.value_structs.contains_key(b) => self.cplus_type_name(b),
-            _ => "*u8".to_string(),
+            // Last resort mirrors map_arg's typedef fallback so the public signature
+            // matches the wire type. Pointer typedefs (and unknown leaves) stay `*u8`.
+            _ => match self.typedef_canon(b) {
+                Some(TdCanon::I64) => "i64".to_string(),
+                Some(TdCanon::U64) => "u64".to_string(),
+                Some(TdCanon::F64) => "f64".to_string(),
+                Some(TdCanon::F32) => "f32".to_string(),
+                Some(TdCanon::I32) => "i32".to_string(),
+                Some(TdCanon::U32) => "u32".to_string(),
+                Some(TdCanon::Ptr) | None => "*u8".to_string(),
+            },
         }
+    }
+
+    /// Last-resort mapping for an otherwise-unmapped type: follow the Pass-1
+    /// typedef chain until it bottoms out in a scalar the rt:: shim zoo supports,
+    /// or any pointer (→ untyped `*u8` handle, like bare `id`). Returns None for
+    /// 8/16-bit scalars, function pointers, and unknown leaves — those stay
+    /// skipped rather than risk a wrong ABI width. Following the *declared*
+    /// underlying type (not a hardcoded name→width guess) keeps it C-ABI-correct
+    /// by construction: `NSLayoutPriority`→float→f32, `NSModalResponse`→NSInteger→i64,
+    /// `dispatch_queue_t`→`… *`→handle. Used as the tail of map_ret/map_arg/param_sig_type
+    /// so those three stay in lockstep.
+    fn typedef_canon(&self, base_ty: &str) -> Option<TdCanon> {
+        let mut cur = base_ty.trim().to_string();
+        for _ in 0..8 {
+            let c = cur.trim().trim_start_matches("const ").trim();
+            match c {
+                "NSInteger" | "long" | "long long" | "int64_t" | "ptrdiff_t" => return Some(TdCanon::I64),
+                "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => {
+                    return Some(TdCanon::U64)
+                }
+                "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => return Some(TdCanon::F64),
+                "float" => return Some(TdCanon::F32),
+                "int" | "int32_t" => return Some(TdCanon::I32),
+                "unsigned int" | "unsigned" | "uint32_t" => return Some(TdCanon::U32),
+                _ => {}
+            }
+            if c.ends_with('*') {
+                return Some(TdCanon::Ptr);
+            }
+            match self.typedefs.get(c) {
+                Some(u) => cur = u.trim().to_string(),
+                None => return None,
+            }
+        }
+        None
     }
 
     fn enum_of(&self, ty: &str) -> Option<String> {
@@ -2295,6 +2366,19 @@ fn read_int(node: &serde_json::Value) -> Option<i64> {
         None
     }
     node.get("inner").and_then(|x| x.as_array()).into_iter().flatten().find_map(search)
+}
+
+/// Canonical ABI kind an otherwise-unmapped typedef bottoms out in (see
+/// `ObjcEmitter::typedef_canon`). Only the widths the rt:: shim zoo models —
+/// `Ptr` is any pointer typedef, lowered to an untyped `*u8` handle.
+enum TdCanon {
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+    Ptr,
 }
 
 /// Mechanical C+ method name from a selector. Single-colon selectors keep their
@@ -2640,6 +2724,43 @@ mod tests {
         assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
+    }
+
+    #[test]
+    fn unmapped_scalar_and_pointer_typedefs_resolve_through_the_chain() {
+        // A method whose return/params are SDK typedefs the direct match doesn't
+        // know: they must follow the Pass-1 typedef chain to the declared underlying
+        // width (never a guessed one) — scalar typedefs to their scalar, pointer
+        // typedefs to an untyped `*u8` handle. An 8/16-bit typedef stays skipped.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "NSLayoutPriority", "type": { "qualType": "float" } },
+                { "kind": "TypedefDecl", "name": "NSModalResponse", "type": { "qualType": "NSInteger" } },
+                { "kind": "TypedefDecl", "name": "CGImageRef", "type": { "qualType": "struct CGImage *" } },
+                { "kind": "TypedefDecl", "name": "CGGlyph", "type": { "qualType": "unsigned short" } },
+                { "kind": "ObjCProtocolDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "priority", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSLayoutPriority" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "applyImage:response:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "image", "type": { "qualType": "CGImageRef" } },
+                        { "kind": "ParmVarDecl", "name": "response", "type": { "qualType": "NSModalResponse" } } ] },
+                    { "kind": "ObjCMethodDecl", "name": "glyphAt:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "g", "type": { "qualType": "CGGlyph" } }] },
+                ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Scalar typedef return -> f32 (float), via the chain.
+        assert!(out.contains("fn priority(this) -> f32"), "NSLayoutPriority->f32:\n{out}");
+        // Pointer typedef param -> *u8 handle; scalar typedef param -> i64 (shape void_id_i64).
+        assert!(out.contains("fn apply_image_response(this, image: *u8, response: i64)"),
+            "pointer + scalar typedef params:\n{out}");
+        assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
+        // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
+        assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
     }
 
     #[test]
