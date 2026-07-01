@@ -315,13 +315,18 @@ impl SharingServicePicker {
 
     fn from_raw(ptr: *u8) -> SharingServicePicker { return SharingServicePicker { _obj: ptr }; }
 
-    fn new(items: *u8) -> SharingServicePicker {
+    fn new_with_items(items: *u8) -> SharingServicePicker {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingServicePicker\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return SharingServicePicker { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItems:\0")), items) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> SharingServicePicker {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingServicePicker\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingServicePicker { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn show_relative_to_rect(this, rect: rt::Rect, of_view: View, preferred_edge: RectEdge) {
         rt::msg_void_rect_id_i64(this._obj, rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")), rect, of_view.raw(), rect_edge_raw(preferred_edge));
     }

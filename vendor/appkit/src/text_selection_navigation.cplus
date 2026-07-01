@@ -167,13 +167,16 @@ impl TextSelectionNavigation {
 
     fn from_raw(ptr: *u8) -> TextSelectionNavigation { return TextSelectionNavigation { _obj: ptr }; }
 
-    fn new(data_source: *u8) -> TextSelectionNavigation {
+    fn new_with_data_source(data_source: *u8) -> TextSelectionNavigation {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextSelectionNavigation\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextSelectionNavigation { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDataSource:\0")), data_source) };
     }
 
-    // SKIPPED `new`: method `new` already defined
+    fn new() -> TextSelectionNavigation {
+        return TextSelectionNavigation { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTextSelectionNavigation\0")), rt::sel(#str_ptr("new\0")))) };
+    }
+
     // SKIPPED `init`: `new` already defined (extra constructor)
     fn flush_layout_cache(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushLayoutCache\0")));

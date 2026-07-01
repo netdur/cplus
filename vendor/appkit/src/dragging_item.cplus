@@ -52,13 +52,18 @@ impl DraggingImageComponent {
         return DraggingImageComponent { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSDraggingImageComponent\0")), rt::sel(#str_ptr("draggingImageComponentWithKey:\0")), bridge::nsstring(key))) };
     }
 
-    fn new(key: str) -> DraggingImageComponent {
+    fn new_with_key(key: str) -> DraggingImageComponent {
         let cls: *u8 = rt::get_class(#str_ptr("NSDraggingImageComponent\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return DraggingImageComponent { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithKey:\0")), bridge::nsstring(key)) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> DraggingImageComponent {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDraggingImageComponent\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return DraggingImageComponent { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn key(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("key\0")));
         return bridge::to_text(ns);
@@ -100,13 +105,18 @@ impl DraggingItem {
 
     fn from_raw(ptr: *u8) -> DraggingItem { return DraggingItem { _obj: ptr }; }
 
-    fn new(pasteboard_writer: PasteboardWriting) -> DraggingItem {
+    fn new_with_pasteboard_writer(pasteboard_writer: PasteboardWriting) -> DraggingItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSDraggingItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return DraggingItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithPasteboardWriter:\0")), pasteboard_writer.raw()) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> DraggingItem {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDraggingItem\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return DraggingItem { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn set_dragging_frame_contents(this, frame: rt::Rect, contents: *u8) {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, contents);
     }

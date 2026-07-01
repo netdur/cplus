@@ -40,7 +40,7 @@ impl PreviewRepresentingActivityItem {
 
     fn from_raw(ptr: *u8) -> PreviewRepresentingActivityItem { return PreviewRepresentingActivityItem { _obj: ptr }; }
 
-    fn new(item: *u8, title: str, image: Image, icon: Image) -> PreviewRepresentingActivityItem {
+    fn new_with_item_title_image_icon(item: *u8, title: str, image: Image, icon: Image) -> PreviewRepresentingActivityItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSPreviewRepresentingActivityItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return PreviewRepresentingActivityItem { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithItem:title:image:icon:\0")), item, bridge::nsstring(title), image.raw(), icon.raw()) };
@@ -52,7 +52,12 @@ impl PreviewRepresentingActivityItem {
         return PreviewRepresentingActivityItem { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithItem:title:imageProvider:iconProvider:\0")), item, bridge::nsstring(title), image_provider.raw(), icon_provider.raw()) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> PreviewRepresentingActivityItem {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPreviewRepresentingActivityItem\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PreviewRepresentingActivityItem { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `new`: method `new` already defined
     fn drop(ref this) {
         rt::release(this._obj);

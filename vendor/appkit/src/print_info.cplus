@@ -91,7 +91,7 @@ impl PrintInfo {
 
     fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
 
-    fn new(attributes: string_map::StringMap[AnyObject]) -> PrintInfo {
+    fn new_with_dictionary(attributes: string_map::StringMap[AnyObject]) -> PrintInfo {
         let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
@@ -122,7 +122,12 @@ impl PrintInfo {
         return PrintInfo { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> PrintInfo {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PrintInfo { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn dictionary(this) -> string_map::StringMap[AnyObject] {
         let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dictionary\0")));
         let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));

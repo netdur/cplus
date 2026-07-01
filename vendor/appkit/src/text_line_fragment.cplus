@@ -28,7 +28,7 @@ impl TextLineFragment {
 
     fn from_raw(ptr: *u8) -> TextLineFragment { return TextLineFragment { _obj: ptr }; }
 
-    fn new(attributed_string: *u8, range: rt::Range) -> TextLineFragment {
+    fn new_with_attributed_string_range(attributed_string: *u8, range: rt::Range) -> TextLineFragment {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextLineFragment { _obj: rt::msg_id_id_range(alloced, rt::sel(#str_ptr("initWithAttributedString:range:\0")), attributed_string, range) };
@@ -41,7 +41,12 @@ impl TextLineFragment {
     }
 
     // SKIPPED `initWithString:attributes:range:`: init arg shape not yet modelled
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> TextLineFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLineFragment { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn draw_at_point(this, point: rt::Point, in_context: *u8) {
         rt::msg_void_point_id(this._obj, rt::sel(#str_ptr("drawAtPoint:inContext:\0")), point, in_context);
     }

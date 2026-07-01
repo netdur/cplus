@@ -52,7 +52,7 @@ impl MenuItemBadge {
         return MenuItemBadge { _obj: rt::retain(rt::msg_id_i64(rt::get_class(#str_ptr("NSMenuItemBadge\0")), rt::sel(#str_ptr("alertsWithCount:\0")), item_count)) };
     }
 
-    fn new(item_count: i64, type_: MenuItemBadgeType) -> MenuItemBadge {
+    fn new_with_count_type(item_count: i64, type_: MenuItemBadgeType) -> MenuItemBadge {
         let cls: *u8 = rt::get_class(#str_ptr("NSMenuItemBadge\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return MenuItemBadge { _obj: rt::msg_id_i64_i64(alloced, rt::sel(#str_ptr("initWithCount:type:\0")), item_count, menu_item_badge_type_raw(type_)) };
@@ -70,7 +70,12 @@ impl MenuItemBadge {
         return MenuItemBadge { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithString:\0")), bridge::nsstring(string)) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> MenuItemBadge {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMenuItemBadge\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return MenuItemBadge { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn item_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("itemCount\0")));
     }

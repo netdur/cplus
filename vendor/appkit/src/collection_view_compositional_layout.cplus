@@ -979,7 +979,7 @@ impl CollectionViewCompositionalLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewCompositionalLayout { return CollectionViewCompositionalLayout { _obj: ptr }; }
 
-    fn new(section: CollectionLayoutSection) -> CollectionViewCompositionalLayout {
+    fn new_with_section(section: CollectionLayoutSection) -> CollectionViewCompositionalLayout {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionViewCompositionalLayout\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return CollectionViewCompositionalLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithSection:\0")), section.raw()) };
@@ -999,7 +999,12 @@ impl CollectionViewCompositionalLayout {
     }
 
     // SKIPPED `initWithSectionProvider:configuration:`: params after the block not modelled
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> CollectionViewCompositionalLayout {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCollectionViewCompositionalLayout\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return CollectionViewCompositionalLayout { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `new`: method `new` already defined
     fn configuration(this) -> CollectionViewCompositionalLayoutConfiguration {
         return CollectionViewCompositionalLayoutConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("configuration\0"))));

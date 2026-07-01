@@ -34,7 +34,7 @@ impl SharingCollaborationModeRestriction {
 
     fn from_raw(ptr: *u8) -> SharingCollaborationModeRestriction { return SharingCollaborationModeRestriction { _obj: ptr }; }
 
-    fn new(disabled_mode: SharingCollaborationMode) -> SharingCollaborationModeRestriction {
+    fn new_with_disabled_mode(disabled_mode: SharingCollaborationMode) -> SharingCollaborationModeRestriction {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return SharingCollaborationModeRestriction { _obj: rt::msg_id_i64(alloced, rt::sel(#str_ptr("initWithDisabledMode:\0")), sharing_collaboration_mode_raw(disabled_mode)) };
@@ -43,7 +43,12 @@ impl SharingCollaborationModeRestriction {
     // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:`: init arg shape not yet modelled
     // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:`: init arg shape not yet modelled
     // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:alertRecoverySuggestionButtonTitle:alertRecoverySuggestionButtonLaunchURL:`: init arg shape not yet modelled
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> SharingCollaborationModeRestriction {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingCollaborationModeRestriction { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `new`: method `new` already defined
     fn disabled_mode(this) -> SharingCollaborationMode {
         return sharing_collaboration_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("disabledMode\0"))));

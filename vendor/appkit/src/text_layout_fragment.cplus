@@ -125,7 +125,7 @@ impl TextLayoutFragment {
 
     fn from_raw(ptr: *u8) -> TextLayoutFragment { return TextLayoutFragment { _obj: ptr }; }
 
-    fn new(text_element: TextElement, range_in_element: TextRange) -> TextLayoutFragment {
+    fn new_with_text_element_range(text_element: TextElement, range_in_element: TextRange) -> TextLayoutFragment {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextLayoutFragment\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextLayoutFragment { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithTextElement:range:\0")), text_element.raw(), range_in_element.raw()) };
@@ -137,7 +137,12 @@ impl TextLayoutFragment {
         return TextLayoutFragment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> TextLayoutFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLayoutFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLayoutFragment { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn text_line_fragment_for_vertical_offset(this, vertical_offset: f64, requires_exact_match: bool) -> option::Option[TextLineFragment] {
         let obj: *u8 = rt::msg_id_f64_i8(this._obj, rt::sel(#str_ptr("textLineFragmentForVerticalOffset:requiresExactMatch:\0")), vertical_offset, requires_exact_match as i8);
         if obj == { 0 as *u8 } {

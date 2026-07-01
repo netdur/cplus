@@ -88,7 +88,7 @@ impl TouchBarItem {
 
     fn from_raw(ptr: *u8) -> TouchBarItem { return TouchBarItem { _obj: ptr }; }
 
-    fn new(identifier: str) -> TouchBarItem {
+    fn new_with_identifier(identifier: str) -> TouchBarItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSTouchBarItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TouchBarItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), bridge::nsstring(identifier)) };
@@ -100,7 +100,12 @@ impl TouchBarItem {
         return TouchBarItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> TouchBarItem {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTouchBarItem\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TouchBarItem { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn identifier(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
         return bridge::to_text(ns);

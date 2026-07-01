@@ -40,13 +40,18 @@ impl WritingToolsCoordinatorContext {
 
     fn from_raw(ptr: *u8) -> WritingToolsCoordinatorContext { return WritingToolsCoordinatorContext { _obj: ptr }; }
 
-    fn new(attributed_string: AttributedString, range: rt::Range) -> WritingToolsCoordinatorContext {
+    fn new_with_attributed_string_range(attributed_string: AttributedString, range: rt::Range) -> WritingToolsCoordinatorContext {
         let cls: *u8 = rt::get_class(#str_ptr("NSWritingToolsCoordinatorContext\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return WritingToolsCoordinatorContext { _obj: rt::msg_id_id_range(alloced, rt::sel(#str_ptr("initWithAttributedString:range:\0")), attributed_string.raw(), range) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> WritingToolsCoordinatorContext {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWritingToolsCoordinatorContext\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WritingToolsCoordinatorContext { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn attributed_string(this) -> AttributedString {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }

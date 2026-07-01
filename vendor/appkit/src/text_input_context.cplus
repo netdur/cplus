@@ -29,13 +29,18 @@ impl TextInputContext {
 
     fn from_raw(ptr: *u8) -> TextInputContext { return TextInputContext { _obj: ptr }; }
 
-    fn new(client: *u8) -> TextInputContext {
+    fn new_with_client(client: *u8) -> TextInputContext {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextInputContext\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextInputContext { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithClient:\0")), client) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> TextInputContext {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextInputContext\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextInputContext { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn activate(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("activate\0")));
     }

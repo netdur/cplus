@@ -111,13 +111,18 @@ impl Toolbar {
 
     fn from_raw(ptr: *u8) -> Toolbar { return Toolbar { _obj: ptr }; }
 
-    fn new(identifier: str) -> Toolbar {
+    fn new_with_identifier(identifier: str) -> Toolbar {
         let cls: *u8 = rt::get_class(#str_ptr("NSToolbar\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return Toolbar { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), bridge::nsstring(identifier)) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> Toolbar {
+        let cls: *u8 = rt::get_class(#str_ptr("NSToolbar\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Toolbar { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn insert_item_with_item_identifier(this, item_identifier: str, at_index: i64) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithItemIdentifier:atIndex:\0")), bridge::nsstring(item_identifier), at_index);
     }

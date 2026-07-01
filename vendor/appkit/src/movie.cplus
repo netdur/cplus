@@ -28,13 +28,18 @@ impl Movie {
 
     fn from_raw(ptr: *u8) -> Movie { return Movie { _obj: ptr }; }
 
-    fn new(coder: *u8) -> Movie {
+    fn new_with_coder(coder: *u8) -> Movie {
         let cls: *u8 = rt::get_class(#str_ptr("NSMovie\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return Movie { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> Movie {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMovie\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Movie { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn new_with_movie(movie: QTMovie) -> Movie {
         let cls: *u8 = rt::get_class(#str_ptr("NSMovie\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

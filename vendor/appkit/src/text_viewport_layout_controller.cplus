@@ -53,13 +53,16 @@ impl TextViewportLayoutController {
 
     fn from_raw(ptr: *u8) -> TextViewportLayoutController { return TextViewportLayoutController { _obj: ptr }; }
 
-    fn new(text_layout_manager: TextLayoutManager) -> TextViewportLayoutController {
+    fn new_with_text_layout_manager(text_layout_manager: TextLayoutManager) -> TextViewportLayoutController {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextViewportLayoutController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextViewportLayoutController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTextLayoutManager:\0")), text_layout_manager.raw()) };
     }
 
-    // SKIPPED `new`: method `new` already defined
+    fn new() -> TextViewportLayoutController {
+        return TextViewportLayoutController { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTextViewportLayoutController\0")), rt::sel(#str_ptr("new\0")))) };
+    }
+
     // SKIPPED `init`: `new` already defined (extra constructor)
     fn layout_viewport(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("layoutViewport\0")));

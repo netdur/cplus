@@ -29,13 +29,18 @@ impl TextCheckingController {
 
     fn from_raw(ptr: *u8) -> TextCheckingController { return TextCheckingController { _obj: ptr }; }
 
-    fn new(client: *u8) -> TextCheckingController {
+    fn new_with_client(client: *u8) -> TextCheckingController {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextCheckingController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextCheckingController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithClient:\0")), client) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new() -> TextCheckingController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextCheckingController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextCheckingController { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn invalidate(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidate\0")));
     }
