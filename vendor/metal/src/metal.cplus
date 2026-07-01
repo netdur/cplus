@@ -3510,6 +3510,17 @@ struct Viewport {
     zfar: f64,
 }
 
+// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).
+// Non-owning; the caller manages lifetime.
+struct AnyObject {
+    opaque _obj: *u8,
+}
+
+impl AnyObject {
+    fn raw(this) -> *u8 { return this._obj; }
+    fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }
+}
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_AccelerationStructureSizes_id(recv: *u8, sel: *u8, a0: *u8) -> AccelerationStructureSizes;
 #[link_name = "objc_msgSend"]
@@ -5038,8 +5049,46 @@ impl CompileOptions {
 
     fn from_raw(ptr: *u8) -> CompileOptions { return CompileOptions { _obj: ptr }; }
 
-    // SKIPPED `preprocessorMacros`: return `NSDictionary<NSString *,NSObject *> * _Nullable` — NSDictionary value `NSObject *` not modelled (NSString / NSNumber / non-owning object[array])
-    // SKIPPED `setPreprocessorMacros:`: param `NSDictionary<NSString *,NSObject *> * _Nullable` — generic collection
+    fn preprocessor_macros(this) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("preprocessorMacros\0")));
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_preprocessor_macros(this, preprocessor_macros: string_map::StringMap[AnyObject]) {
+        let dict_preprocessor_macros: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_preprocessor_macros: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_preprocessor_macros: usize = preprocessor_macros.slot_capacity();
+        var dsi_preprocessor_macros: usize = 0 as usize;
+        while dsi_preprocessor_macros < dcap_preprocessor_macros {
+            match preprocessor_macros.value_ptr_at_slot(dsi_preprocessor_macros) {
+                option::Option[*AnyObject]::Some(dvp_preprocessor_macros) => {
+                    match preprocessor_macros.key_ptr_at_slot(dsi_preprocessor_macros) {
+                        option::Option[*text::Text]::Some(dkp_preprocessor_macros) => {
+                    let dval_preprocessor_macros: *u8 = (*dvp_preprocessor_macros).raw();
+                            rt::msg_void_id_id(dict_preprocessor_macros, dset_preprocessor_macros, dval_preprocessor_macros, bridge::nsstring((*dkp_preprocessor_macros).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_preprocessor_macros = dsi_preprocessor_macros +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPreprocessorMacros:\0")), dict_preprocessor_macros);
+    }
+
     fn fast_math_enabled(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("fastMathEnabled\0"))) != (0 as i8);
     }
