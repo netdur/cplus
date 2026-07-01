@@ -66,6 +66,10 @@ pub struct ObjcEmitter {
     // Kept separate from `seen_types` so the class/protocol disambiguator is not
     // tricked into renaming a type against its own pre-registration.
     known_types: HashSet<String>,
+    // ObjC lightweight-generic type-parameter names (`ItemIdentifierType`,
+    // `SectionIdentifierType`, `CandidateType`, ...) declared on any class. These
+    // are type-erased to `id` at the ABI level, so they bind as object handles.
+    type_params: HashSet<String>,
     // Wrapper names whose handle is NON-OWNING (`opaque`, no `drop`): every
     // non-delegate protocol (Metal objects are +0-borrowed) plus every interface
     // with no `init` (factory/singleton classes). An object array — `NSArray<id<P>>`
@@ -348,6 +352,7 @@ impl ObjcEmitter {
             method_plan: HashMap::new(),
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
+            type_params: HashSet::new(),
             non_owning_types: HashSet::new(),
             owning_types: HashSet::new(),
             value_structs: HashMap::new(),
@@ -418,6 +423,21 @@ impl ObjcEmitter {
                     }
                 }
                 Some("EnumDecl") => self.collect_enum(decl),
+                // `@interface Foo<A, B> : NSObject` — the `ObjCTypeParamDecl` children
+                // name the lightweight-generic type parameters. Collect them module-wide
+                // (the names are class-scoped in ObjC but globally distinctive here) so a
+                // method using one as a type resolves it to an erased object handle.
+                Some("ObjCInterfaceDecl") => {
+                    if let Some(members) = decl.get("inner").and_then(|v| v.as_array()) {
+                        for m in members {
+                            if m.get("kind").and_then(|k| k.as_str()) == Some("ObjCTypeParamDecl") {
+                                if let Some(n) = m.get("name").and_then(|v| v.as_str()) {
+                                    self.type_params.insert(n.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             prev_record = if kind == Some("RecordDecl") { Some(decl) } else { None };
@@ -2409,6 +2429,16 @@ impl ObjcEmitter {
             let typed = self.typed_object(base_ty);
             return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
         }
+        // An erased generic type parameter is an object handle (id).
+        if self.is_type_param(base_ty) {
+            return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) };
+        }
+        // A non-collection generic-class instance (`NSDiffableDataSourceSnapshot<S,I> *`)
+        // -> erase the generic args and resolve the base class.
+        if let Some(erased) = self.degeneric(base_ty) {
+            let typed = self.typed_object(&erased);
+            return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
+        }
         if base_ty.contains('<') {
             return Ret::Unsupported("generic collection".into());
         }
@@ -2571,6 +2601,18 @@ impl ObjcEmitter {
                 }
             }
         }
+        // An erased generic type parameter is an object handle (id).
+        if self.is_type_param(base_ty) {
+            return Arg::Id(pname.to_string());
+        }
+        // A non-collection generic-class instance -> erase the generic args; a typed
+        // wrapper param passes `.raw()`, an unresolved one the raw handle.
+        if let Some(erased) = self.degeneric(base_ty) {
+            if self.typed_object(&erased).is_some() {
+                return Arg::Id(format!("{pname}.raw()"));
+            }
+            return Arg::Id(pname.to_string());
+        }
         if base_ty.contains('<') {
             return Arg::Unsupported("generic collection".into());
         }
@@ -2674,6 +2716,17 @@ impl ObjcEmitter {
         // never disagree.
         if let Some(name) = self.typed_object(b) {
             return name;
+        }
+        // Erased generic type parameter -> object handle; generic-class instance ->
+        // the base-class wrapper (mirrors map_arg so the signature matches the wire).
+        if self.is_type_param(b) {
+            return "*u8".to_string();
+        }
+        if let Some(erased) = self.degeneric(b) {
+            if let Some(name) = self.typed_object(&erased) {
+                return name;
+            }
+            return "*u8".to_string();
         }
         match b {
             "NSInteger" | "long" | "long long" | "int64_t" => "i64".to_string(),
@@ -2895,17 +2948,49 @@ impl ObjcEmitter {
         t == "id" || t == "NSObject *" || t == "NSObject*"
     }
 
-    /// `NSArray<id>` / `NSArray<Class>` / `NSArray<NSObject *>` — an array whose
-    /// element has no concrete wrapper. Bridges to `Vec[AnyObject]` (opaque handles;
-    /// `Class` is a valid `id`). Distinct from the typed-wrapper ObjectArray path.
+    /// `NSArray<id>` / `NSArray<Class>` / `NSArray<NSObject *>` / `NSArray<TypeParam>`
+    /// — an array whose element has no concrete wrapper. Bridges to `Vec[AnyObject]`
+    /// (opaque handles; `Class` is a valid `id`; an erased generic param is `id`).
     fn is_any_object_array(&self, ty: &str) -> bool {
         match array_element(ty) {
             Some(elem) => {
                 let e = elem.trim();
-                self.is_untyped_object(e) || e == "Class"
+                self.is_untyped_object(e) || e == "Class" || self.is_type_param(e)
             }
             None => false,
         }
+    }
+
+    /// An ObjC lightweight-generic type-parameter name (`ItemIdentifierType`, ...).
+    /// Type-erased to `id`, so it binds as an object handle wherever it appears.
+    fn is_type_param(&self, b: &str) -> bool {
+        self.type_params.contains(b.trim())
+    }
+
+    /// Erase the generic argument list from a non-collection generic-class pointer:
+    /// `NSDiffableDataSourceSnapshot<S,I> *` -> `NSDiffableDataSourceSnapshot *` (then
+    /// resolved as an ordinary object). Also erases a protocol qualifier on a class
+    /// (`NSObject<NSCopying> *` -> `NSObject *`). None for a bare type, an `id<..>`, or
+    /// a collection (NSArray/NSSet/NSDictionary — those have dedicated bridges).
+    fn degeneric(&self, b: &str) -> Option<String> {
+        let t = b.trim();
+        if !t.ends_with('*') {
+            return None;
+        }
+        let lt = t.find('<')?;
+        let name = t[..lt].trim();
+        if name.is_empty()
+            || name == "id"
+            || name.starts_with("NSArray")
+            || name.starts_with("NSMutableArray")
+            || name.starts_with("NSSet")
+            || name.starts_with("NSMutableSet")
+            || name.starts_with("NSDictionary")
+            || name.starts_with("NSMutableDictionary")
+        {
+            return None;
+        }
+        Some(format!("{name} *"))
     }
 
     fn is_nsnumber(&self, ty: &str) -> bool {
@@ -4853,6 +4938,42 @@ mod tests {
         assert!(out.contains("fn read_items(this, items: vec::Vec[AnyObject])"), "id-array param:\n{out}");
         assert!(out.contains("option::Option[*AnyObject]::Some(e_classes) => { rt::msg_void_id(arr_classes, add_sel_classes, (*e_classes).raw()); }"), "handle read:\n{out}");
         assert!(!out.contains("// SKIPPED `allowedClasses`") && !out.contains("// SKIPPED `readItems:`"), "no generic-collection skip:\n{out}");
+    }
+
+    #[test]
+    fn objc_generic_type_params_erase_to_object_handles() {
+        // ObjC lightweight generics are type-erased to `id`: a bare type parameter is
+        // an object handle (*u8), `NSArray<TypeParam>` is Vec[AnyObject], and a generic
+        // class instance `Snapshot<S,I> *` erases to its base-class wrapper.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSDiffableDataSourceSnapshot", "loc": { "file": "test.h" },
+                  "inner": [
+                    { "kind": "ObjCTypeParamDecl", "name": "SectionIdentifierType" },
+                    { "kind": "ObjCTypeParamDecl", "name": "ItemIdentifierType" },
+                    { "kind": "ObjCMethodDecl", "name": "itemIdentifiers", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<ItemIdentifierType> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "appendItemsWithIdentifiers:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "identifiers", "type": { "qualType": "NSArray<ItemIdentifierType> * _Nonnull" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "indexOfItemIdentifier:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSInteger" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "identifier", "type": { "qualType": "ItemIdentifierType _Nonnull" } }] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSDataSource", "loc": { "file": "test.h" },
+                  "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "snapshot", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // NSArray<TypeParam> -> Vec[AnyObject] (return + param).
+        assert!(out.contains("fn item_identifiers(this) -> vec::Vec[AnyObject]"), "type-param array return:\n{out}");
+        assert!(out.contains("fn append_items_with_identifiers(this, identifiers: vec::Vec[AnyObject])"), "type-param array param:\n{out}");
+        // Bare type parameter -> *u8 object handle.
+        assert!(out.contains("fn index_of_item_identifier(this, identifier: *u8) -> i64"), "bare type-param:\n{out}");
+        // Generic class instance -> the erased base-class wrapper.
+        assert!(out.contains("fn snapshot(this) -> DiffableDataSourceSnapshot"), "generic-class erasure:\n{out}");
+        assert!(!out.contains("unmapped type `ItemIdentifierType`") && !out.contains("// SKIPPED `snapshot`"), "no placeholder skips:\n{out}");
     }
 
     #[test]
