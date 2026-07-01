@@ -235,6 +235,10 @@ enum Arg {
     // NSDictionary<NSString *, V> param built from StringMap[V] (V = Text / non-owning
     // wrapper / non-owning-elem NSArray). `vty` is the StringMap value C+ type.
     DictMap { val: MapVal, vty: String, pname: String },
+    // NSSet<NSString *> (or NSString-typedef element) param built from a StringSet:
+    // the reverse of the TextSet return bridge. Prologue folds the set's elements into
+    // an NSMutableArray, then `[NSSet setWithArray:]`.
+    TextSetParam { pname: String },
     Unsupported(String),
 }
 
@@ -1380,8 +1384,9 @@ impl ObjcEmitter {
         // A param whose value is built by the general-path prologue (arr_<pname> /
         // dict_<pname>). The returns-self and collection-return paths don't build it,
         // so pairing one with such a param would dangle -> skip those combos.
-        let has_collection_param =
-            args.iter().any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. }));
+        let has_collection_param = args
+            .iter()
+            .any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. }));
         if is_init {
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
@@ -1802,7 +1807,10 @@ impl ObjcEmitter {
         }
         // The block path doesn't build the collection prologue, so an NSArray<id> /
         // NSDictionary leading param would reference an undefined arr_/dict_ local.
-        if send_args.iter().any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. })) {
+        if send_args
+            .iter()
+            .any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. }))
+        {
             self.body.push_str(&format!(
                 "    // SKIPPED `{sel}`: block method with a built-collection param not modelled\n"
             ));
@@ -2267,6 +2275,13 @@ impl ObjcEmitter {
                 }
             }
         }
+        // NSSet<NSString *> param -> built from a StringSet (the reverse of the TextSet
+        // return bridge). Only string elements bridge faithfully — object-wrapper /
+        // scalar sets have no `HashSet`/`StringSet` element (not Copy/Hash/Eq).
+        if self.is_string_set(base_ty) {
+            self.needs_string_set = true;
+            return Arg::TextSetParam { pname: pname.to_string() };
+        }
         if base_ty.contains('<') {
             return Arg::Unsupported("generic collection".into());
         }
@@ -2335,6 +2350,10 @@ impl ObjcEmitter {
                     return format!("string_map::StringMap[{vty}]");
                 }
             }
+        }
+        // NSSet<NSString *> param -> StringSet (same gate as map_arg).
+        if self.is_string_set(b) {
+            return "string_set::StringSet".to_string();
         }
         if let Some(objc_enum) = self.enum_of(b) {
             let info = self.enums.get(&objc_enum).unwrap();
@@ -2654,6 +2673,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::Struct(name, _) => name.clone(),
         Arg::IdArray { .. } => "id".into(), // the built NSArray is an id on the wire
         Arg::DictMap { .. } => "id".into(), // the built NSDictionary is an id on the wire
+        Arg::TextSetParam { .. } => "id".into(), // the built NSSet is an id on the wire
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2703,9 +2723,10 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::Point(e)
         | Arg::Size(e)
         | Arg::Struct(_, e) => e.clone(),
-        // The NSMutableArray / NSMutableDictionary built in the method prologue.
+        // The NSMutableArray / NSMutableDictionary / NSSet built in the method prologue.
         Arg::IdArray { pname, .. } => format!("arr_{pname}"),
         Arg::DictMap { pname, .. } => format!("dict_{pname}"),
+        Arg::TextSetParam { pname } => format!("set_{pname}"),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2984,6 +3005,27 @@ fn build_id_array_prologue(args: &[Arg]) -> String {
                  \x20           }}\n\
                  \x20           dsi_{pname} = dsi_{pname} +% (1 as usize);\n\
                  \x20       }}\n"
+            ));
+        }
+        if let Arg::TextSetParam { pname } = a {
+            // Reverse of the TextSet return bridge: fold the StringSet's elements
+            // (slot-iteration, table order) into an NSMutableArray, then snapshot it
+            // as an immutable NSSet via `+setWithArray:`. The prologue borrow-reads
+            // each element through `element_ptr_at_slot` (never moving/dropping it);
+            // `addObject:` takes its own +1 retain, so the caller's set is untouched.
+            prologue.push_str(&format!(
+                "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                 \x20       let sadd_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                 \x20       let scap_{pname}: usize = {pname}.slot_capacity();\n\
+                 \x20       var ssi_{pname}: usize = 0 as usize;\n\
+                 \x20       while ssi_{pname} < scap_{pname} {{\n\
+                 \x20           match {pname}.element_ptr_at_slot(ssi_{pname}) {{\n\
+                 \x20               option::Option[*text::Text]::Some(sep_{pname}) => {{ rt::msg_void_id(arr_{pname}, sadd_{pname}, bridge::nsstring((*sep_{pname}).view())); }}\n\
+                 \x20               option::Option[*text::Text]::None => {{}}\n\
+                 \x20           }}\n\
+                 \x20           ssi_{pname} = ssi_{pname} +% (1 as usize);\n\
+                 \x20       }}\n\
+                 \x20       let set_{pname}: *u8 = rt::msg_id_id(rt::get_class(#str_ptr(\"NSSet\\0\")), rt::sel(#str_ptr(\"setWithArray:\\0\")), arr_{pname});\n"
             ));
         }
     }
@@ -4162,6 +4204,37 @@ mod tests {
         assert!(out.contains(r#"rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")))"#), "allObjects hop:\n{out}");
         assert!(out.contains("let _st: status::Status = out.insert(bridge::to_text(value));"), "insert bridged Text:\n{out}");
         assert!(!out.contains("// SKIPPED `tags`"), "no generic-collection skip:\n{out}");
+    }
+
+    #[test]
+    fn nsset_of_strings_param_builds_from_a_string_set() {
+        // Reverse of the TextSet return bridge: an `NSSet<NSString *>` param (and an
+        // NSString-typedef element) is built from a StringSet — fold the elements into
+        // an NSMutableArray via slot-iteration, then `[NSSet setWithArray:]`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "NSToolbarItemIdentifier", "type": { "qualType": "NSString *" } },
+                { "kind": "ObjCInterfaceDecl", "name": "NSToolbar", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setKeywords:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "keywords", "type": { "qualType": "NSSet<NSString *> * _Nonnull" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "setCenteredItemIdentifiers:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "identifiers", "type": { "qualType": "NSSet<NSToolbarItemIdentifier> *" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("import \"stdlib/string_set\" as string_set;"), "string_set import:\n{out}");
+        // Public signature takes a StringSet by value (same convention as StringMap params).
+        assert!(out.contains("fn set_keywords(this, keywords: string_set::StringSet)"), "StringSet param sig:\n{out}");
+        // The typedef element resolves to NSString too.
+        assert!(out.contains("fn set_centered_item_identifiers(this, identifiers: string_set::StringSet)"), "typedef-element param:\n{out}");
+        // Prologue: slot-iterate the set, bridge each Text to an NSString, addObject:,
+        // then snapshot the mutable array as an immutable NSSet.
+        assert!(out.contains("match keywords.element_ptr_at_slot(ssi_keywords)"), "slot iteration:\n{out}");
+        assert!(out.contains("rt::msg_void_id(arr_keywords, sadd_keywords, bridge::nsstring((*sep_keywords).view()))"), "element bridge + addObject:\n{out}");
+        assert!(out.contains(r#"let set_keywords: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_keywords);"#), "setWithArray: snapshot:\n{out}");
+        assert!(!out.contains("// SKIPPED `setKeywords:`"), "no generic-collection skip:\n{out}");
     }
 
     #[test]
