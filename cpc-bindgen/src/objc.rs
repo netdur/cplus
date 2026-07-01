@@ -37,6 +37,7 @@ pub struct ObjcEmitter {
     block_helpers: String,
     needs_vec: bool,
     needs_string_map: bool,
+    needs_any_object: bool,
     needs_synth: bool,
     synth_key: u64,
     typedefs: HashMap<String, String>,
@@ -188,6 +189,7 @@ impl ObjcEmitter {
             block_helpers: String::new(),
             needs_vec: false,
             needs_string_map: false,
+            needs_any_object: false,
             needs_synth: false,
             synth_key: 0x7000,
             typedefs: HashMap::new(),
@@ -409,6 +411,21 @@ impl ObjcEmitter {
             }
         }
         out.push_str(&self.render_value_structs());
+        if self.needs_any_object {
+            // An untyped Objective-C object handle, for `id` / `NSObject *` values in
+            // collections (whose concrete type has no binding). Non-owning: `opaque`,
+            // no drop. This is the wrapper that makes StringMap[AnyObject] / Vec[
+            // AnyObject] possible where a raw `*u8` value is rejected as a generic arg.
+            out.push_str(
+                "// Untyped Objective-C object handle (`id` / `NSObject *` with no bound type).\n\
+                 // Non-owning; the caller manages lifetime.\n\
+                 struct AnyObject {\n    opaque _obj: *u8,\n}\n\n\
+                 impl AnyObject {\n\
+                 \x20   fn raw(this) -> *u8 { return this._obj; }\n\
+                 \x20   fn from_raw(ptr: *u8) -> AnyObject { return AnyObject { _obj: ptr }; }\n\
+                 }\n\n",
+            );
+        }
         out.push_str(&self.render_struct_shims());
         out.push_str(&self.block_helpers);
         out.push_str(&self.body);
@@ -1881,8 +1898,14 @@ impl ObjcEmitter {
                     return Ret::TextMap(MapVal::Object(w));
                 }
             }
+            // A bare `id` / `NSObject *` value -> the untyped AnyObject handle.
+            if self.is_untyped_object(&v) {
+                self.needs_string_map = true;
+                self.needs_any_object = true;
+                return Ret::TextMap(MapVal::Object("AnyObject".to_string()));
+            }
             return Ret::Unsupported(format!(
-                "NSDictionary value `{v}` not modelled (NSString / NSNumber / non-owning object[array])"
+                "NSDictionary value `{v}` not modelled (NSString / NSNumber / object[array])"
             ));
         }
         // A protocol-qualified id (`id<MTLDevice>`, `id<A,B>`) is an ordinary ObjC
@@ -2010,6 +2033,9 @@ impl ObjcEmitter {
                     self.needs_string_map = true;
                     if matches!(val, MapVal::ObjectArray(_)) {
                         self.needs_vec = true;
+                    }
+                    if vty == "AnyObject" {
+                        self.needs_any_object = true;
                     }
                     return Arg::DictMap { val, vty, pname: pname.to_string() };
                 }
@@ -2264,7 +2290,19 @@ impl ObjcEmitter {
                 return Some((MapVal::Object(w.clone()), w));
             }
         }
+        // A bare `id` / `NSObject *` value has no concrete wrapper -> the untyped
+        // AnyObject handle. (Caller sets needs_any_object.)
+        if self.is_untyped_object(v) {
+            return Some((MapVal::Object("AnyObject".to_string()), "AnyObject".to_string()));
+        }
         None
+    }
+
+    /// A bare untyped Objective-C object spelling (`id` / `NSObject *`) — no concrete
+    /// wrapper, so it bridges through the AnyObject handle.
+    fn is_untyped_object(&self, v: &str) -> bool {
+        let t = v.trim();
+        t == "id" || t == "NSObject *" || t == "NSObject*"
     }
 
     fn is_nsnumber(&self, ty: &str) -> bool {
@@ -3042,6 +3080,24 @@ mod tests {
         assert!(out.contains("constants.slot_capacity()"), "enumerates the map:\n{out}");
         assert!(out.contains("let dval_constants: *u8 = (*dvp_constants).raw();"), "value handle read:\n{out}");
         assert!(out.contains("setObject:forKey:"), "setObject:forKey::\n{out}");
+    }
+
+    #[test]
+    fn string_dict_with_untyped_object_value_binds_via_any_object() {
+        // NSDictionary<NSString *, NSObject *> (generic `id` value, no wrapper) binds
+        // to StringMap[AnyObject] — a raw `*u8` value would be rejected as a generic
+        // arg, but the opaque AnyObject handle works. Emits the AnyObject wrapper once.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "macros", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSDictionary<NSString *,NSObject *> * _Nullable" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct AnyObject {"), "AnyObject wrapper emitted:\n{out}");
+        assert!(out.contains("fn macros(this) -> string_map::StringMap[AnyObject]"), "id-dict -> StringMap[AnyObject]:\n{out}");
+        assert!(out.contains("AnyObject::from_raw(nsval)"), "value wrapped via AnyObject:\n{out}");
     }
 
     #[test]
