@@ -6170,6 +6170,17 @@ fn haptic_feedback_pattern_from_raw(raw: i64) -> HapticFeedbackPattern {
 const text_content_manager_enumeration_options_none: u64 = 0 as u64;
 const text_content_manager_enumeration_options_reverse: u64 = 1 as u64;
 
+// `CGAffineTransform` — by-value C struct.
+#[repr(C)]
+struct CGAffineTransform {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    tx: f64,
+    ty: f64,
+}
+
 // `NSAffineTransformStruct` — by-value C struct.
 #[repr(C)]
 struct AffineTransformStruct {
@@ -6354,6 +6365,8 @@ extern fn objc_msg_void_id_i8_id(recv: *u8, sel: *u8, a0: *u8, a1: i8, a2: *u8);
 extern fn objc_msg_void_id_id_f64_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: f64, a3: *u8, a4: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_i64_id_CGAffineTransform_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8, a4: CGAffineTransform, a5: *u8, a6: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_i8_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i8, a3: *u8);
 #[link_name = "objc_msgSend"]
@@ -46307,7 +46320,29 @@ impl LayoutManager {
         rt::msg_void_range_point(this._obj, rt::sel(#str_ptr("drawGlyphsForGlyphRange:atPoint:\0")), glyphs_to_show, at_point);
     }
 
-    // SKIPPED `showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:`: param `CGAffineTransform` — unmapped type `CGAffineTransform`
+    fn show_c_g_glyphs(this, glyphs: *u8, positions: *u8, count: i64, font: Font, text_matrix: CGAffineTransform, attributes: string_map::StringMap[AnyObject], in_context: *u8) {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        objc_msg_void_id_id_i64_id_CGAffineTransform_id_id(this._obj, rt::sel(#str_ptr("showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:\0")), glyphs, positions, count, font.raw(), text_matrix, dict_attributes, in_context);
+    }
+
     fn fill_background_rect_array(this, rect_array: *u8, count: u64, for_character_range: rt::Range, color: Color) {
         rt::msg_void_id_u64_range_id(this._obj, rt::sel(#str_ptr("fillBackgroundRectArray:count:forCharacterRange:color:\0")), rect_array, count, for_character_range, color.raw());
     }
