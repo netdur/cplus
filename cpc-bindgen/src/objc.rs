@@ -47,6 +47,15 @@ pub struct ObjcEmitter {
     // can collapse to one C+ name (`-open` / `-open:`, `-init` / `+new`); C+ has no
     // overloading, so the second becomes a SKIP rather than a duplicate-method error.
     seen_methods: HashSet<String>,
+    // Per-class method-name plan honoring naming_guideline.md: selector ->
+    // (emitted method name, positional-arg count `k`). Each method claims the
+    // shortest leading selector-segment prefix that is still free as its base
+    // name; the remaining segments become argument labels (params `[0,k)` are
+    // positional, `[k,n)` are labeled). Shorter selectors are assigned first so
+    // they win the cleaner names. This guarantees class-wide unique names (C+ has
+    // no overloading) while keeping the idiomatic `base(label:, ...)` form wherever
+    // the base is unambiguous. Recomputed per class alongside `seen_methods`.
+    method_plan: HashMap<String, (String, usize)>,
     // Emitted struct / type names. A class and a protocol can share a name
     // (NSObject, NSTextAttachmentCell); the later one is renamed, not duplicated.
     seen_types: HashSet<String>,
@@ -196,6 +205,7 @@ impl ObjcEmitter {
             enums: HashMap::new(),
             used_enums: Vec::new(),
             seen_methods: HashSet::new(),
+            method_plan: HashMap::new(),
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
             non_owning_types: HashSet::new(),
@@ -815,6 +825,23 @@ impl ObjcEmitter {
             .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
             .find(|s| *s == "init" || s.starts_with("initWith"))
             .map(String::from);
+
+        // Plan the non-init method names against a reserved set of everything that
+        // shares this impl's name scope but is NOT planned here: `raw`/`from_raw`,
+        // `drop`, and every constructor name (`new` / `new_with_*`).
+        let mut reserved = self.seen_methods.clone();
+        for m in &methods {
+            let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if sel == "init" || sel.starts_with("initWith") {
+                if primary_init.as_deref() == Some(sel) {
+                    reserved.insert("new".to_string());
+                } else {
+                    reserved.insert(ctor_name(sel));
+                }
+            }
+        }
+        self.method_plan = plan_method_names(&methods, &reserved);
+
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let is_init = sel == "init" || sel.starts_with("initWith");
@@ -884,6 +911,7 @@ impl ObjcEmitter {
         self.seen_methods.clear();
         self.seen_methods.insert("raw".to_string());
         self.seen_methods.insert("from_raw".to_string());
+        self.method_plan = plan_method_names(&methods, &self.seen_methods.clone());
         for m in &methods {
             self.emit_method(m, &objc_name, &ty, false, false, None);
         }
@@ -1189,13 +1217,32 @@ impl ObjcEmitter {
             return;
         }
 
+        // Idiomatic naming (naming_guideline.md — "read as a grammatical phrase",
+        // "omit needless words"): the per-class plan assigns this selector a base
+        // name (the shortest free leading-segment prefix) and a positional-arg count
+        // `k`; params `[0,k)` are folded into that base name and stay positional,
+        // params `[k,n)` become labeled by their selector segment. So
+        // `setBuffer:offset:atIndex:` reads `set_buffer(b, offset: 0, at_index: 2)`
+        // instead of the segment-joined `set_buffer_offset_at_index`. Init selectors
+        // aren't planned (they take the ctor path); `positional = MAX` then leaves
+        // every param on its AST name, exactly as before.
+        let segments = selector_segments(&sel);
+        let planned = self.method_plan.get(&sel).cloned();
+        let positional = planned.as_ref().map(|(_, k)| *k).unwrap_or(usize::MAX);
+
         // Lower every argument: `sig_param` is the public C+ parameter list
-        // (labels = override or AST param names, types = enum/str/Range/scalar),
-        // `args` are the wire expressions (raw int / bridged NSString / ...).
+        // (labels = override / selector-segment / AST param names, types =
+        // enum/str/Range/scalar), `args` are the wire expressions.
         let mut sig_parts: Vec<String> = Vec::new();
         let mut args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params.iter().enumerate() {
-            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
+            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| {
+                if idx >= positional && idx < segments.len() {
+                    segments[idx].clone()
+                } else {
+                    snake(pname)
+                }
+            }));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: param `{pqt}` — {why}\n"));
@@ -1248,7 +1295,12 @@ impl ObjcEmitter {
             format!("rt::get_class(#str_ptr(\"{objc_class}\\0\"))")
         };
         let receiver = if is_instance { "this" } else { "" };
-        let name = crate::sanitize_ident(&ov_name.clone().unwrap_or_else(|| mechanical_name(&sel)));
+        let name = crate::sanitize_ident(
+            &ov_name
+                .clone()
+                .or_else(|| planned.as_ref().map(|(nm, _)| nm.clone()))
+                .unwrap_or_else(|| mechanical_name(&sel)),
+        );
         // C+ has no overloading: if this name is taken (`-open` then `-open:`, or
         // `-init` then `+new`), skip rather than emit a duplicate method.
         if !self.seen_methods.insert(name.clone()) {
@@ -1568,11 +1620,25 @@ impl ObjcEmitter {
             format!("fn(*u8, {block_sig})")
         };
 
+        // Same planned name + positional-arg split as the general path, so block
+        // methods read as clauses and share the class-wide unique-name scope. The
+        // block param itself is the fixed `cb`/`ctx` pair (one selector label can't
+        // name a two-value callback), so only the leading params take labels.
+        let segments = selector_segments(sel);
+        let planned = self.method_plan.get(sel).cloned();
+        let positional = planned.as_ref().map(|(_, k)| *k).unwrap_or(usize::MAX);
+
         // Leading (non-block) params.
         let mut sig_parts: Vec<String> = Vec::new();
         let mut send_args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params[..bidx].iter().enumerate() {
-            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| snake(pname)));
+            let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| {
+                if idx >= positional && idx < segments.len() {
+                    segments[idx].clone()
+                } else {
+                    snake(pname)
+                }
+            }));
             let a = self.map_arg(pqt, &pn);
             if let Arg::Unsupported(why) = &a {
                 self.body.push_str(&format!("    // SKIPPED `{sel}`: leading param `{pqt}` — {why}\n"));
@@ -1604,7 +1670,10 @@ impl ObjcEmitter {
             }
         };
 
-        let name = ov_name.clone().unwrap_or_else(|| mechanical_name(sel));
+        let name = ov_name
+            .clone()
+            .or_else(|| planned.as_ref().map(|(nm, _)| nm.clone()))
+            .unwrap_or_else(|| mechanical_name(sel));
         let struct_name = format!("{ty}_{name}_block");
         let invoke_name = format!("{ty}_{name}_invoke");
 
@@ -2827,6 +2896,67 @@ fn mechanical_name(sel: &str) -> String {
     snake(&joined)
 }
 
+/// The snake-cased selector segments (`setBuffer:offset:atIndex:` ->
+/// `["set_buffer","offset","at_index"]`). Index 0 is folded into the method base
+/// name; indices >= 1 supply the argument labels for the idiomatic form.
+fn selector_segments(sel: &str) -> Vec<String> {
+    sel.split(':').filter(|s| !s.is_empty()).map(snake).collect()
+}
+
+/// Plan every non-init method's name for one class (naming_guideline.md). Each
+/// method claims the SHORTEST leading selector-segment prefix that is still free
+/// as its base name; the remaining segments become argument labels. Shorter
+/// selectors are assigned first (ties broken by AST order) so they win the
+/// cleaner names — `setBufferOffset:atIndex:` keeps `set_buffer_offset(offset,
+/// at_index:)` while the longer `setBuffer:offset:atIndex:` gets `set_buffer(...)`.
+/// Guarantees class-wide unique names without overloading, folding extra leading
+/// segments into the base only as far as collisions force. Init selectors are
+/// excluded (they take the `new`/`new_with_*` ctor path). Returns selector ->
+/// (emitted name, positional-arg count `k` = segments folded into the base).
+fn plan_method_names(
+    methods: &[serde_json::Value],
+    reserved: &HashSet<String>,
+) -> HashMap<String, (String, usize)> {
+    // (segment count, AST index, selector, snake segments) — a shorter selector
+    // is assigned first so it claims the tersest base name.
+    let mut items: Vec<(usize, usize, String, Vec<String>)> = Vec::new();
+    for (i, m) in methods.iter().enumerate() {
+        let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if sel.is_empty() || sel == "init" || sel.starts_with("initWith") {
+            continue;
+        }
+        let segs = selector_segments(&sel);
+        items.push((segs.len(), i, sel, segs));
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut taken: HashSet<String> = reserved.clone();
+    let mut plan: HashMap<String, (String, usize)> = HashMap::new();
+    for (_, _, sel, segs) in items {
+        let n = segs.len().max(1);
+        // Try folding 1..=n leading segments into the base name; take the first
+        // (shortest) that is free. Everything past `k` stays a labeled parameter.
+        let mut chosen: Option<(String, usize)> = None;
+        for k in 1..=n {
+            let raw = if segs.is_empty() { snake(&sel) } else { segs[..k.min(segs.len())].join("_") };
+            let cand = crate::sanitize_ident(&raw);
+            if !taken.contains(&cand) {
+                taken.insert(cand.clone());
+                chosen = Some((cand, k));
+                break;
+            }
+        }
+        // Every prefix taken (a true snake-case clash) — keep the fullest name and
+        // let `seen_methods` skip the duplicate, exactly as before.
+        let entry = chosen.unwrap_or_else(|| {
+            let raw = if segs.is_empty() { snake(&sel) } else { segs.join("_") };
+            (crate::sanitize_ident(&raw), n)
+        });
+        plan.insert(sel, entry);
+    }
+    plan
+}
+
 /// Constructor name for an `init`/`initWith*` selector: the `init` stem becomes
 /// `new`, so bare `init` -> `new` and `initWithFrame:size:` -> `new_with_frame_size`.
 /// Derived purely from the selector (order-independent), so a type's constructor
@@ -3284,11 +3414,105 @@ mod tests {
         // Scalar typedef return -> f32 (float), via the chain.
         assert!(out.contains("fn priority(this) -> f32"), "NSLayoutPriority->f32:\n{out}");
         // Pointer typedef param -> *u8 handle; scalar typedef param -> i64 (shape void_id_i64).
-        assert!(out.contains("fn apply_image_response(this, image: *u8, response: i64)"),
+        // Idiomatic naming: base name = first segment (`apply_image`), the trailing
+        // `response:` segment becomes the labeled parameter, first arg positional.
+        assert!(out.contains("fn apply_image(this, image: *u8, response: i64)"),
             "pointer + scalar typedef params:\n{out}");
         assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
         // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
         assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
+    }
+
+    // A synthetic ("fake package") interface exercising the naming_guideline.md
+    // pass end-to-end: unique base -> idiomatic `base(label:, label:)`, the
+    // multi-segment name collision that used to eat a method -> two distinct
+    // idiomatic names, and a genuine overload family -> flattened fallback.
+    fn naming_fixture() -> String {
+        let m = |sel: &str, params: &[&str]| {
+            serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+                "returnType": { "qualType": "void" },
+                "inner": params.iter().map(|p| serde_json::json!(
+                    { "kind": "ParmVarDecl", "name": p, "type": { "qualType": "NSInteger" } })).collect::<Vec<_>>()
+            })
+        };
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "MTLEnc", "loc": { "file": "test.h" }, "inner": [
+                    // Unique base -> idiomatic: first arg positional, rest labeled.
+                    m("setWidth:height:depth:", &["width", "height", "depth"]),
+                    // The former collision: setBuffer:offset:atIndex: and
+                    // setBufferOffset:atIndex: BOTH flattened to
+                    // `set_buffer_offset_at_index` (one was lost). Distinct bases now.
+                    m("setBuffer:offset:atIndex:", &["buffer", "offset", "index"]),
+                    m("setBufferOffset:atIndex:", &["offset", "index"]),
+                    // Genuine overload family (shared base `draw_at`) -> both fall
+                    // back to the segment-joined name; C+ has no overloading.
+                    m("drawAt:count:", &["location", "count"]),
+                    m("drawAt:count:mode:", &["location", "count", "mode"]),
+                ] },
+            ]
+        });
+        ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu)
+    }
+
+    #[test]
+    fn unique_base_selector_reads_as_a_labeled_clause() {
+        let out = naming_fixture();
+        // Base name = first segment; trailing segments become argument labels; the
+        // first argument keeps its (positional) AST name — `set_width(w, height:, depth:)`.
+        assert!(out.contains("fn set_width(this, width: i64, height: i64, depth: i64)"),
+            "idiomatic base + labels:\n{out}");
+        // The old segment-joined name must be gone.
+        assert!(!out.contains("set_width_height_depth"), "no flattened name:\n{out}");
+    }
+
+    #[test]
+    fn multi_segment_name_collision_is_resolved_by_base_split() {
+        let out = naming_fixture();
+        // Both methods bind, with distinct idiomatic names. `atIndex:` -> `at_index:`
+        // is the selector-segment label (not the AST param name `index`).
+        assert!(out.contains("fn set_buffer(this, buffer: i64, offset: i64, at_index: i64)"),
+            "setBuffer:offset:atIndex::\n{out}");
+        assert!(out.contains("fn set_buffer_offset(this, offset: i64, at_index: i64)"),
+            "setBufferOffset:atIndex::\n{out}");
+        // The name that used to collide (and skip one method) no longer appears.
+        assert!(!out.contains("set_buffer_offset_at_index"), "collided name gone:\n{out}");
+        assert!(!out.contains("SKIPPED `setBuffer"), "neither buffer method is skipped:\n{out}");
+    }
+
+    #[test]
+    fn overload_family_disambiguates_by_folding_the_minimum_prefix() {
+        let out = naming_fixture();
+        // Both share the base `draw_at` (C+ can't overload). The SHORTER selector
+        // (`drawAt:count:`) is planned first and wins the terse `draw_at`; the
+        // longer one folds one more segment into its base (`draw_at_count`) and
+        // keeps the trailing `mode:` as a label. No method is lost.
+        assert!(out.contains("fn draw_at(this, location: i64, count: i64)"),
+            "shorter selector keeps the terse base:\n{out}");
+        assert!(out.contains("fn draw_at_count(this, location: i64, count: i64, mode: i64)"),
+            "longer selector folds one segment, labels the rest:\n{out}");
+    }
+
+    #[test]
+    fn overrides_still_win_over_idiomatic_naming() {
+        // An override name/params take precedence over the mechanical idiomatic form.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "MTLEnc", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setWidth:height:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" }, "inner": [
+                        { "kind": "ParmVarDecl", "name": "width", "type": { "qualType": "NSInteger" } },
+                        { "kind": "ParmVarDecl", "name": "height", "type": { "qualType": "NSInteger" } } ] },
+                ] },
+            ]
+        });
+        let ov = serde_json::json!({
+            "methods": { "MTLEnc": { "setWidth:height:": { "name": "resize", "params": ["w", "h"] } } }
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", ov).run(&tu);
+        assert!(out.contains("fn resize(this, w: i64, h: i64)"), "override wins:\n{out}");
+        assert!(!out.contains("fn set_width"), "mechanical name suppressed:\n{out}");
     }
 
     #[test]
