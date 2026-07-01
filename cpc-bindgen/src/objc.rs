@@ -170,6 +170,9 @@ enum Arg {
     Size(String),  // NSSize / CGSize — rt::Size HFA
     Struct(String, String), // (C+ struct type, arg expr) — by-value C struct (MTLSize)
     IdArray { elem: String, pname: String }, // NSArray<id<P>> param built from Vec[P]
+    // NSDictionary<NSString *, V> param built from StringMap[V] (V = Text / non-owning
+    // wrapper / non-owning-elem NSArray). `vty` is the StringMap value C+ type.
+    DictMap { val: MapVal, vty: String, pname: String },
     Unsupported(String),
 }
 
@@ -1187,8 +1190,11 @@ impl ObjcEmitter {
         let sig_param = sig_parts.join(", ");
 
         // Constructors: alloc + send the init selector, wrap in Self.
-        let has_id_array = args.iter().any(|a| matches!(a, Arg::IdArray { .. }));
-        let _ = has_id_array;
+        // A param whose value is built by the general-path prologue (arr_<pname> /
+        // dict_<pname>). The returns-self and collection-return paths don't build it,
+        // so pairing one with such a param would dangle -> skip those combos.
+        let has_collection_param =
+            args.iter().any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. }));
         if is_init {
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
@@ -1239,7 +1245,7 @@ impl ObjcEmitter {
         // we `retain` it to balance `drop`.
         let (ret_base, ret_nullable) = strip_nullability(ret_qt);
         let returns_self = !is_instance
-            && !has_id_array // the prologue is built only in the general path
+            && !has_collection_param // the prologue is built only in the general path
             && matches!(ret, Ret::Object(_) | Ret::ObjectOption(_))
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
@@ -1268,7 +1274,7 @@ impl ObjcEmitter {
         // paths build their own multi-statement bodies and would reference an
         // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
         // collection return rather than emit dangling code.
-        if has_id_array
+        if has_collection_param
             && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextMap(_))
         {
             self.body.push_str(&format!(
@@ -1558,11 +1564,11 @@ impl ObjcEmitter {
             sig_parts.push(format!("{pn}: {}", self.param_sig_type(pqt)));
             send_args.push(a);
         }
-        // The block path doesn't build the `Vec[W] -> NSMutableArray` prologue, so
-        // an NSArray<id> leading param would reference an undefined `arr_<pname>`.
-        if send_args.iter().any(|a| matches!(a, Arg::IdArray { .. })) {
+        // The block path doesn't build the collection prologue, so an NSArray<id> /
+        // NSDictionary leading param would reference an undefined arr_/dict_ local.
+        if send_args.iter().any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. })) {
             self.body.push_str(&format!(
-                "    // SKIPPED `{sel}`: block method with an NSArray<id> param not modelled\n"
+                "    // SKIPPED `{sel}`: block method with a built-collection param not modelled\n"
             ));
             return;
         }
@@ -1995,6 +2001,20 @@ impl ObjcEmitter {
             }
             return Arg::Id(pname.to_string());
         }
+        // NSDictionary<NSString *, V> param -> built from a StringMap[V] (the reverse
+        // of the dict-return bridge). Bindable V: Text / non-owning wrapper / non-owning
+        // NSArray element. The build prologue enumerates the map and setObject:forKey:.
+        if let Some((k, v)) = self.parse_dict(base_ty) {
+            if self.is_nsstring(&k) {
+                if let Some((val, vty)) = self.dict_param_value(&v) {
+                    self.needs_string_map = true;
+                    if matches!(val, MapVal::ObjectArray(_)) {
+                        self.needs_vec = true;
+                    }
+                    return Arg::DictMap { val, vty, pname: pname.to_string() };
+                }
+            }
+        }
         if base_ty.contains('<') {
             return Arg::Unsupported("generic collection".into());
         }
@@ -2053,6 +2073,14 @@ impl ObjcEmitter {
             if let Some(w) = self.wrapper_name_of(&elem) {
                 if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                     return format!("vec::Vec[{w}]");
+                }
+            }
+        }
+        // NSDictionary<NSString *, V> param -> StringMap[V] (same gate as map_arg).
+        if let Some((k, v)) = self.parse_dict(b) {
+            if self.is_nsstring(&k) {
+                if let Some((_, vty)) = self.dict_param_value(&v) {
+                    return format!("string_map::StringMap[{vty}]");
                 }
             }
         }
@@ -2216,6 +2244,29 @@ impl ObjcEmitter {
         Some((k, v))
     }
 
+    /// For a string-keyed NSDictionary PARAM value spelling, the (MapVal, StringMap
+    /// value C+ type) it bridges from — Text, a non-owning wrapper, or a non-owning
+    /// NSArray element -> Vec[W]. None for anything else (stays skipped). Pure (no
+    /// side effects) so param_sig_type (&self) and map_arg can share it.
+    fn dict_param_value(&self, v: &str) -> Option<(MapVal, String)> {
+        if self.is_nsstring(v) {
+            return Some((MapVal::Text, "text::Text".to_string()));
+        }
+        if let Some(elem) = array_element(v) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.non_owning_types.contains(&w) {
+                    return Some((MapVal::ObjectArray(w.clone()), format!("vec::Vec[{w}]")));
+                }
+            }
+        }
+        if let Some(w) = self.wrapper_name_of(v) {
+            if self.non_owning_types.contains(&w) {
+                return Some((MapVal::Object(w.clone()), w));
+            }
+        }
+        None
+    }
+
     fn is_nsnumber(&self, ty: &str) -> bool {
         let t = ty.trim();
         t == "NSNumber *" || t == "NSNumber*"
@@ -2323,6 +2374,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::Size(_) => "size".into(),
         Arg::Struct(name, _) => name.clone(),
         Arg::IdArray { .. } => "id".into(), // the built NSArray is an id on the wire
+        Arg::DictMap { .. } => "id".into(), // the built NSDictionary is an id on the wire
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2372,8 +2424,9 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::Point(e)
         | Arg::Size(e)
         | Arg::Struct(_, e) => e.clone(),
-        // The NSMutableArray built in the method prologue (see emit_method).
+        // The NSMutableArray / NSMutableDictionary built in the method prologue.
         Arg::IdArray { pname, .. } => format!("arr_{pname}"),
+        Arg::DictMap { pname, .. } => format!("dict_{pname}"),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2584,10 +2637,11 @@ fn c_scalar_to_cplus(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Build the `Vec[W] -> NSMutableArray` prologue for every IdArray arg: an empty
-/// NSMutableArray, then borrow-read each element's handle (via `at_ptr`, no move/
-/// drop) and `addObject:` (which retains). The send references it as `arr_<pname>`.
-/// Shared by the general method path and the init path.
+/// Build the `Vec[W] -> NSMutableArray` prologue for every IdArray arg, and the
+/// `StringMap[V] -> NSMutableDictionary` prologue for every DictMap arg. Elements
+/// are borrow-read (via `at_ptr` / the StringMap slot API — no move/drop); `addObject:`
+/// / `setObject:forKey:` take their own retains. The send references the built
+/// collection as `arr_<pname>` / `dict_<pname>`. Shared by the general and init paths.
 fn build_id_array_prologue(args: &[Arg]) -> String {
     let mut prologue = String::new();
     for a in args {
@@ -2603,6 +2657,53 @@ fn build_id_array_prologue(args: &[Arg]) -> String {
                  \x20               option::Option[*{elem}]::None => {{}}\n\
                  \x20           }}\n\
                  \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                 \x20       }}\n"
+            ));
+        }
+        if let Arg::DictMap { val, vty, pname } = a {
+            // Per-entry value build: sets `dval_<pname>: *u8` from the borrowed value.
+            let value_build = match val {
+                MapVal::Text => format!(
+                    "                    let dval_{pname}: *u8 = bridge::nsstring((*dvp_{pname}).view());\n"
+                ),
+                MapVal::Object(_) => format!(
+                    "                    let dval_{pname}: *u8 = (*dvp_{pname}).raw();\n"
+                ),
+                MapVal::ObjectArray(w) => format!(
+                    "                    let dval_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                     \x20                   let dadd_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                     \x20                   let dan_{pname}: usize = (*dvp_{pname}).count();\n\
+                     \x20                   var daj_{pname}: usize = 0 as usize;\n\
+                     \x20                   while daj_{pname} < dan_{pname} {{\n\
+                     \x20                       match (*dvp_{pname}).at_ptr(daj_{pname}) {{\n\
+                     \x20                           option::Option[*{w}]::Some(dae_{pname}) => {{ rt::msg_void_id(dval_{pname}, dadd_{pname}, (*dae_{pname}).raw()); }}\n\
+                     \x20                           option::Option[*{w}]::None => {{}}\n\
+                     \x20                       }}\n\
+                     \x20                       daj_{pname} = daj_{pname} +% (1 as usize);\n\
+                     \x20                   }}\n"
+                ),
+                // dict_param_value never yields ScalarF64; keep the match exhaustive.
+                MapVal::ScalarF64 => format!("                    let dval_{pname}: *u8 = 0 as *u8;\n"),
+            };
+            prologue.push_str(&format!(
+                "        let dict_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableDictionary\\0\")), rt::sel(#str_ptr(\"dictionary\\0\")));\n\
+                 \x20       let dset_{pname}: *u8 = rt::sel(#str_ptr(\"setObject:forKey:\\0\"));\n\
+                 \x20       let dcap_{pname}: usize = {pname}.slot_capacity();\n\
+                 \x20       var dsi_{pname}: usize = 0 as usize;\n\
+                 \x20       while dsi_{pname} < dcap_{pname} {{\n\
+                 \x20           match {pname}.value_ptr_at_slot(dsi_{pname}) {{\n\
+                 \x20               option::Option[*{vty}]::Some(dvp_{pname}) => {{\n\
+                 \x20                   match {pname}.key_ptr_at_slot(dsi_{pname}) {{\n\
+                 \x20                       option::Option[*text::Text]::Some(dkp_{pname}) => {{\n\
+                 {value_build}\
+                 \x20                           rt::msg_void_id_id(dict_{pname}, dset_{pname}, dval_{pname}, bridge::nsstring((*dkp_{pname}).view()));\n\
+                 \x20                       }}\n\
+                 \x20                       option::Option[*text::Text]::None => {{}}\n\
+                 \x20                   }}\n\
+                 \x20               }}\n\
+                 \x20               option::Option[*{vty}]::None => {{}}\n\
+                 \x20           }}\n\
+                 \x20           dsi_{pname} = dsi_{pname} +% (1 as usize);\n\
                  \x20       }}\n"
             ));
         }
@@ -2918,6 +3019,29 @@ mod tests {
         assert!(out.contains("var vvec: vec::Vec[Thing] = vec::Vec[Thing]::with_capacity"), "inner Vec built:\n{out}");
         assert!(out.contains("vvec.append(Thing::from_raw("), "inner elems wrapped:\n{out}");
         assert!(out.contains("out.insert(bridge::to_text(nskey), vvec)"), "Vec inserted:\n{out}");
+    }
+
+    #[test]
+    fn string_dict_param_builds_nsdictionary_from_stringmap() {
+        // NSDictionary<NSString *, MTLThing *> PARAM -> StringMap[Thing] arg; the
+        // prologue enumerates the map (slot API) and setObject:forKey: into a fresh
+        // NSMutableDictionary, borrow-reading each entry (no move/drop).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setConstants:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "constants",
+                        "type": { "qualType": "NSDictionary<NSString *,MTLThing *> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn set_constants(this, constants: string_map::StringMap[Thing])"), "StringMap param:\n{out}");
+        assert!(out.contains("NSMutableDictionary"), "builds NSMutableDictionary:\n{out}");
+        assert!(out.contains("constants.slot_capacity()"), "enumerates the map:\n{out}");
+        assert!(out.contains("let dval_constants: *u8 = (*dvp_constants).raw();"), "value handle read:\n{out}");
+        assert!(out.contains("setObject:forKey:"), "setObject:forKey::\n{out}");
     }
 
     #[test]
@@ -3447,7 +3571,7 @@ mod tests {
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
         assert!(out.contains("// SKIPPED `filter:`: NSArray<id> param with a collection return not modelled"),
             "collection-return combo must skip:\n{out}");
-        assert!(out.contains("// SKIPPED `process:completion:`: block method with an NSArray<id> param not modelled"),
+        assert!(out.contains("// SKIPPED `process:completion:`: block method with a built-collection param not modelled"),
             "block combo must skip:\n{out}");
         // And no dangling `arr_items` reference leaked into emitted code.
         assert!(!out.contains("arr_items"), "no undefined array local emitted:\n{out}");
