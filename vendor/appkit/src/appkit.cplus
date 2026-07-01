@@ -10359,7 +10359,22 @@ impl UserActivity {
         return out;
     }
 
-    // SKIPPED `setRequiredUserInfoKeys:`: param `NSSet<NSString *> * _Nullable` — generic collection
+    fn set_required_user_info_keys(this, required_user_info_keys: string_set::StringSet) {
+        let arr_required_user_info_keys: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_required_user_info_keys: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_required_user_info_keys: usize = required_user_info_keys.slot_capacity();
+        var ssi_required_user_info_keys: usize = 0 as usize;
+        while ssi_required_user_info_keys < scap_required_user_info_keys {
+            match required_user_info_keys.element_ptr_at_slot(ssi_required_user_info_keys) {
+                option::Option[*text::Text]::Some(sep_required_user_info_keys) => { rt::msg_void_id(arr_required_user_info_keys, sadd_required_user_info_keys, bridge::nsstring((*sep_required_user_info_keys).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_required_user_info_keys = ssi_required_user_info_keys +% (1 as usize);
+        }
+        let set_required_user_info_keys: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_required_user_info_keys);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRequiredUserInfoKeys:\0")), set_required_user_info_keys);
+    }
+
     fn needs_save(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("needsSave\0"))) != (0 as i8);
     }
@@ -10419,7 +10434,22 @@ impl UserActivity {
         return out;
     }
 
-    // SKIPPED `setKeywords:`: param `NSSet<NSString *> * _Nonnull` — generic collection
+    fn set_keywords(this, keywords: string_set::StringSet) {
+        let arr_keywords: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_keywords: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_keywords: usize = keywords.slot_capacity();
+        var ssi_keywords: usize = 0 as usize;
+        while ssi_keywords < scap_keywords {
+            match keywords.element_ptr_at_slot(ssi_keywords) {
+                option::Option[*text::Text]::Some(sep_keywords) => { rt::msg_void_id(arr_keywords, sadd_keywords, bridge::nsstring((*sep_keywords).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_keywords = ssi_keywords +% (1 as usize);
+        }
+        let set_keywords: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_keywords);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setKeywords:\0")), set_keywords);
+    }
+
     fn supports_continuation_streams(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supportsContinuationStreams\0"))) != (0 as i8);
     }
@@ -17604,9 +17634,9 @@ impl Pasteboard {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `detectPatternsForPatterns:completionHandler:`: leading param `NSSet<NSPasteboardDetectionPattern> * _Nonnull` — generic collection
-    // SKIPPED `detectValuesForPatterns:completionHandler:`: leading param `NSSet<NSPasteboardDetectionPattern> * _Nonnull` — generic collection
-    // SKIPPED `detectMetadataForTypes:completionHandler:`: leading param `NSSet<NSPasteboardMetadataType> * _Nonnull` — generic collection
+    // SKIPPED `detectPatternsForPatterns:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `detectValuesForPatterns:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `detectMetadataForTypes:completionHandler:`: block method with a built-collection param not modelled
     fn general_pasteboard() -> Pasteboard {
         return Pasteboard { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("generalPasteboard\0"))) };
     }
@@ -17749,9 +17779,9 @@ impl PasteboardItem {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `detectPatternsForPatterns:completionHandler:`: leading param `NSSet<NSPasteboardDetectionPattern> * _Nonnull` — generic collection
-    // SKIPPED `detectValuesForPatterns:completionHandler:`: leading param `NSSet<NSPasteboardDetectionPattern> * _Nonnull` — generic collection
-    // SKIPPED `detectMetadataForTypes:completionHandler:`: leading param `NSSet<NSPasteboardMetadataType> * _Nonnull` — generic collection
+    // SKIPPED `detectPatternsForPatterns:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `detectValuesForPatterns:completionHandler:`: block method with a built-collection param not modelled
+    // SKIPPED `detectMetadataForTypes:completionHandler:`: block method with a built-collection param not modelled
     fn types(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("types\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -26124,7 +26154,22 @@ impl Document {
         rt::msg_void(this._obj, rt::sel(#str_ptr("presentedItemDidChange\0")));
     }
 
-    // SKIPPED `presentedItemDidChangeUbiquityAttributes:`: param `NSSet<NSURLResourceKey> * _Nonnull` — generic collection
+    fn presented_item_did_change_ubiquity_attributes(this, attributes: string_set::StringSet) {
+        let arr_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_attributes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_attributes: usize = attributes.slot_capacity();
+        var ssi_attributes: usize = 0 as usize;
+        while ssi_attributes < scap_attributes {
+            match attributes.element_ptr_at_slot(ssi_attributes) {
+                option::Option[*text::Text]::Some(sep_attributes) => { rt::msg_void_id(arr_attributes, sadd_attributes, bridge::nsstring((*sep_attributes).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_attributes = ssi_attributes +% (1 as usize);
+        }
+        let set_attributes: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_attributes);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentedItemDidChangeUbiquityAttributes:\0")), set_attributes);
+    }
+
     fn presented_item_did_gain_version(this, version: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentedItemDidGainVersion:\0")), version);
     }
@@ -30314,7 +30359,22 @@ impl ToolbarItem {
         return out;
     }
 
-    // SKIPPED `setPossibleLabels:`: param `API_AVAILABLE NSSet<NSString *> *` — generic collection
+    fn set_possible_labels(this, possible_labels: string_set::StringSet) {
+        let arr_possible_labels: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_possible_labels: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_possible_labels: usize = possible_labels.slot_capacity();
+        var ssi_possible_labels: usize = 0 as usize;
+        while ssi_possible_labels < scap_possible_labels {
+            match possible_labels.element_ptr_at_slot(ssi_possible_labels) {
+                option::Option[*text::Text]::Some(sep_possible_labels) => { rt::msg_void_id(arr_possible_labels, sadd_possible_labels, bridge::nsstring((*sep_possible_labels).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_possible_labels = ssi_possible_labels +% (1 as usize);
+        }
+        let set_possible_labels: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_possible_labels);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPossibleLabels:\0")), set_possible_labels);
+    }
+
     fn tool_tip(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
         return bridge::to_text_option(ns);
@@ -33006,8 +33066,27 @@ impl FontDescriptor {
         return FontDescriptor { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithFontAttributes:\0")), dict_attributes) };
     }
 
-    // SKIPPED `matchingFontDescriptorsWithMandatoryKeys:`: param `NSSet<NSFontDescriptorAttributeName> * _Nullable` — generic collection
-    // SKIPPED `matchingFontDescriptorWithMandatoryKeys:`: param `NSSet<NSFontDescriptorAttributeName> * _Nullable` — generic collection
+    // SKIPPED `matchingFontDescriptorsWithMandatoryKeys:`: NSArray<id> param with a collection return not modelled
+    fn matching_font_descriptor_with_mandatory_keys(this, mandatory_keys: string_set::StringSet) -> option::Option[FontDescriptor] {
+        let arr_mandatory_keys: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_mandatory_keys: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_mandatory_keys: usize = mandatory_keys.slot_capacity();
+        var ssi_mandatory_keys: usize = 0 as usize;
+        while ssi_mandatory_keys < scap_mandatory_keys {
+            match mandatory_keys.element_ptr_at_slot(ssi_mandatory_keys) {
+                option::Option[*text::Text]::Some(sep_mandatory_keys) => { rt::msg_void_id(arr_mandatory_keys, sadd_mandatory_keys, bridge::nsstring((*sep_mandatory_keys).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_mandatory_keys = ssi_mandatory_keys +% (1 as usize);
+        }
+        let set_mandatory_keys: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_mandatory_keys);
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingFontDescriptorWithMandatoryKeys:\0")), set_mandatory_keys);
+        if obj == { 0 as *u8 } {
+            return option::Option[FontDescriptor]::None;
+        }
+        return option::some(FontDescriptor::from_raw(obj));
+    }
+
     fn font_descriptor_by_adding_attributes(this, attributes: string_map::StringMap[AnyObject]) -> FontDescriptor {
         let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -33992,7 +34071,22 @@ impl Toolbar {
         return out;
     }
 
-    // SKIPPED `setCenteredItemIdentifiers:`: param `NSSet<NSToolbarItemIdentifier> * _Nonnull` — generic collection
+    fn set_centered_item_identifiers(this, centered_item_identifiers: string_set::StringSet) {
+        let arr_centered_item_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_centered_item_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_centered_item_identifiers: usize = centered_item_identifiers.slot_capacity();
+        var ssi_centered_item_identifiers: usize = 0 as usize;
+        while ssi_centered_item_identifiers < scap_centered_item_identifiers {
+            match centered_item_identifiers.element_ptr_at_slot(ssi_centered_item_identifiers) {
+                option::Option[*text::Text]::Some(sep_centered_item_identifiers) => { rt::msg_void_id(arr_centered_item_identifiers, sadd_centered_item_identifiers, bridge::nsstring((*sep_centered_item_identifiers).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_centered_item_identifiers = ssi_centered_item_identifiers +% (1 as usize);
+        }
+        let set_centered_item_identifiers: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_centered_item_identifiers);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCenteredItemIdentifiers:\0")), set_centered_item_identifiers);
+    }
+
     fn autosaves_configuration(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autosavesConfiguration\0"))) != (0 as i8);
     }
