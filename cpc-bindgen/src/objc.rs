@@ -2294,6 +2294,16 @@ const KNOWN_MSG_SHAPES: &[&str] = &[
         "u64_point", "u64_id_u64", "u64_id_id", "rect_id", "rect_i64_i64", "range_id_u64",
         "id_u64_u64", "id_id_u64_u64", "id_id_rect_id", "id_id_id_id_id_id", "id_id_f64_f64", "id_i8_id",
         "id_f64_f64_f64_f64_f64", "i8_point", "i8_id_u64", "i8_id_id_i64", "i8_id_i8", "f64_u64_rect",
+        // Metal encoder/resource wide-arg shapes (all integer-eightbyte / id / NSRange).
+        "i32_u32", "i8_u64_u64", "id_i64_i64_range_range", "id_i64_u64_i8", "id_i64_u64_u64_i8",
+        "id_i64_u64_u64_u64", "id_id_i64_id", "id_id_id_u64", "id_id_u64_id", "id_u64_id",
+        "id_u64_u64_i64", "id_u64_u64_u64", "u64_id_id_u64", "u64_id_id_u64_u64_u64", "u64_id_range_u64",
+        "void_f32_f32_f32_f32", "void_i64_i64_id_u64_id_u64", "void_i64_i64_u64_u64_u64", "void_i64_id_u64", "void_i64_u64_i64_id_u64",
+        "void_i64_u64_i64_id_u64_u64", "void_i64_u64_i64_id_u64_u64_i64_u64", "void_i64_u64_i64_u64_u64", "void_i64_u64_i64_u64_u64_u64", "void_i64_u64_i64_u64_u64_u64_i64_u64",
+        "void_i64_u64_id_u64", "void_i64_u64_u64", "void_i64_u64_u64_u64", "void_id_id_id_id_u64", "void_id_id_id_id_u64_u64",
+        "void_id_id_u64_i64", "void_id_u64_id", "void_id_u64_id_u64", "void_id_u64_id_u64_u64", "void_id_u64_u64_id_u64",
+        "void_id_u64_u64_id_u64_u64_u64_u64", "void_u32_u32", "void_u64_id_u64_id_u64", "void_u64_id_u64_id_u64_id_u64", "void_u64_range",
+        "void_u64_u64_u64_id_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64", "void_u64_u64_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_u64_u64_id_u64_u64",
 ];
 
 /// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).

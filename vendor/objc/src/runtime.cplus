@@ -916,6 +916,230 @@ fn msg_f64_u64_rect(recv: *u8, selector: *u8, a: u64, b: Rect) -> f64 {
     return { objc_msg_f64_u64_rect(recv, selector, a, b) };
 }
 
+// ---- Metal encoder/resource wide-arg shapes (all integer-eightbyte / id /
+// NSRange — same GPR ABI classes as the shims above, correct by construction). ----
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i32_u32(recv: *u8, sel: *u8, a: u32) -> i32;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64_range_range(recv: *u8, sel: *u8, a: i64, b: i64, c: Range, d: Range) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_u64_i8(recv: *u8, sel: *u8, a: i64, b: u64, c: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_u64_u64_i8(recv: *u8, sel: *u8, a: i64, b: u64, c: u64, d: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_u64_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: u64, d: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_id(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u64_id(recv: *u8, sel: *u8, a: *u8, b: u64, c: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64_id(recv: *u8, sel: *u8, a: u64, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64_u64_i64(recv: *u8, sel: *u8, a: u64, b: u64, c: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_id_id_u64_u64_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64, d: u64, e: u64) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_id_range_u64(recv: *u8, sel: *u8, a: *u8, b: Range, c: u64) -> u64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f32_f32_f32_f32(recv: *u8, sel: *u8, a: f32, b: f32, c: f32, d: f32);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_i64_id_u64_id_u64(recv: *u8, sel: *u8, a: i64, b: i64, c: *u8, d: u64, e: *u8, f: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_i64_u64_u64_u64(recv: *u8, sel: *u8, a: i64, b: i64, c: u64, d: u64, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_id_u64(recv: *u8, sel: *u8, a: i64, b: *u8, c: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_id_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_id_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64, f: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_id_u64_u64_i64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64, f: u64, g: i64, h: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: u64, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_u64_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: u64, e: u64, f: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_i64_u64_u64_u64_i64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: i64, d: u64, e: u64, f: u64, g: i64, h: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_id_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: *u8, d: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_u64_u64_u64(recv: *u8, sel: *u8, a: i64, b: u64, c: u64, d: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_id_u64_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8, e: u64, f: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_u64_i64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64, d: i64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_id(recv: *u8, sel: *u8, a: *u8, b: u64, c: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: *u8, d: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_id_u64_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: *u8, d: u64, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: u64, d: *u8, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_id_u64_u64_u64_u64(recv: *u8, sel: *u8, a: *u8, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64, h: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u32_u32(recv: *u8, sel: *u8, a: u32, b: u32);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_id_u64_id_u64(recv: *u8, sel: *u8, a: u64, b: *u8, c: u64, d: *u8, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_id_u64_id_u64_id_u64(recv: *u8, sel: *u8, a: u64, b: *u8, c: u64, d: *u8, e: u64, f: *u8, g: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_range(recv: *u8, sel: *u8, a: u64, b: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64_u64_id_u64_id_u64_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: *u8, g: u64, h: u64, i: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: *u8, g: u64, h: u64, i: u64, j: *u8, k: u64, l: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64_u64_id_u64_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(recv: *u8, sel: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64, h: *u8, i: u64, j: u64);
+
+fn msg_i32_u32(recv: *u8, selector: *u8, a: u32) -> i32 {
+    return { objc_msg_i32_u32(recv, selector, a) };
+}
+fn msg_i8_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64) -> i8 {
+    return { objc_msg_i8_u64_u64(recv, selector, a, b) };
+}
+fn msg_id_i64_i64_range_range(recv: *u8, selector: *u8, a: i64, b: i64, c: Range, d: Range) -> *u8 {
+    return { objc_msg_id_i64_i64_range_range(recv, selector, a, b, c, d) };
+}
+fn msg_id_i64_u64_i8(recv: *u8, selector: *u8, a: i64, b: u64, c: i8) -> *u8 {
+    return { objc_msg_id_i64_u64_i8(recv, selector, a, b, c) };
+}
+fn msg_id_i64_u64_u64_i8(recv: *u8, selector: *u8, a: i64, b: u64, c: u64, d: i8) -> *u8 {
+    return { objc_msg_id_i64_u64_u64_i8(recv, selector, a, b, c, d) };
+}
+fn msg_id_i64_u64_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: u64, d: u64) -> *u8 {
+    return { objc_msg_id_i64_u64_u64_u64(recv, selector, a, b, c, d) };
+}
+fn msg_id_id_i64_id(recv: *u8, selector: *u8, a: *u8, b: i64, c: *u8) -> *u8 {
+    return { objc_msg_id_id_i64_id(recv, selector, a, b, c) };
+}
+fn msg_id_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: u64) -> *u8 {
+    return { objc_msg_id_id_id_u64(recv, selector, a, b, c) };
+}
+fn msg_id_id_u64_id(recv: *u8, selector: *u8, a: *u8, b: u64, c: *u8) -> *u8 {
+    return { objc_msg_id_id_u64_id(recv, selector, a, b, c) };
+}
+fn msg_id_u64_id(recv: *u8, selector: *u8, a: u64, b: *u8) -> *u8 {
+    return { objc_msg_id_u64_id(recv, selector, a, b) };
+}
+fn msg_id_u64_u64_i64(recv: *u8, selector: *u8, a: u64, b: u64, c: i64) -> *u8 {
+    return { objc_msg_id_u64_u64_i64(recv, selector, a, b, c) };
+}
+fn msg_id_u64_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64) -> *u8 {
+    return { objc_msg_id_u64_u64_u64(recv, selector, a, b, c) };
+}
+fn msg_u64_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: u64) -> u64 {
+    return { objc_msg_u64_id_id_u64(recv, selector, a, b, c) };
+}
+fn msg_u64_id_id_u64_u64_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: u64, d: u64, e: u64) -> u64 {
+    return { objc_msg_u64_id_id_u64_u64_u64(recv, selector, a, b, c, d, e) };
+}
+fn msg_u64_id_range_u64(recv: *u8, selector: *u8, a: *u8, b: Range, c: u64) -> u64 {
+    return { objc_msg_u64_id_range_u64(recv, selector, a, b, c) };
+}
+fn msg_void_f32_f32_f32_f32(recv: *u8, selector: *u8, a: f32, b: f32, c: f32, d: f32) {
+    { objc_msg_void_f32_f32_f32_f32(recv, selector, a, b, c, d); };
+}
+fn msg_void_i64_i64_id_u64_id_u64(recv: *u8, selector: *u8, a: i64, b: i64, c: *u8, d: u64, e: *u8, f: u64) {
+    { objc_msg_void_i64_i64_id_u64_id_u64(recv, selector, a, b, c, d, e, f); };
+}
+fn msg_void_i64_i64_u64_u64_u64(recv: *u8, selector: *u8, a: i64, b: i64, c: u64, d: u64, e: u64) {
+    { objc_msg_void_i64_i64_u64_u64_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_i64_id_u64(recv: *u8, selector: *u8, a: i64, b: *u8, c: u64) {
+    { objc_msg_void_i64_id_u64(recv, selector, a, b, c); };
+}
+fn msg_void_i64_u64_i64_id_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64) {
+    { objc_msg_void_i64_u64_i64_id_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_i64_u64_i64_id_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64, f: u64) {
+    { objc_msg_void_i64_u64_i64_id_u64_u64(recv, selector, a, b, c, d, e, f); };
+}
+fn msg_void_i64_u64_i64_id_u64_u64_i64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: *u8, e: u64, f: u64, g: i64, h: u64) {
+    { objc_msg_void_i64_u64_i64_id_u64_u64_i64_u64(recv, selector, a, b, c, d, e, f, g, h); };
+}
+fn msg_void_i64_u64_i64_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: u64, e: u64) {
+    { objc_msg_void_i64_u64_i64_u64_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_i64_u64_i64_u64_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: u64, e: u64, f: u64) {
+    { objc_msg_void_i64_u64_i64_u64_u64_u64(recv, selector, a, b, c, d, e, f); };
+}
+fn msg_void_i64_u64_i64_u64_u64_u64_i64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: i64, d: u64, e: u64, f: u64, g: i64, h: u64) {
+    { objc_msg_void_i64_u64_i64_u64_u64_u64_i64_u64(recv, selector, a, b, c, d, e, f, g, h); };
+}
+fn msg_void_i64_u64_id_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: *u8, d: u64) {
+    { objc_msg_void_i64_u64_id_u64(recv, selector, a, b, c, d); };
+}
+fn msg_void_i64_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: u64) {
+    { objc_msg_void_i64_u64_u64(recv, selector, a, b, c); };
+}
+fn msg_void_i64_u64_u64_u64(recv: *u8, selector: *u8, a: i64, b: u64, c: u64, d: u64) {
+    { objc_msg_void_i64_u64_u64_u64(recv, selector, a, b, c, d); };
+}
+fn msg_void_id_id_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8, e: u64) {
+    { objc_msg_void_id_id_id_id_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_id_id_id_id_u64_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8, e: u64, f: u64) {
+    { objc_msg_void_id_id_id_id_u64_u64(recv, selector, a, b, c, d, e, f); };
+}
+fn msg_void_id_id_u64_i64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: u64, d: i64) {
+    { objc_msg_void_id_id_u64_i64(recv, selector, a, b, c, d); };
+}
+fn msg_void_id_u64_id(recv: *u8, selector: *u8, a: *u8, b: u64, c: *u8) {
+    { objc_msg_void_id_u64_id(recv, selector, a, b, c); };
+}
+fn msg_void_id_u64_id_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: *u8, d: u64) {
+    { objc_msg_void_id_u64_id_u64(recv, selector, a, b, c, d); };
+}
+fn msg_void_id_u64_id_u64_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: *u8, d: u64, e: u64) {
+    { objc_msg_void_id_u64_id_u64_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_id_u64_u64_id_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: u64, d: *u8, e: u64) {
+    { objc_msg_void_id_u64_u64_id_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_id_u64_u64_id_u64_u64_u64_u64(recv: *u8, selector: *u8, a: *u8, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64, h: u64) {
+    { objc_msg_void_id_u64_u64_id_u64_u64_u64_u64(recv, selector, a, b, c, d, e, f, g, h); };
+}
+fn msg_void_u32_u32(recv: *u8, selector: *u8, a: u32, b: u32) {
+    { objc_msg_void_u32_u32(recv, selector, a, b); };
+}
+fn msg_void_u64_id_u64_id_u64(recv: *u8, selector: *u8, a: u64, b: *u8, c: u64, d: *u8, e: u64) {
+    { objc_msg_void_u64_id_u64_id_u64(recv, selector, a, b, c, d, e); };
+}
+fn msg_void_u64_id_u64_id_u64_id_u64(recv: *u8, selector: *u8, a: u64, b: *u8, c: u64, d: *u8, e: u64, f: *u8, g: u64) {
+    { objc_msg_void_u64_id_u64_id_u64_id_u64(recv, selector, a, b, c, d, e, f, g); };
+}
+fn msg_void_u64_range(recv: *u8, selector: *u8, a: u64, b: Range) {
+    { objc_msg_void_u64_range(recv, selector, a, b); };
+}
+fn msg_void_u64_u64_u64_id_u64_id_u64_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: *u8, g: u64, h: u64, i: u64) {
+    { objc_msg_void_u64_u64_u64_id_u64_id_u64_u64_u64(recv, selector, a, b, c, d, e, f, g, h, i); };
+}
+fn msg_void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: *u8, g: u64, h: u64, i: u64, j: *u8, k: u64, l: u64) {
+    { objc_msg_void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64(recv, selector, a, b, c, d, e, f, g, h, i, j, k, l); };
+}
+fn msg_void_u64_u64_u64_id_u64_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64) {
+    { objc_msg_void_u64_u64_u64_id_u64_u64_u64(recv, selector, a, b, c, d, e, f, g); };
+}
+fn msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(recv: *u8, selector: *u8, a: u64, b: u64, c: u64, d: *u8, e: u64, f: u64, g: u64, h: *u8, i: u64, j: u64) {
+    { objc_msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(recv, selector, a, b, c, d, e, f, g, h, i, j); };
+}
+
 // class_addMethod wrapper for action IMPs: `void (*)(id self, SEL _cmd, id arg)`.
 // The `types` encoding string is passed by the caller ("v@:@\0" for a void
 // method taking one id argument).
