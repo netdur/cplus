@@ -411,21 +411,31 @@ impl ScrubberSelectionStyle {
 }
 
 // `NSScrubberDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `scrubber:viewForItemAtIndex:`: arg shape (only <=5 object args modelled)
-fn ScrubberDataSource_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
+
+fn ScrubberDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn ScrubberDataSource_noop_id_id_i64(user: *u8, a0: *u8, a1: i64) -> *u8 { return { 0 as *u8 }; }
 
 struct ScrubberDataSource {
     number_of_items_for_scrubber: fn(*u8, *u8) -> i64,
+    scrubber_view_for_item_at_index: fn(*u8, *u8, i64) -> *u8,
     opaque user: *u8,
 }
 
 fn ScrubberDataSource_new(user: *u8) -> ScrubberDataSource {
-    return ScrubberDataSource { number_of_items_for_scrubber: ScrubberDataSource_noop_i64_1, user: user };
+    return ScrubberDataSource { number_of_items_for_scrubber: ScrubberDataSource_noop_i64_id, scrubber_view_for_item_at_index: ScrubberDataSource_noop_id_id_i64, user: user };
 }
 
 impl ScrubberDataSource {
     fn set_number_of_items_for_scrubber(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_items_for_scrubber = handler;
+        return;
+    }
+    fn set_scrubber_view_for_item_at_index(ref this, handler: fn(*u8, *u8, i64) -> *u8) {
+        this.scrubber_view_for_item_at_index = handler;
         return;
     }
 }
@@ -439,12 +449,20 @@ fn ScrubberDataSource_number_of_items_for_scrubber_imp(self_obj: *u8, cmd: *u8, 
     return f(u, a0);
 }
 
+fn ScrubberDataSource_scrubber_view_for_item_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> *u8 {
+    let c: *ScrubberDataSource = { synth::get_associated(self_obj, ScrubberDataSource_key()) as *ScrubberDataSource };
+    let f: fn(*u8, *u8, i64) -> *u8 = { (*c).scrubber_view_for_item_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn create_ScrubberDataSource(ctx: *ScrubberDataSource) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_ScrubberDataSource\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_number_of_items_for_scrubber: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfItemsForScrubber:\0")), ScrubberDataSource_number_of_items_for_scrubber_imp, #str_ptr("q@:@\0"));
+        let add_number_of_items_for_scrubber: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfItemsForScrubber:\0")), ScrubberDataSource_number_of_items_for_scrubber_imp, #str_ptr("q@:@\0"));
+        let add_scrubber_view_for_item_at_index: i8 = cplus_add_method_id_id_i64(cls, rt::sel(#str_ptr("scrubber:viewForItemAtIndex:\0")), ScrubberDataSource_scrubber_view_for_item_at_index_imp, #str_ptr("@@:@q\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -453,12 +471,18 @@ fn create_ScrubberDataSource(ctx: *ScrubberDataSource) -> *u8 {
 }
 
 // `NSScrubberDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `scrubber:didSelectItemAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `scrubber:didHighlightItemAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `scrubber:didChangeVisibleRange:`: arg shape (only <=5 object args modelled)
-fn ScrubberDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+// SKIPPED `scrubber:didChangeVisibleRange:`: arg `NSRange` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn ScrubberDelegate_noop_v_id_i64(user: *u8, a0: *u8, a1: i64) { return; }
+fn ScrubberDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct ScrubberDelegate {
+    scrubber_did_select_item_at_index: fn(*u8, *u8, i64),
+    scrubber_did_highlight_item_at_index: fn(*u8, *u8, i64),
     did_begin_interacting_with_scrubber: fn(*u8, *u8),
     did_finish_interacting_with_scrubber: fn(*u8, *u8),
     did_cancel_interacting_with_scrubber: fn(*u8, *u8),
@@ -466,10 +490,18 @@ struct ScrubberDelegate {
 }
 
 fn ScrubberDelegate_new(user: *u8) -> ScrubberDelegate {
-    return ScrubberDelegate { did_begin_interacting_with_scrubber: ScrubberDelegate_noop_v_1, did_finish_interacting_with_scrubber: ScrubberDelegate_noop_v_1, did_cancel_interacting_with_scrubber: ScrubberDelegate_noop_v_1, user: user };
+    return ScrubberDelegate { scrubber_did_select_item_at_index: ScrubberDelegate_noop_v_id_i64, scrubber_did_highlight_item_at_index: ScrubberDelegate_noop_v_id_i64, did_begin_interacting_with_scrubber: ScrubberDelegate_noop_v_id, did_finish_interacting_with_scrubber: ScrubberDelegate_noop_v_id, did_cancel_interacting_with_scrubber: ScrubberDelegate_noop_v_id, user: user };
 }
 
 impl ScrubberDelegate {
+    fn set_scrubber_did_select_item_at_index(ref this, handler: fn(*u8, *u8, i64)) {
+        this.scrubber_did_select_item_at_index = handler;
+        return;
+    }
+    fn set_scrubber_did_highlight_item_at_index(ref this, handler: fn(*u8, *u8, i64)) {
+        this.scrubber_did_highlight_item_at_index = handler;
+        return;
+    }
     fn set_did_begin_interacting_with_scrubber(ref this, handler: fn(*u8, *u8)) {
         this.did_begin_interacting_with_scrubber = handler;
         return;
@@ -485,6 +517,22 @@ impl ScrubberDelegate {
 }
 
 fn ScrubberDelegate_key() -> *u8 { return { 28673 as *u8 }; }
+
+fn ScrubberDelegate_scrubber_did_select_item_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) {
+    let c: *ScrubberDelegate = { synth::get_associated(self_obj, ScrubberDelegate_key()) as *ScrubberDelegate };
+    let f: fn(*u8, *u8, i64) = { (*c).scrubber_did_select_item_at_index };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn ScrubberDelegate_scrubber_did_highlight_item_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) {
+    let c: *ScrubberDelegate = { synth::get_associated(self_obj, ScrubberDelegate_key()) as *ScrubberDelegate };
+    let f: fn(*u8, *u8, i64) = { (*c).scrubber_did_highlight_item_at_index };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
 
 fn ScrubberDelegate_did_begin_interacting_with_scrubber_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *ScrubberDelegate = { synth::get_associated(self_obj, ScrubberDelegate_key()) as *ScrubberDelegate };
@@ -515,9 +563,11 @@ fn create_ScrubberDelegate(ctx: *ScrubberDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_did_begin_interacting_with_scrubber: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("didBeginInteractingWithScrubber:\0")), ScrubberDelegate_did_begin_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
-        let add_did_finish_interacting_with_scrubber: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("didFinishInteractingWithScrubber:\0")), ScrubberDelegate_did_finish_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
-        let add_did_cancel_interacting_with_scrubber: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("didCancelInteractingWithScrubber:\0")), ScrubberDelegate_did_cancel_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
+        let add_scrubber_did_select_item_at_index: i8 = cplus_add_method_v_id_i64(cls, rt::sel(#str_ptr("scrubber:didSelectItemAtIndex:\0")), ScrubberDelegate_scrubber_did_select_item_at_index_imp, #str_ptr("v@:@q\0"));
+        let add_scrubber_did_highlight_item_at_index: i8 = cplus_add_method_v_id_i64(cls, rt::sel(#str_ptr("scrubber:didHighlightItemAtIndex:\0")), ScrubberDelegate_scrubber_did_highlight_item_at_index_imp, #str_ptr("v@:@q\0"));
+        let add_did_begin_interacting_with_scrubber: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("didBeginInteractingWithScrubber:\0")), ScrubberDelegate_did_begin_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
+        let add_did_finish_interacting_with_scrubber: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("didFinishInteractingWithScrubber:\0")), ScrubberDelegate_did_finish_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
+        let add_did_cancel_interacting_with_scrubber: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("didCancelInteractingWithScrubber:\0")), ScrubberDelegate_did_cancel_interacting_with_scrubber_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

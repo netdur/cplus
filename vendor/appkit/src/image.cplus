@@ -926,19 +926,28 @@ impl Image {
 }
 
 // `NSImageDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `imageDidNotDraw:inRect:`: arg shape (only <=5 object args modelled)
-// SKIPPED `image:didLoadPartOfRepresentation:withValidRows:`: arg shape (only <=5 object args modelled)
-// SKIPPED `image:didLoadRepresentation:withStatus:`: arg shape (only <=5 object args modelled)
-fn ImageDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+// SKIPPED `imageDidNotDraw:inRect:`: arg `NSRect` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64), types: *u8) -> i8;
+
+fn ImageDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn ImageDelegate_noop_v_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) { return; }
+fn ImageDelegate_noop_v_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) { return; }
 
 struct ImageDelegate {
     image_will_load_representation: fn(*u8, *u8, *u8),
     image_did_load_representation_header: fn(*u8, *u8, *u8),
+    image_did_load_part_of_representation_with_valid_rows: fn(*u8, *u8, *u8, i64),
+    image_did_load_representation_with_status: fn(*u8, *u8, *u8, u64),
     opaque user: *u8,
 }
 
 fn ImageDelegate_new(user: *u8) -> ImageDelegate {
-    return ImageDelegate { image_will_load_representation: ImageDelegate_noop_v_2, image_did_load_representation_header: ImageDelegate_noop_v_2, user: user };
+    return ImageDelegate { image_will_load_representation: ImageDelegate_noop_v_id_id, image_did_load_representation_header: ImageDelegate_noop_v_id_id, image_did_load_part_of_representation_with_valid_rows: ImageDelegate_noop_v_id_id_i64, image_did_load_representation_with_status: ImageDelegate_noop_v_id_id_u64, user: user };
 }
 
 impl ImageDelegate {
@@ -948,6 +957,14 @@ impl ImageDelegate {
     }
     fn set_image_did_load_representation_header(ref this, handler: fn(*u8, *u8, *u8)) {
         this.image_did_load_representation_header = handler;
+        return;
+    }
+    fn set_image_did_load_part_of_representation_with_valid_rows(ref this, handler: fn(*u8, *u8, *u8, i64)) {
+        this.image_did_load_part_of_representation_with_valid_rows = handler;
+        return;
+    }
+    fn set_image_did_load_representation_with_status(ref this, handler: fn(*u8, *u8, *u8, u64)) {
+        this.image_did_load_representation_with_status = handler;
         return;
     }
 }
@@ -970,13 +987,31 @@ fn ImageDelegate_image_did_load_representation_header_imp(self_obj: *u8, cmd: *u
     return;
 }
 
+fn ImageDelegate_image_did_load_part_of_representation_with_valid_rows_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) {
+    let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
+    let f: fn(*u8, *u8, *u8, i64) = { (*c).image_did_load_part_of_representation_with_valid_rows };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
+fn ImageDelegate_image_did_load_representation_with_status_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) {
+    let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
+    let f: fn(*u8, *u8, *u8, u64) = { (*c).image_did_load_representation_with_status };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
 fn create_ImageDelegate(ctx: *ImageDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_ImageDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_image_will_load_representation: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:willLoadRepresentation:\0")), ImageDelegate_image_will_load_representation_imp, #str_ptr("v@:@@\0"));
-        let add_image_did_load_representation_header: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("image:didLoadRepresentationHeader:\0")), ImageDelegate_image_did_load_representation_header_imp, #str_ptr("v@:@@\0"));
+        let add_image_will_load_representation: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("image:willLoadRepresentation:\0")), ImageDelegate_image_will_load_representation_imp, #str_ptr("v@:@@\0"));
+        let add_image_did_load_representation_header: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("image:didLoadRepresentationHeader:\0")), ImageDelegate_image_did_load_representation_header_imp, #str_ptr("v@:@@\0"));
+        let add_image_did_load_part_of_representation_with_valid_rows: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("image:didLoadPartOfRepresentation:withValidRows:\0")), ImageDelegate_image_did_load_part_of_representation_with_valid_rows_imp, #str_ptr("v@:@@q\0"));
+        let add_image_did_load_representation_with_status: i8 = cplus_add_method_v_id_id_u64(cls, rt::sel(#str_ptr("image:didLoadRepresentation:withStatus:\0")), ImageDelegate_image_did_load_representation_with_status_imp, #str_ptr("v@:@@Q\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

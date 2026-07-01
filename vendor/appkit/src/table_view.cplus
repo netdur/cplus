@@ -1054,41 +1054,87 @@ impl TableView {
 }
 
 // `NSTableViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `tableView:viewForTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:rowViewForRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:didAddRowView:forRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:didRemoveRowView:forRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:willDisplayCell:forTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:shouldEditTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:toolTipForCell:rect:tableColumn:row:mouseLocation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:shouldShowCellExpansionForTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:shouldTrackCell:forTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:dataCellForTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:shouldSelectRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:heightOfRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:typeSelectStringForTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:nextTypeSelectMatchFromRow:toRow:forString:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:isGroupRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:sizeToFitWidthOfColumn:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:shouldReorderColumn:toColumn:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:rowActionsForRow:edge:`: arg shape (only <=5 object args modelled)
-fn TableViewDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TableViewDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TableViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn TableViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+// SKIPPED `tableView:toolTipForCell:rect:tableColumn:row:mouseLocation:`: arg `NSRectPointer _Nonnull` not modelled
+// SKIPPED `tableView:userDidChangeVisibilityOfTableColumns:`: arg `NSArray<NSTableColumn *> * _Nonnull` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_f64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> f64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id_i64_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, i64, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_i64_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn TableViewDelegate_noop_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_id_id_i64(user: *u8, a0: *u8, a1: i64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_v_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) { return; }
+fn TableViewDelegate_noop_v_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) { return; }
+fn TableViewDelegate_noop_i8_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_id_i64(user: *u8, a0: *u8, a1: i64) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TableViewDelegate_noop_f64_id_i64(user: *u8, a0: *u8, a1: i64) -> f64 { return 0 as f64; }
+fn TableViewDelegate_noop_i64_id_i64_i64_id(user: *u8, a0: *u8, a1: i64, a2: i64, a3: *u8) -> i64 { return 0 as i64; }
+fn TableViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_i8_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) -> i8 { return 0 as i8; }
+fn TableViewDelegate_noop_id_id_i64_u64(user: *u8, a0: *u8, a1: i64, a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct TableViewDelegate {
+    table_view_view_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
+    table_view_row_view_for_row: fn(*u8, *u8, i64) -> *u8,
+    table_view_did_add_row_view_for_row: fn(*u8, *u8, *u8, i64),
+    table_view_did_remove_row_view_for_row: fn(*u8, *u8, *u8, i64),
+    table_view_will_display_cell_for_table_column_row: fn(*u8, *u8, *u8, *u8, i64),
+    table_view_should_edit_table_column_row: fn(*u8, *u8, *u8, i64) -> i8,
+    table_view_should_show_cell_expansion_for_table_column_row: fn(*u8, *u8, *u8, i64) -> i8,
+    table_view_should_track_cell_for_table_column_row: fn(*u8, *u8, *u8, *u8, i64) -> i8,
+    table_view_data_cell_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
     selection_should_change_in_table_view: fn(*u8, *u8) -> i8,
+    table_view_should_select_row: fn(*u8, *u8, i64) -> i8,
     table_view_selection_indexes_for_proposed_selection: fn(*u8, *u8, *u8) -> *u8,
     table_view_should_select_table_column: fn(*u8, *u8, *u8) -> i8,
     table_view_mouse_down_in_header_of_table_column: fn(*u8, *u8, *u8),
     table_view_did_click_table_column: fn(*u8, *u8, *u8),
     table_view_did_drag_table_column: fn(*u8, *u8, *u8),
+    table_view_height_of_row: fn(*u8, *u8, i64) -> f64,
+    table_view_type_select_string_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
+    table_view_next_type_select_match_from_row_to_row_for_string: fn(*u8, *u8, i64, i64, *u8) -> i64,
     table_view_should_type_select_for_event_with_current_search_string: fn(*u8, *u8, *u8, *u8) -> i8,
+    table_view_is_group_row: fn(*u8, *u8, i64) -> i8,
+    table_view_size_to_fit_width_of_column: fn(*u8, *u8, i64) -> f64,
+    table_view_should_reorder_column_to_column: fn(*u8, *u8, i64, i64) -> i8,
+    table_view_row_actions_for_row_edge: fn(*u8, *u8, i64, u64) -> *u8,
     table_view_user_can_change_visibility_of_table_column: fn(*u8, *u8, *u8) -> i8,
-    table_view_user_did_change_visibility_of_table_columns: fn(*u8, *u8, *u8),
     table_view_selection_did_change: fn(*u8, *u8),
     table_view_column_did_move: fn(*u8, *u8),
     table_view_column_did_resize: fn(*u8, *u8),
@@ -1097,12 +1143,52 @@ struct TableViewDelegate {
 }
 
 fn TableViewDelegate_new(user: *u8) -> TableViewDelegate {
-    return TableViewDelegate { selection_should_change_in_table_view: TableViewDelegate_noop_i8_1, table_view_selection_indexes_for_proposed_selection: TableViewDelegate_noop_id_2, table_view_should_select_table_column: TableViewDelegate_noop_i8_2, table_view_mouse_down_in_header_of_table_column: TableViewDelegate_noop_v_2, table_view_did_click_table_column: TableViewDelegate_noop_v_2, table_view_did_drag_table_column: TableViewDelegate_noop_v_2, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegate_noop_i8_3, table_view_user_can_change_visibility_of_table_column: TableViewDelegate_noop_i8_2, table_view_user_did_change_visibility_of_table_columns: TableViewDelegate_noop_v_2, table_view_selection_did_change: TableViewDelegate_noop_v_1, table_view_column_did_move: TableViewDelegate_noop_v_1, table_view_column_did_resize: TableViewDelegate_noop_v_1, table_view_selection_is_changing: TableViewDelegate_noop_v_1, user: user };
+    return TableViewDelegate { table_view_view_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_row_view_for_row: TableViewDelegate_noop_id_id_i64, table_view_did_add_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_did_remove_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_will_display_cell_for_table_column_row: TableViewDelegate_noop_v_id_id_id_i64, table_view_should_edit_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_should_show_cell_expansion_for_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_should_track_cell_for_table_column_row: TableViewDelegate_noop_i8_id_id_id_i64, table_view_data_cell_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, selection_should_change_in_table_view: TableViewDelegate_noop_i8_id, table_view_should_select_row: TableViewDelegate_noop_i8_id_i64, table_view_selection_indexes_for_proposed_selection: TableViewDelegate_noop_id_id_id, table_view_should_select_table_column: TableViewDelegate_noop_i8_id_id, table_view_mouse_down_in_header_of_table_column: TableViewDelegate_noop_v_id_id, table_view_did_click_table_column: TableViewDelegate_noop_v_id_id, table_view_did_drag_table_column: TableViewDelegate_noop_v_id_id, table_view_height_of_row: TableViewDelegate_noop_f64_id_i64, table_view_type_select_string_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_next_type_select_match_from_row_to_row_for_string: TableViewDelegate_noop_i64_id_i64_i64_id, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegate_noop_i8_id_id_id, table_view_is_group_row: TableViewDelegate_noop_i8_id_i64, table_view_size_to_fit_width_of_column: TableViewDelegate_noop_f64_id_i64, table_view_should_reorder_column_to_column: TableViewDelegate_noop_i8_id_i64_i64, table_view_row_actions_for_row_edge: TableViewDelegate_noop_id_id_i64_u64, table_view_user_can_change_visibility_of_table_column: TableViewDelegate_noop_i8_id_id, table_view_selection_did_change: TableViewDelegate_noop_v_id, table_view_column_did_move: TableViewDelegate_noop_v_id, table_view_column_did_resize: TableViewDelegate_noop_v_id, table_view_selection_is_changing: TableViewDelegate_noop_v_id, user: user };
 }
 
 impl TableViewDelegate {
+    fn set_table_view_view_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> *u8) {
+        this.table_view_view_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_row_view_for_row(ref this, handler: fn(*u8, *u8, i64) -> *u8) {
+        this.table_view_row_view_for_row = handler;
+        return;
+    }
+    fn set_table_view_did_add_row_view_for_row(ref this, handler: fn(*u8, *u8, *u8, i64)) {
+        this.table_view_did_add_row_view_for_row = handler;
+        return;
+    }
+    fn set_table_view_did_remove_row_view_for_row(ref this, handler: fn(*u8, *u8, *u8, i64)) {
+        this.table_view_did_remove_row_view_for_row = handler;
+        return;
+    }
+    fn set_table_view_will_display_cell_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, *u8, i64)) {
+        this.table_view_will_display_cell_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_should_edit_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> i8) {
+        this.table_view_should_edit_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_should_show_cell_expansion_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> i8) {
+        this.table_view_should_show_cell_expansion_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_should_track_cell_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, *u8, i64) -> i8) {
+        this.table_view_should_track_cell_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_data_cell_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> *u8) {
+        this.table_view_data_cell_for_table_column_row = handler;
+        return;
+    }
     fn set_selection_should_change_in_table_view(ref this, handler: fn(*u8, *u8) -> i8) {
         this.selection_should_change_in_table_view = handler;
+        return;
+    }
+    fn set_table_view_should_select_row(ref this, handler: fn(*u8, *u8, i64) -> i8) {
+        this.table_view_should_select_row = handler;
         return;
     }
     fn set_table_view_selection_indexes_for_proposed_selection(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
@@ -1125,16 +1211,40 @@ impl TableViewDelegate {
         this.table_view_did_drag_table_column = handler;
         return;
     }
+    fn set_table_view_height_of_row(ref this, handler: fn(*u8, *u8, i64) -> f64) {
+        this.table_view_height_of_row = handler;
+        return;
+    }
+    fn set_table_view_type_select_string_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> *u8) {
+        this.table_view_type_select_string_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_next_type_select_match_from_row_to_row_for_string(ref this, handler: fn(*u8, *u8, i64, i64, *u8) -> i64) {
+        this.table_view_next_type_select_match_from_row_to_row_for_string = handler;
+        return;
+    }
     fn set_table_view_should_type_select_for_event_with_current_search_string(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.table_view_should_type_select_for_event_with_current_search_string = handler;
         return;
     }
-    fn set_table_view_user_can_change_visibility_of_table_column(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
-        this.table_view_user_can_change_visibility_of_table_column = handler;
+    fn set_table_view_is_group_row(ref this, handler: fn(*u8, *u8, i64) -> i8) {
+        this.table_view_is_group_row = handler;
         return;
     }
-    fn set_table_view_user_did_change_visibility_of_table_columns(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.table_view_user_did_change_visibility_of_table_columns = handler;
+    fn set_table_view_size_to_fit_width_of_column(ref this, handler: fn(*u8, *u8, i64) -> f64) {
+        this.table_view_size_to_fit_width_of_column = handler;
+        return;
+    }
+    fn set_table_view_should_reorder_column_to_column(ref this, handler: fn(*u8, *u8, i64, i64) -> i8) {
+        this.table_view_should_reorder_column_to_column = handler;
+        return;
+    }
+    fn set_table_view_row_actions_for_row_edge(ref this, handler: fn(*u8, *u8, i64, u64) -> *u8) {
+        this.table_view_row_actions_for_row_edge = handler;
+        return;
+    }
+    fn set_table_view_user_can_change_visibility_of_table_column(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
+        this.table_view_user_can_change_visibility_of_table_column = handler;
         return;
     }
     fn set_table_view_selection_did_change(ref this, handler: fn(*u8, *u8)) {
@@ -1157,11 +1267,84 @@ impl TableViewDelegate {
 
 fn TableViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
+fn TableViewDelegate_table_view_view_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> *u8 = { (*c).table_view_view_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_row_view_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64) -> *u8 = { (*c).table_view_row_view_for_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TableViewDelegate_table_view_did_add_row_view_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) = { (*c).table_view_did_add_row_view_for_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
+fn TableViewDelegate_table_view_did_remove_row_view_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) = { (*c).table_view_did_remove_row_view_for_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
+fn TableViewDelegate_table_view_will_display_cell_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, i64) = { (*c).table_view_will_display_cell_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TableViewDelegate_table_view_should_edit_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> i8 = { (*c).table_view_should_edit_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_should_show_cell_expansion_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> i8 = { (*c).table_view_should_show_cell_expansion_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_should_track_cell_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, i64) -> i8 = { (*c).table_view_should_track_cell_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn TableViewDelegate_table_view_data_cell_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> *u8 = { (*c).table_view_data_cell_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
 fn TableViewDelegate_selection_should_change_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
     let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) -> i8 = { (*c).selection_should_change_in_table_view };
     let u: *u8 = { (*c).user };
     return f(u, a0);
+}
+
+fn TableViewDelegate_table_view_should_select_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64) -> i8 = { (*c).table_view_should_select_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
 }
 
 fn TableViewDelegate_table_view_selection_indexes_for_proposed_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
@@ -1202,9 +1385,58 @@ fn TableViewDelegate_table_view_did_drag_table_column_imp(self_obj: *u8, cmd: *u
     return;
 }
 
+fn TableViewDelegate_table_view_height_of_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> f64 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64) -> f64 = { (*c).table_view_height_of_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TableViewDelegate_table_view_type_select_string_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> *u8 = { (*c).table_view_type_select_string_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_next_type_select_match_from_row_to_row_for_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: i64, a3: *u8) -> i64 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64, i64, *u8) -> i64 = { (*c).table_view_next_type_select_match_from_row_to_row_for_string };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
 fn TableViewDelegate_table_view_should_type_select_for_event_with_current_search_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
     let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).table_view_should_type_select_for_event_with_current_search_string };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_is_group_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64) -> i8 = { (*c).table_view_is_group_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TableViewDelegate_table_view_size_to_fit_width_of_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> f64 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64) -> f64 = { (*c).table_view_size_to_fit_width_of_column };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TableViewDelegate_table_view_should_reorder_column_to_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: i64) -> i8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64, i64) -> i8 = { (*c).table_view_should_reorder_column_to_column };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDelegate_table_view_row_actions_for_row_edge_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: u64) -> *u8 {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, i64, u64) -> *u8 = { (*c).table_view_row_actions_for_row_edge };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
@@ -1214,14 +1446,6 @@ fn TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp(s
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).table_view_user_can_change_visibility_of_table_column };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
-}
-
-fn TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).table_view_user_did_change_visibility_of_table_columns };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
 }
 
 fn TableViewDelegate_table_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
@@ -1261,19 +1485,35 @@ fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_selection_should_change_in_table_view: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("selectionShouldChangeInTableView:\0")), TableViewDelegate_selection_should_change_in_table_view_imp, #str_ptr("c@:@\0"));
-        let add_table_view_selection_indexes_for_proposed_selection: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tableView:selectionIndexesForProposedSelection:\0")), TableViewDelegate_table_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
-        let add_table_view_should_select_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:shouldSelectTableColumn:\0")), TableViewDelegate_table_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_table_view_mouse_down_in_header_of_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:mouseDownInHeaderOfTableColumn:\0")), TableViewDelegate_table_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_did_click_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didClickTableColumn:\0")), TableViewDelegate_table_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_did_drag_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:didDragTableColumn:\0")), TableViewDelegate_table_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), TableViewDelegate_table_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
-        let add_table_view_user_can_change_visibility_of_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tableView:userCanChangeVisibilityOfTableColumn:\0")), TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_table_view_user_did_change_visibility_of_table_columns: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:userDidChangeVisibilityOfTableColumns:\0")), TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_selection_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), TableViewDelegate_table_view_selection_did_change_imp, #str_ptr("v@:@\0"));
-        let add_table_view_column_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidMove:\0")), TableViewDelegate_table_view_column_did_move_imp, #str_ptr("v@:@\0"));
-        let add_table_view_column_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewColumnDidResize:\0")), TableViewDelegate_table_view_column_did_resize_imp, #str_ptr("v@:@\0"));
-        let add_table_view_selection_is_changing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionIsChanging:\0")), TableViewDelegate_table_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
+        let add_table_view_view_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:viewForTableColumn:row:\0")), TableViewDelegate_table_view_view_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
+        let add_table_view_row_view_for_row: i8 = cplus_add_method_id_id_i64(cls, rt::sel(#str_ptr("tableView:rowViewForRow:\0")), TableViewDelegate_table_view_row_view_for_row_imp, #str_ptr("@@:@q\0"));
+        let add_table_view_did_add_row_view_for_row: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("tableView:didAddRowView:forRow:\0")), TableViewDelegate_table_view_did_add_row_view_for_row_imp, #str_ptr("v@:@@q\0"));
+        let add_table_view_did_remove_row_view_for_row: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("tableView:didRemoveRowView:forRow:\0")), TableViewDelegate_table_view_did_remove_row_view_for_row_imp, #str_ptr("v@:@@q\0"));
+        let add_table_view_will_display_cell_for_table_column_row: i8 = cplus_add_method_v_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:willDisplayCell:forTableColumn:row:\0")), TableViewDelegate_table_view_will_display_cell_for_table_column_row_imp, #str_ptr("v@:@@@q\0"));
+        let add_table_view_should_edit_table_column_row: i8 = cplus_add_method_i8_id_id_i64(cls, rt::sel(#str_ptr("tableView:shouldEditTableColumn:row:\0")), TableViewDelegate_table_view_should_edit_table_column_row_imp, #str_ptr("c@:@@q\0"));
+        let add_table_view_should_show_cell_expansion_for_table_column_row: i8 = cplus_add_method_i8_id_id_i64(cls, rt::sel(#str_ptr("tableView:shouldShowCellExpansionForTableColumn:row:\0")), TableViewDelegate_table_view_should_show_cell_expansion_for_table_column_row_imp, #str_ptr("c@:@@q\0"));
+        let add_table_view_should_track_cell_for_table_column_row: i8 = cplus_add_method_i8_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:shouldTrackCell:forTableColumn:row:\0")), TableViewDelegate_table_view_should_track_cell_for_table_column_row_imp, #str_ptr("c@:@@@q\0"));
+        let add_table_view_data_cell_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:dataCellForTableColumn:row:\0")), TableViewDelegate_table_view_data_cell_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
+        let add_selection_should_change_in_table_view: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("selectionShouldChangeInTableView:\0")), TableViewDelegate_selection_should_change_in_table_view_imp, #str_ptr("c@:@\0"));
+        let add_table_view_should_select_row: i8 = cplus_add_method_i8_id_i64(cls, rt::sel(#str_ptr("tableView:shouldSelectRow:\0")), TableViewDelegate_table_view_should_select_row_imp, #str_ptr("c@:@q\0"));
+        let add_table_view_selection_indexes_for_proposed_selection: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tableView:selectionIndexesForProposedSelection:\0")), TableViewDelegate_table_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
+        let add_table_view_should_select_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("tableView:shouldSelectTableColumn:\0")), TableViewDelegate_table_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_table_view_mouse_down_in_header_of_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:mouseDownInHeaderOfTableColumn:\0")), TableViewDelegate_table_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_did_click_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:didClickTableColumn:\0")), TableViewDelegate_table_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_did_drag_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:didDragTableColumn:\0")), TableViewDelegate_table_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_height_of_row: i8 = cplus_add_method_f64_id_i64(cls, rt::sel(#str_ptr("tableView:heightOfRow:\0")), TableViewDelegate_table_view_height_of_row_imp, #str_ptr("d@:@q\0"));
+        let add_table_view_type_select_string_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:typeSelectStringForTableColumn:row:\0")), TableViewDelegate_table_view_type_select_string_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
+        let add_table_view_next_type_select_match_from_row_to_row_for_string: i8 = cplus_add_method_i64_id_i64_i64_id(cls, rt::sel(#str_ptr("tableView:nextTypeSelectMatchFromRow:toRow:forString:\0")), TableViewDelegate_table_view_next_type_select_match_from_row_to_row_for_string_imp, #str_ptr("q@:@qq@\0"));
+        let add_table_view_should_type_select_for_event_with_current_search_string: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("tableView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), TableViewDelegate_table_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
+        let add_table_view_is_group_row: i8 = cplus_add_method_i8_id_i64(cls, rt::sel(#str_ptr("tableView:isGroupRow:\0")), TableViewDelegate_table_view_is_group_row_imp, #str_ptr("c@:@q\0"));
+        let add_table_view_size_to_fit_width_of_column: i8 = cplus_add_method_f64_id_i64(cls, rt::sel(#str_ptr("tableView:sizeToFitWidthOfColumn:\0")), TableViewDelegate_table_view_size_to_fit_width_of_column_imp, #str_ptr("d@:@q\0"));
+        let add_table_view_should_reorder_column_to_column: i8 = cplus_add_method_i8_id_i64_i64(cls, rt::sel(#str_ptr("tableView:shouldReorderColumn:toColumn:\0")), TableViewDelegate_table_view_should_reorder_column_to_column_imp, #str_ptr("c@:@qq\0"));
+        let add_table_view_row_actions_for_row_edge: i8 = cplus_add_method_id_id_i64_u64(cls, rt::sel(#str_ptr("tableView:rowActionsForRow:edge:\0")), TableViewDelegate_table_view_row_actions_for_row_edge_imp, #str_ptr("@@:@qQ\0"));
+        let add_table_view_user_can_change_visibility_of_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("tableView:userCanChangeVisibilityOfTableColumn:\0")), TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_table_view_selection_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), TableViewDelegate_table_view_selection_did_change_imp, #str_ptr("v@:@\0"));
+        let add_table_view_column_did_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewColumnDidMove:\0")), TableViewDelegate_table_view_column_did_move_imp, #str_ptr("v@:@\0"));
+        let add_table_view_column_did_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewColumnDidResize:\0")), TableViewDelegate_table_view_column_did_resize_imp, #str_ptr("v@:@\0"));
+        let add_table_view_selection_is_changing: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewSelectionIsChanging:\0")), TableViewDelegate_table_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -1282,29 +1522,42 @@ fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
 }
 
 // `NSTableViewDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `tableView:objectValueForTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:setObjectValue:forTableColumn:row:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:pasteboardWriterForRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:draggingSession:willBeginAtPoint:forRowIndexes:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:draggingSession:endedAtPoint:operation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:updateDraggingItemsForDrag:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:validateDrop:proposedRow:proposedDropOperation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tableView:acceptDrop:row:dropOperation:`: arg shape (only <=5 object args modelled)
-fn TableViewDataSource_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
-fn TableViewDataSource_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TableViewDataSource_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TableViewDataSource_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+// SKIPPED `tableView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
+// SKIPPED `tableView:pasteboardWriterForRow:`: return `id<NSPasteboardWriting> _Nullable` not modelled
+// SKIPPED `tableView:draggingSession:willBeginAtPoint:forRowIndexes:`: arg `NSPoint` not modelled
+// SKIPPED `tableView:draggingSession:endedAtPoint:operation:`: arg `NSPoint` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, u64) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, u64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn TableViewDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn TableViewDataSource_noop_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDataSource_noop_v_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) { return; }
+fn TableViewDataSource_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TableViewDataSource_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TableViewDataSource_noop_u64_id_id_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> u64 { return 0 as u64; }
+fn TableViewDataSource_noop_i8_id_id_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> i8 { return 0 as i8; }
+fn TableViewDataSource_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct TableViewDataSource {
     number_of_rows_in_table_view: fn(*u8, *u8) -> i64,
-    table_view_sort_descriptors_did_change: fn(*u8, *u8, *u8),
+    table_view_object_value_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
+    table_view_set_object_value_for_table_column_row: fn(*u8, *u8, *u8, *u8, i64),
+    table_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
     table_view_write_rows_with_indexes_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
+    table_view_validate_drop_proposed_row_proposed_drop_operation: fn(*u8, *u8, *u8, i64, u64) -> u64,
+    table_view_accept_drop_row_drop_operation: fn(*u8, *u8, *u8, i64, u64) -> i8,
     table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn TableViewDataSource_new(user: *u8) -> TableViewDataSource {
-    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_1, table_view_sort_descriptors_did_change: TableViewDataSource_noop_v_2, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_3, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_3, user: user };
+    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_id, table_view_object_value_for_table_column_row: TableViewDataSource_noop_id_id_id_i64, table_view_set_object_value_for_table_column_row: TableViewDataSource_noop_v_id_id_id_i64, table_view_update_dragging_items_for_drag: TableViewDataSource_noop_v_id_id, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_id_id_id, table_view_validate_drop_proposed_row_proposed_drop_operation: TableViewDataSource_noop_u64_id_id_i64_u64, table_view_accept_drop_row_drop_operation: TableViewDataSource_noop_i8_id_id_i64_u64, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl TableViewDataSource {
@@ -1312,12 +1565,28 @@ impl TableViewDataSource {
         this.number_of_rows_in_table_view = handler;
         return;
     }
-    fn set_table_view_sort_descriptors_did_change(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.table_view_sort_descriptors_did_change = handler;
+    fn set_table_view_object_value_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, i64) -> *u8) {
+        this.table_view_object_value_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_set_object_value_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, *u8, i64)) {
+        this.table_view_set_object_value_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_update_dragging_items_for_drag(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.table_view_update_dragging_items_for_drag = handler;
         return;
     }
     fn set_table_view_write_rows_with_indexes_to_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.table_view_write_rows_with_indexes_to_pasteboard = handler;
+        return;
+    }
+    fn set_table_view_validate_drop_proposed_row_proposed_drop_operation(ref this, handler: fn(*u8, *u8, *u8, i64, u64) -> u64) {
+        this.table_view_validate_drop_proposed_row_proposed_drop_operation = handler;
+        return;
+    }
+    fn set_table_view_accept_drop_row_drop_operation(ref this, handler: fn(*u8, *u8, *u8, i64, u64) -> i8) {
+        this.table_view_accept_drop_row_drop_operation = handler;
         return;
     }
     fn set_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
@@ -1335,9 +1604,24 @@ fn TableViewDataSource_number_of_rows_in_table_view_imp(self_obj: *u8, cmd: *u8,
     return f(u, a0);
 }
 
-fn TableViewDataSource_table_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+fn TableViewDataSource_table_view_object_value_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 {
     let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
-    let f: fn(*u8, *u8, *u8) = { (*c).table_view_sort_descriptors_did_change };
+    let f: fn(*u8, *u8, *u8, i64) -> *u8 = { (*c).table_view_object_value_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TableViewDataSource_table_view_set_object_value_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8, *u8, i64) = { (*c).table_view_set_object_value_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TableViewDataSource_table_view_update_dragging_items_for_drag_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8) = { (*c).table_view_update_dragging_items_for_drag };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
@@ -1348,6 +1632,20 @@ fn TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp(self
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).table_view_write_rows_with_indexes_to_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn TableViewDataSource_table_view_validate_drop_proposed_row_proposed_drop_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> u64 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8, i64, u64) -> u64 = { (*c).table_view_validate_drop_proposed_row_proposed_drop_operation };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn TableViewDataSource_table_view_accept_drop_row_drop_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> i8 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8, i64, u64) -> i8 = { (*c).table_view_accept_drop_row_drop_operation };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
 }
 
 fn TableViewDataSource_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
@@ -1362,10 +1660,14 @@ fn create_TableViewDataSource(ctx: *TableViewDataSource) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_number_of_rows_in_table_view: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSource_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
-        let add_table_view_sort_descriptors_did_change: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("tableView:sortDescriptorsDidChange:\0")), TableViewDataSource_table_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
-        let add_table_view_write_rows_with_indexes_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tableView:writeRowsWithIndexes:toPasteboard:\0")), TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("tableView:namesOfPromisedFilesDroppedAtDestination:forDraggedRowsWithIndexes:\0")), TableViewDataSource_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp, #str_ptr("@@:@@@\0"));
+        let add_number_of_rows_in_table_view: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSource_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
+        let add_table_view_object_value_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0")), TableViewDataSource_table_view_object_value_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
+        let add_table_view_set_object_value_for_table_column_row: i8 = cplus_add_method_v_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:setObjectValue:forTableColumn:row:\0")), TableViewDataSource_table_view_set_object_value_for_table_column_row_imp, #str_ptr("v@:@@@q\0"));
+        let add_table_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:updateDraggingItemsForDrag:\0")), TableViewDataSource_table_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
+        let add_table_view_write_rows_with_indexes_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("tableView:writeRowsWithIndexes:toPasteboard:\0")), TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_table_view_validate_drop_proposed_row_proposed_drop_operation: i8 = cplus_add_method_u64_id_id_i64_u64(cls, rt::sel(#str_ptr("tableView:validateDrop:proposedRow:proposedDropOperation:\0")), TableViewDataSource_table_view_validate_drop_proposed_row_proposed_drop_operation_imp, #str_ptr("Q@:@@qQ\0"));
+        let add_table_view_accept_drop_row_drop_operation: i8 = cplus_add_method_i8_id_id_i64_u64(cls, rt::sel(#str_ptr("tableView:acceptDrop:row:dropOperation:\0")), TableViewDataSource_table_view_accept_drop_row_drop_operation_imp, #str_ptr("c@:@@qQ\0"));
+        let add_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("tableView:namesOfPromisedFilesDroppedAtDestination:forDraggedRowsWithIndexes:\0")), TableViewDataSource_table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

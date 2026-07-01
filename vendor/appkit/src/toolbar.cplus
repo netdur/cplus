@@ -359,10 +359,15 @@ impl Toolbar {
 }
 
 // `NSToolbarDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: arg shape (only <=5 object args modelled)
-// SKIPPED `toolbar:itemIdentifier:canBeInsertedAtIndex:`: arg shape (only <=5 object args modelled)
-fn ToolbarDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ToolbarDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+// SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: arg `NSToolbarItemIdentifier _Nonnull` not modelled
+// SKIPPED `toolbar:itemIdentifier:canBeInsertedAtIndex:`: arg `NSToolbarItemIdentifier _Nonnull` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn ToolbarDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn ToolbarDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct ToolbarDelegate {
     toolbar_default_item_identifiers: fn(*u8, *u8) -> *u8,
@@ -375,7 +380,7 @@ struct ToolbarDelegate {
 }
 
 fn ToolbarDelegate_new(user: *u8) -> ToolbarDelegate {
-    return ToolbarDelegate { toolbar_default_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_allowed_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_selectable_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_immovable_item_identifiers: ToolbarDelegate_noop_id_1, toolbar_will_add_item: ToolbarDelegate_noop_v_1, toolbar_did_remove_item: ToolbarDelegate_noop_v_1, user: user };
+    return ToolbarDelegate { toolbar_default_item_identifiers: ToolbarDelegate_noop_id_id, toolbar_allowed_item_identifiers: ToolbarDelegate_noop_id_id, toolbar_selectable_item_identifiers: ToolbarDelegate_noop_id_id, toolbar_immovable_item_identifiers: ToolbarDelegate_noop_id_id, toolbar_will_add_item: ToolbarDelegate_noop_v_id, toolbar_did_remove_item: ToolbarDelegate_noop_v_id, user: user };
 }
 
 impl ToolbarDelegate {
@@ -456,12 +461,12 @@ fn create_ToolbarDelegate(ctx: *ToolbarDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_toolbar_default_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), ToolbarDelegate_toolbar_default_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_allowed_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarAllowedItemIdentifiers:\0")), ToolbarDelegate_toolbar_allowed_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_selectable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarSelectableItemIdentifiers:\0")), ToolbarDelegate_toolbar_selectable_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_immovable_item_identifiers: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("toolbarImmovableItemIdentifiers:\0")), ToolbarDelegate_toolbar_immovable_item_identifiers_imp, #str_ptr("@@:@\0"));
-        let add_toolbar_will_add_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarWillAddItem:\0")), ToolbarDelegate_toolbar_will_add_item_imp, #str_ptr("v@:@\0"));
-        let add_toolbar_did_remove_item: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("toolbarDidRemoveItem:\0")), ToolbarDelegate_toolbar_did_remove_item_imp, #str_ptr("v@:@\0"));
+        let add_toolbar_default_item_identifiers: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), ToolbarDelegate_toolbar_default_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_allowed_item_identifiers: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("toolbarAllowedItemIdentifiers:\0")), ToolbarDelegate_toolbar_allowed_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_selectable_item_identifiers: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("toolbarSelectableItemIdentifiers:\0")), ToolbarDelegate_toolbar_selectable_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_immovable_item_identifiers: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("toolbarImmovableItemIdentifiers:\0")), ToolbarDelegate_toolbar_immovable_item_identifiers_imp, #str_ptr("@@:@\0"));
+        let add_toolbar_will_add_item: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("toolbarWillAddItem:\0")), ToolbarDelegate_toolbar_will_add_item_imp, #str_ptr("v@:@\0"));
+        let add_toolbar_did_remove_item: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("toolbarDidRemoveItem:\0")), ToolbarDelegate_toolbar_did_remove_item_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

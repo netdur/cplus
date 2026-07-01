@@ -88,14 +88,29 @@ impl TokenField {
 }
 
 // `NSTokenFieldDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `tokenField:completionsForSubstring:indexOfToken:indexOfSelectedItem:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tokenField:shouldAddObjects:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `tokenField:styleForRepresentedObject:`: no `u64`-return / 2-arg IMP shape
-fn TokenFieldDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TokenFieldDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TokenFieldDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> u64, types: *u8) -> i8;
+
+fn TokenFieldDelegate_noop_id_id_id_i64_id(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TokenFieldDelegate_noop_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn TokenFieldDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TokenFieldDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn TokenFieldDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TokenFieldDelegate_noop_u64_id_id(user: *u8, a0: *u8, a1: *u8) -> u64 { return 0 as u64; }
 
 struct TokenFieldDelegate {
+    token_field_completions_for_substring_index_of_token_index_of_selected_item: fn(*u8, *u8, *u8, i64, *u8) -> *u8,
+    token_field_should_add_objects_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
     token_field_display_string_for_represented_object: fn(*u8, *u8, *u8) -> *u8,
     token_field_editing_string_for_represented_object: fn(*u8, *u8, *u8) -> *u8,
     token_field_represented_object_for_editing_string: fn(*u8, *u8, *u8) -> *u8,
@@ -103,14 +118,23 @@ struct TokenFieldDelegate {
     token_field_read_from_pasteboard: fn(*u8, *u8, *u8) -> *u8,
     token_field_menu_for_represented_object: fn(*u8, *u8, *u8) -> *u8,
     token_field_has_menu_for_represented_object: fn(*u8, *u8, *u8) -> i8,
+    token_field_style_for_represented_object: fn(*u8, *u8, *u8) -> u64,
     opaque user: *u8,
 }
 
 fn TokenFieldDelegate_new(user: *u8) -> TokenFieldDelegate {
-    return TokenFieldDelegate { token_field_display_string_for_represented_object: TokenFieldDelegate_noop_id_2, token_field_editing_string_for_represented_object: TokenFieldDelegate_noop_id_2, token_field_represented_object_for_editing_string: TokenFieldDelegate_noop_id_2, token_field_write_represented_objects_to_pasteboard: TokenFieldDelegate_noop_i8_3, token_field_read_from_pasteboard: TokenFieldDelegate_noop_id_2, token_field_menu_for_represented_object: TokenFieldDelegate_noop_id_2, token_field_has_menu_for_represented_object: TokenFieldDelegate_noop_i8_2, user: user };
+    return TokenFieldDelegate { token_field_completions_for_substring_index_of_token_index_of_selected_item: TokenFieldDelegate_noop_id_id_id_i64_id, token_field_should_add_objects_at_index: TokenFieldDelegate_noop_id_id_id_u64, token_field_display_string_for_represented_object: TokenFieldDelegate_noop_id_id_id, token_field_editing_string_for_represented_object: TokenFieldDelegate_noop_id_id_id, token_field_represented_object_for_editing_string: TokenFieldDelegate_noop_id_id_id, token_field_write_represented_objects_to_pasteboard: TokenFieldDelegate_noop_i8_id_id_id, token_field_read_from_pasteboard: TokenFieldDelegate_noop_id_id_id, token_field_menu_for_represented_object: TokenFieldDelegate_noop_id_id_id, token_field_has_menu_for_represented_object: TokenFieldDelegate_noop_i8_id_id, token_field_style_for_represented_object: TokenFieldDelegate_noop_u64_id_id, user: user };
 }
 
 impl TokenFieldDelegate {
+    fn set_token_field_completions_for_substring_index_of_token_index_of_selected_item(ref this, handler: fn(*u8, *u8, *u8, i64, *u8) -> *u8) {
+        this.token_field_completions_for_substring_index_of_token_index_of_selected_item = handler;
+        return;
+    }
+    fn set_token_field_should_add_objects_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
+        this.token_field_should_add_objects_at_index = handler;
+        return;
+    }
     fn set_token_field_display_string_for_represented_object(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.token_field_display_string_for_represented_object = handler;
         return;
@@ -139,9 +163,27 @@ impl TokenFieldDelegate {
         this.token_field_has_menu_for_represented_object = handler;
         return;
     }
+    fn set_token_field_style_for_represented_object(ref this, handler: fn(*u8, *u8, *u8) -> u64) {
+        this.token_field_style_for_represented_object = handler;
+        return;
+    }
 }
 
 fn TokenFieldDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn TokenFieldDelegate_token_field_completions_for_substring_index_of_token_index_of_selected_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 {
+    let c: *TokenFieldDelegate = { synth::get_associated(self_obj, TokenFieldDelegate_key()) as *TokenFieldDelegate };
+    let f: fn(*u8, *u8, *u8, i64, *u8) -> *u8 = { (*c).token_field_completions_for_substring_index_of_token_index_of_selected_item };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn TokenFieldDelegate_token_field_should_add_objects_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 {
+    let c: *TokenFieldDelegate = { synth::get_associated(self_obj, TokenFieldDelegate_key()) as *TokenFieldDelegate };
+    let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).token_field_should_add_objects_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
 
 fn TokenFieldDelegate_token_field_display_string_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *TokenFieldDelegate = { synth::get_associated(self_obj, TokenFieldDelegate_key()) as *TokenFieldDelegate };
@@ -192,18 +234,28 @@ fn TokenFieldDelegate_token_field_has_menu_for_represented_object_imp(self_obj: 
     return f(u, a0, a1);
 }
 
+fn TokenFieldDelegate_token_field_style_for_represented_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> u64 {
+    let c: *TokenFieldDelegate = { synth::get_associated(self_obj, TokenFieldDelegate_key()) as *TokenFieldDelegate };
+    let f: fn(*u8, *u8, *u8) -> u64 = { (*c).token_field_style_for_represented_object };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn create_TokenFieldDelegate(ctx: *TokenFieldDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_TokenFieldDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_token_field_display_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenField:displayStringForRepresentedObject:\0")), TokenFieldDelegate_token_field_display_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_editing_string_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenField:editingStringForRepresentedObject:\0")), TokenFieldDelegate_token_field_editing_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_represented_object_for_editing_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenField:representedObjectForEditingString:\0")), TokenFieldDelegate_token_field_represented_object_for_editing_string_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_write_represented_objects_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("tokenField:writeRepresentedObjects:toPasteboard:\0")), TokenFieldDelegate_token_field_write_represented_objects_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_token_field_read_from_pasteboard: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenField:readFromPasteboard:\0")), TokenFieldDelegate_token_field_read_from_pasteboard_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_menu_for_represented_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("tokenField:menuForRepresentedObject:\0")), TokenFieldDelegate_token_field_menu_for_represented_object_imp, #str_ptr("@@:@@\0"));
-        let add_token_field_has_menu_for_represented_object: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("tokenField:hasMenuForRepresentedObject:\0")), TokenFieldDelegate_token_field_has_menu_for_represented_object_imp, #str_ptr("c@:@@\0"));
+        let add_token_field_completions_for_substring_index_of_token_index_of_selected_item: i8 = cplus_add_method_id_id_id_i64_id(cls, rt::sel(#str_ptr("tokenField:completionsForSubstring:indexOfToken:indexOfSelectedItem:\0")), TokenFieldDelegate_token_field_completions_for_substring_index_of_token_index_of_selected_item_imp, #str_ptr("@@:@@q@\0"));
+        let add_token_field_should_add_objects_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("tokenField:shouldAddObjects:atIndex:\0")), TokenFieldDelegate_token_field_should_add_objects_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_token_field_display_string_for_represented_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tokenField:displayStringForRepresentedObject:\0")), TokenFieldDelegate_token_field_display_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_editing_string_for_represented_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tokenField:editingStringForRepresentedObject:\0")), TokenFieldDelegate_token_field_editing_string_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_represented_object_for_editing_string: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tokenField:representedObjectForEditingString:\0")), TokenFieldDelegate_token_field_represented_object_for_editing_string_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_write_represented_objects_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("tokenField:writeRepresentedObjects:toPasteboard:\0")), TokenFieldDelegate_token_field_write_represented_objects_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_token_field_read_from_pasteboard: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tokenField:readFromPasteboard:\0")), TokenFieldDelegate_token_field_read_from_pasteboard_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_menu_for_represented_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("tokenField:menuForRepresentedObject:\0")), TokenFieldDelegate_token_field_menu_for_represented_object_imp, #str_ptr("@@:@@\0"));
+        let add_token_field_has_menu_for_represented_object: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("tokenField:hasMenuForRepresentedObject:\0")), TokenFieldDelegate_token_field_has_menu_for_represented_object_imp, #str_ptr("c@:@@\0"));
+        let add_token_field_style_for_represented_object: i8 = cplus_add_method_u64_id_id(cls, rt::sel(#str_ptr("tokenField:styleForRepresentedObject:\0")), TokenFieldDelegate_token_field_style_for_represented_object_imp, #str_ptr("Q@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

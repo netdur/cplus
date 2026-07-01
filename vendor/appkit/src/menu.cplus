@@ -455,16 +455,29 @@ impl Menu {
 }
 
 // `NSMenuDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `menu:updateItem:atIndex:shouldCancel:`: arg shape (only <=5 object args modelled)
-// SKIPPED `menuHasKeyEquivalent:forEvent:target:action:`: no `i8`-return / 4-arg IMP shape
 // SKIPPED `confinementRectForMenu:onScreen:`: return `NSRect` not modelled
-fn MenuDelegate_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
-fn MenuDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn MenuDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_i64_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, i8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+fn MenuDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn MenuDelegate_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn MenuDelegate_noop_i8_id_id_i64_i8(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: i8) -> i8 { return 0 as i8; }
+fn MenuDelegate_noop_i8_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 { return 0 as i8; }
+fn MenuDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 
 struct MenuDelegate {
     menu_needs_update: fn(*u8, *u8),
     number_of_items_in_menu: fn(*u8, *u8) -> i64,
+    menu_update_item_at_index_should_cancel: fn(*u8, *u8, *u8, i64, i8) -> i8,
+    menu_has_key_equivalent_for_event_target_action: fn(*u8, *u8, *u8, *u8, *u8) -> i8,
     menu_will_open: fn(*u8, *u8),
     menu_did_close: fn(*u8, *u8),
     menu_will_highlight_item: fn(*u8, *u8, *u8),
@@ -472,7 +485,7 @@ struct MenuDelegate {
 }
 
 fn MenuDelegate_new(user: *u8) -> MenuDelegate {
-    return MenuDelegate { menu_needs_update: MenuDelegate_noop_v_1, number_of_items_in_menu: MenuDelegate_noop_i64_1, menu_will_open: MenuDelegate_noop_v_1, menu_did_close: MenuDelegate_noop_v_1, menu_will_highlight_item: MenuDelegate_noop_v_2, user: user };
+    return MenuDelegate { menu_needs_update: MenuDelegate_noop_v_id, number_of_items_in_menu: MenuDelegate_noop_i64_id, menu_update_item_at_index_should_cancel: MenuDelegate_noop_i8_id_id_i64_i8, menu_has_key_equivalent_for_event_target_action: MenuDelegate_noop_i8_id_id_id_id, menu_will_open: MenuDelegate_noop_v_id, menu_did_close: MenuDelegate_noop_v_id, menu_will_highlight_item: MenuDelegate_noop_v_id_id, user: user };
 }
 
 impl MenuDelegate {
@@ -482,6 +495,14 @@ impl MenuDelegate {
     }
     fn set_number_of_items_in_menu(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_items_in_menu = handler;
+        return;
+    }
+    fn set_menu_update_item_at_index_should_cancel(ref this, handler: fn(*u8, *u8, *u8, i64, i8) -> i8) {
+        this.menu_update_item_at_index_should_cancel = handler;
+        return;
+    }
+    fn set_menu_has_key_equivalent_for_event_target_action(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> i8) {
+        this.menu_has_key_equivalent_for_event_target_action = handler;
         return;
     }
     fn set_menu_will_open(ref this, handler: fn(*u8, *u8)) {
@@ -515,6 +536,20 @@ fn MenuDelegate_number_of_items_in_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8) ->
     return f(u, a0);
 }
 
+fn MenuDelegate_menu_update_item_at_index_should_cancel_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: i8) -> i8 {
+    let c: *MenuDelegate = { synth::get_associated(self_obj, MenuDelegate_key()) as *MenuDelegate };
+    let f: fn(*u8, *u8, *u8, i64, i8) -> i8 = { (*c).menu_update_item_at_index_should_cancel };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn MenuDelegate_menu_has_key_equivalent_for_event_target_action_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 {
+    let c: *MenuDelegate = { synth::get_associated(self_obj, MenuDelegate_key()) as *MenuDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) -> i8 = { (*c).menu_has_key_equivalent_for_event_target_action };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
 fn MenuDelegate_menu_will_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *MenuDelegate = { synth::get_associated(self_obj, MenuDelegate_key()) as *MenuDelegate };
     let f: fn(*u8, *u8) = { (*c).menu_will_open };
@@ -544,11 +579,13 @@ fn create_MenuDelegate(ctx: *MenuDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_menu_needs_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("menuNeedsUpdate:\0")), MenuDelegate_menu_needs_update_imp, #str_ptr("v@:@\0"));
-        let add_number_of_items_in_menu: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfItemsInMenu:\0")), MenuDelegate_number_of_items_in_menu_imp, #str_ptr("q@:@\0"));
-        let add_menu_will_open: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("menuWillOpen:\0")), MenuDelegate_menu_will_open_imp, #str_ptr("v@:@\0"));
-        let add_menu_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("menuDidClose:\0")), MenuDelegate_menu_did_close_imp, #str_ptr("v@:@\0"));
-        let add_menu_will_highlight_item: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("menu:willHighlightItem:\0")), MenuDelegate_menu_will_highlight_item_imp, #str_ptr("v@:@@\0"));
+        let add_menu_needs_update: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("menuNeedsUpdate:\0")), MenuDelegate_menu_needs_update_imp, #str_ptr("v@:@\0"));
+        let add_number_of_items_in_menu: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfItemsInMenu:\0")), MenuDelegate_number_of_items_in_menu_imp, #str_ptr("q@:@\0"));
+        let add_menu_update_item_at_index_should_cancel: i8 = cplus_add_method_i8_id_id_i64_i8(cls, rt::sel(#str_ptr("menu:updateItem:atIndex:shouldCancel:\0")), MenuDelegate_menu_update_item_at_index_should_cancel_imp, #str_ptr("c@:@@qc\0"));
+        let add_menu_has_key_equivalent_for_event_target_action: i8 = cplus_add_method_i8_id_id_id_id(cls, rt::sel(#str_ptr("menuHasKeyEquivalent:forEvent:target:action:\0")), MenuDelegate_menu_has_key_equivalent_for_event_target_action_imp, #str_ptr("c@:@@@@\0"));
+        let add_menu_will_open: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("menuWillOpen:\0")), MenuDelegate_menu_will_open_imp, #str_ptr("v@:@\0"));
+        let add_menu_did_close: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("menuDidClose:\0")), MenuDelegate_menu_did_close_imp, #str_ptr("v@:@\0"));
+        let add_menu_will_highlight_item: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("menu:willHighlightItem:\0")), MenuDelegate_menu_will_highlight_item_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

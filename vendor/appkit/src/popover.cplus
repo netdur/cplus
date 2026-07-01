@@ -261,9 +261,16 @@ impl Popover {
 }
 
 // `NSPopoverDelegate` delegate protocol -> runtime class-synthesis helper.
-fn PopoverDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn PopoverDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn PopoverDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn PopoverDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn PopoverDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn PopoverDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct PopoverDelegate {
     popover_should_close: fn(*u8, *u8) -> i8,
@@ -278,7 +285,7 @@ struct PopoverDelegate {
 }
 
 fn PopoverDelegate_new(user: *u8) -> PopoverDelegate {
-    return PopoverDelegate { popover_should_close: PopoverDelegate_noop_i8_1, popover_should_detach: PopoverDelegate_noop_i8_1, popover_did_detach: PopoverDelegate_noop_v_1, detachable_window_for_popover: PopoverDelegate_noop_id_1, popover_will_show: PopoverDelegate_noop_v_1, popover_did_show: PopoverDelegate_noop_v_1, popover_will_close: PopoverDelegate_noop_v_1, popover_did_close: PopoverDelegate_noop_v_1, user: user };
+    return PopoverDelegate { popover_should_close: PopoverDelegate_noop_i8_id, popover_should_detach: PopoverDelegate_noop_i8_id, popover_did_detach: PopoverDelegate_noop_v_id, detachable_window_for_popover: PopoverDelegate_noop_id_id, popover_will_show: PopoverDelegate_noop_v_id, popover_did_show: PopoverDelegate_noop_v_id, popover_will_close: PopoverDelegate_noop_v_id, popover_did_close: PopoverDelegate_noop_v_id, user: user };
 }
 
 impl PopoverDelegate {
@@ -384,14 +391,14 @@ fn create_PopoverDelegate(ctx: *PopoverDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_popover_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldClose:\0")), PopoverDelegate_popover_should_close_imp, #str_ptr("c@:@\0"));
-        let add_popover_should_detach: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("popoverShouldDetach:\0")), PopoverDelegate_popover_should_detach_imp, #str_ptr("c@:@\0"));
-        let add_popover_did_detach: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidDetach:\0")), PopoverDelegate_popover_did_detach_imp, #str_ptr("v@:@\0"));
-        let add_detachable_window_for_popover: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("detachableWindowForPopover:\0")), PopoverDelegate_detachable_window_for_popover_imp, #str_ptr("@@:@\0"));
-        let add_popover_will_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillShow:\0")), PopoverDelegate_popover_will_show_imp, #str_ptr("v@:@\0"));
-        let add_popover_did_show: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidShow:\0")), PopoverDelegate_popover_did_show_imp, #str_ptr("v@:@\0"));
-        let add_popover_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverWillClose:\0")), PopoverDelegate_popover_will_close_imp, #str_ptr("v@:@\0"));
-        let add_popover_did_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidClose:\0")), PopoverDelegate_popover_did_close_imp, #str_ptr("v@:@\0"));
+        let add_popover_should_close: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("popoverShouldClose:\0")), PopoverDelegate_popover_should_close_imp, #str_ptr("c@:@\0"));
+        let add_popover_should_detach: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("popoverShouldDetach:\0")), PopoverDelegate_popover_should_detach_imp, #str_ptr("c@:@\0"));
+        let add_popover_did_detach: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("popoverDidDetach:\0")), PopoverDelegate_popover_did_detach_imp, #str_ptr("v@:@\0"));
+        let add_detachable_window_for_popover: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("detachableWindowForPopover:\0")), PopoverDelegate_detachable_window_for_popover_imp, #str_ptr("@@:@\0"));
+        let add_popover_will_show: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("popoverWillShow:\0")), PopoverDelegate_popover_will_show_imp, #str_ptr("v@:@\0"));
+        let add_popover_did_show: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("popoverDidShow:\0")), PopoverDelegate_popover_did_show_imp, #str_ptr("v@:@\0"));
+        let add_popover_will_close: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("popoverWillClose:\0")), PopoverDelegate_popover_will_close_imp, #str_ptr("v@:@\0"));
+        let add_popover_did_close: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("popoverDidClose:\0")), PopoverDelegate_popover_did_close_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

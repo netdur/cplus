@@ -366,8 +366,13 @@ impl GestureRecognizer {
 }
 
 // `NSGestureRecognizerDelegate` delegate protocol -> runtime class-synthesis helper.
-fn GestureRecognizerDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn GestureRecognizerDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
+fn GestureRecognizerDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn GestureRecognizerDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
 
 struct GestureRecognizerDelegate {
     gesture_recognizer_should_attempt_to_recognize_with_event: fn(*u8, *u8, *u8) -> i8,
@@ -380,7 +385,7 @@ struct GestureRecognizerDelegate {
 }
 
 fn GestureRecognizerDelegate_new(user: *u8) -> GestureRecognizerDelegate {
-    return GestureRecognizerDelegate { gesture_recognizer_should_attempt_to_recognize_with_event: GestureRecognizerDelegate_noop_i8_2, gesture_recognizer_should_begin: GestureRecognizerDelegate_noop_i8_1, gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer: GestureRecognizerDelegate_noop_i8_2, gesture_recognizer_should_require_failure_of_gesture_recognizer: GestureRecognizerDelegate_noop_i8_2, gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer: GestureRecognizerDelegate_noop_i8_2, gesture_recognizer_should_receive_touch: GestureRecognizerDelegate_noop_i8_2, user: user };
+    return GestureRecognizerDelegate { gesture_recognizer_should_attempt_to_recognize_with_event: GestureRecognizerDelegate_noop_i8_id_id, gesture_recognizer_should_begin: GestureRecognizerDelegate_noop_i8_id, gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer: GestureRecognizerDelegate_noop_i8_id_id, gesture_recognizer_should_require_failure_of_gesture_recognizer: GestureRecognizerDelegate_noop_i8_id_id, gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer: GestureRecognizerDelegate_noop_i8_id_id, gesture_recognizer_should_receive_touch: GestureRecognizerDelegate_noop_i8_id_id, user: user };
 }
 
 impl GestureRecognizerDelegate {
@@ -459,12 +464,12 @@ fn create_GestureRecognizerDelegate(ctx: *GestureRecognizerDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_gesture_recognizer_should_attempt_to_recognize_with_event: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldAttemptToRecognizeWithEvent:\0")), GestureRecognizerDelegate_gesture_recognizer_should_attempt_to_recognize_with_event_imp, #str_ptr("c@:@@\0"));
-        let add_gesture_recognizer_should_begin: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("gestureRecognizerShouldBegin:\0")), GestureRecognizerDelegate_gesture_recognizer_should_begin_imp, #str_ptr("c@:@\0"));
-        let add_gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
-        let add_gesture_recognizer_should_require_failure_of_gesture_recognizer: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldRequireFailureOfGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_require_failure_of_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
-        let add_gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldBeRequiredToFailByGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
-        let add_gesture_recognizer_should_receive_touch: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldReceiveTouch:\0")), GestureRecognizerDelegate_gesture_recognizer_should_receive_touch_imp, #str_ptr("c@:@@\0"));
+        let add_gesture_recognizer_should_attempt_to_recognize_with_event: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldAttemptToRecognizeWithEvent:\0")), GestureRecognizerDelegate_gesture_recognizer_should_attempt_to_recognize_with_event_imp, #str_ptr("c@:@@\0"));
+        let add_gesture_recognizer_should_begin: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("gestureRecognizerShouldBegin:\0")), GestureRecognizerDelegate_gesture_recognizer_should_begin_imp, #str_ptr("c@:@\0"));
+        let add_gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_recognize_simultaneously_with_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
+        let add_gesture_recognizer_should_require_failure_of_gesture_recognizer: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldRequireFailureOfGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_require_failure_of_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
+        let add_gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldBeRequiredToFailByGestureRecognizer:\0")), GestureRecognizerDelegate_gesture_recognizer_should_be_required_to_fail_by_gesture_recognizer_imp, #str_ptr("c@:@@\0"));
+        let add_gesture_recognizer_should_receive_touch: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("gestureRecognizer:shouldReceiveTouch:\0")), GestureRecognizerDelegate_gesture_recognizer_should_receive_touch_imp, #str_ptr("c@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

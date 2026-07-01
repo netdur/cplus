@@ -2292,33 +2292,55 @@ impl Window {
 }
 
 // `NSWindowDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `windowWillResize:toSize:`: arg shape (only <=5 object args modelled)
-// SKIPPED `windowWillUseStandardFrame:defaultFrame:`: arg shape (only <=5 object args modelled)
-// SKIPPED `windowShouldZoom:toFrame:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:willPositionSheet:usingRect:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:shouldDragDocumentWithEvent:from:withPasteboard:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:willUseFullScreenContentSize:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:willUseFullScreenPresentationOptions:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:startCustomAnimationToEnterFullScreenWithDuration:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:startCustomAnimationToExitFullScreenWithDuration:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:startCustomAnimationToEnterFullScreenOnScreen:withDuration:`: arg shape (only <=5 object args modelled)
-// SKIPPED `window:willResizeForVersionBrowserWithMaxPreferredSize:maxAllowedSize:`: arg shape (only <=5 object args modelled)
-fn WindowDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn WindowDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn WindowDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn WindowDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn WindowDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn WindowDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+// SKIPPED `windowWillResize:toSize:`: return `NSSize` not modelled
+// SKIPPED `windowWillUseStandardFrame:defaultFrame:`: return `NSRect` not modelled
+// SKIPPED `windowShouldZoom:toFrame:`: arg `NSRect` not modelled
+// SKIPPED `window:willPositionSheet:usingRect:`: return `NSRect` not modelled
+// SKIPPED `window:shouldDragDocumentWithEvent:from:withPasteboard:`: arg `NSPoint` not modelled
+// SKIPPED `window:willUseFullScreenContentSize:`: return `NSSize` not modelled
+// SKIPPED `window:willResizeForVersionBrowserWithMaxPreferredSize:maxAllowedSize:`: return `NSSize` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, u64) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_f64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, f64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_f64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, f64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+fn WindowDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn WindowDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn WindowDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn WindowDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn WindowDelegate_noop_u64_id_u64(user: *u8, a0: *u8, a1: u64) -> u64 { return 0 as u64; }
+fn WindowDelegate_noop_v_id_f64(user: *u8, a0: *u8, a1: f64) { return; }
+fn WindowDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn WindowDelegate_noop_v_id_id_f64(user: *u8, a0: *u8, a1: *u8, a2: f64) { return; }
+fn WindowDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 
 struct WindowDelegate {
     window_should_close: fn(*u8, *u8) -> i8,
     window_will_return_field_editor_to_object: fn(*u8, *u8, *u8) -> *u8,
     window_will_return_undo_manager: fn(*u8, *u8) -> *u8,
     window_should_pop_up_document_path_menu: fn(*u8, *u8, *u8) -> i8,
+    window_will_use_full_screen_presentation_options: fn(*u8, *u8, u64) -> u64,
     custom_windows_to_enter_full_screen_for_window: fn(*u8, *u8) -> *u8,
+    window_start_custom_animation_to_enter_full_screen_with_duration: fn(*u8, *u8, f64),
     window_did_fail_to_enter_full_screen: fn(*u8, *u8),
     custom_windows_to_exit_full_screen_for_window: fn(*u8, *u8) -> *u8,
+    window_start_custom_animation_to_exit_full_screen_with_duration: fn(*u8, *u8, f64),
     custom_windows_to_enter_full_screen_for_window_on_screen: fn(*u8, *u8, *u8) -> *u8,
+    window_start_custom_animation_to_enter_full_screen_on_screen_with_duration: fn(*u8, *u8, *u8, f64),
     window_did_fail_to_exit_full_screen: fn(*u8, *u8),
     window_will_encode_restorable_state: fn(*u8, *u8, *u8),
     window_did_decode_restorable_state: fn(*u8, *u8, *u8),
@@ -2357,7 +2379,7 @@ struct WindowDelegate {
 }
 
 fn WindowDelegate_new(user: *u8) -> WindowDelegate {
-    return WindowDelegate { window_should_close: WindowDelegate_noop_i8_1, window_will_return_field_editor_to_object: WindowDelegate_noop_id_2, window_will_return_undo_manager: WindowDelegate_noop_id_1, window_should_pop_up_document_path_menu: WindowDelegate_noop_i8_2, custom_windows_to_enter_full_screen_for_window: WindowDelegate_noop_id_1, window_did_fail_to_enter_full_screen: WindowDelegate_noop_v_1, custom_windows_to_exit_full_screen_for_window: WindowDelegate_noop_id_1, custom_windows_to_enter_full_screen_for_window_on_screen: WindowDelegate_noop_id_2, window_did_fail_to_exit_full_screen: WindowDelegate_noop_v_1, window_will_encode_restorable_state: WindowDelegate_noop_v_2, window_did_decode_restorable_state: WindowDelegate_noop_v_2, preview_representable_activity_items_for_window: WindowDelegate_noop_id_1, window_for_sharing_request_from_window: WindowDelegate_noop_id_1, window_did_resize: WindowDelegate_noop_v_1, window_did_expose: WindowDelegate_noop_v_1, window_will_move: WindowDelegate_noop_v_1, window_did_move: WindowDelegate_noop_v_1, window_did_become_key: WindowDelegate_noop_v_1, window_did_resign_key: WindowDelegate_noop_v_1, window_did_become_main: WindowDelegate_noop_v_1, window_did_resign_main: WindowDelegate_noop_v_1, window_will_close: WindowDelegate_noop_v_1, window_will_miniaturize: WindowDelegate_noop_v_1, window_did_miniaturize: WindowDelegate_noop_v_1, window_did_deminiaturize: WindowDelegate_noop_v_1, window_did_update: WindowDelegate_noop_v_1, window_did_change_screen: WindowDelegate_noop_v_1, window_did_change_screen_profile: WindowDelegate_noop_v_1, window_did_change_backing_properties: WindowDelegate_noop_v_1, window_will_begin_sheet: WindowDelegate_noop_v_1, window_did_end_sheet: WindowDelegate_noop_v_1, window_will_start_live_resize: WindowDelegate_noop_v_1, window_did_end_live_resize: WindowDelegate_noop_v_1, window_will_enter_full_screen: WindowDelegate_noop_v_1, window_did_enter_full_screen: WindowDelegate_noop_v_1, window_will_exit_full_screen: WindowDelegate_noop_v_1, window_did_exit_full_screen: WindowDelegate_noop_v_1, window_will_enter_version_browser: WindowDelegate_noop_v_1, window_did_enter_version_browser: WindowDelegate_noop_v_1, window_will_exit_version_browser: WindowDelegate_noop_v_1, window_did_exit_version_browser: WindowDelegate_noop_v_1, window_did_change_occlusion_state: WindowDelegate_noop_v_1, user: user };
+    return WindowDelegate { window_should_close: WindowDelegate_noop_i8_id, window_will_return_field_editor_to_object: WindowDelegate_noop_id_id_id, window_will_return_undo_manager: WindowDelegate_noop_id_id, window_should_pop_up_document_path_menu: WindowDelegate_noop_i8_id_id, window_will_use_full_screen_presentation_options: WindowDelegate_noop_u64_id_u64, custom_windows_to_enter_full_screen_for_window: WindowDelegate_noop_id_id, window_start_custom_animation_to_enter_full_screen_with_duration: WindowDelegate_noop_v_id_f64, window_did_fail_to_enter_full_screen: WindowDelegate_noop_v_id, custom_windows_to_exit_full_screen_for_window: WindowDelegate_noop_id_id, window_start_custom_animation_to_exit_full_screen_with_duration: WindowDelegate_noop_v_id_f64, custom_windows_to_enter_full_screen_for_window_on_screen: WindowDelegate_noop_id_id_id, window_start_custom_animation_to_enter_full_screen_on_screen_with_duration: WindowDelegate_noop_v_id_id_f64, window_did_fail_to_exit_full_screen: WindowDelegate_noop_v_id, window_will_encode_restorable_state: WindowDelegate_noop_v_id_id, window_did_decode_restorable_state: WindowDelegate_noop_v_id_id, preview_representable_activity_items_for_window: WindowDelegate_noop_id_id, window_for_sharing_request_from_window: WindowDelegate_noop_id_id, window_did_resize: WindowDelegate_noop_v_id, window_did_expose: WindowDelegate_noop_v_id, window_will_move: WindowDelegate_noop_v_id, window_did_move: WindowDelegate_noop_v_id, window_did_become_key: WindowDelegate_noop_v_id, window_did_resign_key: WindowDelegate_noop_v_id, window_did_become_main: WindowDelegate_noop_v_id, window_did_resign_main: WindowDelegate_noop_v_id, window_will_close: WindowDelegate_noop_v_id, window_will_miniaturize: WindowDelegate_noop_v_id, window_did_miniaturize: WindowDelegate_noop_v_id, window_did_deminiaturize: WindowDelegate_noop_v_id, window_did_update: WindowDelegate_noop_v_id, window_did_change_screen: WindowDelegate_noop_v_id, window_did_change_screen_profile: WindowDelegate_noop_v_id, window_did_change_backing_properties: WindowDelegate_noop_v_id, window_will_begin_sheet: WindowDelegate_noop_v_id, window_did_end_sheet: WindowDelegate_noop_v_id, window_will_start_live_resize: WindowDelegate_noop_v_id, window_did_end_live_resize: WindowDelegate_noop_v_id, window_will_enter_full_screen: WindowDelegate_noop_v_id, window_did_enter_full_screen: WindowDelegate_noop_v_id, window_will_exit_full_screen: WindowDelegate_noop_v_id, window_did_exit_full_screen: WindowDelegate_noop_v_id, window_will_enter_version_browser: WindowDelegate_noop_v_id, window_did_enter_version_browser: WindowDelegate_noop_v_id, window_will_exit_version_browser: WindowDelegate_noop_v_id, window_did_exit_version_browser: WindowDelegate_noop_v_id, window_did_change_occlusion_state: WindowDelegate_noop_v_id, user: user };
 }
 
 impl WindowDelegate {
@@ -2377,8 +2399,16 @@ impl WindowDelegate {
         this.window_should_pop_up_document_path_menu = handler;
         return;
     }
+    fn set_window_will_use_full_screen_presentation_options(ref this, handler: fn(*u8, *u8, u64) -> u64) {
+        this.window_will_use_full_screen_presentation_options = handler;
+        return;
+    }
     fn set_custom_windows_to_enter_full_screen_for_window(ref this, handler: fn(*u8, *u8) -> *u8) {
         this.custom_windows_to_enter_full_screen_for_window = handler;
+        return;
+    }
+    fn set_window_start_custom_animation_to_enter_full_screen_with_duration(ref this, handler: fn(*u8, *u8, f64)) {
+        this.window_start_custom_animation_to_enter_full_screen_with_duration = handler;
         return;
     }
     fn set_window_did_fail_to_enter_full_screen(ref this, handler: fn(*u8, *u8)) {
@@ -2389,8 +2419,16 @@ impl WindowDelegate {
         this.custom_windows_to_exit_full_screen_for_window = handler;
         return;
     }
+    fn set_window_start_custom_animation_to_exit_full_screen_with_duration(ref this, handler: fn(*u8, *u8, f64)) {
+        this.window_start_custom_animation_to_exit_full_screen_with_duration = handler;
+        return;
+    }
     fn set_custom_windows_to_enter_full_screen_for_window_on_screen(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.custom_windows_to_enter_full_screen_for_window_on_screen = handler;
+        return;
+    }
+    fn set_window_start_custom_animation_to_enter_full_screen_on_screen_with_duration(ref this, handler: fn(*u8, *u8, *u8, f64)) {
+        this.window_start_custom_animation_to_enter_full_screen_on_screen_with_duration = handler;
         return;
     }
     fn set_window_did_fail_to_exit_full_screen(ref this, handler: fn(*u8, *u8)) {
@@ -2561,11 +2599,26 @@ fn WindowDelegate_window_should_pop_up_document_path_menu_imp(self_obj: *u8, cmd
     return f(u, a0, a1);
 }
 
+fn WindowDelegate_window_will_use_full_screen_presentation_options_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: u64) -> u64 {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
+    let f: fn(*u8, *u8, u64) -> u64 = { (*c).window_will_use_full_screen_presentation_options };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn WindowDelegate_custom_windows_to_enter_full_screen_for_window_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
     let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).custom_windows_to_enter_full_screen_for_window };
     let u: *u8 = { (*c).user };
     return f(u, a0);
+}
+
+fn WindowDelegate_window_start_custom_animation_to_enter_full_screen_with_duration_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
+    let f: fn(*u8, *u8, f64) = { (*c).window_start_custom_animation_to_enter_full_screen_with_duration };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
 }
 
 fn WindowDelegate_window_did_fail_to_enter_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
@@ -2583,11 +2636,27 @@ fn WindowDelegate_custom_windows_to_exit_full_screen_for_window_imp(self_obj: *u
     return f(u, a0);
 }
 
+fn WindowDelegate_window_start_custom_animation_to_exit_full_screen_with_duration_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
+    let f: fn(*u8, *u8, f64) = { (*c).window_start_custom_animation_to_exit_full_screen_with_duration };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
 fn WindowDelegate_custom_windows_to_enter_full_screen_for_window_on_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).custom_windows_to_enter_full_screen_for_window_on_screen };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn WindowDelegate_window_start_custom_animation_to_enter_full_screen_on_screen_with_duration_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: f64) {
+    let c: *WindowDelegate = { synth::get_associated(self_obj, WindowDelegate_key()) as *WindowDelegate };
+    let f: fn(*u8, *u8, *u8, f64) = { (*c).window_start_custom_animation_to_enter_full_screen_on_screen_with_duration };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
 }
 
 fn WindowDelegate_window_did_fail_to_exit_full_screen_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
@@ -2865,48 +2934,52 @@ fn create_WindowDelegate(ctx: *WindowDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_window_should_close: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("windowShouldClose:\0")), WindowDelegate_window_should_close_imp, #str_ptr("c@:@\0"));
-        let add_window_will_return_field_editor_to_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("windowWillReturnFieldEditor:toObject:\0")), WindowDelegate_window_will_return_field_editor_to_object_imp, #str_ptr("@@:@@\0"));
-        let add_window_will_return_undo_manager: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowWillReturnUndoManager:\0")), WindowDelegate_window_will_return_undo_manager_imp, #str_ptr("@@:@\0"));
-        let add_window_should_pop_up_document_path_menu: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("window:shouldPopUpDocumentPathMenu:\0")), WindowDelegate_window_should_pop_up_document_path_menu_imp, #str_ptr("c@:@@\0"));
-        let add_custom_windows_to_enter_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_imp, #str_ptr("@@:@\0"));
-        let add_window_did_fail_to_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToEnterFullScreen:\0")), WindowDelegate_window_did_fail_to_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_custom_windows_to_exit_full_screen_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("customWindowsToExitFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_exit_full_screen_for_window_imp, #str_ptr("@@:@\0"));
-        let add_custom_windows_to_enter_full_screen_for_window_on_screen: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:onScreen:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_on_screen_imp, #str_ptr("@@:@@\0"));
-        let add_window_did_fail_to_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidFailToExitFullScreen:\0")), WindowDelegate_window_did_fail_to_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_encode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:willEncodeRestorableState:\0")), WindowDelegate_window_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_window_did_decode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("window:didDecodeRestorableState:\0")), WindowDelegate_window_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_preview_representable_activity_items_for_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("previewRepresentableActivityItemsForWindow:\0")), WindowDelegate_preview_representable_activity_items_for_window_imp, #str_ptr("@@:@\0"));
-        let add_window_for_sharing_request_from_window: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("windowForSharingRequestFromWindow:\0")), WindowDelegate_window_for_sharing_request_from_window_imp, #str_ptr("@@:@\0"));
-        let add_window_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResize:\0")), WindowDelegate_window_did_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_expose: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExpose:\0")), WindowDelegate_window_did_expose_imp, #str_ptr("v@:@\0"));
-        let add_window_will_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMove:\0")), WindowDelegate_window_will_move_imp, #str_ptr("v@:@\0"));
-        let add_window_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMove:\0")), WindowDelegate_window_did_move_imp, #str_ptr("v@:@\0"));
-        let add_window_did_become_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeKey:\0")), WindowDelegate_window_did_become_key_imp, #str_ptr("v@:@\0"));
-        let add_window_did_resign_key: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignKey:\0")), WindowDelegate_window_did_resign_key_imp, #str_ptr("v@:@\0"));
-        let add_window_did_become_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidBecomeMain:\0")), WindowDelegate_window_did_become_main_imp, #str_ptr("v@:@\0"));
-        let add_window_did_resign_main: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidResignMain:\0")), WindowDelegate_window_did_resign_main_imp, #str_ptr("v@:@\0"));
-        let add_window_will_close: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillClose:\0")), WindowDelegate_window_will_close_imp, #str_ptr("v@:@\0"));
-        let add_window_will_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillMiniaturize:\0")), WindowDelegate_window_will_miniaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_miniaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidMiniaturize:\0")), WindowDelegate_window_did_miniaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_deminiaturize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidDeminiaturize:\0")), WindowDelegate_window_did_deminiaturize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidUpdate:\0")), WindowDelegate_window_did_update_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreen:\0")), WindowDelegate_window_did_change_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_screen_profile: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeScreenProfile:\0")), WindowDelegate_window_did_change_screen_profile_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_backing_properties: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeBackingProperties:\0")), WindowDelegate_window_did_change_backing_properties_imp, #str_ptr("v@:@\0"));
-        let add_window_will_begin_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillBeginSheet:\0")), WindowDelegate_window_will_begin_sheet_imp, #str_ptr("v@:@\0"));
-        let add_window_did_end_sheet: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndSheet:\0")), WindowDelegate_window_did_end_sheet_imp, #str_ptr("v@:@\0"));
-        let add_window_will_start_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillStartLiveResize:\0")), WindowDelegate_window_will_start_live_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_did_end_live_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEndLiveResize:\0")), WindowDelegate_window_did_end_live_resize_imp, #str_ptr("v@:@\0"));
-        let add_window_will_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterFullScreen:\0")), WindowDelegate_window_will_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_enter_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterFullScreen:\0")), WindowDelegate_window_did_enter_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitFullScreen:\0")), WindowDelegate_window_will_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_did_exit_full_screen: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitFullScreen:\0")), WindowDelegate_window_did_exit_full_screen_imp, #str_ptr("v@:@\0"));
-        let add_window_will_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillEnterVersionBrowser:\0")), WindowDelegate_window_will_enter_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_enter_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidEnterVersionBrowser:\0")), WindowDelegate_window_did_enter_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_will_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowWillExitVersionBrowser:\0")), WindowDelegate_window_will_exit_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_exit_version_browser: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidExitVersionBrowser:\0")), WindowDelegate_window_did_exit_version_browser_imp, #str_ptr("v@:@\0"));
-        let add_window_did_change_occlusion_state: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("windowDidChangeOcclusionState:\0")), WindowDelegate_window_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
+        let add_window_should_close: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("windowShouldClose:\0")), WindowDelegate_window_should_close_imp, #str_ptr("c@:@\0"));
+        let add_window_will_return_field_editor_to_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("windowWillReturnFieldEditor:toObject:\0")), WindowDelegate_window_will_return_field_editor_to_object_imp, #str_ptr("@@:@@\0"));
+        let add_window_will_return_undo_manager: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("windowWillReturnUndoManager:\0")), WindowDelegate_window_will_return_undo_manager_imp, #str_ptr("@@:@\0"));
+        let add_window_should_pop_up_document_path_menu: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("window:shouldPopUpDocumentPathMenu:\0")), WindowDelegate_window_should_pop_up_document_path_menu_imp, #str_ptr("c@:@@\0"));
+        let add_window_will_use_full_screen_presentation_options: i8 = cplus_add_method_u64_id_u64(cls, rt::sel(#str_ptr("window:willUseFullScreenPresentationOptions:\0")), WindowDelegate_window_will_use_full_screen_presentation_options_imp, #str_ptr("Q@:@Q\0"));
+        let add_custom_windows_to_enter_full_screen_for_window: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_imp, #str_ptr("@@:@\0"));
+        let add_window_start_custom_animation_to_enter_full_screen_with_duration: i8 = cplus_add_method_v_id_f64(cls, rt::sel(#str_ptr("window:startCustomAnimationToEnterFullScreenWithDuration:\0")), WindowDelegate_window_start_custom_animation_to_enter_full_screen_with_duration_imp, #str_ptr("v@:@d\0"));
+        let add_window_did_fail_to_enter_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidFailToEnterFullScreen:\0")), WindowDelegate_window_did_fail_to_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_custom_windows_to_exit_full_screen_for_window: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("customWindowsToExitFullScreenForWindow:\0")), WindowDelegate_custom_windows_to_exit_full_screen_for_window_imp, #str_ptr("@@:@\0"));
+        let add_window_start_custom_animation_to_exit_full_screen_with_duration: i8 = cplus_add_method_v_id_f64(cls, rt::sel(#str_ptr("window:startCustomAnimationToExitFullScreenWithDuration:\0")), WindowDelegate_window_start_custom_animation_to_exit_full_screen_with_duration_imp, #str_ptr("v@:@d\0"));
+        let add_custom_windows_to_enter_full_screen_for_window_on_screen: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("customWindowsToEnterFullScreenForWindow:onScreen:\0")), WindowDelegate_custom_windows_to_enter_full_screen_for_window_on_screen_imp, #str_ptr("@@:@@\0"));
+        let add_window_start_custom_animation_to_enter_full_screen_on_screen_with_duration: i8 = cplus_add_method_v_id_id_f64(cls, rt::sel(#str_ptr("window:startCustomAnimationToEnterFullScreenOnScreen:withDuration:\0")), WindowDelegate_window_start_custom_animation_to_enter_full_screen_on_screen_with_duration_imp, #str_ptr("v@:@@d\0"));
+        let add_window_did_fail_to_exit_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidFailToExitFullScreen:\0")), WindowDelegate_window_did_fail_to_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_encode_restorable_state: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("window:willEncodeRestorableState:\0")), WindowDelegate_window_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_window_did_decode_restorable_state: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("window:didDecodeRestorableState:\0")), WindowDelegate_window_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_preview_representable_activity_items_for_window: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("previewRepresentableActivityItemsForWindow:\0")), WindowDelegate_preview_representable_activity_items_for_window_imp, #str_ptr("@@:@\0"));
+        let add_window_for_sharing_request_from_window: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("windowForSharingRequestFromWindow:\0")), WindowDelegate_window_for_sharing_request_from_window_imp, #str_ptr("@@:@\0"));
+        let add_window_did_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidResize:\0")), WindowDelegate_window_did_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_expose: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidExpose:\0")), WindowDelegate_window_did_expose_imp, #str_ptr("v@:@\0"));
+        let add_window_will_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillMove:\0")), WindowDelegate_window_will_move_imp, #str_ptr("v@:@\0"));
+        let add_window_did_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidMove:\0")), WindowDelegate_window_did_move_imp, #str_ptr("v@:@\0"));
+        let add_window_did_become_key: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidBecomeKey:\0")), WindowDelegate_window_did_become_key_imp, #str_ptr("v@:@\0"));
+        let add_window_did_resign_key: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidResignKey:\0")), WindowDelegate_window_did_resign_key_imp, #str_ptr("v@:@\0"));
+        let add_window_did_become_main: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidBecomeMain:\0")), WindowDelegate_window_did_become_main_imp, #str_ptr("v@:@\0"));
+        let add_window_did_resign_main: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidResignMain:\0")), WindowDelegate_window_did_resign_main_imp, #str_ptr("v@:@\0"));
+        let add_window_will_close: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillClose:\0")), WindowDelegate_window_will_close_imp, #str_ptr("v@:@\0"));
+        let add_window_will_miniaturize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillMiniaturize:\0")), WindowDelegate_window_will_miniaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_miniaturize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidMiniaturize:\0")), WindowDelegate_window_did_miniaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_deminiaturize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidDeminiaturize:\0")), WindowDelegate_window_did_deminiaturize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_update: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidUpdate:\0")), WindowDelegate_window_did_update_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidChangeScreen:\0")), WindowDelegate_window_did_change_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_screen_profile: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidChangeScreenProfile:\0")), WindowDelegate_window_did_change_screen_profile_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_backing_properties: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidChangeBackingProperties:\0")), WindowDelegate_window_did_change_backing_properties_imp, #str_ptr("v@:@\0"));
+        let add_window_will_begin_sheet: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillBeginSheet:\0")), WindowDelegate_window_will_begin_sheet_imp, #str_ptr("v@:@\0"));
+        let add_window_did_end_sheet: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidEndSheet:\0")), WindowDelegate_window_did_end_sheet_imp, #str_ptr("v@:@\0"));
+        let add_window_will_start_live_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillStartLiveResize:\0")), WindowDelegate_window_will_start_live_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_did_end_live_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidEndLiveResize:\0")), WindowDelegate_window_did_end_live_resize_imp, #str_ptr("v@:@\0"));
+        let add_window_will_enter_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillEnterFullScreen:\0")), WindowDelegate_window_will_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_enter_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidEnterFullScreen:\0")), WindowDelegate_window_did_enter_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_exit_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillExitFullScreen:\0")), WindowDelegate_window_will_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_did_exit_full_screen: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidExitFullScreen:\0")), WindowDelegate_window_did_exit_full_screen_imp, #str_ptr("v@:@\0"));
+        let add_window_will_enter_version_browser: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillEnterVersionBrowser:\0")), WindowDelegate_window_will_enter_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_enter_version_browser: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidEnterVersionBrowser:\0")), WindowDelegate_window_did_enter_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_will_exit_version_browser: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowWillExitVersionBrowser:\0")), WindowDelegate_window_will_exit_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_exit_version_browser: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidExitVersionBrowser:\0")), WindowDelegate_window_did_exit_version_browser_imp, #str_ptr("v@:@\0"));
+        let add_window_did_change_occlusion_state: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("windowDidChangeOcclusionState:\0")), WindowDelegate_window_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

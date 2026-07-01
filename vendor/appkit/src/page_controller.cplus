@@ -124,11 +124,18 @@ impl PageController {
 
 // `NSPageControllerDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `pageController:identifierForObject:`: return `NSPageControllerObjectIdentifier _Nonnull` not modelled
-// SKIPPED `pageController:viewControllerForIdentifier:`: arg shape (only <=5 object args modelled)
+// SKIPPED `pageController:viewControllerForIdentifier:`: arg `NSPageControllerObjectIdentifier _Nonnull` not modelled
 // SKIPPED `pageController:frameForObject:`: return `NSRect` not modelled
-fn PageControllerDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn PageControllerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn PageControllerDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn PageControllerDelegate_noop_v_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn PageControllerDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn PageControllerDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct PageControllerDelegate {
     page_controller_prepare_view_controller_with_object: fn(*u8, *u8, *u8, *u8),
@@ -139,7 +146,7 @@ struct PageControllerDelegate {
 }
 
 fn PageControllerDelegate_new(user: *u8) -> PageControllerDelegate {
-    return PageControllerDelegate { page_controller_prepare_view_controller_with_object: PageControllerDelegate_noop_v_3, page_controller_did_transition_to_object: PageControllerDelegate_noop_v_2, page_controller_will_start_live_transition: PageControllerDelegate_noop_v_1, page_controller_did_end_live_transition: PageControllerDelegate_noop_v_1, user: user };
+    return PageControllerDelegate { page_controller_prepare_view_controller_with_object: PageControllerDelegate_noop_v_id_id_id, page_controller_did_transition_to_object: PageControllerDelegate_noop_v_id_id, page_controller_will_start_live_transition: PageControllerDelegate_noop_v_id, page_controller_did_end_live_transition: PageControllerDelegate_noop_v_id, user: user };
 }
 
 impl PageControllerDelegate {
@@ -200,10 +207,10 @@ fn create_PageControllerDelegate(ctx: *PageControllerDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_page_controller_prepare_view_controller_with_object: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("pageController:prepareViewController:withObject:\0")), PageControllerDelegate_page_controller_prepare_view_controller_with_object_imp, #str_ptr("v@:@@@\0"));
-        let add_page_controller_did_transition_to_object: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pageController:didTransitionToObject:\0")), PageControllerDelegate_page_controller_did_transition_to_object_imp, #str_ptr("v@:@@\0"));
-        let add_page_controller_will_start_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerWillStartLiveTransition:\0")), PageControllerDelegate_page_controller_will_start_live_transition_imp, #str_ptr("v@:@\0"));
-        let add_page_controller_did_end_live_transition: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("pageControllerDidEndLiveTransition:\0")), PageControllerDelegate_page_controller_did_end_live_transition_imp, #str_ptr("v@:@\0"));
+        let add_page_controller_prepare_view_controller_with_object: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("pageController:prepareViewController:withObject:\0")), PageControllerDelegate_page_controller_prepare_view_controller_with_object_imp, #str_ptr("v@:@@@\0"));
+        let add_page_controller_did_transition_to_object: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("pageController:didTransitionToObject:\0")), PageControllerDelegate_page_controller_did_transition_to_object_imp, #str_ptr("v@:@@\0"));
+        let add_page_controller_will_start_live_transition: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("pageControllerWillStartLiveTransition:\0")), PageControllerDelegate_page_controller_will_start_live_transition_imp, #str_ptr("v@:@\0"));
+        let add_page_controller_did_end_live_transition: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("pageControllerDidEndLiveTransition:\0")), PageControllerDelegate_page_controller_did_end_live_transition_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

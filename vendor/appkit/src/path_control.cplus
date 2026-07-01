@@ -257,21 +257,32 @@ impl PathControl {
 }
 
 // `NSPathControlDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `pathControl:validateDrop:`: arg shape (only <=5 object args modelled)
-// SKIPPED `pathControl:acceptDrop:`: arg shape (only <=5 object args modelled)
-fn PathControlDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn PathControlDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+fn PathControlDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn PathControlDelegate_noop_u64_id_id(user: *u8, a0: *u8, a1: *u8) -> u64 { return 0 as u64; }
+fn PathControlDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn PathControlDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 
 struct PathControlDelegate {
     path_control_should_drag_item_with_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     path_control_should_drag_path_component_cell_with_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
+    path_control_validate_drop: fn(*u8, *u8, *u8) -> u64,
+    path_control_accept_drop: fn(*u8, *u8, *u8) -> i8,
     path_control_will_display_open_panel: fn(*u8, *u8, *u8),
     path_control_will_pop_up_menu: fn(*u8, *u8, *u8),
     opaque user: *u8,
 }
 
 fn PathControlDelegate_new(user: *u8) -> PathControlDelegate {
-    return PathControlDelegate { path_control_should_drag_item_with_pasteboard: PathControlDelegate_noop_i8_3, path_control_should_drag_path_component_cell_with_pasteboard: PathControlDelegate_noop_i8_3, path_control_will_display_open_panel: PathControlDelegate_noop_v_2, path_control_will_pop_up_menu: PathControlDelegate_noop_v_2, user: user };
+    return PathControlDelegate { path_control_should_drag_item_with_pasteboard: PathControlDelegate_noop_i8_id_id_id, path_control_should_drag_path_component_cell_with_pasteboard: PathControlDelegate_noop_i8_id_id_id, path_control_validate_drop: PathControlDelegate_noop_u64_id_id, path_control_accept_drop: PathControlDelegate_noop_i8_id_id, path_control_will_display_open_panel: PathControlDelegate_noop_v_id_id, path_control_will_pop_up_menu: PathControlDelegate_noop_v_id_id, user: user };
 }
 
 impl PathControlDelegate {
@@ -281,6 +292,14 @@ impl PathControlDelegate {
     }
     fn set_path_control_should_drag_path_component_cell_with_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.path_control_should_drag_path_component_cell_with_pasteboard = handler;
+        return;
+    }
+    fn set_path_control_validate_drop(ref this, handler: fn(*u8, *u8, *u8) -> u64) {
+        this.path_control_validate_drop = handler;
+        return;
+    }
+    fn set_path_control_accept_drop(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
+        this.path_control_accept_drop = handler;
         return;
     }
     fn set_path_control_will_display_open_panel(ref this, handler: fn(*u8, *u8, *u8)) {
@@ -309,6 +328,20 @@ fn PathControlDelegate_path_control_should_drag_path_component_cell_with_pastebo
     return f(u, a0, a1, a2);
 }
 
+fn PathControlDelegate_path_control_validate_drop_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> u64 {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
+    let f: fn(*u8, *u8, *u8) -> u64 = { (*c).path_control_validate_drop };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn PathControlDelegate_path_control_accept_drop_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
+    let f: fn(*u8, *u8, *u8) -> i8 = { (*c).path_control_accept_drop };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn PathControlDelegate_path_control_will_display_open_panel_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).path_control_will_display_open_panel };
@@ -330,10 +363,12 @@ fn create_PathControlDelegate(ctx: *PathControlDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_path_control_should_drag_item_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragItem:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_item_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_path_control_should_drag_path_component_cell_with_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("pathControl:shouldDragPathComponentCell:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_path_component_cell_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_path_control_will_display_open_panel: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willDisplayOpenPanel:\0")), PathControlDelegate_path_control_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
-        let add_path_control_will_pop_up_menu: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathControl:willPopUpMenu:\0")), PathControlDelegate_path_control_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
+        let add_path_control_should_drag_item_with_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("pathControl:shouldDragItem:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_item_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_path_control_should_drag_path_component_cell_with_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("pathControl:shouldDragPathComponentCell:withPasteboard:\0")), PathControlDelegate_path_control_should_drag_path_component_cell_with_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_path_control_validate_drop: i8 = cplus_add_method_u64_id_id(cls, rt::sel(#str_ptr("pathControl:validateDrop:\0")), PathControlDelegate_path_control_validate_drop_imp, #str_ptr("Q@:@@\0"));
+        let add_path_control_accept_drop: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("pathControl:acceptDrop:\0")), PathControlDelegate_path_control_accept_drop_imp, #str_ptr("c@:@@\0"));
+        let add_path_control_will_display_open_panel: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("pathControl:willDisplayOpenPanel:\0")), PathControlDelegate_path_control_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
+        let add_path_control_will_pop_up_menu: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("pathControl:willPopUpMenu:\0")), PathControlDelegate_path_control_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

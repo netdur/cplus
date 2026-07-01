@@ -235,10 +235,15 @@ impl ViewAnimation {
 }
 
 // `NSAnimationDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `animation:valueForProgress:`: arg shape (only <=5 object args modelled)
-// SKIPPED `animation:didReachProgressMark:`: arg shape (only <=5 object args modelled)
-fn AnimationDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn AnimationDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+// SKIPPED `animation:valueForProgress:`: arg `NSAnimationProgress` not modelled
+// SKIPPED `animation:didReachProgressMark:`: arg `NSAnimationProgress` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn AnimationDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn AnimationDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct AnimationDelegate {
     animation_should_start: fn(*u8, *u8) -> i8,
@@ -248,7 +253,7 @@ struct AnimationDelegate {
 }
 
 fn AnimationDelegate_new(user: *u8) -> AnimationDelegate {
-    return AnimationDelegate { animation_should_start: AnimationDelegate_noop_i8_1, animation_did_stop: AnimationDelegate_noop_v_1, animation_did_end: AnimationDelegate_noop_v_1, user: user };
+    return AnimationDelegate { animation_should_start: AnimationDelegate_noop_i8_id, animation_did_stop: AnimationDelegate_noop_v_id, animation_did_end: AnimationDelegate_noop_v_id, user: user };
 }
 
 impl AnimationDelegate {
@@ -296,9 +301,9 @@ fn create_AnimationDelegate(ctx: *AnimationDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_animation_should_start: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("animationShouldStart:\0")), AnimationDelegate_animation_should_start_imp, #str_ptr("c@:@\0"));
-        let add_animation_did_stop: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("animationDidStop:\0")), AnimationDelegate_animation_did_stop_imp, #str_ptr("v@:@\0"));
-        let add_animation_did_end: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("animationDidEnd:\0")), AnimationDelegate_animation_did_end_imp, #str_ptr("v@:@\0"));
+        let add_animation_should_start: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("animationShouldStart:\0")), AnimationDelegate_animation_should_start_imp, #str_ptr("c@:@\0"));
+        let add_animation_did_stop: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("animationDidStop:\0")), AnimationDelegate_animation_did_stop_imp, #str_ptr("v@:@\0"));
+        let add_animation_did_end: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("animationDidEnd:\0")), AnimationDelegate_animation_did_end_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

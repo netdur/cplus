@@ -312,26 +312,57 @@ impl OutlineView {
 }
 
 // `NSOutlineViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `outlineView:didAddRowView:forRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:didRemoveRowView:forRow:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:toolTipForCell:rect:tableColumn:item:mouseLocation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:heightOfRowByItem:`: return `CGFloat` not modelled
-// SKIPPED `outlineView:shouldTrackCell:forTableColumn:item:`: no `i8`-return / 4-arg IMP shape
-// SKIPPED `outlineView:sizeToFitWidthOfColumn:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:shouldReorderColumn:toColumn:`: arg shape (only <=5 object args modelled)
-fn OutlineViewDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn OutlineViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn OutlineViewDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn OutlineViewDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OutlineViewDelegate_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OutlineViewDelegate_noop_id_4(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OutlineViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn OutlineViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn OutlineViewDelegate_noop_v_4(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
+// SKIPPED `outlineView:toolTipForCell:rect:tableColumn:item:mouseLocation:`: arg `NSRectPointer _Nonnull` not modelled
+// SKIPPED `outlineView:userDidChangeVisibilityOfTableColumns:`: arg `NSArray<NSTableColumn *> * _Nonnull` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_f64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> f64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_f64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> f64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_i64_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn OutlineViewDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDelegate_noop_v_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) { return; }
+fn OutlineViewDelegate_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
+fn OutlineViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn OutlineViewDelegate_noop_f64_id_id(user: *u8, a0: *u8, a1: *u8) -> f64 { return 0 as f64; }
+fn OutlineViewDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDelegate_noop_i8_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_f64_id_i64(user: *u8, a0: *u8, a1: i64) -> f64 { return 0 as f64; }
+fn OutlineViewDelegate_noop_i8_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct OutlineViewDelegate {
     outline_view_view_for_table_column_item: fn(*u8, *u8, *u8, *u8) -> *u8,
     outline_view_row_view_for_item: fn(*u8, *u8, *u8) -> *u8,
+    outline_view_did_add_row_view_for_row: fn(*u8, *u8, *u8, i64),
+    outline_view_did_remove_row_view_for_row: fn(*u8, *u8, *u8, i64),
     outline_view_will_display_cell_for_table_column_item: fn(*u8, *u8, *u8, *u8, *u8),
     outline_view_should_edit_table_column_item: fn(*u8, *u8, *u8, *u8) -> i8,
     selection_should_change_in_outline_view: fn(*u8, *u8) -> i8,
@@ -341,19 +372,22 @@ struct OutlineViewDelegate {
     outline_view_mouse_down_in_header_of_table_column: fn(*u8, *u8, *u8),
     outline_view_did_click_table_column: fn(*u8, *u8, *u8),
     outline_view_did_drag_table_column: fn(*u8, *u8, *u8),
+    outline_view_height_of_row_by_item: fn(*u8, *u8, *u8) -> f64,
     outline_view_tint_configuration_for_item: fn(*u8, *u8, *u8) -> *u8,
     outline_view_type_select_string_for_table_column_item: fn(*u8, *u8, *u8, *u8) -> *u8,
     outline_view_next_type_select_match_from_item_to_item_for_string: fn(*u8, *u8, *u8, *u8, *u8) -> *u8,
     outline_view_should_type_select_for_event_with_current_search_string: fn(*u8, *u8, *u8, *u8) -> i8,
     outline_view_should_show_cell_expansion_for_table_column_item: fn(*u8, *u8, *u8, *u8) -> i8,
+    outline_view_should_track_cell_for_table_column_item: fn(*u8, *u8, *u8, *u8, *u8) -> i8,
     outline_view_data_cell_for_table_column_item: fn(*u8, *u8, *u8, *u8) -> *u8,
     outline_view_is_group_item: fn(*u8, *u8, *u8) -> i8,
     outline_view_should_expand_item: fn(*u8, *u8, *u8) -> i8,
     outline_view_should_collapse_item: fn(*u8, *u8, *u8) -> i8,
     outline_view_will_display_outline_cell_for_table_column_item: fn(*u8, *u8, *u8, *u8, *u8),
+    outline_view_size_to_fit_width_of_column: fn(*u8, *u8, i64) -> f64,
+    outline_view_should_reorder_column_to_column: fn(*u8, *u8, i64, i64) -> i8,
     outline_view_should_show_outline_cell_for_item: fn(*u8, *u8, *u8) -> i8,
     outline_view_user_can_change_visibility_of_table_column: fn(*u8, *u8, *u8) -> i8,
-    outline_view_user_did_change_visibility_of_table_columns: fn(*u8, *u8, *u8),
     outline_view_selection_did_change: fn(*u8, *u8),
     outline_view_column_did_move: fn(*u8, *u8),
     outline_view_column_did_resize: fn(*u8, *u8),
@@ -366,7 +400,7 @@ struct OutlineViewDelegate {
 }
 
 fn OutlineViewDelegate_new(user: *u8) -> OutlineViewDelegate {
-    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_3, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_2, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_4, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_3, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_1, outline_view_should_select_item: OutlineViewDelegate_noop_i8_2, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_2, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_2, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_2, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_2, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_2, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_2, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_3, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_4, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_3, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_3, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_3, outline_view_is_group_item: OutlineViewDelegate_noop_i8_2, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_2, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_2, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_4, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_2, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_2, outline_view_user_did_change_visibility_of_table_columns: OutlineViewDelegate_noop_v_2, outline_view_selection_did_change: OutlineViewDelegate_noop_v_1, outline_view_column_did_move: OutlineViewDelegate_noop_v_1, outline_view_column_did_resize: OutlineViewDelegate_noop_v_1, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_1, outline_view_item_will_expand: OutlineViewDelegate_noop_v_1, outline_view_item_did_expand: OutlineViewDelegate_noop_v_1, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_1, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_1, user: user };
+    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_did_add_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_did_remove_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_id, outline_view_should_select_item: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_id_id, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_height_of_row_by_item: OutlineViewDelegate_noop_f64_id_id, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_id_id_id_id, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_track_cell_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id_id, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_is_group_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_id_id, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_size_to_fit_width_of_column: OutlineViewDelegate_noop_f64_id_i64, outline_view_should_reorder_column_to_column: OutlineViewDelegate_noop_i8_id_i64_i64, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_id_id, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_did_change: OutlineViewDelegate_noop_v_id, outline_view_column_did_move: OutlineViewDelegate_noop_v_id, outline_view_column_did_resize: OutlineViewDelegate_noop_v_id, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_id, outline_view_item_will_expand: OutlineViewDelegate_noop_v_id, outline_view_item_did_expand: OutlineViewDelegate_noop_v_id, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_id, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_id, user: user };
 }
 
 impl OutlineViewDelegate {
@@ -376,6 +410,14 @@ impl OutlineViewDelegate {
     }
     fn set_outline_view_row_view_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.outline_view_row_view_for_item = handler;
+        return;
+    }
+    fn set_outline_view_did_add_row_view_for_row(ref this, handler: fn(*u8, *u8, *u8, i64)) {
+        this.outline_view_did_add_row_view_for_row = handler;
+        return;
+    }
+    fn set_outline_view_did_remove_row_view_for_row(ref this, handler: fn(*u8, *u8, *u8, i64)) {
+        this.outline_view_did_remove_row_view_for_row = handler;
         return;
     }
     fn set_outline_view_will_display_cell_for_table_column_item(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8)) {
@@ -414,6 +456,10 @@ impl OutlineViewDelegate {
         this.outline_view_did_drag_table_column = handler;
         return;
     }
+    fn set_outline_view_height_of_row_by_item(ref this, handler: fn(*u8, *u8, *u8) -> f64) {
+        this.outline_view_height_of_row_by_item = handler;
+        return;
+    }
     fn set_outline_view_tint_configuration_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.outline_view_tint_configuration_for_item = handler;
         return;
@@ -432,6 +478,10 @@ impl OutlineViewDelegate {
     }
     fn set_outline_view_should_show_cell_expansion_for_table_column_item(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.outline_view_should_show_cell_expansion_for_table_column_item = handler;
+        return;
+    }
+    fn set_outline_view_should_track_cell_for_table_column_item(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> i8) {
+        this.outline_view_should_track_cell_for_table_column_item = handler;
         return;
     }
     fn set_outline_view_data_cell_for_table_column_item(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
@@ -454,16 +504,20 @@ impl OutlineViewDelegate {
         this.outline_view_will_display_outline_cell_for_table_column_item = handler;
         return;
     }
+    fn set_outline_view_size_to_fit_width_of_column(ref this, handler: fn(*u8, *u8, i64) -> f64) {
+        this.outline_view_size_to_fit_width_of_column = handler;
+        return;
+    }
+    fn set_outline_view_should_reorder_column_to_column(ref this, handler: fn(*u8, *u8, i64, i64) -> i8) {
+        this.outline_view_should_reorder_column_to_column = handler;
+        return;
+    }
     fn set_outline_view_should_show_outline_cell_for_item(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.outline_view_should_show_outline_cell_for_item = handler;
         return;
     }
     fn set_outline_view_user_can_change_visibility_of_table_column(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.outline_view_user_can_change_visibility_of_table_column = handler;
-        return;
-    }
-    fn set_outline_view_user_did_change_visibility_of_table_columns(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.outline_view_user_did_change_visibility_of_table_columns = handler;
         return;
     }
     fn set_outline_view_selection_did_change(ref this, handler: fn(*u8, *u8)) {
@@ -514,6 +568,22 @@ fn OutlineViewDelegate_outline_view_row_view_for_item_imp(self_obj: *u8, cmd: *u
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).outline_view_row_view_for_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn OutlineViewDelegate_outline_view_did_add_row_view_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) = { (*c).outline_view_did_add_row_view_for_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
+fn OutlineViewDelegate_outline_view_did_remove_row_view_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) = { (*c).outline_view_did_remove_row_view_for_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
 }
 
 fn OutlineViewDelegate_outline_view_will_display_cell_for_table_column_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) {
@@ -583,6 +653,13 @@ fn OutlineViewDelegate_outline_view_did_drag_table_column_imp(self_obj: *u8, cmd
     return;
 }
 
+fn OutlineViewDelegate_outline_view_height_of_row_by_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> f64 {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, *u8) -> f64 = { (*c).outline_view_height_of_row_by_item };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn OutlineViewDelegate_outline_view_tint_configuration_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).outline_view_tint_configuration_for_item };
@@ -616,6 +693,13 @@ fn OutlineViewDelegate_outline_view_should_show_cell_expansion_for_table_column_
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).outline_view_should_show_cell_expansion_for_table_column_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn OutlineViewDelegate_outline_view_should_track_cell_for_table_column_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) -> i8 = { (*c).outline_view_should_track_cell_for_table_column_item };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
 }
 
 fn OutlineViewDelegate_outline_view_data_cell_for_table_column_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
@@ -654,6 +738,20 @@ fn OutlineViewDelegate_outline_view_will_display_outline_cell_for_table_column_i
     return;
 }
 
+fn OutlineViewDelegate_outline_view_size_to_fit_width_of_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> f64 {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, i64) -> f64 = { (*c).outline_view_size_to_fit_width_of_column };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn OutlineViewDelegate_outline_view_should_reorder_column_to_column_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: i64) -> i8 {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, i64, i64) -> i8 = { (*c).outline_view_should_reorder_column_to_column };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
 fn OutlineViewDelegate_outline_view_should_show_outline_cell_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
     let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).outline_view_should_show_outline_cell_for_item };
@@ -666,14 +764,6 @@ fn OutlineViewDelegate_outline_view_user_can_change_visibility_of_table_column_i
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).outline_view_user_can_change_visibility_of_table_column };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
-}
-
-fn OutlineViewDelegate_outline_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).outline_view_user_did_change_visibility_of_table_columns };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
 }
 
 fn OutlineViewDelegate_outline_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
@@ -745,38 +835,43 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_outline_view_view_for_table_column_item: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("outlineView:viewForTableColumn:item:\0")), OutlineViewDelegate_outline_view_view_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
-        let add_outline_view_row_view_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("outlineView:rowViewForItem:\0")), OutlineViewDelegate_outline_view_row_view_for_item_imp, #str_ptr("@@:@@\0"));
-        let add_outline_view_will_display_cell_for_table_column_item: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("outlineView:willDisplayCell:forTableColumn:item:\0")), OutlineViewDelegate_outline_view_will_display_cell_for_table_column_item_imp, #str_ptr("v@:@@@@\0"));
-        let add_outline_view_should_edit_table_column_item: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("outlineView:shouldEditTableColumn:item:\0")), OutlineViewDelegate_outline_view_should_edit_table_column_item_imp, #str_ptr("c@:@@@\0"));
-        let add_selection_should_change_in_outline_view: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("selectionShouldChangeInOutlineView:\0")), OutlineViewDelegate_selection_should_change_in_outline_view_imp, #str_ptr("c@:@\0"));
-        let add_outline_view_should_select_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:shouldSelectItem:\0")), OutlineViewDelegate_outline_view_should_select_item_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_selection_indexes_for_proposed_selection: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("outlineView:selectionIndexesForProposedSelection:\0")), OutlineViewDelegate_outline_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
-        let add_outline_view_should_select_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:shouldSelectTableColumn:\0")), OutlineViewDelegate_outline_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_mouse_down_in_header_of_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("outlineView:mouseDownInHeaderOfTableColumn:\0")), OutlineViewDelegate_outline_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_outline_view_did_click_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("outlineView:didClickTableColumn:\0")), OutlineViewDelegate_outline_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_outline_view_did_drag_table_column: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("outlineView:didDragTableColumn:\0")), OutlineViewDelegate_outline_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
-        let add_outline_view_tint_configuration_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("outlineView:tintConfigurationForItem:\0")), OutlineViewDelegate_outline_view_tint_configuration_for_item_imp, #str_ptr("@@:@@\0"));
-        let add_outline_view_type_select_string_for_table_column_item: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("outlineView:typeSelectStringForTableColumn:item:\0")), OutlineViewDelegate_outline_view_type_select_string_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
-        let add_outline_view_next_type_select_match_from_item_to_item_for_string: i8 = synth::add_method_id_4id(cls, rt::sel(#str_ptr("outlineView:nextTypeSelectMatchFromItem:toItem:forString:\0")), OutlineViewDelegate_outline_view_next_type_select_match_from_item_to_item_for_string_imp, #str_ptr("@@:@@@@\0"));
-        let add_outline_view_should_type_select_for_event_with_current_search_string: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("outlineView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), OutlineViewDelegate_outline_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
-        let add_outline_view_should_show_cell_expansion_for_table_column_item: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("outlineView:shouldShowCellExpansionForTableColumn:item:\0")), OutlineViewDelegate_outline_view_should_show_cell_expansion_for_table_column_item_imp, #str_ptr("c@:@@@\0"));
-        let add_outline_view_data_cell_for_table_column_item: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("outlineView:dataCellForTableColumn:item:\0")), OutlineViewDelegate_outline_view_data_cell_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
-        let add_outline_view_is_group_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:isGroupItem:\0")), OutlineViewDelegate_outline_view_is_group_item_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_should_expand_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:shouldExpandItem:\0")), OutlineViewDelegate_outline_view_should_expand_item_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_should_collapse_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:shouldCollapseItem:\0")), OutlineViewDelegate_outline_view_should_collapse_item_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_will_display_outline_cell_for_table_column_item: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("outlineView:willDisplayOutlineCell:forTableColumn:item:\0")), OutlineViewDelegate_outline_view_will_display_outline_cell_for_table_column_item_imp, #str_ptr("v@:@@@@\0"));
-        let add_outline_view_should_show_outline_cell_for_item: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:shouldShowOutlineCellForItem:\0")), OutlineViewDelegate_outline_view_should_show_outline_cell_for_item_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_user_can_change_visibility_of_table_column: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:userCanChangeVisibilityOfTableColumn:\0")), OutlineViewDelegate_outline_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_user_did_change_visibility_of_table_columns: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("outlineView:userDidChangeVisibilityOfTableColumns:\0")), OutlineViewDelegate_outline_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
-        let add_outline_view_selection_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewSelectionDidChange:\0")), OutlineViewDelegate_outline_view_selection_did_change_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_column_did_move: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewColumnDidMove:\0")), OutlineViewDelegate_outline_view_column_did_move_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_column_did_resize: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewColumnDidResize:\0")), OutlineViewDelegate_outline_view_column_did_resize_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_selection_is_changing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewSelectionIsChanging:\0")), OutlineViewDelegate_outline_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_item_will_expand: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemWillExpand:\0")), OutlineViewDelegate_outline_view_item_will_expand_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_item_did_expand: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemDidExpand:\0")), OutlineViewDelegate_outline_view_item_did_expand_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_item_will_collapse: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemWillCollapse:\0")), OutlineViewDelegate_outline_view_item_will_collapse_imp, #str_ptr("v@:@\0"));
-        let add_outline_view_item_did_collapse: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemDidCollapse:\0")), OutlineViewDelegate_outline_view_item_did_collapse_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_view_for_table_column_item: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:viewForTableColumn:item:\0")), OutlineViewDelegate_outline_view_view_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
+        let add_outline_view_row_view_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:rowViewForItem:\0")), OutlineViewDelegate_outline_view_row_view_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_did_add_row_view_for_row: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("outlineView:didAddRowView:forRow:\0")), OutlineViewDelegate_outline_view_did_add_row_view_for_row_imp, #str_ptr("v@:@@q\0"));
+        let add_outline_view_did_remove_row_view_for_row: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("outlineView:didRemoveRowView:forRow:\0")), OutlineViewDelegate_outline_view_did_remove_row_view_for_row_imp, #str_ptr("v@:@@q\0"));
+        let add_outline_view_will_display_cell_for_table_column_item: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:willDisplayCell:forTableColumn:item:\0")), OutlineViewDelegate_outline_view_will_display_cell_for_table_column_item_imp, #str_ptr("v@:@@@@\0"));
+        let add_outline_view_should_edit_table_column_item: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("outlineView:shouldEditTableColumn:item:\0")), OutlineViewDelegate_outline_view_should_edit_table_column_item_imp, #str_ptr("c@:@@@\0"));
+        let add_selection_should_change_in_outline_view: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("selectionShouldChangeInOutlineView:\0")), OutlineViewDelegate_selection_should_change_in_outline_view_imp, #str_ptr("c@:@\0"));
+        let add_outline_view_should_select_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldSelectItem:\0")), OutlineViewDelegate_outline_view_should_select_item_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_selection_indexes_for_proposed_selection: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:selectionIndexesForProposedSelection:\0")), OutlineViewDelegate_outline_view_selection_indexes_for_proposed_selection_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_should_select_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldSelectTableColumn:\0")), OutlineViewDelegate_outline_view_should_select_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_mouse_down_in_header_of_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:mouseDownInHeaderOfTableColumn:\0")), OutlineViewDelegate_outline_view_mouse_down_in_header_of_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_outline_view_did_click_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:didClickTableColumn:\0")), OutlineViewDelegate_outline_view_did_click_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_outline_view_did_drag_table_column: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:didDragTableColumn:\0")), OutlineViewDelegate_outline_view_did_drag_table_column_imp, #str_ptr("v@:@@\0"));
+        let add_outline_view_height_of_row_by_item: i8 = cplus_add_method_f64_id_id(cls, rt::sel(#str_ptr("outlineView:heightOfRowByItem:\0")), OutlineViewDelegate_outline_view_height_of_row_by_item_imp, #str_ptr("d@:@@\0"));
+        let add_outline_view_tint_configuration_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:tintConfigurationForItem:\0")), OutlineViewDelegate_outline_view_tint_configuration_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_type_select_string_for_table_column_item: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:typeSelectStringForTableColumn:item:\0")), OutlineViewDelegate_outline_view_type_select_string_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
+        let add_outline_view_next_type_select_match_from_item_to_item_for_string: i8 = cplus_add_method_id_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:nextTypeSelectMatchFromItem:toItem:forString:\0")), OutlineViewDelegate_outline_view_next_type_select_match_from_item_to_item_for_string_imp, #str_ptr("@@:@@@@\0"));
+        let add_outline_view_should_type_select_for_event_with_current_search_string: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("outlineView:shouldTypeSelectForEvent:withCurrentSearchString:\0")), OutlineViewDelegate_outline_view_should_type_select_for_event_with_current_search_string_imp, #str_ptr("c@:@@@\0"));
+        let add_outline_view_should_show_cell_expansion_for_table_column_item: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("outlineView:shouldShowCellExpansionForTableColumn:item:\0")), OutlineViewDelegate_outline_view_should_show_cell_expansion_for_table_column_item_imp, #str_ptr("c@:@@@\0"));
+        let add_outline_view_should_track_cell_for_table_column_item: i8 = cplus_add_method_i8_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:shouldTrackCell:forTableColumn:item:\0")), OutlineViewDelegate_outline_view_should_track_cell_for_table_column_item_imp, #str_ptr("c@:@@@@\0"));
+        let add_outline_view_data_cell_for_table_column_item: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:dataCellForTableColumn:item:\0")), OutlineViewDelegate_outline_view_data_cell_for_table_column_item_imp, #str_ptr("@@:@@@\0"));
+        let add_outline_view_is_group_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:isGroupItem:\0")), OutlineViewDelegate_outline_view_is_group_item_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_should_expand_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldExpandItem:\0")), OutlineViewDelegate_outline_view_should_expand_item_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_should_collapse_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldCollapseItem:\0")), OutlineViewDelegate_outline_view_should_collapse_item_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_will_display_outline_cell_for_table_column_item: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:willDisplayOutlineCell:forTableColumn:item:\0")), OutlineViewDelegate_outline_view_will_display_outline_cell_for_table_column_item_imp, #str_ptr("v@:@@@@\0"));
+        let add_outline_view_size_to_fit_width_of_column: i8 = cplus_add_method_f64_id_i64(cls, rt::sel(#str_ptr("outlineView:sizeToFitWidthOfColumn:\0")), OutlineViewDelegate_outline_view_size_to_fit_width_of_column_imp, #str_ptr("d@:@q\0"));
+        let add_outline_view_should_reorder_column_to_column: i8 = cplus_add_method_i8_id_i64_i64(cls, rt::sel(#str_ptr("outlineView:shouldReorderColumn:toColumn:\0")), OutlineViewDelegate_outline_view_should_reorder_column_to_column_imp, #str_ptr("c@:@qq\0"));
+        let add_outline_view_should_show_outline_cell_for_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldShowOutlineCellForItem:\0")), OutlineViewDelegate_outline_view_should_show_outline_cell_for_item_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_user_can_change_visibility_of_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:userCanChangeVisibilityOfTableColumn:\0")), OutlineViewDelegate_outline_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_selection_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewSelectionDidChange:\0")), OutlineViewDelegate_outline_view_selection_did_change_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_column_did_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewColumnDidMove:\0")), OutlineViewDelegate_outline_view_column_did_move_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_column_did_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewColumnDidResize:\0")), OutlineViewDelegate_outline_view_column_did_resize_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_selection_is_changing: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewSelectionIsChanging:\0")), OutlineViewDelegate_outline_view_selection_is_changing_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_item_will_expand: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewItemWillExpand:\0")), OutlineViewDelegate_outline_view_item_will_expand_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_item_did_expand: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewItemDidExpand:\0")), OutlineViewDelegate_outline_view_item_did_expand_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_item_will_collapse: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewItemWillCollapse:\0")), OutlineViewDelegate_outline_view_item_will_collapse_imp, #str_ptr("v@:@\0"));
+        let add_outline_view_item_did_collapse: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewItemDidCollapse:\0")), OutlineViewDelegate_outline_view_item_did_collapse_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -785,41 +880,57 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
 }
 
 // `NSOutlineViewDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `outlineView:child:ofItem:`: arg shape (only <=5 object args modelled)
+// SKIPPED `outlineView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
 // SKIPPED `outlineView:pasteboardWriterForItem:`: return `id<NSPasteboardWriting> _Nullable` not modelled
-// SKIPPED `outlineView:draggingSession:willBeginAtPoint:forItems:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:draggingSession:endedAtPoint:operation:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:updateDraggingItemsForDrag:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:validateDrop:proposedItem:proposedChildIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `outlineView:acceptDrop:item:childIndex:`: arg shape (only <=5 object args modelled)
-fn OutlineViewDataSource_noop_i64_2(user: *u8, a0: *u8, a1: *u8) -> i64 { return 0 as i64; }
-fn OutlineViewDataSource_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn OutlineViewDataSource_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn OutlineViewDataSource_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OutlineViewDataSource_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OutlineViewDataSource_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn OutlineViewDataSource_noop_v_4(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
+// SKIPPED `outlineView:draggingSession:willBeginAtPoint:forItems:`: arg `NSPoint` not modelled
+// SKIPPED `outlineView:draggingSession:endedAtPoint:operation:`: arg `NSPoint` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+
+fn OutlineViewDataSource_noop_i64_id_id(user: *u8, a0: *u8, a1: *u8) -> i64 { return 0 as i64; }
+fn OutlineViewDataSource_noop_id_id_i64_id(user: *u8, a0: *u8, a1: i64, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDataSource_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDataSource_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDataSource_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
+fn OutlineViewDataSource_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDataSource_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn OutlineViewDataSource_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn OutlineViewDataSource_noop_u64_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> u64 { return 0 as u64; }
+fn OutlineViewDataSource_noop_i8_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> i8 { return 0 as i8; }
 
 struct OutlineViewDataSource {
     outline_view_number_of_children_of_item: fn(*u8, *u8, *u8) -> i64,
+    outline_view_child_of_item: fn(*u8, *u8, i64, *u8) -> *u8,
     outline_view_is_item_expandable: fn(*u8, *u8, *u8) -> i8,
     outline_view_object_value_for_table_column_by_item: fn(*u8, *u8, *u8, *u8) -> *u8,
     outline_view_set_object_value_for_table_column_by_item: fn(*u8, *u8, *u8, *u8, *u8),
     outline_view_item_for_persistent_object: fn(*u8, *u8, *u8) -> *u8,
     outline_view_persistent_object_for_item: fn(*u8, *u8, *u8) -> *u8,
-    outline_view_sort_descriptors_did_change: fn(*u8, *u8, *u8),
     outline_view_write_items_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
+    outline_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
+    outline_view_validate_drop_proposed_item_proposed_child_index: fn(*u8, *u8, *u8, *u8, i64) -> u64,
+    outline_view_accept_drop_item_child_index: fn(*u8, *u8, *u8, *u8, i64) -> i8,
     outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn OutlineViewDataSource_new(user: *u8) -> OutlineViewDataSource {
-    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_2, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_2, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_3, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_4, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_2, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_2, outline_view_sort_descriptors_did_change: OutlineViewDataSource_noop_v_2, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_3, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_3, user: user };
+    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_id_id, outline_view_child_of_item: OutlineViewDataSource_noop_id_id_i64_id, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_id_id, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_id_id_id, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_id_id_id_id, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_id_id, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_id_id_id, outline_view_update_dragging_items_for_drag: OutlineViewDataSource_noop_v_id_id, outline_view_validate_drop_proposed_item_proposed_child_index: OutlineViewDataSource_noop_u64_id_id_id_i64, outline_view_accept_drop_item_child_index: OutlineViewDataSource_noop_i8_id_id_id_i64, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl OutlineViewDataSource {
     fn set_outline_view_number_of_children_of_item(ref this, handler: fn(*u8, *u8, *u8) -> i64) {
         this.outline_view_number_of_children_of_item = handler;
+        return;
+    }
+    fn set_outline_view_child_of_item(ref this, handler: fn(*u8, *u8, i64, *u8) -> *u8) {
+        this.outline_view_child_of_item = handler;
         return;
     }
     fn set_outline_view_is_item_expandable(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
@@ -842,12 +953,20 @@ impl OutlineViewDataSource {
         this.outline_view_persistent_object_for_item = handler;
         return;
     }
-    fn set_outline_view_sort_descriptors_did_change(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.outline_view_sort_descriptors_did_change = handler;
-        return;
-    }
     fn set_outline_view_write_items_to_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.outline_view_write_items_to_pasteboard = handler;
+        return;
+    }
+    fn set_outline_view_update_dragging_items_for_drag(ref this, handler: fn(*u8, *u8, *u8)) {
+        this.outline_view_update_dragging_items_for_drag = handler;
+        return;
+    }
+    fn set_outline_view_validate_drop_proposed_item_proposed_child_index(ref this, handler: fn(*u8, *u8, *u8, *u8, i64) -> u64) {
+        this.outline_view_validate_drop_proposed_item_proposed_child_index = handler;
+        return;
+    }
+    fn set_outline_view_accept_drop_item_child_index(ref this, handler: fn(*u8, *u8, *u8, *u8, i64) -> i8) {
+        this.outline_view_accept_drop_item_child_index = handler;
         return;
     }
     fn set_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
@@ -863,6 +982,13 @@ fn OutlineViewDataSource_outline_view_number_of_children_of_item_imp(self_obj: *
     let f: fn(*u8, *u8, *u8) -> i64 = { (*c).outline_view_number_of_children_of_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn OutlineViewDataSource_outline_view_child_of_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: *u8) -> *u8 {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, i64, *u8) -> *u8 = { (*c).outline_view_child_of_item };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
 }
 
 fn OutlineViewDataSource_outline_view_is_item_expandable_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
@@ -901,19 +1027,33 @@ fn OutlineViewDataSource_outline_view_persistent_object_for_item_imp(self_obj: *
     return f(u, a0, a1);
 }
 
-fn OutlineViewDataSource_outline_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
-    let f: fn(*u8, *u8, *u8) = { (*c).outline_view_sort_descriptors_did_change };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
 fn OutlineViewDataSource_outline_view_write_items_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
     let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).outline_view_write_items_to_pasteboard };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn OutlineViewDataSource_outline_view_update_dragging_items_for_drag_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8) = { (*c).outline_view_update_dragging_items_for_drag };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn OutlineViewDataSource_outline_view_validate_drop_proposed_item_proposed_child_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> u64 {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8, *u8, i64) -> u64 = { (*c).outline_view_validate_drop_proposed_item_proposed_child_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn OutlineViewDataSource_outline_view_accept_drop_item_child_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> i8 {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8, *u8, i64) -> i8 = { (*c).outline_view_accept_drop_item_child_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
 }
 
 fn OutlineViewDataSource_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
@@ -928,15 +1068,18 @@ fn create_OutlineViewDataSource(ctx: *OutlineViewDataSource) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_outline_view_number_of_children_of_item: i8 = synth::add_method_i64_2id(cls, rt::sel(#str_ptr("outlineView:numberOfChildrenOfItem:\0")), OutlineViewDataSource_outline_view_number_of_children_of_item_imp, #str_ptr("q@:@@\0"));
-        let add_outline_view_is_item_expandable: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:isItemExpandable:\0")), OutlineViewDataSource_outline_view_is_item_expandable_imp, #str_ptr("c@:@@\0"));
-        let add_outline_view_object_value_for_table_column_by_item: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("outlineView:objectValueForTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_object_value_for_table_column_by_item_imp, #str_ptr("@@:@@@\0"));
-        let add_outline_view_set_object_value_for_table_column_by_item: i8 = synth::add_method_v_4id(cls, rt::sel(#str_ptr("outlineView:setObjectValue:forTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_set_object_value_for_table_column_by_item_imp, #str_ptr("v@:@@@@\0"));
-        let add_outline_view_item_for_persistent_object: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("outlineView:itemForPersistentObject:\0")), OutlineViewDataSource_outline_view_item_for_persistent_object_imp, #str_ptr("@@:@@\0"));
-        let add_outline_view_persistent_object_for_item: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("outlineView:persistentObjectForItem:\0")), OutlineViewDataSource_outline_view_persistent_object_for_item_imp, #str_ptr("@@:@@\0"));
-        let add_outline_view_sort_descriptors_did_change: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("outlineView:sortDescriptorsDidChange:\0")), OutlineViewDataSource_outline_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
-        let add_outline_view_write_items_to_pasteboard: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("outlineView:writeItems:toPasteboard:\0")), OutlineViewDataSource_outline_view_write_items_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
-        let add_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("outlineView:namesOfPromisedFilesDroppedAtDestination:forDraggedItems:\0")), OutlineViewDataSource_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items_imp, #str_ptr("@@:@@@\0"));
+        let add_outline_view_number_of_children_of_item: i8 = cplus_add_method_i64_id_id(cls, rt::sel(#str_ptr("outlineView:numberOfChildrenOfItem:\0")), OutlineViewDataSource_outline_view_number_of_children_of_item_imp, #str_ptr("q@:@@\0"));
+        let add_outline_view_child_of_item: i8 = cplus_add_method_id_id_i64_id(cls, rt::sel(#str_ptr("outlineView:child:ofItem:\0")), OutlineViewDataSource_outline_view_child_of_item_imp, #str_ptr("@@:@q@\0"));
+        let add_outline_view_is_item_expandable: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:isItemExpandable:\0")), OutlineViewDataSource_outline_view_is_item_expandable_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_object_value_for_table_column_by_item: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:objectValueForTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_object_value_for_table_column_by_item_imp, #str_ptr("@@:@@@\0"));
+        let add_outline_view_set_object_value_for_table_column_by_item: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:setObjectValue:forTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_set_object_value_for_table_column_by_item_imp, #str_ptr("v@:@@@@\0"));
+        let add_outline_view_item_for_persistent_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:itemForPersistentObject:\0")), OutlineViewDataSource_outline_view_item_for_persistent_object_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_persistent_object_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:persistentObjectForItem:\0")), OutlineViewDataSource_outline_view_persistent_object_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_write_items_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("outlineView:writeItems:toPasteboard:\0")), OutlineViewDataSource_outline_view_write_items_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_outline_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:updateDraggingItemsForDrag:\0")), OutlineViewDataSource_outline_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
+        let add_outline_view_validate_drop_proposed_item_proposed_child_index: i8 = cplus_add_method_u64_id_id_id_i64(cls, rt::sel(#str_ptr("outlineView:validateDrop:proposedItem:proposedChildIndex:\0")), OutlineViewDataSource_outline_view_validate_drop_proposed_item_proposed_child_index_imp, #str_ptr("Q@:@@@q\0"));
+        let add_outline_view_accept_drop_item_child_index: i8 = cplus_add_method_i8_id_id_id_i64(cls, rt::sel(#str_ptr("outlineView:acceptDrop:item:childIndex:\0")), OutlineViewDataSource_outline_view_accept_drop_item_child_index_imp, #str_ptr("c@:@@@q\0"));
+        let add_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:namesOfPromisedFilesDroppedAtDestination:forDraggedItems:\0")), OutlineViewDataSource_outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items_imp, #str_ptr("@@:@@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

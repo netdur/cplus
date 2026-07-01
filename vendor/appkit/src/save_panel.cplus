@@ -457,18 +457,32 @@ impl SavePanel {
 }
 
 // `NSOpenSavePanelDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `panel:userEnteredFilename:confirmed:`: arg shape (only <=5 object args modelled)
-// SKIPPED `panel:willExpand:`: arg shape (only <=5 object args modelled)
-fn OpenSavePanelDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn OpenSavePanelDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn OpenSavePanelDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn OpenSavePanelDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn OpenSavePanelDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+// SKIPPED `panel:validateURL:error:`: arg `NSError * _Nullable * _Nullable` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn OpenSavePanelDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn OpenSavePanelDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn OpenSavePanelDelegate_noop_id_id_id_i8(user: *u8, a0: *u8, a1: *u8, a2: i8) -> *u8 { return { 0 as *u8 }; }
+fn OpenSavePanelDelegate_noop_v_id_i8(user: *u8, a0: *u8, a1: i8) { return; }
+fn OpenSavePanelDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn OpenSavePanelDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct OpenSavePanelDelegate {
     panel_should_enable_u_r_l: fn(*u8, *u8, *u8) -> i8,
-    panel_validate_u_r_l_error: fn(*u8, *u8, *u8, *u8) -> i8,
     panel_did_change_to_directory_u_r_l: fn(*u8, *u8, *u8),
+    panel_user_entered_filename_confirmed: fn(*u8, *u8, *u8, i8) -> *u8,
+    panel_will_expand: fn(*u8, *u8, i8),
     panel_selection_did_change: fn(*u8, *u8),
     panel_display_name_for_type: fn(*u8, *u8, *u8) -> *u8,
     panel_did_select_type: fn(*u8, *u8, *u8),
@@ -476,7 +490,7 @@ struct OpenSavePanelDelegate {
 }
 
 fn OpenSavePanelDelegate_new(user: *u8) -> OpenSavePanelDelegate {
-    return OpenSavePanelDelegate { panel_should_enable_u_r_l: OpenSavePanelDelegate_noop_i8_2, panel_validate_u_r_l_error: OpenSavePanelDelegate_noop_i8_3, panel_did_change_to_directory_u_r_l: OpenSavePanelDelegate_noop_v_2, panel_selection_did_change: OpenSavePanelDelegate_noop_v_1, panel_display_name_for_type: OpenSavePanelDelegate_noop_id_2, panel_did_select_type: OpenSavePanelDelegate_noop_v_2, user: user };
+    return OpenSavePanelDelegate { panel_should_enable_u_r_l: OpenSavePanelDelegate_noop_i8_id_id, panel_did_change_to_directory_u_r_l: OpenSavePanelDelegate_noop_v_id_id, panel_user_entered_filename_confirmed: OpenSavePanelDelegate_noop_id_id_id_i8, panel_will_expand: OpenSavePanelDelegate_noop_v_id_i8, panel_selection_did_change: OpenSavePanelDelegate_noop_v_id, panel_display_name_for_type: OpenSavePanelDelegate_noop_id_id_id, panel_did_select_type: OpenSavePanelDelegate_noop_v_id_id, user: user };
 }
 
 impl OpenSavePanelDelegate {
@@ -484,12 +498,16 @@ impl OpenSavePanelDelegate {
         this.panel_should_enable_u_r_l = handler;
         return;
     }
-    fn set_panel_validate_u_r_l_error(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
-        this.panel_validate_u_r_l_error = handler;
-        return;
-    }
     fn set_panel_did_change_to_directory_u_r_l(ref this, handler: fn(*u8, *u8, *u8)) {
         this.panel_did_change_to_directory_u_r_l = handler;
+        return;
+    }
+    fn set_panel_user_entered_filename_confirmed(ref this, handler: fn(*u8, *u8, *u8, i8) -> *u8) {
+        this.panel_user_entered_filename_confirmed = handler;
+        return;
+    }
+    fn set_panel_will_expand(ref this, handler: fn(*u8, *u8, i8)) {
+        this.panel_will_expand = handler;
         return;
     }
     fn set_panel_selection_did_change(ref this, handler: fn(*u8, *u8)) {
@@ -515,16 +533,24 @@ fn OpenSavePanelDelegate_panel_should_enable_u_r_l_imp(self_obj: *u8, cmd: *u8, 
     return f(u, a0, a1);
 }
 
-fn OpenSavePanelDelegate_panel_validate_u_r_l_error_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+fn OpenSavePanelDelegate_panel_did_change_to_directory_u_r_l_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *OpenSavePanelDelegate = { synth::get_associated(self_obj, OpenSavePanelDelegate_key()) as *OpenSavePanelDelegate };
-    let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).panel_validate_u_r_l_error };
+    let f: fn(*u8, *u8, *u8) = { (*c).panel_did_change_to_directory_u_r_l };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn OpenSavePanelDelegate_panel_user_entered_filename_confirmed_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i8) -> *u8 {
+    let c: *OpenSavePanelDelegate = { synth::get_associated(self_obj, OpenSavePanelDelegate_key()) as *OpenSavePanelDelegate };
+    let f: fn(*u8, *u8, *u8, i8) -> *u8 = { (*c).panel_user_entered_filename_confirmed };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn OpenSavePanelDelegate_panel_did_change_to_directory_u_r_l_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+fn OpenSavePanelDelegate_panel_will_expand_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i8) {
     let c: *OpenSavePanelDelegate = { synth::get_associated(self_obj, OpenSavePanelDelegate_key()) as *OpenSavePanelDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).panel_did_change_to_directory_u_r_l };
+    let f: fn(*u8, *u8, i8) = { (*c).panel_will_expand };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
@@ -558,12 +584,13 @@ fn create_OpenSavePanelDelegate(ctx: *OpenSavePanelDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_panel_should_enable_u_r_l: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("panel:shouldEnableURL:\0")), OpenSavePanelDelegate_panel_should_enable_u_r_l_imp, #str_ptr("c@:@@\0"));
-        let add_panel_validate_u_r_l_error: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("panel:validateURL:error:\0")), OpenSavePanelDelegate_panel_validate_u_r_l_error_imp, #str_ptr("c@:@@@\0"));
-        let add_panel_did_change_to_directory_u_r_l: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("panel:didChangeToDirectoryURL:\0")), OpenSavePanelDelegate_panel_did_change_to_directory_u_r_l_imp, #str_ptr("v@:@@\0"));
-        let add_panel_selection_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("panelSelectionDidChange:\0")), OpenSavePanelDelegate_panel_selection_did_change_imp, #str_ptr("v@:@\0"));
-        let add_panel_display_name_for_type: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("panel:displayNameForType:\0")), OpenSavePanelDelegate_panel_display_name_for_type_imp, #str_ptr("@@:@@\0"));
-        let add_panel_did_select_type: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("panel:didSelectType:\0")), OpenSavePanelDelegate_panel_did_select_type_imp, #str_ptr("v@:@@\0"));
+        let add_panel_should_enable_u_r_l: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("panel:shouldEnableURL:\0")), OpenSavePanelDelegate_panel_should_enable_u_r_l_imp, #str_ptr("c@:@@\0"));
+        let add_panel_did_change_to_directory_u_r_l: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("panel:didChangeToDirectoryURL:\0")), OpenSavePanelDelegate_panel_did_change_to_directory_u_r_l_imp, #str_ptr("v@:@@\0"));
+        let add_panel_user_entered_filename_confirmed: i8 = cplus_add_method_id_id_id_i8(cls, rt::sel(#str_ptr("panel:userEnteredFilename:confirmed:\0")), OpenSavePanelDelegate_panel_user_entered_filename_confirmed_imp, #str_ptr("@@:@@c\0"));
+        let add_panel_will_expand: i8 = cplus_add_method_v_id_i8(cls, rt::sel(#str_ptr("panel:willExpand:\0")), OpenSavePanelDelegate_panel_will_expand_imp, #str_ptr("v@:@c\0"));
+        let add_panel_selection_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("panelSelectionDidChange:\0")), OpenSavePanelDelegate_panel_selection_did_change_imp, #str_ptr("v@:@\0"));
+        let add_panel_display_name_for_type: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("panel:displayNameForType:\0")), OpenSavePanelDelegate_panel_display_name_for_type_imp, #str_ptr("@@:@@\0"));
+        let add_panel_did_select_type: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("panel:didSelectType:\0")), OpenSavePanelDelegate_panel_did_select_type_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

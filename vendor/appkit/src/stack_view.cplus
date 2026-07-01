@@ -6,7 +6,6 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
-import "objc/synthesis" as synth;
 
 // `NSLayoutConstraintOrientation` (NS_ENUM)
 enum LayoutConstraintOrientation {
@@ -394,61 +393,5 @@ impl StackView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setHasEqualSpacing:\0")), has_equal_spacing as i8);
     }
 
-}
-
-// `NSStackViewDelegate` delegate protocol -> runtime class-synthesis helper.
-fn StackViewDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-
-struct StackViewDelegate {
-    stack_view_will_detach_views: fn(*u8, *u8, *u8),
-    stack_view_did_reattach_views: fn(*u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn StackViewDelegate_new(user: *u8) -> StackViewDelegate {
-    return StackViewDelegate { stack_view_will_detach_views: StackViewDelegate_noop_v_2, stack_view_did_reattach_views: StackViewDelegate_noop_v_2, user: user };
-}
-
-impl StackViewDelegate {
-    fn set_stack_view_will_detach_views(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.stack_view_will_detach_views = handler;
-        return;
-    }
-    fn set_stack_view_did_reattach_views(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.stack_view_did_reattach_views = handler;
-        return;
-    }
-}
-
-fn StackViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn StackViewDelegate_stack_view_will_detach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).stack_view_will_detach_views };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
-fn StackViewDelegate_stack_view_did_reattach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).stack_view_did_reattach_views };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
-fn create_StackViewDelegate(ctx: *StackViewDelegate) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_StackViewDelegate\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_stack_view_will_detach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:willDetachViews:\0")), StackViewDelegate_stack_view_will_detach_views_imp, #str_ptr("v@:@@\0"));
-        let add_stack_view_did_reattach_views: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("stackView:didReattachViews:\0")), StackViewDelegate_stack_view_did_reattach_views_imp, #str_ptr("v@:@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, StackViewDelegate_key(), { ctx as *u8 });
-    return d;
 }
 

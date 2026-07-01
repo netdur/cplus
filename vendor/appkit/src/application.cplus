@@ -837,34 +837,54 @@ impl UserActivityRestoring {
 }
 
 // `NSApplicationDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `application:printFiles:withSettings:showPrintPanels:`: arg shape (only <=5 object args modelled)
-// SKIPPED `applicationShouldHandleReopen:hasVisibleWindows:`: arg shape (only <=5 object args modelled)
-// SKIPPED `application:continueUserActivity:restorationHandler:`: arg shape (only <=5 object args modelled)
-fn ApplicationDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn ApplicationDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn ApplicationDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ApplicationDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn ApplicationDelegate_noop_u64_1(user: *u8, a0: *u8) -> u64 { return 0 as u64; }
-fn ApplicationDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn ApplicationDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
-fn ApplicationDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+// SKIPPED `application:openURLs:`: arg `NSArray<NSURL *> * _Nonnull` not modelled
+// SKIPPED `application:openFiles:`: arg `NSArray<NSString *> * _Nonnull` not modelled
+// SKIPPED `application:printFiles:withSettings:showPrintPanels:`: arg `NSArray<NSString *> * _Nonnull` not modelled
+// SKIPPED `application:didReceiveRemoteNotification:`: arg `NSDictionary<NSString *,id> * _Nonnull` not modelled
+// SKIPPED `application:continueUserActivity:restorationHandler:`: arg `void (^ _Nonnull)(NSArray<id<NSUserActivityRestoring>> * _Nonnull)` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn ApplicationDelegate_noop_u64_id(user: *u8, a0: *u8) -> u64 { return 0 as u64; }
+fn ApplicationDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn ApplicationDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn ApplicationDelegate_noop_i8_id_i8(user: *u8, a0: *u8, a1: i8) -> i8 { return 0 as i8; }
+fn ApplicationDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn ApplicationDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn ApplicationDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn ApplicationDelegate_noop_v_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn ApplicationDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct ApplicationDelegate {
     application_should_terminate: fn(*u8, *u8) -> u64,
-    application_open_u_r_ls: fn(*u8, *u8, *u8),
     application_open_file: fn(*u8, *u8, *u8) -> i8,
-    application_open_files: fn(*u8, *u8, *u8),
     application_open_temp_file: fn(*u8, *u8, *u8) -> i8,
     application_should_open_untitled_file: fn(*u8, *u8) -> i8,
     application_open_untitled_file: fn(*u8, *u8) -> i8,
     application_open_file_without_u_i: fn(*u8, *u8, *u8) -> i8,
     application_print_file: fn(*u8, *u8, *u8) -> i8,
     application_should_terminate_after_last_window_closed: fn(*u8, *u8) -> i8,
+    application_should_handle_reopen_has_visible_windows: fn(*u8, *u8, i8) -> i8,
     application_dock_menu: fn(*u8, *u8) -> *u8,
     application_will_present_error: fn(*u8, *u8, *u8) -> *u8,
     application_did_register_for_remote_notifications_with_device_token: fn(*u8, *u8, *u8),
     application_did_fail_to_register_for_remote_notifications_with_error: fn(*u8, *u8, *u8),
-    application_did_receive_remote_notification: fn(*u8, *u8, *u8),
     application_supports_secure_restorable_state: fn(*u8, *u8) -> i8,
     application_handler_for_intent: fn(*u8, *u8, *u8) -> *u8,
     application_will_encode_restorable_state: fn(*u8, *u8, *u8),
@@ -896,7 +916,7 @@ struct ApplicationDelegate {
 }
 
 fn ApplicationDelegate_new(user: *u8) -> ApplicationDelegate {
-    return ApplicationDelegate { application_should_terminate: ApplicationDelegate_noop_u64_1, application_open_u_r_ls: ApplicationDelegate_noop_v_2, application_open_file: ApplicationDelegate_noop_i8_2, application_open_files: ApplicationDelegate_noop_v_2, application_open_temp_file: ApplicationDelegate_noop_i8_2, application_should_open_untitled_file: ApplicationDelegate_noop_i8_1, application_open_untitled_file: ApplicationDelegate_noop_i8_1, application_open_file_without_u_i: ApplicationDelegate_noop_i8_2, application_print_file: ApplicationDelegate_noop_i8_2, application_should_terminate_after_last_window_closed: ApplicationDelegate_noop_i8_1, application_dock_menu: ApplicationDelegate_noop_id_1, application_will_present_error: ApplicationDelegate_noop_id_2, application_did_register_for_remote_notifications_with_device_token: ApplicationDelegate_noop_v_2, application_did_fail_to_register_for_remote_notifications_with_error: ApplicationDelegate_noop_v_2, application_did_receive_remote_notification: ApplicationDelegate_noop_v_2, application_supports_secure_restorable_state: ApplicationDelegate_noop_i8_1, application_handler_for_intent: ApplicationDelegate_noop_id_2, application_will_encode_restorable_state: ApplicationDelegate_noop_v_2, application_did_decode_restorable_state: ApplicationDelegate_noop_v_2, application_will_continue_user_activity_with_type: ApplicationDelegate_noop_i8_2, application_did_fail_to_continue_user_activity_with_type_error: ApplicationDelegate_noop_v_3, application_did_update_user_activity: ApplicationDelegate_noop_v_2, application_user_did_accept_cloud_kit_share_with_metadata: ApplicationDelegate_noop_v_2, application_delegate_handles_key: ApplicationDelegate_noop_i8_2, application_should_automatically_localize_key_equivalents: ApplicationDelegate_noop_i8_1, application_will_finish_launching: ApplicationDelegate_noop_v_1, application_did_finish_launching: ApplicationDelegate_noop_v_1, application_will_hide: ApplicationDelegate_noop_v_1, application_did_hide: ApplicationDelegate_noop_v_1, application_will_unhide: ApplicationDelegate_noop_v_1, application_did_unhide: ApplicationDelegate_noop_v_1, application_will_become_active: ApplicationDelegate_noop_v_1, application_did_become_active: ApplicationDelegate_noop_v_1, application_will_resign_active: ApplicationDelegate_noop_v_1, application_did_resign_active: ApplicationDelegate_noop_v_1, application_will_update: ApplicationDelegate_noop_v_1, application_did_update: ApplicationDelegate_noop_v_1, application_will_terminate: ApplicationDelegate_noop_v_1, application_did_change_screen_parameters: ApplicationDelegate_noop_v_1, application_did_change_occlusion_state: ApplicationDelegate_noop_v_1, application_protected_data_will_become_unavailable: ApplicationDelegate_noop_v_1, application_protected_data_did_become_available: ApplicationDelegate_noop_v_1, user: user };
+    return ApplicationDelegate { application_should_terminate: ApplicationDelegate_noop_u64_id, application_open_file: ApplicationDelegate_noop_i8_id_id, application_open_temp_file: ApplicationDelegate_noop_i8_id_id, application_should_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_file_without_u_i: ApplicationDelegate_noop_i8_id_id, application_print_file: ApplicationDelegate_noop_i8_id_id, application_should_terminate_after_last_window_closed: ApplicationDelegate_noop_i8_id, application_should_handle_reopen_has_visible_windows: ApplicationDelegate_noop_i8_id_i8, application_dock_menu: ApplicationDelegate_noop_id_id, application_will_present_error: ApplicationDelegate_noop_id_id_id, application_did_register_for_remote_notifications_with_device_token: ApplicationDelegate_noop_v_id_id, application_did_fail_to_register_for_remote_notifications_with_error: ApplicationDelegate_noop_v_id_id, application_supports_secure_restorable_state: ApplicationDelegate_noop_i8_id, application_handler_for_intent: ApplicationDelegate_noop_id_id_id, application_will_encode_restorable_state: ApplicationDelegate_noop_v_id_id, application_did_decode_restorable_state: ApplicationDelegate_noop_v_id_id, application_will_continue_user_activity_with_type: ApplicationDelegate_noop_i8_id_id, application_did_fail_to_continue_user_activity_with_type_error: ApplicationDelegate_noop_v_id_id_id, application_did_update_user_activity: ApplicationDelegate_noop_v_id_id, application_user_did_accept_cloud_kit_share_with_metadata: ApplicationDelegate_noop_v_id_id, application_delegate_handles_key: ApplicationDelegate_noop_i8_id_id, application_should_automatically_localize_key_equivalents: ApplicationDelegate_noop_i8_id, application_will_finish_launching: ApplicationDelegate_noop_v_id, application_did_finish_launching: ApplicationDelegate_noop_v_id, application_will_hide: ApplicationDelegate_noop_v_id, application_did_hide: ApplicationDelegate_noop_v_id, application_will_unhide: ApplicationDelegate_noop_v_id, application_did_unhide: ApplicationDelegate_noop_v_id, application_will_become_active: ApplicationDelegate_noop_v_id, application_did_become_active: ApplicationDelegate_noop_v_id, application_will_resign_active: ApplicationDelegate_noop_v_id, application_did_resign_active: ApplicationDelegate_noop_v_id, application_will_update: ApplicationDelegate_noop_v_id, application_did_update: ApplicationDelegate_noop_v_id, application_will_terminate: ApplicationDelegate_noop_v_id, application_did_change_screen_parameters: ApplicationDelegate_noop_v_id, application_did_change_occlusion_state: ApplicationDelegate_noop_v_id, application_protected_data_will_become_unavailable: ApplicationDelegate_noop_v_id, application_protected_data_did_become_available: ApplicationDelegate_noop_v_id, user: user };
 }
 
 impl ApplicationDelegate {
@@ -904,16 +924,8 @@ impl ApplicationDelegate {
         this.application_should_terminate = handler;
         return;
     }
-    fn set_application_open_u_r_ls(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.application_open_u_r_ls = handler;
-        return;
-    }
     fn set_application_open_file(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.application_open_file = handler;
-        return;
-    }
-    fn set_application_open_files(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.application_open_files = handler;
         return;
     }
     fn set_application_open_temp_file(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
@@ -940,6 +952,10 @@ impl ApplicationDelegate {
         this.application_should_terminate_after_last_window_closed = handler;
         return;
     }
+    fn set_application_should_handle_reopen_has_visible_windows(ref this, handler: fn(*u8, *u8, i8) -> i8) {
+        this.application_should_handle_reopen_has_visible_windows = handler;
+        return;
+    }
     fn set_application_dock_menu(ref this, handler: fn(*u8, *u8) -> *u8) {
         this.application_dock_menu = handler;
         return;
@@ -954,10 +970,6 @@ impl ApplicationDelegate {
     }
     fn set_application_did_fail_to_register_for_remote_notifications_with_error(ref this, handler: fn(*u8, *u8, *u8)) {
         this.application_did_fail_to_register_for_remote_notifications_with_error = handler;
-        return;
-    }
-    fn set_application_did_receive_remote_notification(ref this, handler: fn(*u8, *u8, *u8)) {
-        this.application_did_receive_remote_notification = handler;
         return;
     }
     fn set_application_supports_secure_restorable_state(ref this, handler: fn(*u8, *u8) -> i8) {
@@ -1079,27 +1091,11 @@ fn ApplicationDelegate_application_should_terminate_imp(self_obj: *u8, cmd: *u8,
     return f(u, a0);
 }
 
-fn ApplicationDelegate_application_open_u_r_ls_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).application_open_u_r_ls };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
 fn ApplicationDelegate_application_open_file_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
     let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).application_open_file };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
-}
-
-fn ApplicationDelegate_application_open_files_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).application_open_files };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
 }
 
 fn ApplicationDelegate_application_open_temp_file_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
@@ -1144,6 +1140,13 @@ fn ApplicationDelegate_application_should_terminate_after_last_window_closed_imp
     return f(u, a0);
 }
 
+fn ApplicationDelegate_application_should_handle_reopen_has_visible_windows_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i8) -> i8 {
+    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
+    let f: fn(*u8, *u8, i8) -> i8 = { (*c).application_should_handle_reopen_has_visible_windows };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn ApplicationDelegate_application_dock_menu_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
     let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
     let f: fn(*u8, *u8) -> *u8 = { (*c).application_dock_menu };
@@ -1169,14 +1172,6 @@ fn ApplicationDelegate_application_did_register_for_remote_notifications_with_de
 fn ApplicationDelegate_application_did_fail_to_register_for_remote_notifications_with_error_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
     let f: fn(*u8, *u8, *u8) = { (*c).application_did_fail_to_register_for_remote_notifications_with_error };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1);
-    return;
-}
-
-fn ApplicationDelegate_application_did_receive_remote_notification_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
-    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
-    let f: fn(*u8, *u8, *u8) = { (*c).application_did_receive_remote_notification };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
     return;
@@ -1398,48 +1393,46 @@ fn create_ApplicationDelegate(ctx: *ApplicationDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_application_should_terminate: i8 = synth::add_method_u64_1id(cls, rt::sel(#str_ptr("applicationShouldTerminate:\0")), ApplicationDelegate_application_should_terminate_imp, #str_ptr("Q@:@\0"));
-        let add_application_open_u_r_ls: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:openURLs:\0")), ApplicationDelegate_application_open_u_r_ls_imp, #str_ptr("v@:@@\0"));
-        let add_application_open_file: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:openFile:\0")), ApplicationDelegate_application_open_file_imp, #str_ptr("c@:@@\0"));
-        let add_application_open_files: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:openFiles:\0")), ApplicationDelegate_application_open_files_imp, #str_ptr("v@:@@\0"));
-        let add_application_open_temp_file: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:openTempFile:\0")), ApplicationDelegate_application_open_temp_file_imp, #str_ptr("c@:@@\0"));
-        let add_application_should_open_untitled_file: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("applicationShouldOpenUntitledFile:\0")), ApplicationDelegate_application_should_open_untitled_file_imp, #str_ptr("c@:@\0"));
-        let add_application_open_untitled_file: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("applicationOpenUntitledFile:\0")), ApplicationDelegate_application_open_untitled_file_imp, #str_ptr("c@:@\0"));
-        let add_application_open_file_without_u_i: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:openFileWithoutUI:\0")), ApplicationDelegate_application_open_file_without_u_i_imp, #str_ptr("c@:@@\0"));
-        let add_application_print_file: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:printFile:\0")), ApplicationDelegate_application_print_file_imp, #str_ptr("c@:@@\0"));
-        let add_application_should_terminate_after_last_window_closed: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0")), ApplicationDelegate_application_should_terminate_after_last_window_closed_imp, #str_ptr("c@:@\0"));
-        let add_application_dock_menu: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("applicationDockMenu:\0")), ApplicationDelegate_application_dock_menu_imp, #str_ptr("@@:@\0"));
-        let add_application_will_present_error: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("application:willPresentError:\0")), ApplicationDelegate_application_will_present_error_imp, #str_ptr("@@:@@\0"));
-        let add_application_did_register_for_remote_notifications_with_device_token: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:didRegisterForRemoteNotificationsWithDeviceToken:\0")), ApplicationDelegate_application_did_register_for_remote_notifications_with_device_token_imp, #str_ptr("v@:@@\0"));
-        let add_application_did_fail_to_register_for_remote_notifications_with_error: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:didFailToRegisterForRemoteNotificationsWithError:\0")), ApplicationDelegate_application_did_fail_to_register_for_remote_notifications_with_error_imp, #str_ptr("v@:@@\0"));
-        let add_application_did_receive_remote_notification: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:didReceiveRemoteNotification:\0")), ApplicationDelegate_application_did_receive_remote_notification_imp, #str_ptr("v@:@@\0"));
-        let add_application_supports_secure_restorable_state: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("applicationSupportsSecureRestorableState:\0")), ApplicationDelegate_application_supports_secure_restorable_state_imp, #str_ptr("c@:@\0"));
-        let add_application_handler_for_intent: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("application:handlerForIntent:\0")), ApplicationDelegate_application_handler_for_intent_imp, #str_ptr("@@:@@\0"));
-        let add_application_will_encode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:willEncodeRestorableState:\0")), ApplicationDelegate_application_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_application_did_decode_restorable_state: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:didDecodeRestorableState:\0")), ApplicationDelegate_application_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
-        let add_application_will_continue_user_activity_with_type: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:willContinueUserActivityWithType:\0")), ApplicationDelegate_application_will_continue_user_activity_with_type_imp, #str_ptr("c@:@@\0"));
-        let add_application_did_fail_to_continue_user_activity_with_type_error: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("application:didFailToContinueUserActivityWithType:error:\0")), ApplicationDelegate_application_did_fail_to_continue_user_activity_with_type_error_imp, #str_ptr("v@:@@@\0"));
-        let add_application_did_update_user_activity: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:didUpdateUserActivity:\0")), ApplicationDelegate_application_did_update_user_activity_imp, #str_ptr("v@:@@\0"));
-        let add_application_user_did_accept_cloud_kit_share_with_metadata: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("application:userDidAcceptCloudKitShareWithMetadata:\0")), ApplicationDelegate_application_user_did_accept_cloud_kit_share_with_metadata_imp, #str_ptr("v@:@@\0"));
-        let add_application_delegate_handles_key: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("application:delegateHandlesKey:\0")), ApplicationDelegate_application_delegate_handles_key_imp, #str_ptr("c@:@@\0"));
-        let add_application_should_automatically_localize_key_equivalents: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("applicationShouldAutomaticallyLocalizeKeyEquivalents:\0")), ApplicationDelegate_application_should_automatically_localize_key_equivalents_imp, #str_ptr("c@:@\0"));
-        let add_application_will_finish_launching: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillFinishLaunching:\0")), ApplicationDelegate_application_will_finish_launching_imp, #str_ptr("v@:@\0"));
-        let add_application_did_finish_launching: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidFinishLaunching:\0")), ApplicationDelegate_application_did_finish_launching_imp, #str_ptr("v@:@\0"));
-        let add_application_will_hide: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillHide:\0")), ApplicationDelegate_application_will_hide_imp, #str_ptr("v@:@\0"));
-        let add_application_did_hide: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidHide:\0")), ApplicationDelegate_application_did_hide_imp, #str_ptr("v@:@\0"));
-        let add_application_will_unhide: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillUnhide:\0")), ApplicationDelegate_application_will_unhide_imp, #str_ptr("v@:@\0"));
-        let add_application_did_unhide: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidUnhide:\0")), ApplicationDelegate_application_did_unhide_imp, #str_ptr("v@:@\0"));
-        let add_application_will_become_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillBecomeActive:\0")), ApplicationDelegate_application_will_become_active_imp, #str_ptr("v@:@\0"));
-        let add_application_did_become_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidBecomeActive:\0")), ApplicationDelegate_application_did_become_active_imp, #str_ptr("v@:@\0"));
-        let add_application_will_resign_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillResignActive:\0")), ApplicationDelegate_application_will_resign_active_imp, #str_ptr("v@:@\0"));
-        let add_application_did_resign_active: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidResignActive:\0")), ApplicationDelegate_application_did_resign_active_imp, #str_ptr("v@:@\0"));
-        let add_application_will_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillUpdate:\0")), ApplicationDelegate_application_will_update_imp, #str_ptr("v@:@\0"));
-        let add_application_did_update: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidUpdate:\0")), ApplicationDelegate_application_did_update_imp, #str_ptr("v@:@\0"));
-        let add_application_will_terminate: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationWillTerminate:\0")), ApplicationDelegate_application_will_terminate_imp, #str_ptr("v@:@\0"));
-        let add_application_did_change_screen_parameters: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidChangeScreenParameters:\0")), ApplicationDelegate_application_did_change_screen_parameters_imp, #str_ptr("v@:@\0"));
-        let add_application_did_change_occlusion_state: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationDidChangeOcclusionState:\0")), ApplicationDelegate_application_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
-        let add_application_protected_data_will_become_unavailable: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationProtectedDataWillBecomeUnavailable:\0")), ApplicationDelegate_application_protected_data_will_become_unavailable_imp, #str_ptr("v@:@\0"));
-        let add_application_protected_data_did_become_available: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("applicationProtectedDataDidBecomeAvailable:\0")), ApplicationDelegate_application_protected_data_did_become_available_imp, #str_ptr("v@:@\0"));
+        let add_application_should_terminate: i8 = cplus_add_method_u64_id(cls, rt::sel(#str_ptr("applicationShouldTerminate:\0")), ApplicationDelegate_application_should_terminate_imp, #str_ptr("Q@:@\0"));
+        let add_application_open_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openFile:\0")), ApplicationDelegate_application_open_file_imp, #str_ptr("c@:@@\0"));
+        let add_application_open_temp_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openTempFile:\0")), ApplicationDelegate_application_open_temp_file_imp, #str_ptr("c@:@@\0"));
+        let add_application_should_open_untitled_file: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationShouldOpenUntitledFile:\0")), ApplicationDelegate_application_should_open_untitled_file_imp, #str_ptr("c@:@\0"));
+        let add_application_open_untitled_file: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationOpenUntitledFile:\0")), ApplicationDelegate_application_open_untitled_file_imp, #str_ptr("c@:@\0"));
+        let add_application_open_file_without_u_i: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openFileWithoutUI:\0")), ApplicationDelegate_application_open_file_without_u_i_imp, #str_ptr("c@:@@\0"));
+        let add_application_print_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:printFile:\0")), ApplicationDelegate_application_print_file_imp, #str_ptr("c@:@@\0"));
+        let add_application_should_terminate_after_last_window_closed: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0")), ApplicationDelegate_application_should_terminate_after_last_window_closed_imp, #str_ptr("c@:@\0"));
+        let add_application_should_handle_reopen_has_visible_windows: i8 = cplus_add_method_i8_id_i8(cls, rt::sel(#str_ptr("applicationShouldHandleReopen:hasVisibleWindows:\0")), ApplicationDelegate_application_should_handle_reopen_has_visible_windows_imp, #str_ptr("c@:@c\0"));
+        let add_application_dock_menu: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("applicationDockMenu:\0")), ApplicationDelegate_application_dock_menu_imp, #str_ptr("@@:@\0"));
+        let add_application_will_present_error: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("application:willPresentError:\0")), ApplicationDelegate_application_will_present_error_imp, #str_ptr("@@:@@\0"));
+        let add_application_did_register_for_remote_notifications_with_device_token: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:didRegisterForRemoteNotificationsWithDeviceToken:\0")), ApplicationDelegate_application_did_register_for_remote_notifications_with_device_token_imp, #str_ptr("v@:@@\0"));
+        let add_application_did_fail_to_register_for_remote_notifications_with_error: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:didFailToRegisterForRemoteNotificationsWithError:\0")), ApplicationDelegate_application_did_fail_to_register_for_remote_notifications_with_error_imp, #str_ptr("v@:@@\0"));
+        let add_application_supports_secure_restorable_state: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationSupportsSecureRestorableState:\0")), ApplicationDelegate_application_supports_secure_restorable_state_imp, #str_ptr("c@:@\0"));
+        let add_application_handler_for_intent: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("application:handlerForIntent:\0")), ApplicationDelegate_application_handler_for_intent_imp, #str_ptr("@@:@@\0"));
+        let add_application_will_encode_restorable_state: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:willEncodeRestorableState:\0")), ApplicationDelegate_application_will_encode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_application_did_decode_restorable_state: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:didDecodeRestorableState:\0")), ApplicationDelegate_application_did_decode_restorable_state_imp, #str_ptr("v@:@@\0"));
+        let add_application_will_continue_user_activity_with_type: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:willContinueUserActivityWithType:\0")), ApplicationDelegate_application_will_continue_user_activity_with_type_imp, #str_ptr("c@:@@\0"));
+        let add_application_did_fail_to_continue_user_activity_with_type_error: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("application:didFailToContinueUserActivityWithType:error:\0")), ApplicationDelegate_application_did_fail_to_continue_user_activity_with_type_error_imp, #str_ptr("v@:@@@\0"));
+        let add_application_did_update_user_activity: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:didUpdateUserActivity:\0")), ApplicationDelegate_application_did_update_user_activity_imp, #str_ptr("v@:@@\0"));
+        let add_application_user_did_accept_cloud_kit_share_with_metadata: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:userDidAcceptCloudKitShareWithMetadata:\0")), ApplicationDelegate_application_user_did_accept_cloud_kit_share_with_metadata_imp, #str_ptr("v@:@@\0"));
+        let add_application_delegate_handles_key: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:delegateHandlesKey:\0")), ApplicationDelegate_application_delegate_handles_key_imp, #str_ptr("c@:@@\0"));
+        let add_application_should_automatically_localize_key_equivalents: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationShouldAutomaticallyLocalizeKeyEquivalents:\0")), ApplicationDelegate_application_should_automatically_localize_key_equivalents_imp, #str_ptr("c@:@\0"));
+        let add_application_will_finish_launching: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillFinishLaunching:\0")), ApplicationDelegate_application_will_finish_launching_imp, #str_ptr("v@:@\0"));
+        let add_application_did_finish_launching: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidFinishLaunching:\0")), ApplicationDelegate_application_did_finish_launching_imp, #str_ptr("v@:@\0"));
+        let add_application_will_hide: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillHide:\0")), ApplicationDelegate_application_will_hide_imp, #str_ptr("v@:@\0"));
+        let add_application_did_hide: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidHide:\0")), ApplicationDelegate_application_did_hide_imp, #str_ptr("v@:@\0"));
+        let add_application_will_unhide: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillUnhide:\0")), ApplicationDelegate_application_will_unhide_imp, #str_ptr("v@:@\0"));
+        let add_application_did_unhide: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidUnhide:\0")), ApplicationDelegate_application_did_unhide_imp, #str_ptr("v@:@\0"));
+        let add_application_will_become_active: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillBecomeActive:\0")), ApplicationDelegate_application_will_become_active_imp, #str_ptr("v@:@\0"));
+        let add_application_did_become_active: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidBecomeActive:\0")), ApplicationDelegate_application_did_become_active_imp, #str_ptr("v@:@\0"));
+        let add_application_will_resign_active: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillResignActive:\0")), ApplicationDelegate_application_will_resign_active_imp, #str_ptr("v@:@\0"));
+        let add_application_did_resign_active: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidResignActive:\0")), ApplicationDelegate_application_did_resign_active_imp, #str_ptr("v@:@\0"));
+        let add_application_will_update: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillUpdate:\0")), ApplicationDelegate_application_will_update_imp, #str_ptr("v@:@\0"));
+        let add_application_did_update: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidUpdate:\0")), ApplicationDelegate_application_did_update_imp, #str_ptr("v@:@\0"));
+        let add_application_will_terminate: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationWillTerminate:\0")), ApplicationDelegate_application_will_terminate_imp, #str_ptr("v@:@\0"));
+        let add_application_did_change_screen_parameters: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidChangeScreenParameters:\0")), ApplicationDelegate_application_did_change_screen_parameters_imp, #str_ptr("v@:@\0"));
+        let add_application_did_change_occlusion_state: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationDidChangeOcclusionState:\0")), ApplicationDelegate_application_did_change_occlusion_state_imp, #str_ptr("v@:@\0"));
+        let add_application_protected_data_will_become_unavailable: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationProtectedDataWillBecomeUnavailable:\0")), ApplicationDelegate_application_protected_data_will_become_unavailable_imp, #str_ptr("v@:@\0"));
+        let add_application_protected_data_did_become_available: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("applicationProtectedDataDidBecomeAvailable:\0")), ApplicationDelegate_application_protected_data_did_become_available_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

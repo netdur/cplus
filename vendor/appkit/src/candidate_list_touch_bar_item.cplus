@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "objc/synthesis" as synth;
 
 #[repr(C)]
 struct CandidateListTouchBarItem_set_attributed_string_for_candidate_block {
@@ -97,6 +98,99 @@ impl CandidateListTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setCustomizationLabel:\0")), bridge::nsstring(customization_label));
     }
 
+}
+
+// `NSCandidateListTouchBarItemDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_i64_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i8), types: *u8) -> i8;
+
+fn CandidateListTouchBarItemDelegate_noop_v_id_i64(user: *u8, a0: *u8, a1: i64) { return; }
+fn CandidateListTouchBarItemDelegate_noop_v_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) { return; }
+fn CandidateListTouchBarItemDelegate_noop_v_id_i8(user: *u8, a0: *u8, a1: i8) { return; }
+
+struct CandidateListTouchBarItemDelegate {
+    candidate_list_touch_bar_item_begin_selecting_candidate_at_index: fn(*u8, *u8, i64),
+    candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index: fn(*u8, *u8, i64, i64),
+    candidate_list_touch_bar_item_end_selecting_candidate_at_index: fn(*u8, *u8, i64),
+    candidate_list_touch_bar_item_changed_candidate_list_visibility: fn(*u8, *u8, i8),
+    opaque user: *u8,
+}
+
+fn CandidateListTouchBarItemDelegate_new(user: *u8) -> CandidateListTouchBarItemDelegate {
+    return CandidateListTouchBarItemDelegate { candidate_list_touch_bar_item_begin_selecting_candidate_at_index: CandidateListTouchBarItemDelegate_noop_v_id_i64, candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index: CandidateListTouchBarItemDelegate_noop_v_id_i64_i64, candidate_list_touch_bar_item_end_selecting_candidate_at_index: CandidateListTouchBarItemDelegate_noop_v_id_i64, candidate_list_touch_bar_item_changed_candidate_list_visibility: CandidateListTouchBarItemDelegate_noop_v_id_i8, user: user };
+}
+
+impl CandidateListTouchBarItemDelegate {
+    fn set_candidate_list_touch_bar_item_begin_selecting_candidate_at_index(ref this, handler: fn(*u8, *u8, i64)) {
+        this.candidate_list_touch_bar_item_begin_selecting_candidate_at_index = handler;
+        return;
+    }
+    fn set_candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index(ref this, handler: fn(*u8, *u8, i64, i64)) {
+        this.candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index = handler;
+        return;
+    }
+    fn set_candidate_list_touch_bar_item_end_selecting_candidate_at_index(ref this, handler: fn(*u8, *u8, i64)) {
+        this.candidate_list_touch_bar_item_end_selecting_candidate_at_index = handler;
+        return;
+    }
+    fn set_candidate_list_touch_bar_item_changed_candidate_list_visibility(ref this, handler: fn(*u8, *u8, i8)) {
+        this.candidate_list_touch_bar_item_changed_candidate_list_visibility = handler;
+        return;
+    }
+}
+
+fn CandidateListTouchBarItemDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_begin_selecting_candidate_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) {
+    let c: *CandidateListTouchBarItemDelegate = { synth::get_associated(self_obj, CandidateListTouchBarItemDelegate_key()) as *CandidateListTouchBarItemDelegate };
+    let f: fn(*u8, *u8, i64) = { (*c).candidate_list_touch_bar_item_begin_selecting_candidate_at_index };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64, a2: i64) {
+    let c: *CandidateListTouchBarItemDelegate = { synth::get_associated(self_obj, CandidateListTouchBarItemDelegate_key()) as *CandidateListTouchBarItemDelegate };
+    let f: fn(*u8, *u8, i64, i64) = { (*c).candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2);
+    return;
+}
+
+fn CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_end_selecting_candidate_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) {
+    let c: *CandidateListTouchBarItemDelegate = { synth::get_associated(self_obj, CandidateListTouchBarItemDelegate_key()) as *CandidateListTouchBarItemDelegate };
+    let f: fn(*u8, *u8, i64) = { (*c).candidate_list_touch_bar_item_end_selecting_candidate_at_index };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_changed_candidate_list_visibility_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i8) {
+    let c: *CandidateListTouchBarItemDelegate = { synth::get_associated(self_obj, CandidateListTouchBarItemDelegate_key()) as *CandidateListTouchBarItemDelegate };
+    let f: fn(*u8, *u8, i8) = { (*c).candidate_list_touch_bar_item_changed_candidate_list_visibility };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1);
+    return;
+}
+
+fn create_CandidateListTouchBarItemDelegate(ctx: *CandidateListTouchBarItemDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_CandidateListTouchBarItemDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_candidate_list_touch_bar_item_begin_selecting_candidate_at_index: i8 = cplus_add_method_v_id_i64(cls, rt::sel(#str_ptr("candidateListTouchBarItem:beginSelectingCandidateAtIndex:\0")), CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_begin_selecting_candidate_at_index_imp, #str_ptr("v@:@q\0"));
+        let add_candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index: i8 = cplus_add_method_v_id_i64_i64(cls, rt::sel(#str_ptr("candidateListTouchBarItem:changeSelectionFromCandidateAtIndex:toIndex:\0")), CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_change_selection_from_candidate_at_index_to_index_imp, #str_ptr("v@:@qq\0"));
+        let add_candidate_list_touch_bar_item_end_selecting_candidate_at_index: i8 = cplus_add_method_v_id_i64(cls, rt::sel(#str_ptr("candidateListTouchBarItem:endSelectingCandidateAtIndex:\0")), CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_end_selecting_candidate_at_index_imp, #str_ptr("v@:@q\0"));
+        let add_candidate_list_touch_bar_item_changed_candidate_list_visibility: i8 = cplus_add_method_v_id_i8(cls, rt::sel(#str_ptr("candidateListTouchBarItem:changedCandidateListVisibility:\0")), CandidateListTouchBarItemDelegate_candidate_list_touch_bar_item_changed_candidate_list_visibility_imp, #str_ptr("v@:@c\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, CandidateListTouchBarItemDelegate_key(), { ctx as *u8 });
+    return d;
 }
 
 // `NSTextInputClient` (ObjC protocol). Non-owning handle; `opaque`, no drop.

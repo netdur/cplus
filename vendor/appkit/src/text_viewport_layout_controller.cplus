@@ -124,8 +124,13 @@ impl TextLocation {
 
 // `NSTextViewportLayoutControllerDelegate` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `viewportBoundsForTextViewportLayoutController:`: return `CGRect` not modelled
-fn TextViewportLayoutControllerDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
-fn TextViewportLayoutControllerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn TextViewportLayoutControllerDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn TextViewportLayoutControllerDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct TextViewportLayoutControllerDelegate {
     text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: fn(*u8, *u8, *u8),
@@ -135,7 +140,7 @@ struct TextViewportLayoutControllerDelegate {
 }
 
 fn TextViewportLayoutControllerDelegate_new(user: *u8) -> TextViewportLayoutControllerDelegate {
-    return TextViewportLayoutControllerDelegate { text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: TextViewportLayoutControllerDelegate_noop_v_2, text_viewport_layout_controller_will_layout: TextViewportLayoutControllerDelegate_noop_v_1, text_viewport_layout_controller_did_layout: TextViewportLayoutControllerDelegate_noop_v_1, user: user };
+    return TextViewportLayoutControllerDelegate { text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: TextViewportLayoutControllerDelegate_noop_v_id_id, text_viewport_layout_controller_will_layout: TextViewportLayoutControllerDelegate_noop_v_id, text_viewport_layout_controller_did_layout: TextViewportLayoutControllerDelegate_noop_v_id, user: user };
 }
 
 impl TextViewportLayoutControllerDelegate {
@@ -184,9 +189,9 @@ fn create_TextViewportLayoutControllerDelegate(ctx: *TextViewportLayoutControlle
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("textViewportLayoutController:configureRenderingSurfaceForTextLayoutFragment:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment_imp, #str_ptr("v@:@@\0"));
-        let add_text_viewport_layout_controller_will_layout: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewportLayoutControllerWillLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_will_layout_imp, #str_ptr("v@:@\0"));
-        let add_text_viewport_layout_controller_did_layout: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewportLayoutControllerDidLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_did_layout_imp, #str_ptr("v@:@\0"));
+        let add_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("textViewportLayoutController:configureRenderingSurfaceForTextLayoutFragment:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment_imp, #str_ptr("v@:@@\0"));
+        let add_text_viewport_layout_controller_will_layout: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewportLayoutControllerWillLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_will_layout_imp, #str_ptr("v@:@\0"));
+        let add_text_viewport_layout_controller_did_layout: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewportLayoutControllerDidLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_did_layout_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

@@ -191,24 +191,43 @@ impl ComboBoxCell {
 }
 
 // `NSComboBoxCellDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `comboBoxCell:objectValueForItemAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `comboBoxCell:indexOfItemWithStringValue:`: no `u64`-return / 2-arg IMP shape
-fn ComboBoxCellDataSource_noop_i64_1(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
-fn ComboBoxCellDataSource_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> u64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn ComboBoxCellDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
+fn ComboBoxCellDataSource_noop_id_id_i64(user: *u8, a0: *u8, a1: i64) -> *u8 { return { 0 as *u8 }; }
+fn ComboBoxCellDataSource_noop_u64_id_id(user: *u8, a0: *u8, a1: *u8) -> u64 { return 0 as u64; }
+fn ComboBoxCellDataSource_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct ComboBoxCellDataSource {
     number_of_items_in_combo_box_cell: fn(*u8, *u8) -> i64,
+    combo_box_cell_object_value_for_item_at_index: fn(*u8, *u8, i64) -> *u8,
+    combo_box_cell_index_of_item_with_string_value: fn(*u8, *u8, *u8) -> u64,
     combo_box_cell_completed_string: fn(*u8, *u8, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn ComboBoxCellDataSource_new(user: *u8) -> ComboBoxCellDataSource {
-    return ComboBoxCellDataSource { number_of_items_in_combo_box_cell: ComboBoxCellDataSource_noop_i64_1, combo_box_cell_completed_string: ComboBoxCellDataSource_noop_id_2, user: user };
+    return ComboBoxCellDataSource { number_of_items_in_combo_box_cell: ComboBoxCellDataSource_noop_i64_id, combo_box_cell_object_value_for_item_at_index: ComboBoxCellDataSource_noop_id_id_i64, combo_box_cell_index_of_item_with_string_value: ComboBoxCellDataSource_noop_u64_id_id, combo_box_cell_completed_string: ComboBoxCellDataSource_noop_id_id_id, user: user };
 }
 
 impl ComboBoxCellDataSource {
     fn set_number_of_items_in_combo_box_cell(ref this, handler: fn(*u8, *u8) -> i64) {
         this.number_of_items_in_combo_box_cell = handler;
+        return;
+    }
+    fn set_combo_box_cell_object_value_for_item_at_index(ref this, handler: fn(*u8, *u8, i64) -> *u8) {
+        this.combo_box_cell_object_value_for_item_at_index = handler;
+        return;
+    }
+    fn set_combo_box_cell_index_of_item_with_string_value(ref this, handler: fn(*u8, *u8, *u8) -> u64) {
+        this.combo_box_cell_index_of_item_with_string_value = handler;
         return;
     }
     fn set_combo_box_cell_completed_string(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
@@ -226,6 +245,20 @@ fn ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp(self_obj: *u8, c
     return f(u, a0);
 }
 
+fn ComboBoxCellDataSource_combo_box_cell_object_value_for_item_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> *u8 {
+    let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
+    let f: fn(*u8, *u8, i64) -> *u8 = { (*c).combo_box_cell_object_value_for_item_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn ComboBoxCellDataSource_combo_box_cell_index_of_item_with_string_value_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> u64 {
+    let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
+    let f: fn(*u8, *u8, *u8) -> u64 = { (*c).combo_box_cell_index_of_item_with_string_value };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
 fn ComboBoxCellDataSource_combo_box_cell_completed_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).combo_box_cell_completed_string };
@@ -238,8 +271,10 @@ fn create_ComboBoxCellDataSource(ctx: *ComboBoxCellDataSource) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_number_of_items_in_combo_box_cell: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfItemsInComboBoxCell:\0")), ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp, #str_ptr("q@:@\0"));
-        let add_combo_box_cell_completed_string: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("comboBoxCell:completedString:\0")), ComboBoxCellDataSource_combo_box_cell_completed_string_imp, #str_ptr("@@:@@\0"));
+        let add_number_of_items_in_combo_box_cell: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfItemsInComboBoxCell:\0")), ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp, #str_ptr("q@:@\0"));
+        let add_combo_box_cell_object_value_for_item_at_index: i8 = cplus_add_method_id_id_i64(cls, rt::sel(#str_ptr("comboBoxCell:objectValueForItemAtIndex:\0")), ComboBoxCellDataSource_combo_box_cell_object_value_for_item_at_index_imp, #str_ptr("@@:@q\0"));
+        let add_combo_box_cell_index_of_item_with_string_value: i8 = cplus_add_method_u64_id_id(cls, rt::sel(#str_ptr("comboBoxCell:indexOfItemWithStringValue:\0")), ComboBoxCellDataSource_combo_box_cell_index_of_item_with_string_value_imp, #str_ptr("Q@:@@\0"));
+        let add_combo_box_cell_completed_string: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("comboBoxCell:completedString:\0")), ComboBoxCellDataSource_combo_box_cell_completed_string_imp, #str_ptr("@@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

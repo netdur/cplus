@@ -284,7 +284,10 @@ impl PathCell {
 }
 
 // `NSPathCellDelegate` delegate protocol -> runtime class-synthesis helper.
-fn PathCellDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+fn PathCellDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 
 struct PathCellDelegate {
     path_cell_will_display_open_panel: fn(*u8, *u8, *u8),
@@ -293,7 +296,7 @@ struct PathCellDelegate {
 }
 
 fn PathCellDelegate_new(user: *u8) -> PathCellDelegate {
-    return PathCellDelegate { path_cell_will_display_open_panel: PathCellDelegate_noop_v_2, path_cell_will_pop_up_menu: PathCellDelegate_noop_v_2, user: user };
+    return PathCellDelegate { path_cell_will_display_open_panel: PathCellDelegate_noop_v_id_id, path_cell_will_pop_up_menu: PathCellDelegate_noop_v_id_id, user: user };
 }
 
 impl PathCellDelegate {
@@ -330,8 +333,8 @@ fn create_PathCellDelegate(ctx: *PathCellDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_path_cell_will_display_open_panel: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathCell:willDisplayOpenPanel:\0")), PathCellDelegate_path_cell_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
-        let add_path_cell_will_pop_up_menu: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("pathCell:willPopUpMenu:\0")), PathCellDelegate_path_cell_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
+        let add_path_cell_will_display_open_panel: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("pathCell:willDisplayOpenPanel:\0")), PathCellDelegate_path_cell_will_display_open_panel_imp, #str_ptr("v@:@@\0"));
+        let add_path_cell_will_pop_up_menu: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("pathCell:willPopUpMenu:\0")), PathCellDelegate_path_cell_will_pop_up_menu_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

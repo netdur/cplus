@@ -7,6 +7,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/string_map" as string_map;
+import "objc/synthesis" as synth;
 
 // `NSTextLayoutFragmentEnumerationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const text_layout_fragment_enumeration_options_none: u64 = 0 as u64;
@@ -464,5 +465,81 @@ impl TextLocation {
 
     fn from_raw(ptr: *u8) -> TextLocation { return TextLocation { _obj: ptr }; }
 
+}
+
+// `NSTextLayoutManagerDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn TextLayoutManagerDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextLayoutManagerDelegate_noop_i8_id_id_i8(user: *u8, a0: *u8, a1: *u8, a2: i8) -> i8 { return 0 as i8; }
+fn TextLayoutManagerDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
+
+struct TextLayoutManagerDelegate {
+    text_layout_manager_text_layout_fragment_for_location_in_text_element: fn(*u8, *u8, *u8, *u8) -> *u8,
+    text_layout_manager_should_break_line_before_location_hyphenating: fn(*u8, *u8, *u8, i8) -> i8,
+    text_layout_manager_rendering_attributes_for_link_at_location_default_attributes: fn(*u8, *u8, *u8, *u8, *u8) -> *u8,
+    opaque user: *u8,
+}
+
+fn TextLayoutManagerDelegate_new(user: *u8) -> TextLayoutManagerDelegate {
+    return TextLayoutManagerDelegate { text_layout_manager_text_layout_fragment_for_location_in_text_element: TextLayoutManagerDelegate_noop_id_id_id_id, text_layout_manager_should_break_line_before_location_hyphenating: TextLayoutManagerDelegate_noop_i8_id_id_i8, text_layout_manager_rendering_attributes_for_link_at_location_default_attributes: TextLayoutManagerDelegate_noop_id_id_id_id_id, user: user };
+}
+
+impl TextLayoutManagerDelegate {
+    fn set_text_layout_manager_text_layout_fragment_for_location_in_text_element(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
+        this.text_layout_manager_text_layout_fragment_for_location_in_text_element = handler;
+        return;
+    }
+    fn set_text_layout_manager_should_break_line_before_location_hyphenating(ref this, handler: fn(*u8, *u8, *u8, i8) -> i8) {
+        this.text_layout_manager_should_break_line_before_location_hyphenating = handler;
+        return;
+    }
+    fn set_text_layout_manager_rendering_attributes_for_link_at_location_default_attributes(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> *u8) {
+        this.text_layout_manager_rendering_attributes_for_link_at_location_default_attributes = handler;
+        return;
+    }
+}
+
+fn TextLayoutManagerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn TextLayoutManagerDelegate_text_layout_manager_text_layout_fragment_for_location_in_text_element_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TextLayoutManagerDelegate = { synth::get_associated(self_obj, TextLayoutManagerDelegate_key()) as *TextLayoutManagerDelegate };
+    let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_layout_manager_text_layout_fragment_for_location_in_text_element };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TextLayoutManagerDelegate_text_layout_manager_should_break_line_before_location_hyphenating_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i8) -> i8 {
+    let c: *TextLayoutManagerDelegate = { synth::get_associated(self_obj, TextLayoutManagerDelegate_key()) as *TextLayoutManagerDelegate };
+    let f: fn(*u8, *u8, *u8, i8) -> i8 = { (*c).text_layout_manager_should_break_line_before_location_hyphenating };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TextLayoutManagerDelegate_text_layout_manager_rendering_attributes_for_link_at_location_default_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 {
+    let c: *TextLayoutManagerDelegate = { synth::get_associated(self_obj, TextLayoutManagerDelegate_key()) as *TextLayoutManagerDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, *u8) -> *u8 = { (*c).text_layout_manager_rendering_attributes_for_link_at_location_default_attributes };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn create_TextLayoutManagerDelegate(ctx: *TextLayoutManagerDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextLayoutManagerDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_text_layout_manager_text_layout_fragment_for_location_in_text_element: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("textLayoutManager:textLayoutFragmentForLocation:inTextElement:\0")), TextLayoutManagerDelegate_text_layout_manager_text_layout_fragment_for_location_in_text_element_imp, #str_ptr("@@:@@@\0"));
+        let add_text_layout_manager_should_break_line_before_location_hyphenating: i8 = cplus_add_method_i8_id_id_i8(cls, rt::sel(#str_ptr("textLayoutManager:shouldBreakLineBeforeLocation:hyphenating:\0")), TextLayoutManagerDelegate_text_layout_manager_should_break_line_before_location_hyphenating_imp, #str_ptr("c@:@@c\0"));
+        let add_text_layout_manager_rendering_attributes_for_link_at_location_default_attributes: i8 = cplus_add_method_id_id_id_id_id(cls, rt::sel(#str_ptr("textLayoutManager:renderingAttributesForLink:atLocation:defaultAttributes:\0")), TextLayoutManagerDelegate_text_layout_manager_rendering_attributes_for_link_at_location_default_attributes_imp, #str_ptr("@@:@@@@\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, TextLayoutManagerDelegate_key(), { ctx as *u8 });
+    return d;
 }
 

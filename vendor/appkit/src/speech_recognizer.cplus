@@ -102,7 +102,10 @@ impl SpeechRecognizer {
 }
 
 // `NSSpeechRecognizerDelegate` delegate protocol -> runtime class-synthesis helper.
-fn SpeechRecognizerDelegate_noop_v_2(user: *u8, a0: *u8, a1: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+
+fn SpeechRecognizerDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 
 struct SpeechRecognizerDelegate {
     speech_recognizer_did_recognize_command: fn(*u8, *u8, *u8),
@@ -110,7 +113,7 @@ struct SpeechRecognizerDelegate {
 }
 
 fn SpeechRecognizerDelegate_new(user: *u8) -> SpeechRecognizerDelegate {
-    return SpeechRecognizerDelegate { speech_recognizer_did_recognize_command: SpeechRecognizerDelegate_noop_v_2, user: user };
+    return SpeechRecognizerDelegate { speech_recognizer_did_recognize_command: SpeechRecognizerDelegate_noop_v_id_id, user: user };
 }
 
 impl SpeechRecognizerDelegate {
@@ -135,7 +138,7 @@ fn create_SpeechRecognizerDelegate(ctx: *SpeechRecognizerDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_speech_recognizer_did_recognize_command: i8 = synth::add_method_v_2id(cls, rt::sel(#str_ptr("speechRecognizer:didRecognizeCommand:\0")), SpeechRecognizerDelegate_speech_recognizer_did_recognize_command_imp, #str_ptr("v@:@@\0"));
+        let add_speech_recognizer_did_recognize_command: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("speechRecognizer:didRecognizeCommand:\0")), SpeechRecognizerDelegate_speech_recognizer_did_recognize_command_imp, #str_ptr("v@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

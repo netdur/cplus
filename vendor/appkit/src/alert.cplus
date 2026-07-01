@@ -262,7 +262,10 @@ impl Alert {
 }
 
 // `NSAlertDelegate` delegate protocol -> runtime class-synthesis helper.
-fn AlertDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
+fn AlertDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
 
 struct AlertDelegate {
     alert_show_help: fn(*u8, *u8) -> i8,
@@ -270,7 +273,7 @@ struct AlertDelegate {
 }
 
 fn AlertDelegate_new(user: *u8) -> AlertDelegate {
-    return AlertDelegate { alert_show_help: AlertDelegate_noop_i8_1, user: user };
+    return AlertDelegate { alert_show_help: AlertDelegate_noop_i8_id, user: user };
 }
 
 impl AlertDelegate {
@@ -294,7 +297,7 @@ fn create_AlertDelegate(ctx: *AlertDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_alert_show_help: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("alertShowHelp:\0")), AlertDelegate_alert_show_help_imp, #str_ptr("c@:@\0"));
+        let add_alert_show_help: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("alertShowHelp:\0")), AlertDelegate_alert_show_help_imp, #str_ptr("c@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

@@ -1564,45 +1564,67 @@ impl TextView {
 }
 
 // `NSTextViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `textView:clickedOnLink:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:clickedOnCell:inRect:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:doubleClickedOnCell:inRect:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:draggedCell:inRect:event:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:writablePasteboardTypesForCell:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:writeCell:atIndex:toPasteboard:type:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:willChangeSelectionFromCharacterRange:toCharacterRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:willDisplayToolTip:forCharacterAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:completions:forPartialWordRange:indexOfSelectedItem:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:shouldChangeTextInRange:replacementString:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:doCommandBySelector:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:shouldSetSpellingState:range:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:menu:forEvent:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:willCheckTextInRange:options:types:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:didCheckTextInRange:types:options:results:orthography:wordCount:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:URLForContentsOfTextAttachment:atIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:candidatesForSelectedRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:candidates:forSelectedRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:shouldSelectCandidateAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:writingToolsIgnoredRangesInEnclosingRange:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:clickedOnCell:inRect:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:doubleClickedOnCell:inRect:`: arg shape (only <=5 object args modelled)
-// SKIPPED `textView:draggedCell:inRect:event:`: arg shape (only <=5 object args modelled)
-fn TextViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn TextViewDelegate_noop_i8_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
-fn TextViewDelegate_noop_id_1(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegate_noop_id_2(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegate_noop_id_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+// SKIPPED `textView:clickedOnCell:inRect:atIndex:`: arg `NSRect` not modelled
+// SKIPPED `textView:doubleClickedOnCell:inRect:atIndex:`: arg `NSRect` not modelled
+// SKIPPED `textView:draggedCell:inRect:event:atIndex:`: arg `NSRect` not modelled
+// SKIPPED `textView:writeCell:atIndex:toPasteboard:type:`: arg `NSPasteboardType _Nonnull` not modelled
+// SKIPPED `textView:willChangeSelectionFromCharacterRange:toCharacterRange:`: return `NSRange` not modelled
+// SKIPPED `textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
+// SKIPPED `textView:shouldChangeTextInRanges:replacementStrings:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
+// SKIPPED `textView:shouldChangeTypingAttributes:toAttributes:`: arg `NSDictionary<NSString *,id> * _Nonnull` not modelled
+// SKIPPED `textView:completions:forPartialWordRange:indexOfSelectedItem:`: arg `NSArray<NSString *> * _Nonnull` not modelled
+// SKIPPED `textView:shouldChangeTextInRange:replacementString:`: arg `NSRange` not modelled
+// SKIPPED `textView:shouldSetSpellingState:range:`: arg `NSRange` not modelled
+// SKIPPED `textView:willCheckTextInRange:options:types:`: arg `NSRange` not modelled
+// SKIPPED `textView:didCheckTextInRange:types:options:results:orthography:wordCount:`: arg shape (>6 args not modelled)
+// SKIPPED `textView:candidatesForSelectedRange:`: arg `NSRange` not modelled
+// SKIPPED `textView:candidates:forSelectedRange:`: arg `NSArray<NSTextCheckingResult *> * _Nonnull` not modelled
+// SKIPPED `textView:writingToolsIgnoredRangesInEnclosingRange:`: arg `NSRange` not modelled
+// SKIPPED `textView:clickedOnCell:inRect:`: arg `NSRect` not modelled
+// SKIPPED `textView:doubleClickedOnCell:inRect:`: arg `NSRect` not modelled
+// SKIPPED `textView:draggedCell:inRect:event:`: arg `NSRect` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, u64) -> i8, types: *u8) -> i8;
+
+fn TextViewDelegate_noop_i8_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> i8 { return 0 as i8; }
+fn TextViewDelegate_noop_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn TextViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn TextViewDelegate_noop_id_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: u64) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_i8_id_u64(user: *u8, a0: *u8, a1: u64) -> i8 { return 0 as i8; }
 
 struct TextViewDelegate {
-    text_view_will_change_selection_from_character_ranges_to_character_ranges: fn(*u8, *u8, *u8, *u8) -> *u8,
-    text_view_should_change_text_in_ranges_replacement_strings: fn(*u8, *u8, *u8, *u8) -> i8,
-    text_view_should_change_typing_attributes_to_attributes: fn(*u8, *u8, *u8, *u8) -> *u8,
+    text_view_clicked_on_link_at_index: fn(*u8, *u8, *u8, u64) -> i8,
+    text_view_writable_pasteboard_types_for_cell_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
     text_view_did_change_selection: fn(*u8, *u8),
     text_view_did_change_typing_attributes: fn(*u8, *u8),
+    text_view_will_display_tool_tip_for_character_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
+    text_view_do_command_by_selector: fn(*u8, *u8, *u8) -> i8,
+    text_view_menu_for_event_at_index: fn(*u8, *u8, *u8, *u8, u64) -> *u8,
+    text_view_u_r_l_for_contents_of_text_attachment_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
     text_view_will_show_sharing_service_picker_for_items: fn(*u8, *u8, *u8, *u8) -> *u8,
     undo_manager_for_text_view: fn(*u8, *u8) -> *u8,
     text_view_should_update_touch_bar_item_identifiers: fn(*u8, *u8, *u8) -> *u8,
+    text_view_should_select_candidate_at_index: fn(*u8, *u8, u64) -> i8,
     text_view_writing_tools_will_begin: fn(*u8, *u8),
     text_view_writing_tools_did_end: fn(*u8, *u8),
     text_view_clicked_on_link: fn(*u8, *u8, *u8) -> i8,
@@ -1610,20 +1632,16 @@ struct TextViewDelegate {
 }
 
 fn TextViewDelegate_new(user: *u8) -> TextViewDelegate {
-    return TextViewDelegate { text_view_will_change_selection_from_character_ranges_to_character_ranges: TextViewDelegate_noop_id_3, text_view_should_change_text_in_ranges_replacement_strings: TextViewDelegate_noop_i8_3, text_view_should_change_typing_attributes_to_attributes: TextViewDelegate_noop_id_3, text_view_did_change_selection: TextViewDelegate_noop_v_1, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_1, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_3, undo_manager_for_text_view: TextViewDelegate_noop_id_1, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_2, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_1, text_view_writing_tools_did_end: TextViewDelegate_noop_v_1, text_view_clicked_on_link: TextViewDelegate_noop_i8_2, user: user };
+    return TextViewDelegate { text_view_clicked_on_link_at_index: TextViewDelegate_noop_i8_id_id_u64, text_view_writable_pasteboard_types_for_cell_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_did_change_selection: TextViewDelegate_noop_v_id, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_id, text_view_will_display_tool_tip_for_character_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_do_command_by_selector: TextViewDelegate_noop_i8_id_id, text_view_menu_for_event_at_index: TextViewDelegate_noop_id_id_id_id_u64, text_view_u_r_l_for_contents_of_text_attachment_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_id_id_id, undo_manager_for_text_view: TextViewDelegate_noop_id_id, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_id_id, text_view_should_select_candidate_at_index: TextViewDelegate_noop_i8_id_u64, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_id, text_view_writing_tools_did_end: TextViewDelegate_noop_v_id, text_view_clicked_on_link: TextViewDelegate_noop_i8_id_id, user: user };
 }
 
 impl TextViewDelegate {
-    fn set_text_view_will_change_selection_from_character_ranges_to_character_ranges(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
-        this.text_view_will_change_selection_from_character_ranges_to_character_ranges = handler;
+    fn set_text_view_clicked_on_link_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> i8) {
+        this.text_view_clicked_on_link_at_index = handler;
         return;
     }
-    fn set_text_view_should_change_text_in_ranges_replacement_strings(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
-        this.text_view_should_change_text_in_ranges_replacement_strings = handler;
-        return;
-    }
-    fn set_text_view_should_change_typing_attributes_to_attributes(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
-        this.text_view_should_change_typing_attributes_to_attributes = handler;
+    fn set_text_view_writable_pasteboard_types_for_cell_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
+        this.text_view_writable_pasteboard_types_for_cell_at_index = handler;
         return;
     }
     fn set_text_view_did_change_selection(ref this, handler: fn(*u8, *u8)) {
@@ -1632,6 +1650,22 @@ impl TextViewDelegate {
     }
     fn set_text_view_did_change_typing_attributes(ref this, handler: fn(*u8, *u8)) {
         this.text_view_did_change_typing_attributes = handler;
+        return;
+    }
+    fn set_text_view_will_display_tool_tip_for_character_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
+        this.text_view_will_display_tool_tip_for_character_at_index = handler;
+        return;
+    }
+    fn set_text_view_do_command_by_selector(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
+        this.text_view_do_command_by_selector = handler;
+        return;
+    }
+    fn set_text_view_menu_for_event_at_index(ref this, handler: fn(*u8, *u8, *u8, *u8, u64) -> *u8) {
+        this.text_view_menu_for_event_at_index = handler;
+        return;
+    }
+    fn set_text_view_u_r_l_for_contents_of_text_attachment_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
+        this.text_view_u_r_l_for_contents_of_text_attachment_at_index = handler;
         return;
     }
     fn set_text_view_will_show_sharing_service_picker_for_items(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
@@ -1644,6 +1678,10 @@ impl TextViewDelegate {
     }
     fn set_text_view_should_update_touch_bar_item_identifiers(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.text_view_should_update_touch_bar_item_identifiers = handler;
+        return;
+    }
+    fn set_text_view_should_select_candidate_at_index(ref this, handler: fn(*u8, *u8, u64) -> i8) {
+        this.text_view_should_select_candidate_at_index = handler;
         return;
     }
     fn set_text_view_writing_tools_will_begin(ref this, handler: fn(*u8, *u8)) {
@@ -1662,23 +1700,16 @@ impl TextViewDelegate {
 
 fn TextViewDelegate_key() -> *u8 { return { 28672 as *u8 }; }
 
-fn TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+fn TextViewDelegate_text_view_clicked_on_link_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> i8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
-    let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_will_change_selection_from_character_ranges_to_character_ranges };
+    let f: fn(*u8, *u8, *u8, u64) -> i8 = { (*c).text_view_clicked_on_link_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
 
-fn TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+fn TextViewDelegate_text_view_writable_pasteboard_types_for_cell_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
-    let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).text_view_should_change_text_in_ranges_replacement_strings };
-    let u: *u8 = { (*c).user };
-    return f(u, a0, a1, a2);
-}
-
-fn TextViewDelegate_text_view_should_change_typing_attributes_to_attributes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
-    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
-    let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_should_change_typing_attributes_to_attributes };
+    let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_writable_pasteboard_types_for_cell_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
 }
@@ -1699,6 +1730,34 @@ fn TextViewDelegate_text_view_did_change_typing_attributes_imp(self_obj: *u8, cm
     return;
 }
 
+fn TextViewDelegate_text_view_will_display_tool_tip_for_character_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_will_display_tool_tip_for_character_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn TextViewDelegate_text_view_do_command_by_selector_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, *u8) -> i8 = { (*c).text_view_do_command_by_selector };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TextViewDelegate_text_view_menu_for_event_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: u64) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_menu_for_event_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2, a3);
+}
+
+fn TextViewDelegate_text_view_u_r_l_for_contents_of_text_attachment_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_u_r_l_for_contents_of_text_attachment_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
 fn TextViewDelegate_text_view_will_show_sharing_service_picker_for_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).text_view_will_show_sharing_service_picker_for_items };
@@ -1716,6 +1775,13 @@ fn TextViewDelegate_undo_manager_for_text_view_imp(self_obj: *u8, cmd: *u8, a0: 
 fn TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).text_view_should_update_touch_bar_item_identifiers };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TextViewDelegate_text_view_should_select_candidate_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: u64) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, u64) -> i8 = { (*c).text_view_should_select_candidate_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
@@ -1748,17 +1814,21 @@ fn create_TextViewDelegate(ctx: *TextViewDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_view_will_change_selection_from_character_ranges_to_character_ranges: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:\0")), TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp, #str_ptr("@@:@@@\0"));
-        let add_text_view_should_change_text_in_ranges_replacement_strings: i8 = synth::add_method_i8_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTextInRanges:replacementStrings:\0")), TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp, #str_ptr("c@:@@@\0"));
-        let add_text_view_should_change_typing_attributes_to_attributes: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:shouldChangeTypingAttributes:toAttributes:\0")), TextViewDelegate_text_view_should_change_typing_attributes_to_attributes_imp, #str_ptr("@@:@@@\0"));
-        let add_text_view_did_change_selection: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegate_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
-        let add_text_view_did_change_typing_attributes: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegate_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));
-        let add_text_view_will_show_sharing_service_picker_for_items: i8 = synth::add_method_id_3id(cls, rt::sel(#str_ptr("textView:willShowSharingServicePicker:forItems:\0")), TextViewDelegate_text_view_will_show_sharing_service_picker_for_items_imp, #str_ptr("@@:@@@\0"));
-        let add_undo_manager_for_text_view: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("undoManagerForTextView:\0")), TextViewDelegate_undo_manager_for_text_view_imp, #str_ptr("@@:@\0"));
-        let add_text_view_should_update_touch_bar_item_identifiers: i8 = synth::add_method_id_2id(cls, rt::sel(#str_ptr("textView:shouldUpdateTouchBarItemIdentifiers:\0")), TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp, #str_ptr("@@:@@\0"));
-        let add_text_view_writing_tools_will_begin: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsWillBegin:\0")), TextViewDelegate_text_view_writing_tools_will_begin_imp, #str_ptr("v@:@\0"));
-        let add_text_view_writing_tools_did_end: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewWritingToolsDidEnd:\0")), TextViewDelegate_text_view_writing_tools_did_end_imp, #str_ptr("v@:@\0"));
-        let add_text_view_clicked_on_link: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("textView:clickedOnLink:\0")), TextViewDelegate_text_view_clicked_on_link_imp, #str_ptr("c@:@@\0"));
+        let add_text_view_clicked_on_link_at_index: i8 = cplus_add_method_i8_id_id_u64(cls, rt::sel(#str_ptr("textView:clickedOnLink:atIndex:\0")), TextViewDelegate_text_view_clicked_on_link_at_index_imp, #str_ptr("c@:@@Q\0"));
+        let add_text_view_writable_pasteboard_types_for_cell_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:writablePasteboardTypesForCell:atIndex:\0")), TextViewDelegate_text_view_writable_pasteboard_types_for_cell_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_text_view_did_change_selection: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegate_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
+        let add_text_view_did_change_typing_attributes: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegate_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));
+        let add_text_view_will_display_tool_tip_for_character_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:willDisplayToolTip:forCharacterAtIndex:\0")), TextViewDelegate_text_view_will_display_tool_tip_for_character_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_text_view_do_command_by_selector: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("textView:doCommandBySelector:\0")), TextViewDelegate_text_view_do_command_by_selector_imp, #str_ptr("c@:@:\0"));
+        let add_text_view_menu_for_event_at_index: i8 = cplus_add_method_id_id_id_id_u64(cls, rt::sel(#str_ptr("textView:menu:forEvent:atIndex:\0")), TextViewDelegate_text_view_menu_for_event_at_index_imp, #str_ptr("@@:@@@Q\0"));
+        let add_text_view_u_r_l_for_contents_of_text_attachment_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:URLForContentsOfTextAttachment:atIndex:\0")), TextViewDelegate_text_view_u_r_l_for_contents_of_text_attachment_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_text_view_will_show_sharing_service_picker_for_items: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("textView:willShowSharingServicePicker:forItems:\0")), TextViewDelegate_text_view_will_show_sharing_service_picker_for_items_imp, #str_ptr("@@:@@@\0"));
+        let add_undo_manager_for_text_view: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("undoManagerForTextView:\0")), TextViewDelegate_undo_manager_for_text_view_imp, #str_ptr("@@:@\0"));
+        let add_text_view_should_update_touch_bar_item_identifiers: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("textView:shouldUpdateTouchBarItemIdentifiers:\0")), TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp, #str_ptr("@@:@@\0"));
+        let add_text_view_should_select_candidate_at_index: i8 = cplus_add_method_i8_id_u64(cls, rt::sel(#str_ptr("textView:shouldSelectCandidateAtIndex:\0")), TextViewDelegate_text_view_should_select_candidate_at_index_imp, #str_ptr("c@:@Q\0"));
+        let add_text_view_writing_tools_will_begin: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewWritingToolsWillBegin:\0")), TextViewDelegate_text_view_writing_tools_will_begin_imp, #str_ptr("v@:@\0"));
+        let add_text_view_writing_tools_did_end: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewWritingToolsDidEnd:\0")), TextViewDelegate_text_view_writing_tools_did_end_imp, #str_ptr("v@:@\0"));
+        let add_text_view_clicked_on_link: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("textView:clickedOnLink:\0")), TextViewDelegate_text_view_clicked_on_link_imp, #str_ptr("c@:@@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

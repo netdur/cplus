@@ -5,7 +5,6 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
-import "objc/synthesis" as synth;
 
 // `NSDatePickerStyle` (NS_ENUM)
 enum DatePickerStyle {
@@ -244,47 +243,5 @@ impl DatePickerCell {
     fn drop(ref this) {
         rt::release(this._obj);
     }
-}
-
-// `NSDatePickerCellDelegate` delegate protocol -> runtime class-synthesis helper.
-fn DatePickerCellDelegate_noop_v_3(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
-
-struct DatePickerCellDelegate {
-    date_picker_cell_validate_proposed_date_value_time_interval: fn(*u8, *u8, *u8, *u8),
-    opaque user: *u8,
-}
-
-fn DatePickerCellDelegate_new(user: *u8) -> DatePickerCellDelegate {
-    return DatePickerCellDelegate { date_picker_cell_validate_proposed_date_value_time_interval: DatePickerCellDelegate_noop_v_3, user: user };
-}
-
-impl DatePickerCellDelegate {
-    fn set_date_picker_cell_validate_proposed_date_value_time_interval(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
-        this.date_picker_cell_validate_proposed_date_value_time_interval = handler;
-        return;
-    }
-}
-
-fn DatePickerCellDelegate_key() -> *u8 { return { 28672 as *u8 }; }
-
-fn DatePickerCellDelegate_date_picker_cell_validate_proposed_date_value_time_interval_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) {
-    let c: *DatePickerCellDelegate = { synth::get_associated(self_obj, DatePickerCellDelegate_key()) as *DatePickerCellDelegate };
-    let f: fn(*u8, *u8, *u8, *u8) = { (*c).date_picker_cell_validate_proposed_date_value_time_interval };
-    let u: *u8 = { (*c).user };
-    f(u, a0, a1, a2);
-    return;
-}
-
-fn create_DatePickerCellDelegate(ctx: *DatePickerCellDelegate) -> *u8 {
-    let name: *u8 = #str_ptr("Cplus_DatePickerCellDelegate\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_date_picker_cell_validate_proposed_date_value_time_interval: i8 = synth::add_method_v_3id(cls, rt::sel(#str_ptr("datePickerCell:validateProposedDateValue:timeInterval:\0")), DatePickerCellDelegate_date_picker_cell_validate_proposed_date_value_time_interval_imp, #str_ptr("v@:@@@\0"));
-        synth::register_class_pair(cls);
-    }
-    let d: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(d, DatePickerCellDelegate_key(), { ctx as *u8 });
-    return d;
 }
 

@@ -7,6 +7,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/string_map" as string_map;
+import "objc/synthesis" as synth;
 
 // `NSWindowOrderingMode` (NS_ENUM)
 enum WindowOrderingMode {
@@ -1714,6 +1715,50 @@ impl DraggingSource {
 
     fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
 
+}
+
+// `NSViewLayerContentScaleDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_f64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, f64, *u8) -> i8, types: *u8) -> i8;
+
+fn ViewLayerContentScaleDelegate_noop_i8_id_f64_id(user: *u8, a0: *u8, a1: f64, a2: *u8) -> i8 { return 0 as i8; }
+
+struct ViewLayerContentScaleDelegate {
+    layer_should_inherit_contents_scale_from_window: fn(*u8, *u8, f64, *u8) -> i8,
+    opaque user: *u8,
+}
+
+fn ViewLayerContentScaleDelegate_new(user: *u8) -> ViewLayerContentScaleDelegate {
+    return ViewLayerContentScaleDelegate { layer_should_inherit_contents_scale_from_window: ViewLayerContentScaleDelegate_noop_i8_id_f64_id, user: user };
+}
+
+impl ViewLayerContentScaleDelegate {
+    fn set_layer_should_inherit_contents_scale_from_window(ref this, handler: fn(*u8, *u8, f64, *u8) -> i8) {
+        this.layer_should_inherit_contents_scale_from_window = handler;
+        return;
+    }
+}
+
+fn ViewLayerContentScaleDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn ViewLayerContentScaleDelegate_layer_should_inherit_contents_scale_from_window_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64, a2: *u8) -> i8 {
+    let c: *ViewLayerContentScaleDelegate = { synth::get_associated(self_obj, ViewLayerContentScaleDelegate_key()) as *ViewLayerContentScaleDelegate };
+    let f: fn(*u8, *u8, f64, *u8) -> i8 = { (*c).layer_should_inherit_contents_scale_from_window };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn create_ViewLayerContentScaleDelegate(ctx: *ViewLayerContentScaleDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_ViewLayerContentScaleDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_layer_should_inherit_contents_scale_from_window: i8 = cplus_add_method_i8_id_f64_id(cls, rt::sel(#str_ptr("layer:shouldInheritContentsScale:fromWindow:\0")), ViewLayerContentScaleDelegate_layer_should_inherit_contents_scale_from_window_imp, #str_ptr("c@:@d@\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, ViewLayerContentScaleDelegate_key(), { ctx as *u8 });
+    return d;
 }
 
 // `NSViewToolTipOwner` (ObjC protocol). Non-owning handle; `opaque`, no drop.

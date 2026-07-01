@@ -156,27 +156,41 @@ impl SplitView {
 }
 
 // `NSSplitViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:constrainMinCoordinate:ofSubviewAt:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:constrainMaxCoordinate:ofSubviewAt:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:constrainSplitPosition:ofSubviewAt:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:resizeSubviewsWithOldSize:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:shouldHideDividerAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: arg shape (only <=5 object args modelled)
-// SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: arg shape (only <=5 object args modelled)
-fn SplitViewDelegate_noop_i8_2(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
-fn SplitViewDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+// SKIPPED `splitView:resizeSubviewsWithOldSize:`: arg `NSSize` not modelled
+// SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: return `NSRect` not modelled
+// SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: return `NSRect` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_f64_id_f64_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, f64, i64) -> f64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn SplitViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn SplitViewDelegate_noop_i8_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> i8 { return 0 as i8; }
+fn SplitViewDelegate_noop_f64_id_f64_i64(user: *u8, a0: *u8, a1: f64, a2: i64) -> f64 { return 0 as f64; }
+fn SplitViewDelegate_noop_i8_id_i64(user: *u8, a0: *u8, a1: i64) -> i8 { return 0 as i8; }
+fn SplitViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct SplitViewDelegate {
     split_view_can_collapse_subview: fn(*u8, *u8, *u8) -> i8,
+    split_view_should_collapse_subview_for_double_click_on_divider_at_index: fn(*u8, *u8, *u8, i64) -> i8,
+    split_view_constrain_min_coordinate_of_subview_at: fn(*u8, *u8, f64, i64) -> f64,
+    split_view_constrain_max_coordinate_of_subview_at: fn(*u8, *u8, f64, i64) -> f64,
+    split_view_constrain_split_position_of_subview_at: fn(*u8, *u8, f64, i64) -> f64,
     split_view_should_adjust_size_of_subview: fn(*u8, *u8, *u8) -> i8,
+    split_view_should_hide_divider_at_index: fn(*u8, *u8, i64) -> i8,
     split_view_will_resize_subviews: fn(*u8, *u8),
     split_view_did_resize_subviews: fn(*u8, *u8),
     opaque user: *u8,
 }
 
 fn SplitViewDelegate_new(user: *u8) -> SplitViewDelegate {
-    return SplitViewDelegate { split_view_can_collapse_subview: SplitViewDelegate_noop_i8_2, split_view_should_adjust_size_of_subview: SplitViewDelegate_noop_i8_2, split_view_will_resize_subviews: SplitViewDelegate_noop_v_1, split_view_did_resize_subviews: SplitViewDelegate_noop_v_1, user: user };
+    return SplitViewDelegate { split_view_can_collapse_subview: SplitViewDelegate_noop_i8_id_id, split_view_should_collapse_subview_for_double_click_on_divider_at_index: SplitViewDelegate_noop_i8_id_id_i64, split_view_constrain_min_coordinate_of_subview_at: SplitViewDelegate_noop_f64_id_f64_i64, split_view_constrain_max_coordinate_of_subview_at: SplitViewDelegate_noop_f64_id_f64_i64, split_view_constrain_split_position_of_subview_at: SplitViewDelegate_noop_f64_id_f64_i64, split_view_should_adjust_size_of_subview: SplitViewDelegate_noop_i8_id_id, split_view_should_hide_divider_at_index: SplitViewDelegate_noop_i8_id_i64, split_view_will_resize_subviews: SplitViewDelegate_noop_v_id, split_view_did_resize_subviews: SplitViewDelegate_noop_v_id, user: user };
 }
 
 impl SplitViewDelegate {
@@ -184,8 +198,28 @@ impl SplitViewDelegate {
         this.split_view_can_collapse_subview = handler;
         return;
     }
+    fn set_split_view_should_collapse_subview_for_double_click_on_divider_at_index(ref this, handler: fn(*u8, *u8, *u8, i64) -> i8) {
+        this.split_view_should_collapse_subview_for_double_click_on_divider_at_index = handler;
+        return;
+    }
+    fn set_split_view_constrain_min_coordinate_of_subview_at(ref this, handler: fn(*u8, *u8, f64, i64) -> f64) {
+        this.split_view_constrain_min_coordinate_of_subview_at = handler;
+        return;
+    }
+    fn set_split_view_constrain_max_coordinate_of_subview_at(ref this, handler: fn(*u8, *u8, f64, i64) -> f64) {
+        this.split_view_constrain_max_coordinate_of_subview_at = handler;
+        return;
+    }
+    fn set_split_view_constrain_split_position_of_subview_at(ref this, handler: fn(*u8, *u8, f64, i64) -> f64) {
+        this.split_view_constrain_split_position_of_subview_at = handler;
+        return;
+    }
     fn set_split_view_should_adjust_size_of_subview(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.split_view_should_adjust_size_of_subview = handler;
+        return;
+    }
+    fn set_split_view_should_hide_divider_at_index(ref this, handler: fn(*u8, *u8, i64) -> i8) {
+        this.split_view_should_hide_divider_at_index = handler;
         return;
     }
     fn set_split_view_will_resize_subviews(ref this, handler: fn(*u8, *u8)) {
@@ -207,9 +241,44 @@ fn SplitViewDelegate_split_view_can_collapse_subview_imp(self_obj: *u8, cmd: *u8
     return f(u, a0, a1);
 }
 
+fn SplitViewDelegate_split_view_should_collapse_subview_for_double_click_on_divider_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> i8 {
+    let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> i8 = { (*c).split_view_should_collapse_subview_for_double_click_on_divider_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn SplitViewDelegate_split_view_constrain_min_coordinate_of_subview_at_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64, a2: i64) -> f64 {
+    let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
+    let f: fn(*u8, *u8, f64, i64) -> f64 = { (*c).split_view_constrain_min_coordinate_of_subview_at };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn SplitViewDelegate_split_view_constrain_max_coordinate_of_subview_at_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64, a2: i64) -> f64 {
+    let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
+    let f: fn(*u8, *u8, f64, i64) -> f64 = { (*c).split_view_constrain_max_coordinate_of_subview_at };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn SplitViewDelegate_split_view_constrain_split_position_of_subview_at_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: f64, a2: i64) -> f64 {
+    let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
+    let f: fn(*u8, *u8, f64, i64) -> f64 = { (*c).split_view_constrain_split_position_of_subview_at };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
 fn SplitViewDelegate_split_view_should_adjust_size_of_subview_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
     let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).split_view_should_adjust_size_of_subview };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn SplitViewDelegate_split_view_should_hide_divider_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> i8 {
+    let c: *SplitViewDelegate = { synth::get_associated(self_obj, SplitViewDelegate_key()) as *SplitViewDelegate };
+    let f: fn(*u8, *u8, i64) -> i8 = { (*c).split_view_should_hide_divider_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
 }
@@ -235,10 +304,15 @@ fn create_SplitViewDelegate(ctx: *SplitViewDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_split_view_can_collapse_subview: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("splitView:canCollapseSubview:\0")), SplitViewDelegate_split_view_can_collapse_subview_imp, #str_ptr("c@:@@\0"));
-        let add_split_view_should_adjust_size_of_subview: i8 = synth::add_method_i8_2id(cls, rt::sel(#str_ptr("splitView:shouldAdjustSizeOfSubview:\0")), SplitViewDelegate_split_view_should_adjust_size_of_subview_imp, #str_ptr("c@:@@\0"));
-        let add_split_view_will_resize_subviews: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("splitViewWillResizeSubviews:\0")), SplitViewDelegate_split_view_will_resize_subviews_imp, #str_ptr("v@:@\0"));
-        let add_split_view_did_resize_subviews: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("splitViewDidResizeSubviews:\0")), SplitViewDelegate_split_view_did_resize_subviews_imp, #str_ptr("v@:@\0"));
+        let add_split_view_can_collapse_subview: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("splitView:canCollapseSubview:\0")), SplitViewDelegate_split_view_can_collapse_subview_imp, #str_ptr("c@:@@\0"));
+        let add_split_view_should_collapse_subview_for_double_click_on_divider_at_index: i8 = cplus_add_method_i8_id_id_i64(cls, rt::sel(#str_ptr("splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:\0")), SplitViewDelegate_split_view_should_collapse_subview_for_double_click_on_divider_at_index_imp, #str_ptr("c@:@@q\0"));
+        let add_split_view_constrain_min_coordinate_of_subview_at: i8 = cplus_add_method_f64_id_f64_i64(cls, rt::sel(#str_ptr("splitView:constrainMinCoordinate:ofSubviewAt:\0")), SplitViewDelegate_split_view_constrain_min_coordinate_of_subview_at_imp, #str_ptr("d@:@dq\0"));
+        let add_split_view_constrain_max_coordinate_of_subview_at: i8 = cplus_add_method_f64_id_f64_i64(cls, rt::sel(#str_ptr("splitView:constrainMaxCoordinate:ofSubviewAt:\0")), SplitViewDelegate_split_view_constrain_max_coordinate_of_subview_at_imp, #str_ptr("d@:@dq\0"));
+        let add_split_view_constrain_split_position_of_subview_at: i8 = cplus_add_method_f64_id_f64_i64(cls, rt::sel(#str_ptr("splitView:constrainSplitPosition:ofSubviewAt:\0")), SplitViewDelegate_split_view_constrain_split_position_of_subview_at_imp, #str_ptr("d@:@dq\0"));
+        let add_split_view_should_adjust_size_of_subview: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("splitView:shouldAdjustSizeOfSubview:\0")), SplitViewDelegate_split_view_should_adjust_size_of_subview_imp, #str_ptr("c@:@@\0"));
+        let add_split_view_should_hide_divider_at_index: i8 = cplus_add_method_i8_id_i64(cls, rt::sel(#str_ptr("splitView:shouldHideDividerAtIndex:\0")), SplitViewDelegate_split_view_should_hide_divider_at_index_imp, #str_ptr("c@:@q\0"));
+        let add_split_view_will_resize_subviews: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("splitViewWillResizeSubviews:\0")), SplitViewDelegate_split_view_will_resize_subviews_imp, #str_ptr("v@:@\0"));
+        let add_split_view_did_resize_subviews: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("splitViewDidResizeSubviews:\0")), SplitViewDelegate_split_view_did_resize_subviews_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

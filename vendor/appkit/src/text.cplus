@@ -415,8 +415,13 @@ impl Text {
 }
 
 // `NSTextDelegate` delegate protocol -> runtime class-synthesis helper.
-fn TextDelegate_noop_i8_1(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
-fn TextDelegate_noop_v_1(user: *u8, a0: *u8) { return; }
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_i8_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn TextDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn TextDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct TextDelegate {
     text_should_begin_editing: fn(*u8, *u8) -> i8,
@@ -428,7 +433,7 @@ struct TextDelegate {
 }
 
 fn TextDelegate_new(user: *u8) -> TextDelegate {
-    return TextDelegate { text_should_begin_editing: TextDelegate_noop_i8_1, text_should_end_editing: TextDelegate_noop_i8_1, text_did_begin_editing: TextDelegate_noop_v_1, text_did_end_editing: TextDelegate_noop_v_1, text_did_change: TextDelegate_noop_v_1, user: user };
+    return TextDelegate { text_should_begin_editing: TextDelegate_noop_i8_id, text_should_end_editing: TextDelegate_noop_i8_id, text_did_begin_editing: TextDelegate_noop_v_id, text_did_end_editing: TextDelegate_noop_v_id, text_did_change: TextDelegate_noop_v_id, user: user };
 }
 
 impl TextDelegate {
@@ -499,11 +504,11 @@ fn create_TextDelegate(ctx: *TextDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let add_text_should_begin_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldBeginEditing:\0")), TextDelegate_text_should_begin_editing_imp, #str_ptr("c@:@\0"));
-        let add_text_should_end_editing: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("textShouldEndEditing:\0")), TextDelegate_text_should_end_editing_imp, #str_ptr("c@:@\0"));
-        let add_text_did_begin_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidBeginEditing:\0")), TextDelegate_text_did_begin_editing_imp, #str_ptr("v@:@\0"));
-        let add_text_did_end_editing: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")), TextDelegate_text_did_end_editing_imp, #str_ptr("v@:@\0"));
-        let add_text_did_change: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidChange:\0")), TextDelegate_text_did_change_imp, #str_ptr("v@:@\0"));
+        let add_text_should_begin_editing: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("textShouldBeginEditing:\0")), TextDelegate_text_should_begin_editing_imp, #str_ptr("c@:@\0"));
+        let add_text_should_end_editing: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("textShouldEndEditing:\0")), TextDelegate_text_should_end_editing_imp, #str_ptr("c@:@\0"));
+        let add_text_did_begin_editing: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textDidBeginEditing:\0")), TextDelegate_text_did_begin_editing_imp, #str_ptr("v@:@\0"));
+        let add_text_did_end_editing: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")), TextDelegate_text_did_end_editing_imp, #str_ptr("v@:@\0"));
+        let add_text_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textDidChange:\0")), TextDelegate_text_did_change_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
