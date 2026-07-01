@@ -110,6 +110,9 @@ struct EnumInfo {
     // These emit as u64 constants rather than a C+ enum, and callers combine
     // them with `|` directly.
     is_options: bool,
+    // C+ scalar of the enum's fixed underlying type (NS_ENUM(uint8_t, ...) -> "u8"),
+    // for laying out a value struct with an enum field. Empty if unknown.
+    underlying: String,
 }
 
 enum Ret {
@@ -531,6 +534,18 @@ impl ObjcEmitter {
                 })
             })
             .unwrap_or(false);
+        // The fixed underlying integer type (NS_ENUM(uint8_t, ...)), for laying out a
+        // value struct with an enum field. Prefer the desugared (canonical) spelling.
+        let underlying = decl
+            .get("fixedUnderlyingType")
+            .and_then(|t| {
+                t.get("desugaredQualType")
+                    .or_else(|| t.get("qualType"))
+                    .and_then(|v| v.as_str())
+            })
+            .and_then(c_scalar_to_cplus)
+            .unwrap_or("")
+            .to_string();
         let cplus_name = self.cplus_type_name(&objc_name);
         let snake_name = snake(&cplus_name);
         self.enums.insert(
@@ -542,6 +557,7 @@ impl ObjcEmitter {
                 from_raw_fn: format!("{snake_name}_from_raw"),
                 variants,
                 is_options,
+                underlying,
             },
         );
     }
@@ -574,25 +590,17 @@ impl ObjcEmitter {
     fn struct_field_type(&self, fqt: &str) -> Option<String> {
         let mut cur = fqt.trim().to_string();
         for _ in 0..8 {
-            let mapped = match cur.as_str() {
-                "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => "u64",
-                "NSInteger" | "long" | "long long" | "int64_t" => "i64",
-                "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64",
-                "float" => "f32",
-                "int" | "int32_t" => "i32",
-                "unsigned int" | "unsigned" | "uint32_t" => "u32",
-                "BOOL" | "_Bool" | "bool" => "bool",
-                "uint16_t" | "unsigned short" => "u16",
-                "int16_t" | "short" => "i16",
-                "uint8_t" | "unsigned char" => "u8",
-                "int8_t" | "signed char" => "i8",
-                _ => "",
-            };
-            if !mapped.is_empty() {
-                return Some(mapped.to_string());
+            if let Some(m) = c_scalar_to_cplus(&cur) {
+                return Some(m.to_string());
             }
             if self.value_structs.contains_key(&cur) {
                 return Some(self.cplus_type_name(&cur));
+            }
+            // An enum-typed field lays out at its fixed underlying integer width
+            // (NS_ENUM(uint8_t, MTLTextureSwizzle) -> u8). Unknown width => None, so
+            // the containing struct isn't recorded rather than risk a wrong layout.
+            if let Some(info) = self.enums.get(&cur) {
+                return (!info.underlying.is_empty()).then(|| info.underlying.clone());
             }
             match self.typedefs.get(&cur) {
                 Some(u) => cur = u.trim().to_string(),
@@ -2522,6 +2530,25 @@ fn strip_nullability(qt: &str) -> (String, bool) {
     (s.to_string(), false)
 }
 
+/// A C scalar type spelling -> its fixed-width C+ type, for value-struct field
+/// layout. None for anything that isn't a plain integer/float scalar.
+fn c_scalar_to_cplus(name: &str) -> Option<&'static str> {
+    Some(match name.trim() {
+        "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" | "size_t" => "u64",
+        "NSInteger" | "long" | "long long" | "int64_t" => "i64",
+        "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => "f64",
+        "float" => "f32",
+        "int" | "int32_t" => "i32",
+        "unsigned int" | "unsigned" | "uint32_t" => "u32",
+        "BOOL" | "_Bool" | "bool" => "bool",
+        "uint16_t" | "unsigned short" => "u16",
+        "int16_t" | "short" => "i16",
+        "uint8_t" | "unsigned char" => "u8",
+        "int8_t" | "signed char" => "i8",
+        _ => return None,
+    })
+}
+
 /// Given a slice that starts with `(`, return the slice past the matching `)`.
 /// Handles nesting (`API_AVAILABLE(macos(11.0))`); returns the input unchanged if
 /// the parens are unbalanced.
@@ -3003,6 +3030,33 @@ mod tests {
         assert!(out.contains("_block {"), "block struct emitted:\n{out}");
         assert!(out.contains("rt::stack_block_isa()"), "stack block:\n{out}");
         assert!(!out.contains("unmapped type `MTLHandler`"), "not skipped as unmapped:\n{out}");
+    }
+
+    #[test]
+    fn value_struct_with_enum_field_lays_out_at_the_enum_width() {
+        // MTLTextureSwizzleChannels { MTLTextureSwizzle red,green } where the enum is
+        // NS_ENUM(uint8_t) -> each field lays out as u8 (the enum's fixed underlying
+        // width, read from the AST), so the repr(C) struct matches the C ABI. Without
+        // the width the whole struct would skip as an unmapped type.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "EnumDecl", "name": "MTLSwizzle", "loc": { "file": "test.h" },
+                  "fixedUnderlyingType": { "desugaredQualType": "unsigned char", "qualType": "uint8_t" },
+                  "inner": [ { "kind": "EnumConstantDecl", "name": "MTLSwizzleZero" } ] },
+                { "kind": "RecordDecl", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "FieldDecl", "name": "red", "type": { "qualType": "MTLSwizzle" } },
+                    { "kind": "FieldDecl", "name": "green", "type": { "qualType": "MTLSwizzle" } } ] },
+                { "kind": "TypedefDecl", "name": "MTLSwizzleChannels", "loc": { "file": "test.h" },
+                  "type": { "qualType": "struct MTLSwizzleChannels" } },
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "swizzle", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "MTLSwizzleChannels" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("#[repr(C)]\nstruct SwizzleChannels {\n    red: u8,\n    green: u8,\n}"),
+            "enum fields lay out at their u8 underlying width:\n{out}");
+        assert!(out.contains("fn swizzle(this) -> SwizzleChannels"), "struct return binds:\n{out}");
     }
 
     #[test]
