@@ -1184,13 +1184,8 @@ impl ObjcEmitter {
 
         // Constructors: alloc + send the init selector, wrap in Self.
         let has_id_array = args.iter().any(|a| matches!(a, Arg::IdArray { .. }));
+        let _ = has_id_array;
         if is_init {
-            // The Vec[P]->NSArray prologue is only wired into the general path; an
-            // init taking one is rare — skip rather than emit a dangling local.
-            if has_id_array {
-                self.body.push_str(&format!("    // SKIPPED `{sel}`: init with an NSArray<id> param not modelled\n"));
-                return;
-            }
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
                 Some(s) => s,
@@ -1205,8 +1200,11 @@ impl ObjcEmitter {
                 return;
             }
             let header = if sig_param.is_empty() { String::new() } else { sig_param.clone() };
+            // An `initWith…:` taking an NSArray<id> param builds the NSMutableArray
+            // between alloc and init (same borrow-read prologue as the general path).
+            let prologue = build_id_array_prologue(&args);
             self.body.push_str(&format!(
-                "    fn {ctor}({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n        return {ty} {{ _obj: {send} }};\n    }}\n\n"
+                "    fn {ctor}({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n{prologue}        return {ty} {{ _obj: {send} }};\n    }}\n\n"
             ));
             return;
         }
@@ -1422,24 +1420,7 @@ impl ObjcEmitter {
 
         // Prologue: build an NSMutableArray from each Vec[P] param (the send call
         // already references the `arr_<pname>` local via arg_expr).
-        let mut prologue = String::new();
-        for a in &args {
-            if let Arg::IdArray { elem, pname } = a {
-                prologue.push_str(&format!(
-                    "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
-                     \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
-                     \x20       let n_{pname}: usize = {pname}.count();\n\
-                     \x20       var i_{pname}: usize = 0 as usize;\n\
-                     \x20       while i_{pname} < n_{pname} {{\n\
-                     \x20           match {pname}.at_ptr(i_{pname}) {{\n\
-                     \x20               option::Option[*{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, (*e_{pname}).raw()); }}\n\
-                     \x20               option::Option[*{elem}]::None => {{}}\n\
-                     \x20           }}\n\
-                     \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
-                     \x20       }}\n"
-                ));
-            }
-        }
+        let prologue = build_id_array_prologue(&args);
 
         self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{prologue}{body_line}    }}\n\n"));
     }
@@ -2549,6 +2530,32 @@ fn c_scalar_to_cplus(name: &str) -> Option<&'static str> {
     })
 }
 
+/// Build the `Vec[W] -> NSMutableArray` prologue for every IdArray arg: an empty
+/// NSMutableArray, then borrow-read each element's handle (via `at_ptr`, no move/
+/// drop) and `addObject:` (which retains). The send references it as `arr_<pname>`.
+/// Shared by the general method path and the init path.
+fn build_id_array_prologue(args: &[Arg]) -> String {
+    let mut prologue = String::new();
+    for a in args {
+        if let Arg::IdArray { elem, pname } = a {
+            prologue.push_str(&format!(
+                "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                 \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                 \x20       let n_{pname}: usize = {pname}.count();\n\
+                 \x20       var i_{pname}: usize = 0 as usize;\n\
+                 \x20       while i_{pname} < n_{pname} {{\n\
+                 \x20           match {pname}.at_ptr(i_{pname}) {{\n\
+                 \x20               option::Option[*{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, (*e_{pname}).raw()); }}\n\
+                 \x20               option::Option[*{elem}]::None => {{}}\n\
+                 \x20           }}\n\
+                 \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                 \x20       }}\n"
+            ));
+        }
+    }
+    prologue
+}
+
 /// Given a slice that starts with `(`, return the slice past the matching `)`.
 /// Handles nesting (`API_AVAILABLE(macos(11.0))`); returns the input unchanged if
 /// the parens are unbalanced.
@@ -3102,6 +3109,27 @@ mod tests {
         let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
         assert!(out.contains("fn use_mode(this, mode: u64)"), "const stripped + typedef resolved:\n{out}");
         assert!(!out.contains("unmapped type"), "no unmapped skip:\n{out}");
+    }
+
+    #[test]
+    fn init_with_nsarray_param_builds_the_array_prologue() {
+        // `initWithBuffers:` taking NSArray<id<MTLBuffer>> now builds the NSMutableArray
+        // between alloc and init (same borrow-read prologue as the general path), instead
+        // of skipping as "init with an NSArray<id> param not modelled".
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLBuffer", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "MTLBundle", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithBuffers:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "buffers", "type": { "qualType": "NSArray<id<MTLBuffer>> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn new(buffers: vec::Vec[Buffer])"), "init with array param binds:\n{out}");
+        assert!(out.contains("let arr_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray"),
+            "builds the array between alloc and init:\n{out}");
+        assert!(!out.contains("init with an NSArray"), "no legacy skip:\n{out}");
     }
 
     #[test]
