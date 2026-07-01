@@ -6363,6 +6363,8 @@ extern fn objc_msg_void_id_id_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_u64_id_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8, a5: *u8, a6: *u8);
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_range_id(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: *u8);
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_range_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: u64, a3: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_u64_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i64, a3: *u8);
@@ -8284,6 +8286,25 @@ fn TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke(block: 
     let f: fn(*u8, *u8, *u8, i64, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1, a2, a3);
+    return;
+}
+
+#[repr(C)]
+struct TableViewDiffableDataSource_apply_snapshot_animating_differences_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn TableViewDiffableDataSource_apply_snapshot_animating_differences_invoke(block: *u8) {
+    let bl: *TableViewDiffableDataSource_apply_snapshot_animating_differences_block = { block as *TableViewDiffableDataSource_apply_snapshot_animating_differences_block };
+    let f: fn(*u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx);
     return;
 }
 
@@ -14195,8 +14216,14 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setParentWindow:\0")), parent_window.raw());
     }
 
-    // SKIPPED `appearanceSource`: return `NSObject<NSAppearanceCustomization> * _Nonnull` — generic collection
-    // SKIPPED `setAppearanceSource:`: param `NSObject<NSAppearanceCustomization> * _Nullable` — generic collection
+    fn appearance_source(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("appearanceSource\0")));
+    }
+
+    fn set_appearance_source(this, appearance_source: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppearanceSource:\0")), appearance_source);
+    }
+
     fn color_space(this) -> ColorSpace {
         return ColorSpace::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("colorSpace\0"))));
     }
@@ -30447,9 +30474,33 @@ impl CandidateListTouchBarItem {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("updateWithInsertionPointVisibility:\0")), is_visible as i8);
     }
 
-    // SKIPPED `setCandidates:forSelectedRange:inString:`: param `NSArray<CandidateType> * _Nonnull` — generic collection
-    // SKIPPED `client`: return `NSView<NSTextInputClient> * _Nullable` — generic collection
-    // SKIPPED `setClient:`: param `NSView<NSTextInputClient> * _Nullable` — generic collection
+    fn set_candidates(this, candidates: vec::Vec[AnyObject], for_selected_range: rt::Range, in_string: str) {
+        let arr_candidates: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_candidates: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_candidates: usize = candidates.count();
+        var i_candidates: usize = 0 as usize;
+        while i_candidates < n_candidates {
+            match candidates.at_ptr(i_candidates) {
+                option::Option[*AnyObject]::Some(e_candidates) => { rt::msg_void_id(arr_candidates, add_sel_candidates, (*e_candidates).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_candidates = i_candidates +% (1 as usize);
+        }
+        objc_msg_void_id_range_id(this._obj, rt::sel(#str_ptr("setCandidates:forSelectedRange:inString:\0")), arr_candidates, for_selected_range, bridge::nsstring(in_string));
+    }
+
+    fn client(this) -> option::Option[View] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("client\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
+    }
+
+    fn set_client(this, client: View) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setClient:\0")), client.raw());
+    }
+
     fn delegate(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
     }
@@ -30495,7 +30546,19 @@ impl CandidateListTouchBarItem {
         return;
     }
 
-    // SKIPPED `candidates`: return `API_UNAVAILABLE NSArray<CandidateType> *` — generic collection
+    fn candidates(this) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("candidates\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn customization_label(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("customizationLabel\0")));
         return bridge::to_text(ns);
@@ -31259,7 +31322,14 @@ impl CollectionView {
         return option::some(IndexPath::from_raw(obj));
     }
 
-    // SKIPPED `supplementaryViewForElementKind:atIndexPath:`: return `NSView<NSCollectionViewElement> * _Nullable` — generic collection
+    fn supplementary_view_for_element_kind(this, element_kind: str, at_index_path: IndexPath) -> option::Option[View] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("supplementaryViewForElementKind:atIndexPath:\0")), bridge::nsstring(element_kind), at_index_path.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
+    }
+
     // SKIPPED `visibleSupplementaryViewsOfKind:`: return `NSArray<NSView<NSCollectionViewElement> *> * _Nonnull` — generic collection
     fn index_paths_for_visible_supplementary_elements_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
         let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsForVisibleSupplementaryElementsOfKind:\0")), bridge::nsstring(element_kind));
@@ -33534,30 +33604,221 @@ impl DiffableDataSourceSnapshot {
 
     fn from_raw(ptr: *u8) -> DiffableDataSourceSnapshot { return DiffableDataSourceSnapshot { _obj: ptr }; }
 
-    // SKIPPED `numberOfItemsInSection:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
-    // SKIPPED `itemIdentifiersInSectionWithIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
-    // SKIPPED `sectionIdentifierForSectionContainingItemIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
-    // SKIPPED `indexOfItemIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
-    // SKIPPED `indexOfSectionIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
-    // SKIPPED `appendItemsWithIdentifiers:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `appendItemsWithIdentifiers:intoSectionWithIdentifier:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `insertItemsWithIdentifiers:beforeItemWithIdentifier:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `insertItemsWithIdentifiers:afterItemWithIdentifier:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `deleteItemsWithIdentifiers:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
+    fn number_of_items_in_section(this, section_identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("numberOfItemsInSection:\0")), section_identifier);
+    }
+
+    fn item_identifiers_in_section_with_identifier(this, section_identifier: *u8) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemIdentifiersInSectionWithIdentifier:\0")), section_identifier);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn section_identifier_for_section_containing_item_identifier(this, item_identifier: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("sectionIdentifierForSectionContainingItemIdentifier:\0")), item_identifier);
+        return bridge::obj_option(obj);
+    }
+
+    fn index_of_item_identifier(this, item_identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfItemIdentifier:\0")), item_identifier);
+    }
+
+    fn index_of_section_identifier(this, section_identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfSectionIdentifier:\0")), section_identifier);
+    }
+
+    fn append_items_with_identifiers(this, identifiers: vec::Vec[AnyObject]) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendItemsWithIdentifiers:\0")), arr_identifiers);
+    }
+
+    fn append_items_with_identifiers_into_section_with_identifier(this, identifiers: vec::Vec[AnyObject], section_identifier: *u8) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("appendItemsWithIdentifiers:intoSectionWithIdentifier:\0")), arr_identifiers, section_identifier);
+    }
+
+    fn insert_items_with_identifiers(this, identifiers: vec::Vec[AnyObject], before_item_with_identifier: *u8) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertItemsWithIdentifiers:beforeItemWithIdentifier:\0")), arr_identifiers, before_item_with_identifier);
+    }
+
+    fn insert_items_with_identifiers_after_item_with_identifier(this, identifiers: vec::Vec[AnyObject], item_identifier: *u8) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertItemsWithIdentifiers:afterItemWithIdentifier:\0")), arr_identifiers, item_identifier);
+    }
+
+    fn delete_items_with_identifiers(this, identifiers: vec::Vec[AnyObject]) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteItemsWithIdentifiers:\0")), arr_identifiers);
+    }
+
     fn delete_all_items(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("deleteAllItems\0")));
     }
 
-    // SKIPPED `moveItemWithIdentifier:beforeItemWithIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
-    // SKIPPED `moveItemWithIdentifier:afterItemWithIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
-    // SKIPPED `reloadItemsWithIdentifiers:`: param `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `appendSectionsWithIdentifiers:`: param `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `insertSectionsWithIdentifiers:beforeSectionWithIdentifier:`: param `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `insertSectionsWithIdentifiers:afterSectionWithIdentifier:`: param `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `deleteSectionsWithIdentifiers:`: param `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `moveSectionWithIdentifier:beforeSectionWithIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
-    // SKIPPED `moveSectionWithIdentifier:afterSectionWithIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
-    // SKIPPED `reloadSectionsWithIdentifiers:`: param `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
+    fn move_item_with_identifier(this, from_identifier: *u8, before_item_with_identifier: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveItemWithIdentifier:beforeItemWithIdentifier:\0")), from_identifier, before_item_with_identifier);
+    }
+
+    fn move_item_with_identifier_after_item_with_identifier(this, from_identifier: *u8, to_identifier: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveItemWithIdentifier:afterItemWithIdentifier:\0")), from_identifier, to_identifier);
+    }
+
+    fn reload_items_with_identifiers(this, identifiers: vec::Vec[AnyObject]) {
+        let arr_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_identifiers: usize = identifiers.count();
+        var i_identifiers: usize = 0 as usize;
+        while i_identifiers < n_identifiers {
+            match identifiers.at_ptr(i_identifiers) {
+                option::Option[*AnyObject]::Some(e_identifiers) => { rt::msg_void_id(arr_identifiers, add_sel_identifiers, (*e_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_identifiers = i_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItemsWithIdentifiers:\0")), arr_identifiers);
+    }
+
+    fn append_sections_with_identifiers(this, section_identifiers: vec::Vec[AnyObject]) {
+        let arr_section_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_section_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_section_identifiers: usize = section_identifiers.count();
+        var i_section_identifiers: usize = 0 as usize;
+        while i_section_identifiers < n_section_identifiers {
+            match section_identifiers.at_ptr(i_section_identifiers) {
+                option::Option[*AnyObject]::Some(e_section_identifiers) => { rt::msg_void_id(arr_section_identifiers, add_sel_section_identifiers, (*e_section_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_section_identifiers = i_section_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendSectionsWithIdentifiers:\0")), arr_section_identifiers);
+    }
+
+    fn insert_sections_with_identifiers(this, section_identifiers: vec::Vec[AnyObject], before_section_with_identifier: *u8) {
+        let arr_section_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_section_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_section_identifiers: usize = section_identifiers.count();
+        var i_section_identifiers: usize = 0 as usize;
+        while i_section_identifiers < n_section_identifiers {
+            match section_identifiers.at_ptr(i_section_identifiers) {
+                option::Option[*AnyObject]::Some(e_section_identifiers) => { rt::msg_void_id(arr_section_identifiers, add_sel_section_identifiers, (*e_section_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_section_identifiers = i_section_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertSectionsWithIdentifiers:beforeSectionWithIdentifier:\0")), arr_section_identifiers, before_section_with_identifier);
+    }
+
+    fn insert_sections_with_identifiers_after_section_with_identifier(this, section_identifiers: vec::Vec[AnyObject], to_section_identifier: *u8) {
+        let arr_section_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_section_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_section_identifiers: usize = section_identifiers.count();
+        var i_section_identifiers: usize = 0 as usize;
+        while i_section_identifiers < n_section_identifiers {
+            match section_identifiers.at_ptr(i_section_identifiers) {
+                option::Option[*AnyObject]::Some(e_section_identifiers) => { rt::msg_void_id(arr_section_identifiers, add_sel_section_identifiers, (*e_section_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_section_identifiers = i_section_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertSectionsWithIdentifiers:afterSectionWithIdentifier:\0")), arr_section_identifiers, to_section_identifier);
+    }
+
+    fn delete_sections_with_identifiers(this, section_identifiers: vec::Vec[AnyObject]) {
+        let arr_section_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_section_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_section_identifiers: usize = section_identifiers.count();
+        var i_section_identifiers: usize = 0 as usize;
+        while i_section_identifiers < n_section_identifiers {
+            match section_identifiers.at_ptr(i_section_identifiers) {
+                option::Option[*AnyObject]::Some(e_section_identifiers) => { rt::msg_void_id(arr_section_identifiers, add_sel_section_identifiers, (*e_section_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_section_identifiers = i_section_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteSectionsWithIdentifiers:\0")), arr_section_identifiers);
+    }
+
+    fn move_section_with_identifier(this, from_section_identifier: *u8, before_section_with_identifier: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveSectionWithIdentifier:beforeSectionWithIdentifier:\0")), from_section_identifier, before_section_with_identifier);
+    }
+
+    fn move_section_with_identifier_after_section_with_identifier(this, from_section_identifier: *u8, to_section_identifier: *u8) {
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveSectionWithIdentifier:afterSectionWithIdentifier:\0")), from_section_identifier, to_section_identifier);
+    }
+
+    fn reload_sections_with_identifiers(this, section_identifiers: vec::Vec[AnyObject]) {
+        let arr_section_identifiers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_section_identifiers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_section_identifiers: usize = section_identifiers.count();
+        var i_section_identifiers: usize = 0 as usize;
+        while i_section_identifiers < n_section_identifiers {
+            match section_identifiers.at_ptr(i_section_identifiers) {
+                option::Option[*AnyObject]::Some(e_section_identifiers) => { rt::msg_void_id(arr_section_identifiers, add_sel_section_identifiers, (*e_section_identifiers).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_section_identifiers = i_section_identifiers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadSectionsWithIdentifiers:\0")), arr_section_identifiers);
+    }
+
     fn number_of_items(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfItems\0")));
     }
@@ -33566,8 +33827,32 @@ impl DiffableDataSourceSnapshot {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfSections\0")));
     }
 
-    // SKIPPED `sectionIdentifiers`: return `NSArray<SectionIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `itemIdentifiers`: return `NSArray<ItemIdentifierType> * _Nonnull` — generic collection
+    fn section_identifiers(this) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("sectionIdentifiers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn item_identifiers(this) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("itemIdentifiers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSCollectionViewDiffableDataSource` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -33594,10 +33879,27 @@ impl CollectionViewDiffableDataSource {
     }
 
     // SKIPPED `new`: method `new` already defined
-    // SKIPPED `snapshot`: return `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `applySnapshot:animatingDifferences:`: param `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `itemIdentifierForIndexPath:`: return `ItemIdentifierType _Nullable` — unmapped type `ItemIdentifierType`
-    // SKIPPED `indexPathForItemIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
+    fn snapshot(this) -> DiffableDataSourceSnapshot {
+        return DiffableDataSourceSnapshot::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("snapshot\0"))));
+    }
+
+    fn apply_snapshot(this, snapshot: DiffableDataSourceSnapshot, animating_differences: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("applySnapshot:animatingDifferences:\0")), snapshot.raw(), animating_differences as i8);
+    }
+
+    fn item_identifier_for_index_path(this, index_path: IndexPath) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemIdentifierForIndexPath:\0")), index_path.raw());
+        return bridge::obj_option(obj);
+    }
+
+    fn index_path_for_item_identifier(this, identifier: *u8) -> option::Option[IndexPath] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathForItemIdentifier:\0")), identifier);
+        if obj == { 0 as *u8 } {
+            return option::Option[IndexPath]::None;
+        }
+        return option::some(IndexPath::from_raw(obj));
+    }
+
     // SKIPPED `supplementaryViewProvider`: return `NSCollectionViewDiffableDataSourceSupplementaryViewProvider _Nullable` — unmapped type `NSCollectionViewDiffableDataSourceSupplementaryViewProvider`
     fn set_supplementary_view_provider(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
@@ -39795,12 +40097,30 @@ impl LayoutAnchor {
 
     fn from_raw(ptr: *u8) -> LayoutAnchor { return LayoutAnchor { _obj: ptr }; }
 
-    // SKIPPED `constraintEqualToAnchor:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    // SKIPPED `constraintGreaterThanOrEqualToAnchor:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    // SKIPPED `constraintLessThanOrEqualToAnchor:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    // SKIPPED `constraintEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    // SKIPPED `constraintGreaterThanOrEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
-    // SKIPPED `constraintLessThanOrEqualToAnchor:constant:`: param `NSLayoutAnchor<AnchorType> * _Nonnull` — generic collection
+    fn constraint_equal_to_anchor(this, anchor: LayoutAnchor) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:\0")), anchor.raw()));
+    }
+
+    fn constraint_greater_than_or_equal_to_anchor(this, anchor: LayoutAnchor) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:\0")), anchor.raw()));
+    }
+
+    fn constraint_less_than_or_equal_to_anchor(this, anchor: LayoutAnchor) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:\0")), anchor.raw()));
+    }
+
+    fn constraint_equal_to_anchor_constant(this, anchor: LayoutAnchor, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintEqualToAnchor:constant:\0")), anchor.raw(), c));
+    }
+
+    fn constraint_greater_than_or_equal_to_anchor_constant(this, anchor: LayoutAnchor, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintGreaterThanOrEqualToAnchor:constant:\0")), anchor.raw(), c));
+    }
+
+    fn constraint_less_than_or_equal_to_anchor_constant(this, anchor: LayoutAnchor, c: f64) -> LayoutConstraint {
+        return LayoutConstraint::from_raw(rt::msg_id_id_f64(this._obj, rt::sel(#str_ptr("constraintLessThanOrEqualToAnchor:constant:\0")), anchor.raw(), c));
+    }
+
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);
@@ -40921,7 +41241,10 @@ impl SliderTouchBarItem {
 
     fn from_raw(ptr: *u8) -> SliderTouchBarItem { return SliderTouchBarItem { _obj: ptr }; }
 
-    // SKIPPED `view`: return `API_UNAVAILABLE NSView<NSUserInterfaceCompression> *` — generic collection
+    fn view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("view\0"))));
+    }
+
     fn slider(this) -> Slider {
         return Slider::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("slider\0"))));
     }
@@ -43066,8 +43389,14 @@ impl PrintPanel {
         return PrintPanel { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
     }
 
-    // SKIPPED `addAccessoryController:`: param `NSViewController<NSPrintPanelAccessorizing> * _Nonnull` — generic collection
-    // SKIPPED `removeAccessoryController:`: param `NSViewController<NSPrintPanelAccessorizing> * _Nonnull` — generic collection
+    fn add_accessory_controller(this, accessory_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("addAccessoryController:\0")), accessory_controller.raw());
+    }
+
+    fn remove_accessory_controller(this, accessory_controller: ViewController) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeAccessoryController:\0")), accessory_controller.raw());
+    }
+
     fn set_default_button_title(this, default_button_title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDefaultButtonTitle:\0")), bridge::nsstring(default_button_title));
     }
@@ -48605,13 +48934,40 @@ impl TableViewDiffableDataSource {
     }
 
     // SKIPPED `new`: method `new` already defined
-    // SKIPPED `snapshot`: return `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `applySnapshot:animatingDifferences:`: param `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `applySnapshot:animatingDifferences:completion:`: leading param `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
-    // SKIPPED `itemIdentifierForRow:`: return `ItemIdentifierType _Nullable` — unmapped type `ItemIdentifierType`
-    // SKIPPED `rowForItemIdentifier:`: param `ItemIdentifierType _Nonnull` — unmapped type `ItemIdentifierType`
-    // SKIPPED `sectionIdentifierForRow:`: return `SectionIdentifierType _Nullable` — unmapped type `SectionIdentifierType`
-    // SKIPPED `rowForSectionIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
+    fn snapshot(this) -> DiffableDataSourceSnapshot {
+        return DiffableDataSourceSnapshot::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("snapshot\0"))));
+    }
+
+    fn apply_snapshot(this, snapshot: DiffableDataSourceSnapshot, animating_differences: bool) {
+        rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("applySnapshot:animatingDifferences:\0")), snapshot.raw(), animating_differences as i8);
+    }
+
+    fn apply_snapshot_animating_differences(this, snapshot: DiffableDataSourceSnapshot, animating_differences: bool, cb: fn(*u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TableViewDiffableDataSource_apply_snapshot_animating_differences_block = TableViewDiffableDataSource_apply_snapshot_animating_differences_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_apply_snapshot_animating_differences_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("applySnapshot:animatingDifferences:completion:\0")), snapshot.raw(), animating_differences as i8, bp);
+        return;
+    }
+
+    fn item_identifier_for_row(this, row: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("itemIdentifierForRow:\0")), row);
+        return bridge::obj_option(obj);
+    }
+
+    fn row_for_item_identifier(this, identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("rowForItemIdentifier:\0")), identifier);
+    }
+
+    fn section_identifier_for_row(this, row: i64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("sectionIdentifierForRow:\0")), row);
+        return bridge::obj_option(obj);
+    }
+
+    fn row_for_section_identifier(this, identifier: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("rowForSectionIdentifier:\0")), identifier);
+    }
+
     // SKIPPED `rowViewProvider`: return `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
     fn set_row_view_provider(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
