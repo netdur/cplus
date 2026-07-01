@@ -1140,6 +1140,30 @@ fn msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(recv: *u8, selector: *u8, a: u
     { objc_msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(recv, selector, a, b, c, d, e, f, g, h, i, j); };
 }
 
+// ---- Metal encoder/resource wide-arg shapes (all integer-eightbyte / id /
+// NSRange — same GPR ABI classes as the shims above, correct by construction). ----
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_u64(recv: *u8, sel: *u8, a: *u8, b: i64, c: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_range(recv: *u8, sel: *u8, a: *u8, b: i64, c: Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_id_u64(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8, d: u64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8, d: *u8, e: *u8, f: u64);
+
+fn msg_void_id_i64_u64(recv: *u8, selector: *u8, a: *u8, b: i64, c: u64) {
+    { objc_msg_void_id_i64_u64(recv, selector, a, b, c); };
+}
+fn msg_void_id_i64_range(recv: *u8, selector: *u8, a: *u8, b: i64, c: Range) {
+    { objc_msg_void_id_i64_range(recv, selector, a, b, c); };
+}
+fn msg_void_id_i64_id_u64(recv: *u8, selector: *u8, a: *u8, b: i64, c: *u8, d: u64) {
+    { objc_msg_void_id_i64_id_u64(recv, selector, a, b, c, d); };
+}
+fn msg_void_id_i64_id_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: i64, c: *u8, d: *u8, e: *u8, f: u64) {
+    { objc_msg_void_id_i64_id_id_id_u64(recv, selector, a, b, c, d, e, f); };
+}
+
 // class_addMethod wrapper for action IMPs: `void (*)(id self, SEL _cmd, id arg)`.
 // The `types` encoding string is passed by the caller ("v@:@\0" for a void
 // method taking one id argument).

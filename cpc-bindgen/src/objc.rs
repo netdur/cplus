@@ -2325,6 +2325,8 @@ const KNOWN_MSG_SHAPES: &[&str] = &[
         "void_id_id_u64_i64", "void_id_u64_id", "void_id_u64_id_u64", "void_id_u64_id_u64_u64", "void_id_u64_u64_id_u64",
         "void_id_u64_u64_id_u64_u64_u64_u64", "void_u32_u32", "void_u64_id_u64_id_u64", "void_u64_id_u64_id_u64_id_u64", "void_u64_range",
         "void_u64_u64_u64_id_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64", "void_u64_u64_u64_id_u64_u64_u64", "void_u64_u64_u64_id_u64_u64_u64_id_u64_u64",
+        // Metal shapes surfaced after MTLArgument.h + typedef resolution landed.
+        "void_id_i64_u64", "void_id_i64_range", "void_id_i64_id_u64", "void_id_i64_id_id_id_u64",
 ];
 
 /// The typed `objc_msgSend` shims the runtime provides (vendor/objc/src/runtime.cplus).
