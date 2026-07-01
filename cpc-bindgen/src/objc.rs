@@ -2159,6 +2159,13 @@ impl ObjcEmitter {
                 }
             }
         }
+        // NSArray<id> / NSArray<Class> RETURN -> `Vec[AnyObject]` (opaque handles, no
+        // concrete wrapper). Reuses the ObjectArray codegen; AnyObject is non-owning so
+        // no retain-on-wrap.
+        if self.is_any_object_array(base_ty) {
+            self.needs_any_object = true;
+            return Ret::ObjectArray("AnyObject".to_string());
+        }
         // NSSet<W *> (object wrapper) RETURN -> `Vec[W]` (lossy on set-ness), via
         // `-allObjects`. Same wrapper gate + retain-on-wrap as ObjectArray. (The
         // string case was already taken by `is_string_set` above.)
@@ -2336,6 +2343,13 @@ impl ObjcEmitter {
                 }
             }
         }
+        // NSArray<id> / NSArray<Class> param -> built from a Vec[AnyObject] (opaque
+        // handles). Reuses the IdArray prologue; AnyObject's `.raw()` is the handle.
+        if self.is_any_object_array(base_ty) {
+            self.needs_vec = true;
+            self.needs_any_object = true;
+            return Arg::IdArray { elem: "AnyObject".to_string(), pname: pname.to_string() };
+        }
         if let Some(objc_enum) = self.enum_of(base_ty) {
             if !self.used_enums.contains(&objc_enum) {
                 self.used_enums.push(objc_enum.clone());
@@ -2474,6 +2488,10 @@ impl ObjcEmitter {
         // NSArray<NSNumber *> param -> Vec[f64] (same gate as map_arg).
         if self.is_number_array(b) {
             return "vec::Vec[f64]".to_string();
+        }
+        // NSArray<id> / NSArray<Class> param -> Vec[AnyObject] (same gate as map_arg).
+        if self.is_any_object_array(b) {
+            return "vec::Vec[AnyObject]".to_string();
         }
         // Object array param -> Vec[W], non-owning or owning element (same gate as map_arg).
         if let Some(elem) = array_element(b) {
@@ -2734,6 +2752,19 @@ impl ObjcEmitter {
     fn is_untyped_object(&self, v: &str) -> bool {
         let t = v.trim();
         t == "id" || t == "NSObject *" || t == "NSObject*"
+    }
+
+    /// `NSArray<id>` / `NSArray<Class>` / `NSArray<NSObject *>` — an array whose
+    /// element has no concrete wrapper. Bridges to `Vec[AnyObject]` (opaque handles;
+    /// `Class` is a valid `id`). Distinct from the typed-wrapper ObjectArray path.
+    fn is_any_object_array(&self, ty: &str) -> bool {
+        match array_element(ty) {
+            Some(elem) => {
+                let e = elem.trim();
+                self.is_untyped_object(e) || e == "Class"
+            }
+            None => false,
+        }
     }
 
     fn is_nsnumber(&self, ty: &str) -> bool {
@@ -4564,6 +4595,35 @@ mod tests {
         assert!(out.contains(r#"let num_sel_marks: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));"#), "numberWithDouble: box:\n{out}");
         assert!(out.contains("rt::msg_void_id(arr_marks, add_sel_marks, rt::msg_id_f64(num_cls_marks, num_sel_marks, *e_marks));"), "box + addObject:\n{out}");
         assert!(!out.contains("// SKIPPED `progressMarks`") && !out.contains("// SKIPPED `setProgressMarks:`"), "no generic-collection skip:\n{out}");
+    }
+
+    #[test]
+    fn nsarray_of_id_or_class_bridges_to_a_vec_of_anyobject() {
+        // NSArray<id> / NSArray<Class> have no concrete element wrapper -> Vec[AnyObject]
+        // (opaque handles). Reuses the ObjectArray/IdArray machinery + the AnyObject wrapper.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSPasteboard", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "allowedClasses", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<Class> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "readObjectsForClasses:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "classes", "type": { "qualType": "NSArray<Class> * _Nonnull" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "readItems:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<id> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct AnyObject {"), "AnyObject wrapper emitted:\n{out}");
+        // Return -> Vec[AnyObject], non-owning wrap (no retain).
+        assert!(out.contains("fn allowed_classes(this) -> vec::Vec[AnyObject] {"), "Class-array return:\n{out}");
+        assert!(out.contains("out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));"), "non-owning wrap:\n{out}");
+        // Params <- Vec[AnyObject]: IdArray prologue reads each handle via .raw().
+        assert!(out.contains("fn read_objects_for_classes(this, classes: vec::Vec[AnyObject])"), "Class-array param:\n{out}");
+        assert!(out.contains("fn read_items(this, items: vec::Vec[AnyObject])"), "id-array param:\n{out}");
+        assert!(out.contains("option::Option[*AnyObject]::Some(e_classes) => { rt::msg_void_id(arr_classes, add_sel_classes, (*e_classes).raw()); }"), "handle read:\n{out}");
+        assert!(!out.contains("// SKIPPED `allowedClasses`") && !out.contains("// SKIPPED `readItems:`"), "no generic-collection skip:\n{out}");
     }
 
     #[test]
