@@ -22,6 +22,7 @@ import "./box" as box;
 import "./rc" as rc;
 import "./arc" as arc;
 import "./hash_map" as hash_map;
+import "./hash_set" as hash_set;
 import "./string_map" as string_map;
 import "./atomic" as atomic;
 import "./thread" as thread;
