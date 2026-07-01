@@ -3288,6 +3288,19 @@ fn toolbar_item_style_from_raw(raw: i64) -> ToolbarItemStyle {
     return ToolbarItemStyle::Plain;
 }
 
+// `NSCollectionViewScrollPosition` (NS_OPTIONS) — bitfield; combine with `|`.
+const collection_view_scroll_position_none: u64 = 0 as u64;
+const collection_view_scroll_position_top: u64 = 1 as u64;
+const collection_view_scroll_position_centered_vertically: u64 = 2 as u64;
+const collection_view_scroll_position_bottom: u64 = 4 as u64;
+const collection_view_scroll_position_nearest_horizontal_edge: u64 = 512 as u64;
+const collection_view_scroll_position_left: u64 = 8 as u64;
+const collection_view_scroll_position_centered_horizontally: u64 = 16 as u64;
+const collection_view_scroll_position_right: u64 = 32 as u64;
+const collection_view_scroll_position_leading_edge: u64 = 64 as u64;
+const collection_view_scroll_position_trailing_edge: u64 = 128 as u64;
+const collection_view_scroll_position_nearest_vertical_edge: u64 = 256 as u64;
+
 // `NSCollectionElementCategory` (NS_ENUM)
 enum CollectionElementCategory {
     Item,
@@ -17193,9 +17206,48 @@ impl Event {
         return option::some(Event { _obj: obj });
     }
 
-    // SKIPPED `touchesMatchingPhase:inView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
-    // SKIPPED `allTouches`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
-    // SKIPPED `touchesForView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
+    fn touches_matching_phase(this, phase: u64, in_view: View) -> vec::Vec[Touch] {
+        let set: *u8 = rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("touchesMatchingPhase:inView:\0")), phase, in_view.raw());
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Touch] = vec::Vec[Touch]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn all_touches(this) -> vec::Vec[Touch] {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("allTouches\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Touch] = vec::Vec[Touch]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn touches_for_view(this, view: View) -> vec::Vec[Touch] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("touchesForView:\0")), view.raw());
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Touch] = vec::Vec[Touch]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Touch::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn coalesced_touches_for_touch(this, touch: Touch) -> vec::Vec[Touch] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("coalescedTouchesForTouch:\0")), touch.raw());
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -29491,7 +29543,24 @@ impl UserInterfaceCompressionOptions {
         return UserInterfaceCompressionOptions { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), bridge::nsstring(identifier)) };
     }
 
-    // SKIPPED `initWithCompressionOptions:`: param `NSSet<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
+    fn new_with_compression_options(options: vec::Vec[UserInterfaceCompressionOptions]) -> UserInterfaceCompressionOptions {
+        let cls: *u8 = rt::get_class(#str_ptr("NSUserInterfaceCompressionOptions\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_options: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_options: usize = options.count();
+        var i_options: usize = 0 as usize;
+        while i_options < n_options {
+            match options.at_ptr(i_options) {
+                option::Option[*UserInterfaceCompressionOptions]::Some(e_options) => { rt::msg_void_id(arr_options, add_sel_options, (*e_options).raw()); }
+                option::Option[*UserInterfaceCompressionOptions]::None => {}
+            }
+            i_options = i_options +% (1 as usize);
+        }
+        let set_options: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_options);
+        return UserInterfaceCompressionOptions { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCompressionOptions:\0")), set_options) };
+    }
+
     fn contains_options(this, options: UserInterfaceCompressionOptions) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("containsOptions:\0")), options.raw()) != (0 as i8);
     }
@@ -29737,8 +29806,36 @@ impl TouchBar {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setEscapeKeyReplacementItemIdentifier:\0")), bridge::nsstring(escape_key_replacement_item_identifier));
     }
 
-    // SKIPPED `templateItems`: return `NSSet<NSTouchBarItem *> * _Nonnull` — generic collection
-    // SKIPPED `setTemplateItems:`: param `NSSet<NSTouchBarItem *> * _Nonnull` — generic collection
+    fn template_items(this) -> vec::Vec[TouchBarItem] {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("templateItems\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TouchBarItem] = vec::Vec[TouchBarItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TouchBarItem::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_template_items(this, template_items: vec::Vec[TouchBarItem]) {
+        let arr_template_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_template_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_template_items: usize = template_items.count();
+        var i_template_items: usize = 0 as usize;
+        while i_template_items < n_template_items {
+            match template_items.at_ptr(i_template_items) {
+                option::Option[*TouchBarItem]::Some(e_template_items) => { rt::msg_void_id(arr_template_items, add_sel_template_items, (*e_template_items).raw()); }
+                option::Option[*TouchBarItem]::None => {}
+            }
+            i_template_items = i_template_items +% (1 as usize);
+        }
+        let set_template_items: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_template_items);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTemplateItems:\0")), set_template_items);
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -30814,8 +30911,38 @@ impl CollectionView {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("numberOfItemsInSection:\0")), section);
     }
 
-    // SKIPPED `selectItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `deselectItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn select_items_at_index_paths(this, index_paths: vec::Vec[IndexPath], scroll_position: u64) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("selectItemsAtIndexPaths:scrollPosition:\0")), set_index_paths, scroll_position);
+    }
+
+    fn deselect_items_at_index_paths(this, index_paths: vec::Vec[IndexPath]) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deselectItemsAtIndexPaths:\0")), set_index_paths);
+    }
+
     fn select_all(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("selectAll:\0")), sender);
     }
@@ -30877,7 +31004,20 @@ impl CollectionView {
         return out;
     }
 
-    // SKIPPED `indexPathsForVisibleItems`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn index_paths_for_visible_items(this) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexPathsForVisibleItems\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn index_path_for_item(this, item: CollectionViewItem) -> option::Option[IndexPath] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathForItem:\0")), item.raw());
         if obj == { 0 as *u8 } {
@@ -30896,7 +31036,20 @@ impl CollectionView {
 
     // SKIPPED `supplementaryViewForElementKind:atIndexPath:`: return `NSView<NSCollectionViewElement> * _Nullable` — generic collection
     // SKIPPED `visibleSupplementaryViewsOfKind:`: return `NSArray<NSView<NSCollectionViewElement> *> * _Nonnull` — generic collection
-    // SKIPPED `indexPathsForVisibleSupplementaryElementsOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn index_paths_for_visible_supplementary_elements_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsForVisibleSupplementaryElementsOfKind:\0")), bridge::nsstring(element_kind));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn insert_sections(this, sections: IndexSet) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertSections:\0")), sections.raw());
     }
@@ -30913,9 +31066,54 @@ impl CollectionView {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("moveSection:toSection:\0")), section, to_section);
     }
 
-    // SKIPPED `insertItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `deleteItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `reloadItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn insert_items_at_index_paths(this, index_paths: vec::Vec[IndexPath]) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertItemsAtIndexPaths:\0")), set_index_paths);
+    }
+
+    fn delete_items_at_index_paths(this, index_paths: vec::Vec[IndexPath]) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("deleteItemsAtIndexPaths:\0")), set_index_paths);
+    }
+
+    fn reload_items_at_index_paths(this, index_paths: vec::Vec[IndexPath]) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("reloadItemsAtIndexPaths:\0")), set_index_paths);
+    }
+
     fn move_item_at_index_path(this, index_path: IndexPath, to_index_path: IndexPath) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("moveItemAtIndexPath:toIndexPath:\0")), index_path.raw(), to_index_path.raw());
     }
@@ -30925,12 +31123,42 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleSectionCollapse:\0")), sender);
     }
 
-    // SKIPPED `scrollToItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn scroll_to_items_at_index_paths(this, index_paths: vec::Vec[IndexPath], scroll_position: u64) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("scrollToItemsAtIndexPaths:scrollPosition:\0")), set_index_paths, scroll_position);
+    }
+
     fn set_dragging_source_operation_mask(this, drag_operation_mask: u64, for_local: bool) {
         rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), drag_operation_mask, for_local as i8);
     }
 
-    // SKIPPED `draggingImageForItemsAtIndexPaths:withEvent:offset:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn dragging_image_for_items_at_index_paths(this, index_paths: vec::Vec[IndexPath], with_event: Event, offset: *u8) -> Image {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        return Image::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("draggingImageForItemsAtIndexPaths:withEvent:offset:\0")), set_index_paths, with_event.raw(), offset));
+    }
+
     fn dragging_image_for_items_at_indexes(this, indexes: IndexSet, with_event: Event, offset: *u8) -> Image {
         return Image::from_raw(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("draggingImageForItemsAtIndexes:withEvent:offset:\0")), indexes.raw(), with_event.raw(), offset));
     }
@@ -31054,8 +31282,36 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionIndexes:\0")), selection_indexes.raw());
     }
 
-    // SKIPPED `selectionIndexPaths`: return `API_AVAILABLE NSSet<NSIndexPath *> *` — generic collection
-    // SKIPPED `setSelectionIndexPaths:`: param `API_AVAILABLE NSSet<NSIndexPath *> *` — generic collection
+    fn selection_index_paths(this) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("selectionIndexPaths\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_selection_index_paths(this, selection_index_paths: vec::Vec[IndexPath]) {
+        let arr_selection_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_selection_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_selection_index_paths: usize = selection_index_paths.count();
+        var i_selection_index_paths: usize = 0 as usize;
+        while i_selection_index_paths < n_selection_index_paths {
+            match selection_index_paths.at_ptr(i_selection_index_paths) {
+                option::Option[*IndexPath]::Some(e_selection_index_paths) => { rt::msg_void_id(arr_selection_index_paths, add_sel_selection_index_paths, (*e_selection_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_selection_index_paths = i_selection_index_paths +% (1 as usize);
+        }
+        let set_selection_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_selection_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSelectionIndexPaths:\0")), set_selection_index_paths);
+    }
+
     fn new_item_for_represented_object(this, object: *u8) -> CollectionViewItem {
         return CollectionViewItem::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newItemForRepresentedObject:\0")), object));
     }
@@ -31316,10 +31572,62 @@ impl CollectionViewLayout {
         return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `indexPathsToDeleteForSupplementaryViewOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `indexPathsToDeleteForDecorationViewOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `indexPathsToInsertForSupplementaryViewOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `indexPathsToInsertForDecorationViewOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn index_paths_to_delete_for_supplementary_view_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsToDeleteForSupplementaryViewOfKind:\0")), bridge::nsstring(element_kind));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn index_paths_to_delete_for_decoration_view_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsToDeleteForDecorationViewOfKind:\0")), bridge::nsstring(element_kind));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn index_paths_to_insert_for_supplementary_view_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsToInsertForSupplementaryViewOfKind:\0")), bridge::nsstring(element_kind));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn index_paths_to_insert_for_decoration_view_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsToInsertForDecorationViewOfKind:\0")), bridge::nsstring(element_kind));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSCollectionViewLayoutAttributes` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -31767,9 +32075,54 @@ impl CollectionViewLayoutInvalidationContext {
 
     fn from_raw(ptr: *u8) -> CollectionViewLayoutInvalidationContext { return CollectionViewLayoutInvalidationContext { _obj: ptr }; }
 
-    // SKIPPED `invalidateItemsAtIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `invalidateSupplementaryElementsOfKind:atIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `invalidateDecorationElementsOfKind:atIndexPaths:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
+    fn invalidate_items_at_index_paths(this, index_paths: vec::Vec[IndexPath]) {
+        let arr_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_index_paths: usize = index_paths.count();
+        var i_index_paths: usize = 0 as usize;
+        while i_index_paths < n_index_paths {
+            match index_paths.at_ptr(i_index_paths) {
+                option::Option[*IndexPath]::Some(e_index_paths) => { rt::msg_void_id(arr_index_paths, add_sel_index_paths, (*e_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_index_paths = i_index_paths +% (1 as usize);
+        }
+        let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateItemsAtIndexPaths:\0")), set_index_paths);
+    }
+
+    fn invalidate_supplementary_elements_of_kind(this, element_kind: str, at_index_paths: vec::Vec[IndexPath]) {
+        let arr_at_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_at_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_at_index_paths: usize = at_index_paths.count();
+        var i_at_index_paths: usize = 0 as usize;
+        while i_at_index_paths < n_at_index_paths {
+            match at_index_paths.at_ptr(i_at_index_paths) {
+                option::Option[*IndexPath]::Some(e_at_index_paths) => { rt::msg_void_id(arr_at_index_paths, add_sel_at_index_paths, (*e_at_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_at_index_paths = i_at_index_paths +% (1 as usize);
+        }
+        let set_at_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_at_index_paths);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("invalidateSupplementaryElementsOfKind:atIndexPaths:\0")), bridge::nsstring(element_kind), set_at_index_paths);
+    }
+
+    fn invalidate_decoration_elements_of_kind(this, element_kind: str, at_index_paths: vec::Vec[IndexPath]) {
+        let arr_at_index_paths: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_at_index_paths: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_at_index_paths: usize = at_index_paths.count();
+        var i_at_index_paths: usize = 0 as usize;
+        while i_at_index_paths < n_at_index_paths {
+            match at_index_paths.at_ptr(i_at_index_paths) {
+                option::Option[*IndexPath]::Some(e_at_index_paths) => { rt::msg_void_id(arr_at_index_paths, add_sel_at_index_paths, (*e_at_index_paths).raw()); }
+                option::Option[*IndexPath]::None => {}
+            }
+            i_at_index_paths = i_at_index_paths +% (1 as usize);
+        }
+        let set_at_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_at_index_paths);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("invalidateDecorationElementsOfKind:atIndexPaths:\0")), bridge::nsstring(element_kind), set_at_index_paths);
+    }
+
     fn invalidate_everything(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("invalidateEverything\0"))) != (0 as i8);
     }
@@ -31778,7 +32131,20 @@ impl CollectionViewLayoutInvalidationContext {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("invalidateDataSourceCounts\0"))) != (0 as i8);
     }
 
-    // SKIPPED `invalidatedItemIndexPaths`: return `NSSet<NSIndexPath *> * _Nullable` — generic collection
+    fn invalidated_item_index_paths(this) -> vec::Vec[IndexPath] {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("invalidatedItemIndexPaths\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `invalidatedSupplementaryIndexPaths`: return `NSDictionary<NSCollectionViewSupplementaryElementKind,NSSet<NSIndexPath *> *> * _Nullable` — NSDictionary value `NSSet<NSIndexPath *> *` not modelled (NSString / NSNumber / object[array])
     // SKIPPED `invalidatedDecorationIndexPaths`: return `NSDictionary<NSCollectionViewDecorationElementKind,NSSet<NSIndexPath *> *> * _Nullable` — NSDictionary value `NSSet<NSIndexPath *> *` not modelled (NSString / NSNumber / object[array])
     fn content_offset_adjustment(this) -> rt::Point {
@@ -39572,7 +39938,20 @@ impl ScrubberLayout {
         return option::some(ScrubberLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `layoutAttributesForItemsInRect:`: return `NSSet<__kindof NSScrubberLayoutAttributes *> * _Nonnull` — generic collection
+    fn layout_attributes_for_items_in_rect(this, rect: rt::Rect) -> vec::Vec[ScrubberLayoutAttributes] {
+        let set: *u8 = rt::msg_id_rect(this._obj, rt::sel(#str_ptr("layoutAttributesForItemsInRect:\0")), rect);
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[ScrubberLayoutAttributes] = vec::Vec[ScrubberLayoutAttributes]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(ScrubberLayoutAttributes::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn should_invalidate_layout_for_change_from_visible_rect(this, from_visible_rect: rt::Rect, to_visible_rect: rt::Rect) -> bool {
         return rt::msg_i8_rect_rect(this._obj, rt::sel(#str_ptr("shouldInvalidateLayoutForChangeFromVisibleRect:toVisibleRect:\0")), from_visible_rect, to_visible_rect) != (0 as i8);
     }
