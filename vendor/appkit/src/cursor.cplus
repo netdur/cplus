@@ -104,7 +104,12 @@ impl Cursor {
     fn from_raw(ptr: *u8) -> Cursor { return Cursor { _obj: ptr }; }
 
     // SKIPPED `initWithImage:hotSpot:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Cursor {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCursor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Cursor { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn hide() {
         rt::msg_void(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("hide\0")));
     }
@@ -242,7 +247,7 @@ impl Cursor {
         return rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpDownCursor\0")));
     }
 
-    // SKIPPED `initWithImage:foregroundColorHint:backgroundColorHint:hotSpot:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithImage:foregroundColorHint:backgroundColorHint:hotSpot:`: init arg shape not yet modelled
     fn set_on_mouse_exited(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setOnMouseExited:\0")), flag as i8);
     }

@@ -58,7 +58,12 @@ impl Controller {
         return Controller { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Controller {
+        let cls: *u8 = rt::get_class(#str_ptr("NSController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Controller { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn object_did_begin_editing(this, editor: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("objectDidBeginEditing:\0")), editor);
     }

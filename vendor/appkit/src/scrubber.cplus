@@ -84,7 +84,12 @@ impl Scrubber {
         return Scrubber { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Scrubber {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrubber\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Scrubber { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn reload_data(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reloadData\0")));
     }
@@ -378,7 +383,12 @@ impl ScrubberSelectionStyle {
         return ScrubberSelectionStyle { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ScrubberSelectionStyle {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrubberSelectionStyle\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrubberSelectionStyle { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn make_selection_view(this) -> option::Option[ScrubberSelectionView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("makeSelectionView\0")));
         if obj == { 0 as *u8 } {

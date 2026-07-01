@@ -6,6 +6,27 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSWindowDepth` (NS_ENUM)
+enum WindowDepth {
+    TwentyfourBitRGB,
+    SixtyfourBitRGB,
+    OnehundredtwentyeightBitRGB,
+}
+
+fn window_depth_raw(v: WindowDepth) -> i64 {
+    return match v {
+        WindowDepth::TwentyfourBitRGB => { 520 as i64 },
+        WindowDepth::SixtyfourBitRGB => { 528 as i64 },
+        WindowDepth::OnehundredtwentyeightBitRGB => { 544 as i64 },
+    };
+}
+
+fn window_depth_from_raw(raw: i64) -> WindowDepth {
+    if raw == (528 as i64) { return WindowDepth::SixtyfourBitRGB; }
+    if raw == (544 as i64) { return WindowDepth::OnehundredtwentyeightBitRGB; }
+    return WindowDepth::TwentyfourBitRGB;
+}
+
 // `NSWindow` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Window {
     opaque _obj: *u8,
@@ -29,7 +50,7 @@ impl CachedImageRep {
     fn from_raw(ptr: *u8) -> CachedImageRep { return CachedImageRep { _obj: ptr }; }
 
     // SKIPPED `initWithWindow:rect:`: init arg shape not yet modelled
-    // SKIPPED `initWithSize:depth:separate:alpha:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithSize:depth:separate:alpha:`: init arg shape not yet modelled
     fn window(this) -> Window {
         return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }

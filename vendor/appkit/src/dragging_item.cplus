@@ -58,7 +58,7 @@ impl DraggingImageComponent {
         return DraggingImageComponent { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithKey:\0")), bridge::nsstring(key)) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     fn key(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("key\0")));
         return bridge::to_text(ns);
@@ -106,7 +106,7 @@ impl DraggingItem {
         return DraggingItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithPasteboardWriter:\0")), pasteboard_writer.raw()) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     fn set_dragging_frame_contents(this, frame: rt::Rect, contents: *u8) {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, contents);
     }

@@ -107,7 +107,12 @@ impl Text {
         return Text { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Text {
+        let cls: *u8 = rt::get_class(#str_ptr("NSText\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Text { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn replace_characters_in_range_with_string(this, range: rt::Range, string: str) {
         rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("replaceCharactersInRange:withString:\0")), range, bridge::nsstring(string));
     }

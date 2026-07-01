@@ -22,12 +22,22 @@ impl Nib {
         return Nib { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithNibNamed:bundle:\0")), bridge::nsstring(nib_name), bundle) };
     }
 
-    // SKIPPED `initWithNibData:bundle:`: extra init variant (one `new` per type)
+    fn new_with_nib_data_bundle(nib_data: *u8, bundle: *u8) -> Nib {
+        let cls: *u8 = rt::get_class(#str_ptr("NSNib\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Nib { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithNibData:bundle:\0")), nib_data, bundle) };
+    }
+
     fn instantiate_with_owner_top_level_objects(this, owner: *u8, top_level_objects: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("instantiateWithOwner:topLevelObjects:\0")), owner, top_level_objects) != (0 as i8);
     }
 
-    // SKIPPED `initWithContentsOfURL:`: extra init variant (one `new` per type)
+    fn new_with_contents_of_u_r_l(nib_file_u_r_l: *u8) -> Nib {
+        let cls: *u8 = rt::get_class(#str_ptr("NSNib\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Nib { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfURL:\0")), nib_file_u_r_l) };
+    }
+
     fn instantiate_nib_with_external_name_table(this, external_name_table: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("instantiateNibWithExternalNameTable:\0")), external_name_table) != (0 as i8);
     }

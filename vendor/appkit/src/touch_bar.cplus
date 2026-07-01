@@ -23,7 +23,12 @@ impl TouchBar {
         return TouchBar { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TouchBar {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTouchBar\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TouchBar { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn item_for_identifier(this, identifier: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("itemForIdentifier:\0")), bridge::nsstring(identifier));
         return bridge::obj_option(obj);

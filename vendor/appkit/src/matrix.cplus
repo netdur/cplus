@@ -58,8 +58,8 @@ impl Matrix {
         return Matrix { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
+    // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
     fn make_cell_at_row_column(this, row: i64, col: i64) -> *u8 {
         return rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, col);
     }

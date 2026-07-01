@@ -60,7 +60,7 @@ impl TextViewportLayoutController {
     }
 
     // SKIPPED `new`: method `new` already defined
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     fn layout_viewport(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("layoutViewport\0")));
     }

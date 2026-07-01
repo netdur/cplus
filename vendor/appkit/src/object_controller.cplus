@@ -70,7 +70,12 @@ impl ObjectController {
         return ObjectController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContent:\0")), content) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ObjectController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSObjectController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ObjectController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn prepare_content(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareContent\0")));
     }

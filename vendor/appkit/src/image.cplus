@@ -416,10 +416,30 @@ impl Image {
 
     // SKIPPED `imageWithSymbolName:bundle:variableValue:`: msgSend shape `id_id_id_f64` not yet modelled
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithData:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithContentsOfFile:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithContentsOfURL:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new_with_data(data: *u8) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithData:\0")), data) };
+    }
+
+    fn new_with_contents_of_file(file_name: str) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfFile:\0")), bridge::nsstring(file_name)) };
+    }
+
+    fn new_with_contents_of_u_r_l(url: URL) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfURL:\0")), url.raw()) };
+    }
+
     fn init_by_referencing_file(this, file_name: str) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initByReferencingFile:\0")), bridge::nsstring(file_name));
     }
@@ -428,8 +448,18 @@ impl Image {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initByReferencingURL:\0")), url.raw());
     }
 
-    // SKIPPED `initWithPasteboard:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithDataIgnoringOrientation:`: extra init variant (one `new` per type)
+    fn new_with_pasteboard(pasteboard: *u8) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithPasteboard:\0")), pasteboard) };
+    }
+
+    fn new_with_data_ignoring_orientation(data: *u8) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDataIgnoringOrientation:\0")), data) };
+    }
+
     // SKIPPED `imageWithSize:flipped:drawingHandler:`: block method with non-void return
     fn set_name(this, string: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(string)) != (0 as i8);
@@ -480,7 +510,7 @@ impl Image {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard) != (0 as i8);
     }
 
-    // SKIPPED `initWithCGImage:size:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithCGImage:size:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
@@ -697,7 +727,7 @@ impl Image {
         return out;
     }
 
-    // SKIPPED `initWithIconRef:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithIconRef:`: param `IconRef _Nonnull` — unmapped type `IconRef`
     fn best_representation_for_device(this, device_description: *u8) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bestRepresentationForDevice:\0")), device_description);
         if obj == { 0 as *u8 } {

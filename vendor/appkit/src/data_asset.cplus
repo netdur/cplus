@@ -22,8 +22,18 @@ impl DataAsset {
         return DataAsset { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithName:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithName:bundle:`: extra init variant (one `new` per type)
+    fn new_with_name(name: str) -> DataAsset {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDataAsset\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return DataAsset { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithName:\0")), bridge::nsstring(name)) };
+    }
+
+    fn new_with_name_bundle(name: str, bundle: *u8) -> DataAsset {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDataAsset\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return DataAsset { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithName:bundle:\0")), bridge::nsstring(name), bundle) };
+    }
+
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);

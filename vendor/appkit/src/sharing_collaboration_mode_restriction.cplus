@@ -40,10 +40,10 @@ impl SharingCollaborationModeRestriction {
         return SharingCollaborationModeRestriction { _obj: rt::msg_id_i64(alloced, rt::sel(#str_ptr("initWithDisabledMode:\0")), sharing_collaboration_mode_raw(disabled_mode)) };
     }
 
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:alertRecoverySuggestionButtonTitle:alertRecoverySuggestionButtonLaunchURL:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:`: init arg shape not yet modelled
+    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:`: init arg shape not yet modelled
+    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:alertRecoverySuggestionButtonTitle:alertRecoverySuggestionButtonLaunchURL:`: init arg shape not yet modelled
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `new`: method `new` already defined
     fn disabled_mode(this) -> SharingCollaborationMode {
         return sharing_collaboration_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("disabledMode\0"))));

@@ -340,7 +340,12 @@ impl GridView {
         return GridView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> GridView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGridView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return GridView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn grid_view_with_number_of_columns_rows(column_count: i64, row_count: i64) -> GridView {
         return GridView { _obj: rt::retain(rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSGridView\0")), rt::sel(#str_ptr("gridViewWithNumberOfColumns:rows:\0")), column_count, row_count)) };
     }

@@ -887,8 +887,13 @@ impl Window {
         return Window { _obj: rt::msg_id_rect_u64_i64_i8(alloced, rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")), content_rect, style, backing_store_type_raw(backing_store_type), flag as i8) };
     }
 
-    // SKIPPED `initWithContentRect:styleMask:backing:defer:screen:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithContentRect:styleMask:backing:defer:screen:`: init arg shape not yet modelled
+    fn new_with_coder(coder: *u8) -> Window {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Window { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn add_titlebar_accessory_view_controller(this, child_view_controller: TitlebarAccessoryViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), child_view_controller.raw());
     }
@@ -2090,7 +2095,12 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushWindowIfNeeded\0")));
     }
 
-    // SKIPPED `initWithWindowRef:`: extra init variant (one `new` per type)
+    fn new_with_window_ref(window_ref: *u8) -> Window {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Window { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithWindowRef:\0")), window_ref) };
+    }
+
     fn disable_screen_updates_until_flush(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("disableScreenUpdatesUntilFlush\0")));
     }

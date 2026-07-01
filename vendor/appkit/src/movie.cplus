@@ -34,8 +34,13 @@ impl Movie {
         return Movie { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
-    // SKIPPED `initWithMovie:`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
+    fn new_with_movie(movie: QTMovie) -> Movie {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMovie\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Movie { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithMovie:\0")), movie.raw()) };
+    }
+
     fn q_t_movie(this) -> option::Option[QTMovie] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("QTMovie\0")));
         if obj == { 0 as *u8 } {

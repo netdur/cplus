@@ -110,8 +110,18 @@ impl OpenGLPixelFormat {
     fn from_raw(ptr: *u8) -> OpenGLPixelFormat { return OpenGLPixelFormat { _obj: ptr }; }
 
     // SKIPPED `initWithCGLPixelFormatObj:`: param `CGLPixelFormatObj _Nonnull` — unmapped type `CGLPixelFormatObj`
-    // SKIPPED `initWithAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithData:`: extra init variant (one `new` per type)
+    fn new_with_attributes(attribs: *u8) -> OpenGLPixelFormat {
+        let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLPixelFormat\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLPixelFormat { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithAttributes:\0")), attribs) };
+    }
+
+    fn new_with_data(attribs: Data) -> OpenGLPixelFormat {
+        let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLPixelFormat\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLPixelFormat { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithData:\0")), attribs.raw()) };
+    }
+
     fn attributes(this) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0")));
         if obj == { 0 as *u8 } {
@@ -143,7 +153,7 @@ impl OpenGLPixelBuffer {
     fn from_raw(ptr: *u8) -> OpenGLPixelBuffer { return OpenGLPixelBuffer { _obj: ptr }; }
 
     // SKIPPED `initWithTextureTarget:textureInternalFormat:textureMaxMipMapLevel:pixelsWide:pixelsHigh:`: param `GLenum` — unmapped type `GLenum`
-    // SKIPPED `initWithCGLPBufferObj:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithCGLPBufferObj:`: param `CGLPBufferObj _Nonnull` — unmapped type `CGLPBufferObj`
     // SKIPPED `CGLPBufferObj`: return `NS_RETURNS_INNER_POINTER CGLPBufferObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLPBufferObj`
     // SKIPPED `pixelsWide`: return `GLsizei` — unmapped type `GLsizei`
     // SKIPPED `pixelsHigh`: return `GLsizei` — unmapped type `GLsizei`
@@ -171,7 +181,7 @@ impl OpenGLContext {
         return OpenGLContext { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithFormat:shareContext:\0")), format.raw(), share.raw()) };
     }
 
-    // SKIPPED `initWithCGLContextObj:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithCGLContextObj:`: param `CGLContextObj _Nonnull` — unmapped type `CGLContextObj`
     fn set_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setView:\0")), view.raw());
     }

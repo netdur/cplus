@@ -131,8 +131,13 @@ impl TextLayoutFragment {
         return TextLayoutFragment { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithTextElement:range:\0")), text_element.raw(), range_in_element.raw()) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TextLayoutFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLayoutFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLayoutFragment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `textLineFragmentForVerticalOffset:requiresExactMatch:`: msgSend shape `id_f64_i8` not yet modelled
     fn text_line_fragment_for_text_location_is_upstream_affinity(this, text_location: TextLocation, is_upstream_affinity: bool) -> option::Option[TextLineFragment] {
         let obj: *u8 = rt::msg_id_id_i8(this._obj, rt::sel(#str_ptr("textLineFragmentForTextLocation:isUpstreamAffinity:\0")), text_location.raw(), is_upstream_affinity as i8);

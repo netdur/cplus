@@ -184,7 +184,12 @@ impl SharingService {
     }
 
     // SKIPPED `initWithTitle:image:alternateImage:handler:`: block method with non-void return
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new() -> SharingService {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingService\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingService { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn can_perform_with_items(this, items: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canPerformWithItems:\0")), items) != (0 as i8);
     }
@@ -271,7 +276,7 @@ impl SharingServicePicker {
         return SharingServicePicker { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItems:\0")), items) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: msgSend shape `void_rect_id_i64` not yet modelled
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));

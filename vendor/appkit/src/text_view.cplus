@@ -357,8 +357,18 @@ impl TextView {
     fn from_raw(ptr: *u8) -> TextView { return TextView { _obj: ptr }; }
 
     // SKIPPED `initWithFrame:textContainer:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithFrame:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TextView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new_with_frame(frame_rect: rt::Rect) -> TextView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
+    }
+
     fn init_using_text_layout_manager(this, using_text_layout_manager: bool) -> *u8 {
         return rt::msg_id_i8(this._obj, rt::sel(#str_ptr("initUsingTextLayoutManager:\0")), using_text_layout_manager as i8);
     }

@@ -179,7 +179,12 @@ impl ImageRep {
         return ImageRep { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ImageRep { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn draw(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("draw\0"))) != (0 as i8);
     }

@@ -30,7 +30,12 @@ impl TextListElement {
     fn from_raw(ptr: *u8) -> TextListElement { return TextListElement { _obj: ptr }; }
 
     // SKIPPED `initWithParentElement:textList:contents:markerAttributes:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `initWithAttributedString:`: extra init variant (one `new` per type)
+    fn new_with_attributed_string(attributed_string: *u8) -> TextListElement {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextListElement\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextListElement { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithAttributedString:\0")), attributed_string) };
+    }
+
     // SKIPPED `textListElementWithContents:markerAttributes:textList:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
     // SKIPPED `textListElementWithChildElements:textList:nestingLevel:`: param `NSArray<NSTextListElement *> * _Nonnull` — generic collection
     fn text_list(this) -> TextList {

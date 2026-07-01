@@ -88,7 +88,12 @@ impl Animation {
     fn from_raw(ptr: *u8) -> Animation { return Animation { _obj: ptr }; }
 
     // SKIPPED `initWithDuration:animationCurve:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Animation {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAnimation\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Animation { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn start_animation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("startAnimation\0")));
     }

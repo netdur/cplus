@@ -222,8 +222,13 @@ impl TextPreview {
     fn from_raw(ptr: *u8) -> TextPreview { return TextPreview { _obj: ptr }; }
 
     // SKIPPED `initWithSnapshotImage:presentationFrame:candidateRects:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
-    // SKIPPED `initWithSnapshotImage:presentationFrame:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `initWithSnapshotImage:presentationFrame:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
+    fn new() -> TextPreview {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextPreview\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextPreview { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `previewImage`: return `CGImageRef _Nonnull` — unmapped type `CGImageRef`
     fn presentation_frame(this) -> rt::Rect {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("presentationFrame\0")));

@@ -130,7 +130,12 @@ impl Color {
         return Color { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Color { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn color_with_color_space_components_count(space: ColorSpace, components: *u8, number_of_components: i64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:components:count:\0")), space.raw(), components, number_of_components)) };
     }

@@ -43,8 +43,13 @@ impl TextRange {
         return TextRange { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithLocation:endLocation:\0")), location.raw(), end_location.raw()) };
     }
 
-    // SKIPPED `initWithLocation:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_location(location: TextLocation) -> TextRange {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextRange\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextRange { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithLocation:\0")), location.raw()) };
+    }
+
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `new`: method `new` already defined
     fn is_equal_to_text_range(this, text_range: TextRange) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isEqualToTextRange:\0")), text_range.raw()) != (0 as i8);

@@ -80,8 +80,18 @@ impl PrintInfo {
     fn from_raw(ptr: *u8) -> PrintInfo { return PrintInfo { _obj: ptr }; }
 
     // SKIPPED `initWithDictionary:`: param `NSDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — generic collection
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> PrintInfo {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PrintInfo { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new() -> PrintInfo {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPrintInfo\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PrintInfo { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `dictionary`: return `NSMutableDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn set_up_print_operation_default_values(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setUpPrintOperationDefaultValues\0")));

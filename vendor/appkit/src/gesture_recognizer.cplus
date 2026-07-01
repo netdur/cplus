@@ -119,7 +119,12 @@ impl GestureRecognizer {
         return GestureRecognizer { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")), target, action) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> GestureRecognizer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSGestureRecognizer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return GestureRecognizer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn location_in_view(this, view: View) -> rt::Point {
         return rt::msg_point_id(this._obj, rt::sel(#str_ptr("locationInView:\0")), view.raw());
     }

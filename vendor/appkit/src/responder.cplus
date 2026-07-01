@@ -104,7 +104,12 @@ impl Responder {
         return Responder { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Responder {
+        let cls: *u8 = rt::get_class(#str_ptr("NSResponder\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Responder { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn try_to_perform_with(this, action: *u8, object: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tryToPerform:with:\0")), action, object) != (0 as i8);
     }

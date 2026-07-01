@@ -22,9 +22,19 @@ impl UserInterfaceCompressionOptions {
         return UserInterfaceCompressionOptions { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithIdentifier:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithCompressionOptions:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> UserInterfaceCompressionOptions {
+        let cls: *u8 = rt::get_class(#str_ptr("NSUserInterfaceCompressionOptions\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return UserInterfaceCompressionOptions { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new_with_identifier(identifier: str) -> UserInterfaceCompressionOptions {
+        let cls: *u8 = rt::get_class(#str_ptr("NSUserInterfaceCompressionOptions\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return UserInterfaceCompressionOptions { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), bridge::nsstring(identifier)) };
+    }
+
+    // SKIPPED `initWithCompressionOptions:`: param `NSSet<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
     fn contains_options(this, options: UserInterfaceCompressionOptions) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("containsOptions:\0")), options.raw()) != (0 as i8);
     }

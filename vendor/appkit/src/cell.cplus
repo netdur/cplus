@@ -490,7 +490,12 @@ impl Cell {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image.raw());
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Cell {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCell\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Cell { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn send_action_on(this, mask: u64) -> i64 {
         return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("sendActionOn:\0")), mask);
     }

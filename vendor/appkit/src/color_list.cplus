@@ -55,7 +55,12 @@ impl ColorList {
         return ColorList { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithName:\0")), bridge::nsstring(name)) };
     }
 
-    // SKIPPED `initWithName:fromFile:`: extra init variant (one `new` per type)
+    fn new_with_name_from_file(name: str, path: str) -> ColorList {
+        let cls: *u8 = rt::get_class(#str_ptr("NSColorList\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ColorList { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithName:fromFile:\0")), bridge::nsstring(name), bridge::nsstring(path)) };
+    }
+
     fn set_color_for_key(this, color: Color, key: str) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setColor:forKey:\0")), color.raw(), bridge::nsstring(key));
     }

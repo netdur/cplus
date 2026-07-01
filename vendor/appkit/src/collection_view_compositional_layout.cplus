@@ -808,10 +808,15 @@ impl CollectionViewCompositionalLayout {
         return CollectionViewCompositionalLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithSection:\0")), section.raw()) };
     }
 
-    // SKIPPED `initWithSection:configuration:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithSectionProvider:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithSectionProvider:configuration:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_section_configuration(section: CollectionLayoutSection, configuration: CollectionViewCompositionalLayoutConfiguration) -> CollectionViewCompositionalLayout {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCollectionViewCompositionalLayout\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return CollectionViewCompositionalLayout { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithSection:configuration:\0")), section.raw(), configuration.raw()) };
+    }
+
+    // SKIPPED `initWithSectionProvider:`: param `NSCollectionViewCompositionalLayoutSectionProvider _Nonnull` — unmapped type `NSCollectionViewCompositionalLayoutSectionProvider`
+    // SKIPPED `initWithSectionProvider:configuration:`: param `NSCollectionViewCompositionalLayoutSectionProvider _Nonnull` — unmapped type `NSCollectionViewCompositionalLayoutSectionProvider`
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `new`: method `new` already defined
     fn configuration(this) -> CollectionViewCompositionalLayoutConfiguration {
         return CollectionViewCompositionalLayoutConfiguration::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("configuration\0"))));

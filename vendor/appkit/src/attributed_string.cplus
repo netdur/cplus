@@ -17,18 +17,18 @@ impl AttributedString {
     fn from_raw(ptr: *u8) -> AttributedString { return AttributedString { _obj: ptr }; }
 
     // SKIPPED `initWithURL:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentReadingOptionKey,id> * _Nonnull` — generic collection
-    // SKIPPED `initWithData:options:documentAttributes:error:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithData:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentReadingOptionKey,id> * _Nonnull` — generic collection
     // SKIPPED `dataFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `fileWrapperFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `containsAttachmentsInRange:`: msgSend shape `i8_range` not yet modelled
     // SKIPPED `prefersRTFDInRange:`: msgSend shape `i8_range` not yet modelled
-    // SKIPPED `initWithRTF:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithRTFD:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithHTML:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithHTML:baseURL:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithDocFormat:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithHTML:options:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithRTFDFileWrapper:documentAttributes:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithRTF:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    // SKIPPED `initWithRTFD:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    // SKIPPED `initWithHTML:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    // SKIPPED `initWithHTML:baseURL:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    // SKIPPED `initWithDocFormat:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    // SKIPPED `initWithHTML:options:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentReadingOptionKey,id> * _Nonnull` — generic collection
+    // SKIPPED `initWithRTFDFileWrapper:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
     // SKIPPED `RTFFromRange:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `RTFDFromRange:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `RTFDFileWrapperFromRange:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
@@ -73,8 +73,18 @@ impl AttributedString {
         return rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")), rt::sel(#str_ptr("textUnfilteredPasteboardTypes\0")));
     }
 
-    // SKIPPED `initWithURL:documentAttributes:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithPath:documentAttributes:`: extra init variant (one `new` per type)
+    fn new_with_u_r_l_document_attributes(url: URL, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithURL:documentAttributes:\0")), url.raw(), dict) };
+    }
+
+    fn new_with_path_document_attributes(path: str, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithPath:documentAttributes:\0")), bridge::nsstring(path), dict) };
+    }
+
     // SKIPPED `URLAtIndex:effectiveRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
     fn contains_attachments(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("containsAttachments\0"))) != (0 as i8);

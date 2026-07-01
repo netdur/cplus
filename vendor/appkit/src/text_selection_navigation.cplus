@@ -174,7 +174,7 @@ impl TextSelectionNavigation {
     }
 
     // SKIPPED `new`: method `new` already defined
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     fn flush_layout_cache(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushLayoutCache\0")));
     }

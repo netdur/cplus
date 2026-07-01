@@ -151,7 +151,7 @@ impl TextTab {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `initWithType:location:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithType:location:`: init arg shape not yet modelled
     fn tab_stop_type(this) -> TextTabType {
         return text_tab_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabStopType\0"))));
     }

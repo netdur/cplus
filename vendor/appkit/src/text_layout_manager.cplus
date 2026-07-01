@@ -155,7 +155,12 @@ impl TextLayoutManager {
         return TextLayoutManager { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TextLayoutManager {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLayoutManager\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLayoutManager { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn replace_text_content_manager(this, text_content_manager: TextContentManager) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContentManager:\0")), text_content_manager.raw());
     }

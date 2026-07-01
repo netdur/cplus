@@ -66,7 +66,12 @@ impl RulerView {
         return RulerView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `initWithScrollView:orientation:`: extra init variant (one `new` per type)
+    fn new_with_scroll_view_orientation(scroll_view: ScrollView, orientation: RulerOrientation) -> RulerView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSRulerView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RulerView { _obj: rt::msg_id_id_i64(alloced, rt::sel(#str_ptr("initWithScrollView:orientation:\0")), scroll_view.raw(), ruler_orientation_raw(orientation)) };
+    }
+
     fn add_marker(this, marker: RulerMarker) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addMarker:\0")), marker.raw());
     }

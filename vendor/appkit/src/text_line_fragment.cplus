@@ -17,9 +17,19 @@ impl TextLineFragment {
     fn from_raw(ptr: *u8) -> TextLineFragment { return TextLineFragment { _obj: ptr }; }
 
     // SKIPPED `initWithAttributedString:range:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithString:attributes:range:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_coder(a_decoder: *u8) -> TextLineFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLineFragment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), a_decoder) };
+    }
+
+    // SKIPPED `initWithString:attributes:range:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
+    fn new() -> TextLineFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLineFragment { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
     // SKIPPED `locationForCharacterAtIndex:`: msgSend shape `point_i64` not yet modelled
     fn character_index_for_point(this, point: rt::Point) -> i64 {

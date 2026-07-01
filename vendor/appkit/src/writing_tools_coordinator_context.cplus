@@ -41,7 +41,12 @@ impl WritingToolsCoordinatorContext {
     fn from_raw(ptr: *u8) -> WritingToolsCoordinatorContext { return WritingToolsCoordinatorContext { _obj: ptr }; }
 
     // SKIPPED `initWithAttributedString:range:`: init arg shape not yet modelled
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new() -> WritingToolsCoordinatorContext {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWritingToolsCoordinatorContext\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WritingToolsCoordinatorContext { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn attributed_string(this) -> AttributedString {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }

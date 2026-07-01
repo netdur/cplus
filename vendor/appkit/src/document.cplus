@@ -585,12 +585,22 @@ impl Document {
         return Document { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithType:error:`: extra init variant (one `new` per type)
+    fn new_with_type_error(type_name: str, out_error: *u8) -> Document {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDocument\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Document { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithType:error:\0")), bridge::nsstring(type_name), out_error) };
+    }
+
     fn can_concurrently_read_documents_of_type(type_name: str) -> bool {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("canConcurrentlyReadDocumentsOfType:\0")), bridge::nsstring(type_name)) != (0 as i8);
     }
 
-    // SKIPPED `initWithContentsOfURL:ofType:error:`: extra init variant (one `new` per type)
+    fn new_with_contents_of_u_r_l_of_type_error(url: URL, type_name: str, out_error: *u8) -> Document {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDocument\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Document { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error) };
+    }
+
     fn init_for_u_r_l_with_contents_of_u_r_l_of_type_error(this, url_or_nil: URL, contents_u_r_l: URL, type_name: str, out_error: *u8) -> *u8 {
         return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("initForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), contents_u_r_l.raw(), bridge::nsstring(type_name), out_error);
     }
@@ -1250,8 +1260,18 @@ impl Document {
         return option::some(FileWrapper::from_raw(obj));
     }
 
-    // SKIPPED `initWithContentsOfFile:ofType:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithContentsOfURL:ofType:`: extra init variant (one `new` per type)
+    fn new_with_contents_of_file_of_type(absolute_path: str, type_name: str) -> Document {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDocument\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Document { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfFile:ofType:\0")), bridge::nsstring(absolute_path), bridge::nsstring(type_name)) };
+    }
+
+    fn new_with_contents_of_u_r_l_of_type(url: URL, type_name: str) -> Document {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDocument\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Document { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithContentsOfURL:ofType:\0")), url.raw(), bridge::nsstring(type_name)) };
+    }
+
     fn load_data_representation_of_type(this, data: Data, type_: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("loadDataRepresentation:ofType:\0")), data.raw(), bridge::nsstring(type_)) != (0 as i8);
     }

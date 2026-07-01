@@ -62,11 +62,13 @@ impl TableViewDiffableDataSource {
     fn from_raw(ptr: *u8) -> TableViewDiffableDataSource { return TableViewDiffableDataSource { _obj: ptr }; }
 
     // SKIPPED `initWithTableView:cellProvider:`: param `NSTableViewDiffableDataSourceCellProvider _Nonnull` — unmapped type `NSTableViewDiffableDataSourceCellProvider`
-    // SKIPPED `init`: extra init variant (one `new` per type)
     fn new() -> TableViewDiffableDataSource {
-        return TableViewDiffableDataSource { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTableViewDiffableDataSource\0")), rt::sel(#str_ptr("new\0")))) };
+        let cls: *u8 = rt::get_class(#str_ptr("NSTableViewDiffableDataSource\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TableViewDiffableDataSource { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
+    // SKIPPED `new`: method `new` already defined
     // SKIPPED `snapshot`: return `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
     // SKIPPED `applySnapshot:animatingDifferences:`: param `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection
     // SKIPPED `applySnapshot:animatingDifferences:completion:`: leading param `NSDiffableDataSourceSnapshot<SectionIdentifierType,ItemIdentifierType> * _Nonnull` — generic collection

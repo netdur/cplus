@@ -124,7 +124,12 @@ impl Menu {
         return Menu { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTitle:\0")), bridge::nsstring(title)) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Menu {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMenu\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Menu { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn pop_up_context_menu_with_event_for_view(menu: Menu, event: Event, view: View) {
         rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:\0")), menu.raw(), event.raw(), view.raw());
     }

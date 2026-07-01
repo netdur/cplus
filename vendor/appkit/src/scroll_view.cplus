@@ -237,7 +237,12 @@ impl ScrollView {
         return ScrollView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ScrollView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrollView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrollView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     // SKIPPED `frameSizeForContentSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: msgSend shape `size_size_id_id_i64_i64_i64` not yet modelled
     // SKIPPED `contentSizeForFrameSize:horizontalScrollerClass:verticalScrollerClass:borderType:controlSize:scrollerStyle:`: msgSend shape `size_size_id_id_i64_i64_i64` not yet modelled
     // SKIPPED `frameSizeForContentSize:hasHorizontalScroller:hasVerticalScroller:borderType:`: msgSend shape `size_size_i8_i8_i64` not yet modelled

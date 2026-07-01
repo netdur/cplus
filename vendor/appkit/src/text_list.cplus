@@ -20,8 +20,18 @@ impl TextList {
     fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
 
     // SKIPPED `initWithMarkerFormat:options:startingItemNumber:`: init arg shape not yet modelled
-    // SKIPPED `initWithMarkerFormat:options:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_marker_format_options(marker_format: str, options: u64) -> TextList {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextList\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextList { _obj: rt::msg_id_id_u64(alloced, rt::sel(#str_ptr("initWithMarkerFormat:options:\0")), bridge::nsstring(marker_format), options) };
+    }
+
+    fn new_with_coder(coder: *u8) -> TextList {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextList\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextList { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn marker_for_item_number(this, item_number: i64) -> text::Text {
         let ns: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("markerForItemNumber:\0")), item_number);
         return bridge::to_text(ns);

@@ -53,8 +53,18 @@ impl RulerMarker {
     fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
 
     // SKIPPED `initWithRulerView:markerLocation:image:imageOrigin:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> RulerMarker {
+        let cls: *u8 = rt::get_class(#str_ptr("NSRulerMarker\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RulerMarker { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new() -> RulerMarker {
+        let cls: *u8 = rt::get_class(#str_ptr("NSRulerMarker\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RulerMarker { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
+    }
+
     fn draw_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawRect:\0")), rect);
     }

@@ -3024,6 +3024,8 @@ extern fn objc_msg_id_Size(recv: *u8, sel: *u8, a0: Size) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_Size_id(recv: *u8, sel: *u8, a0: Size, a1: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_Size_id_id(recv: *u8, sel: *u8, a0: Size, a1: *u8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_Size_u64_id(recv: *u8, sel: *u8, a0: Size, a1: u64, a2: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_u64_Size(recv: *u8, sel: *u8, a0: Size) -> u64;
@@ -4568,8 +4570,18 @@ impl RasterizationRateLayerDescriptor {
         return RasterizationRateLayerDescriptor { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithSampleCount:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithSampleCount:horizontal:vertical:`: extra init variant (one `new` per type)
+    fn new_with_sample_count(sample_count: Size) -> RasterizationRateLayerDescriptor {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLRasterizationRateLayerDescriptor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RasterizationRateLayerDescriptor { _obj: objc_msg_id_Size(alloced, rt::sel(#str_ptr("initWithSampleCount:\0")), sample_count) };
+    }
+
+    fn new_with_sample_count_horizontal_vertical(sample_count: Size, horizontal: *u8, vertical: *u8) -> RasterizationRateLayerDescriptor {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLRasterizationRateLayerDescriptor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RasterizationRateLayerDescriptor { _obj: objc_msg_id_Size_id_id(alloced, rt::sel(#str_ptr("initWithSampleCount:horizontal:vertical:\0")), sample_count, horizontal, vertical) };
+    }
+
     fn sample_count(this) -> Size {
         return objc_msg_Size(this._obj, rt::sel(#str_ptr("sampleCount\0")));
     }
@@ -8309,7 +8321,7 @@ impl SharedEventListener {
         return SharedEventListener { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithDispatchQueue:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithDispatchQueue:`: param `dispatch_queue_t _Nonnull` — unmapped type `dispatch_queue_t`
     fn shared_listener() -> SharedEventListener {
         return SharedEventListener { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("MTLSharedEventListener\0")), rt::sel(#str_ptr("sharedListener\0")))) };
     }

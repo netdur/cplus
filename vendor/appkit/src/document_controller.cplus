@@ -145,7 +145,12 @@ impl DocumentController {
         return DocumentController { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> DocumentController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDocumentController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return DocumentController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn document_for_u_r_l(this, url: URL) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("documentForURL:\0")), url.raw());
         if obj == { 0 as *u8 } {

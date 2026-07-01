@@ -152,7 +152,12 @@ impl Popover {
         return Popover { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> Popover {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPopover\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Popover { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: msgSend shape `void_rect_id_i64` not yet modelled
     fn show_relative_to_toolbar_item(this, toolbar_item: ToolbarItem) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("showRelativeToToolbarItem:\0")), toolbar_item.raw());

@@ -331,7 +331,12 @@ impl TableView {
         return TableView { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TableView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTableView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TableView { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn note_height_of_rows_with_indexes_changed(this, index_set: IndexSet) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), index_set.raw());
     }

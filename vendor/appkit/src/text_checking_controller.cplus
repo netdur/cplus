@@ -23,7 +23,7 @@ impl TextCheckingController {
         return TextCheckingController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithClient:\0")), client) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     fn invalidate(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidate\0")));
     }

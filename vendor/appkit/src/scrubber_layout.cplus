@@ -118,7 +118,12 @@ impl ScrubberLayout {
         return ScrubberLayout { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ScrubberLayout {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrubberLayout\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrubberLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn invalidate_layout(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }
@@ -190,7 +195,12 @@ impl ScrubberProportionalLayout {
         return ScrubberProportionalLayout { _obj: rt::msg_id_i64(alloced, rt::sel(#str_ptr("initWithNumberOfVisibleItems:\0")), number_of_visible_items) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> ScrubberProportionalLayout {
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrubberProportionalLayout\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrubberProportionalLayout { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn number_of_visible_items(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfVisibleItems\0")));
     }

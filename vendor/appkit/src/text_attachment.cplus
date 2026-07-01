@@ -82,7 +82,7 @@ impl TextAttachmentViewProvider {
         return TextAttachmentViewProvider { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithTextAttachment:parentView:textLayoutManager:location:\0")), text_attachment.raw(), parent_view.raw(), text_layout_manager.raw(), location.raw()) };
     }
 
-    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `new`: method `new` already defined
     fn load_view(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadView\0")));
@@ -174,7 +174,12 @@ impl TextAttachment {
         return TextAttachment { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithData:ofType:\0")), content_data, bridge::nsstring(uti)) };
     }
 
-    // SKIPPED `initWithFileWrapper:`: extra init variant (one `new` per type)
+    fn new_with_file_wrapper(file_wrapper: FileWrapper) -> TextAttachment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextAttachment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextAttachment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithFileWrapper:\0")), file_wrapper.raw()) };
+    }
+
     fn text_attachment_view_provider_class_for_file_type(file_type: str) -> *u8 {
         return rt::msg_id_id(rt::get_class(#str_ptr("NSTextAttachment\0")), rt::sel(#str_ptr("textAttachmentViewProviderClassForFileType:\0")), bridge::nsstring(file_type));
     }

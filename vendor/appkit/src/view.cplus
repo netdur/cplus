@@ -425,7 +425,12 @@ impl View {
         return View { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> View {
+        let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return View { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     fn is_descendant_of(this, view: View) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isDescendantOf:\0")), view.raw()) != (0 as i8);
     }

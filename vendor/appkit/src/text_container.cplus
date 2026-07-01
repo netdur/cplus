@@ -131,7 +131,12 @@ impl TextContainer {
     fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
 
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> TextContainer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextContainer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextContainer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
     // SKIPPED `lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:`: msgSend shape `rect_rect_u64_i64_id` not yet modelled
     fn text_layout_manager(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
@@ -212,7 +217,7 @@ impl TextContainer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextView:\0")), text_view);
     }
 
-    // SKIPPED `initWithContainerSize:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithContainerSize:`: init arg shape not yet modelled
     // SKIPPED `lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
     fn contains_point(this, point: rt::Point) -> bool {
         return rt::msg_i8_point(this._obj, rt::sel(#str_ptr("containsPoint:\0")), point) != (0 as i8);

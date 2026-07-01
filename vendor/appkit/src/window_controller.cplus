@@ -82,10 +82,30 @@ impl WindowController {
         return WindowController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithWindow:\0")), window.raw()) };
     }
 
-    // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithWindowNibName:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithWindowNibName:owner:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithWindowNibPath:owner:`: extra init variant (one `new` per type)
+    fn new_with_coder(coder: *u8) -> WindowController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindowController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WindowController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
+    }
+
+    fn new_with_window_nib_name(window_nib_name: str) -> WindowController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindowController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WindowController { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithWindowNibName:\0")), bridge::nsstring(window_nib_name)) };
+    }
+
+    fn new_with_window_nib_name_owner(window_nib_name: str, owner: *u8) -> WindowController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindowController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WindowController { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithWindowNibName:owner:\0")), bridge::nsstring(window_nib_name), owner) };
+    }
+
+    fn new_with_window_nib_path_owner(window_nib_path: str, owner: *u8) -> WindowController {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindowController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return WindowController { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithWindowNibPath:owner:\0")), bridge::nsstring(window_nib_path), owner) };
+    }
+
     fn set_document_edited(this, dirty_flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setDocumentEdited:\0")), dirty_flag as i8);
     }

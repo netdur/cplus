@@ -6,6 +6,15 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+// `NSBitmapFormat` (NS_OPTIONS) — bitfield; combine with `|`.
+const bitmap_format_alpha_first: u64 = 1 as u64;
+const bitmap_format_alpha_nonpremultiplied: u64 = 2 as u64;
+const bitmap_format_floating_point_samples: u64 = 4 as u64;
+const bitmap_format_sixteen_bit_little_endian: u64 = 256 as u64;
+const bitmap_format_thirty_two_bit_little_endian: u64 = 512 as u64;
+const bitmap_format_sixteen_bit_big_endian: u64 = 1024 as u64;
+const bitmap_format_thirty_two_bit_big_endian: u64 = 2048 as u64;
+
 // `NSTIFFCompression` (NS_ENUM)
 enum TIFFCompression {
     None,
@@ -68,15 +77,6 @@ fn color_rendering_intent_from_raw(raw: i64) -> ColorRenderingIntent {
     if raw == (4 as i64) { return ColorRenderingIntent::Saturation; }
     return ColorRenderingIntent::Default;
 }
-
-// `NSBitmapFormat` (NS_OPTIONS) — bitfield; combine with `|`.
-const bitmap_format_alpha_first: u64 = 1 as u64;
-const bitmap_format_alpha_nonpremultiplied: u64 = 2 as u64;
-const bitmap_format_floating_point_samples: u64 = 4 as u64;
-const bitmap_format_sixteen_bit_little_endian: u64 = 256 as u64;
-const bitmap_format_thirty_two_bit_little_endian: u64 = 512 as u64;
-const bitmap_format_sixteen_bit_big_endian: u64 = 1024 as u64;
-const bitmap_format_thirty_two_bit_big_endian: u64 = 2048 as u64;
 
 // `NSBitmapImageFileType` (NS_ENUM)
 enum BitmapImageFileType {
@@ -160,10 +160,15 @@ impl BitmapImageRep {
         return BitmapImageRep { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFocusedViewRect:\0")), rect) };
     }
 
-    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithCGImage:`: extra init variant (one `new` per type)
-    // SKIPPED `initWithCIImage:`: extra init variant (one `new` per type)
+    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
+    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
+    // SKIPPED `initWithCGImage:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
+    fn new_with_c_i_image(ci_image: CIImage) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCIImage:\0")), ci_image.raw()) };
+    }
+
     // SKIPPED `imageRepsWithData:`: return `NSArray<NSImageRep *> * _Nonnull` — generic collection
     fn image_rep_with_data(data: *u8) -> option::Option[BitmapImageRep] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSBitmapImageRep\0")), rt::sel(#str_ptr("imageRepWithData:\0")), data);
@@ -173,7 +178,12 @@ impl BitmapImageRep {
         return option::some(BitmapImageRep { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `initWithData:`: extra init variant (one `new` per type)
+    fn new_with_data(data: *u8) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithData:\0")), data) };
+    }
+
     fn get_bitmap_data_planes(this, data: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getBitmapDataPlanes:\0")), data);
     }
