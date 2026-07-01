@@ -1523,11 +1523,12 @@ fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
 
 // `NSTableViewDataSource` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `tableView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
-// SKIPPED `tableView:pasteboardWriterForRow:`: return `id<NSPasteboardWriting> _Nullable` not modelled
-// SKIPPED `tableView:draggingSession:willBeginAtPoint:forRowIndexes:`: arg `NSPoint` not modelled
-// SKIPPED `tableView:draggingSession:endedAtPoint:operation:`: arg `NSPoint` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_point_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Point, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_point_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Point, u64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, u64) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -1538,6 +1539,9 @@ extern fn cplus_add_method_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8
 fn TableViewDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
 fn TableViewDataSource_noop_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 { return { 0 as *u8 }; }
 fn TableViewDataSource_noop_v_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) { return; }
+fn TableViewDataSource_noop_id_id_i64(user: *u8, a0: *u8, a1: i64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDataSource_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) { return; }
+fn TableViewDataSource_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
 fn TableViewDataSource_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn TableViewDataSource_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
 fn TableViewDataSource_noop_u64_id_id_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> u64 { return 0 as u64; }
@@ -1548,6 +1552,9 @@ struct TableViewDataSource {
     number_of_rows_in_table_view: fn(*u8, *u8) -> i64,
     table_view_object_value_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
     table_view_set_object_value_for_table_column_row: fn(*u8, *u8, *u8, *u8, i64),
+    table_view_pasteboard_writer_for_row: fn(*u8, *u8, i64) -> *u8,
+    table_view_dragging_session_will_begin_at_point_for_row_indexes: fn(*u8, *u8, *u8, rt::Point, *u8),
+    table_view_dragging_session_ended_at_point_operation: fn(*u8, *u8, *u8, rt::Point, u64),
     table_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
     table_view_write_rows_with_indexes_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     table_view_validate_drop_proposed_row_proposed_drop_operation: fn(*u8, *u8, *u8, i64, u64) -> u64,
@@ -1557,7 +1564,7 @@ struct TableViewDataSource {
 }
 
 fn TableViewDataSource_new(user: *u8) -> TableViewDataSource {
-    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_id, table_view_object_value_for_table_column_row: TableViewDataSource_noop_id_id_id_i64, table_view_set_object_value_for_table_column_row: TableViewDataSource_noop_v_id_id_id_i64, table_view_update_dragging_items_for_drag: TableViewDataSource_noop_v_id_id, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_id_id_id, table_view_validate_drop_proposed_row_proposed_drop_operation: TableViewDataSource_noop_u64_id_id_i64_u64, table_view_accept_drop_row_drop_operation: TableViewDataSource_noop_i8_id_id_i64_u64, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_id_id_id, user: user };
+    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_id, table_view_object_value_for_table_column_row: TableViewDataSource_noop_id_id_id_i64, table_view_set_object_value_for_table_column_row: TableViewDataSource_noop_v_id_id_id_i64, table_view_pasteboard_writer_for_row: TableViewDataSource_noop_id_id_i64, table_view_dragging_session_will_begin_at_point_for_row_indexes: TableViewDataSource_noop_v_id_id_point_id, table_view_dragging_session_ended_at_point_operation: TableViewDataSource_noop_v_id_id_point_u64, table_view_update_dragging_items_for_drag: TableViewDataSource_noop_v_id_id, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_id_id_id, table_view_validate_drop_proposed_row_proposed_drop_operation: TableViewDataSource_noop_u64_id_id_i64_u64, table_view_accept_drop_row_drop_operation: TableViewDataSource_noop_i8_id_id_i64_u64, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl TableViewDataSource {
@@ -1571,6 +1578,18 @@ impl TableViewDataSource {
     }
     fn set_table_view_set_object_value_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, *u8, i64)) {
         this.table_view_set_object_value_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_pasteboard_writer_for_row(ref this, handler: fn(*u8, *u8, i64) -> *u8) {
+        this.table_view_pasteboard_writer_for_row = handler;
+        return;
+    }
+    fn set_table_view_dragging_session_will_begin_at_point_for_row_indexes(ref this, handler: fn(*u8, *u8, *u8, rt::Point, *u8)) {
+        this.table_view_dragging_session_will_begin_at_point_for_row_indexes = handler;
+        return;
+    }
+    fn set_table_view_dragging_session_ended_at_point_operation(ref this, handler: fn(*u8, *u8, *u8, rt::Point, u64)) {
+        this.table_view_dragging_session_ended_at_point_operation = handler;
         return;
     }
     fn set_table_view_update_dragging_items_for_drag(ref this, handler: fn(*u8, *u8, *u8)) {
@@ -1614,6 +1633,29 @@ fn TableViewDataSource_table_view_object_value_for_table_column_row_imp(self_obj
 fn TableViewDataSource_table_view_set_object_value_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) {
     let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
     let f: fn(*u8, *u8, *u8, *u8, i64) = { (*c).table_view_set_object_value_for_table_column_row };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TableViewDataSource_table_view_pasteboard_writer_for_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> *u8 {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, i64) -> *u8 = { (*c).table_view_pasteboard_writer_for_row };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn TableViewDataSource_table_view_dragging_session_will_begin_at_point_for_row_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8, rt::Point, *u8) = { (*c).table_view_dragging_session_will_begin_at_point_for_row_indexes };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TableViewDataSource_table_view_dragging_session_ended_at_point_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, *u8, rt::Point, u64) = { (*c).table_view_dragging_session_ended_at_point_operation };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3);
     return;
@@ -1663,6 +1705,9 @@ fn create_TableViewDataSource(ctx: *TableViewDataSource) -> *u8 {
         let add_number_of_rows_in_table_view: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSource_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
         let add_table_view_object_value_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0")), TableViewDataSource_table_view_object_value_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
         let add_table_view_set_object_value_for_table_column_row: i8 = cplus_add_method_v_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:setObjectValue:forTableColumn:row:\0")), TableViewDataSource_table_view_set_object_value_for_table_column_row_imp, #str_ptr("v@:@@@q\0"));
+        let add_table_view_pasteboard_writer_for_row: i8 = cplus_add_method_id_id_i64(cls, rt::sel(#str_ptr("tableView:pasteboardWriterForRow:\0")), TableViewDataSource_table_view_pasteboard_writer_for_row_imp, #str_ptr("@@:@q\0"));
+        let add_table_view_dragging_session_will_begin_at_point_for_row_indexes: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("tableView:draggingSession:willBeginAtPoint:forRowIndexes:\0")), TableViewDataSource_table_view_dragging_session_will_begin_at_point_for_row_indexes_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
+        let add_table_view_dragging_session_ended_at_point_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("tableView:draggingSession:endedAtPoint:operation:\0")), TableViewDataSource_table_view_dragging_session_ended_at_point_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
         let add_table_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:updateDraggingItemsForDrag:\0")), TableViewDataSource_table_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
         let add_table_view_write_rows_with_indexes_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("tableView:writeRowsWithIndexes:toPasteboard:\0")), TableViewDataSource_table_view_write_rows_with_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
         let add_table_view_validate_drop_proposed_row_proposed_drop_operation: i8 = cplus_add_method_u64_id_id_i64_u64(cls, rt::sel(#str_ptr("tableView:validateDrop:proposedRow:proposedDropOperation:\0")), TableViewDataSource_table_view_validate_drop_proposed_row_proposed_drop_operation_imp, #str_ptr("Q@:@@qQ\0"));

@@ -881,13 +881,14 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
 
 // `NSOutlineViewDataSource` delegate protocol -> runtime class-synthesis helper.
 // SKIPPED `outlineView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
-// SKIPPED `outlineView:pasteboardWriterForItem:`: return `id<NSPasteboardWriting> _Nullable` not modelled
-// SKIPPED `outlineView:draggingSession:willBeginAtPoint:forItems:`: arg `NSPoint` not modelled
-// SKIPPED `outlineView:draggingSession:endedAtPoint:operation:`: arg `NSPoint` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64, *u8) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_point_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Point, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_point_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Point, u64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -899,6 +900,8 @@ fn OutlineViewDataSource_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { retu
 fn OutlineViewDataSource_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
 fn OutlineViewDataSource_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
 fn OutlineViewDataSource_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDataSource_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) { return; }
+fn OutlineViewDataSource_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
 fn OutlineViewDataSource_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
 fn OutlineViewDataSource_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn OutlineViewDataSource_noop_u64_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) -> u64 { return 0 as u64; }
@@ -912,6 +915,9 @@ struct OutlineViewDataSource {
     outline_view_set_object_value_for_table_column_by_item: fn(*u8, *u8, *u8, *u8, *u8),
     outline_view_item_for_persistent_object: fn(*u8, *u8, *u8) -> *u8,
     outline_view_persistent_object_for_item: fn(*u8, *u8, *u8) -> *u8,
+    outline_view_pasteboard_writer_for_item: fn(*u8, *u8, *u8) -> *u8,
+    outline_view_dragging_session_will_begin_at_point_for_items: fn(*u8, *u8, *u8, rt::Point, *u8),
+    outline_view_dragging_session_ended_at_point_operation: fn(*u8, *u8, *u8, rt::Point, u64),
     outline_view_write_items_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
     outline_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
     outline_view_validate_drop_proposed_item_proposed_child_index: fn(*u8, *u8, *u8, *u8, i64) -> u64,
@@ -921,7 +927,7 @@ struct OutlineViewDataSource {
 }
 
 fn OutlineViewDataSource_new(user: *u8) -> OutlineViewDataSource {
-    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_id_id, outline_view_child_of_item: OutlineViewDataSource_noop_id_id_i64_id, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_id_id, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_id_id_id, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_id_id_id_id, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_id_id, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_id_id_id, outline_view_update_dragging_items_for_drag: OutlineViewDataSource_noop_v_id_id, outline_view_validate_drop_proposed_item_proposed_child_index: OutlineViewDataSource_noop_u64_id_id_id_i64, outline_view_accept_drop_item_child_index: OutlineViewDataSource_noop_i8_id_id_id_i64, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_id_id_id, user: user };
+    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_id_id, outline_view_child_of_item: OutlineViewDataSource_noop_id_id_i64_id, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_id_id, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_id_id_id, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_id_id_id_id, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_id_id, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_pasteboard_writer_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_dragging_session_will_begin_at_point_for_items: OutlineViewDataSource_noop_v_id_id_point_id, outline_view_dragging_session_ended_at_point_operation: OutlineViewDataSource_noop_v_id_id_point_u64, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_id_id_id, outline_view_update_dragging_items_for_drag: OutlineViewDataSource_noop_v_id_id, outline_view_validate_drop_proposed_item_proposed_child_index: OutlineViewDataSource_noop_u64_id_id_id_i64, outline_view_accept_drop_item_child_index: OutlineViewDataSource_noop_i8_id_id_id_i64, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl OutlineViewDataSource {
@@ -951,6 +957,18 @@ impl OutlineViewDataSource {
     }
     fn set_outline_view_persistent_object_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.outline_view_persistent_object_for_item = handler;
+        return;
+    }
+    fn set_outline_view_pasteboard_writer_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
+        this.outline_view_pasteboard_writer_for_item = handler;
+        return;
+    }
+    fn set_outline_view_dragging_session_will_begin_at_point_for_items(ref this, handler: fn(*u8, *u8, *u8, rt::Point, *u8)) {
+        this.outline_view_dragging_session_will_begin_at_point_for_items = handler;
+        return;
+    }
+    fn set_outline_view_dragging_session_ended_at_point_operation(ref this, handler: fn(*u8, *u8, *u8, rt::Point, u64)) {
+        this.outline_view_dragging_session_ended_at_point_operation = handler;
         return;
     }
     fn set_outline_view_write_items_to_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
@@ -1027,6 +1045,29 @@ fn OutlineViewDataSource_outline_view_persistent_object_for_item_imp(self_obj: *
     return f(u, a0, a1);
 }
 
+fn OutlineViewDataSource_outline_view_pasteboard_writer_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).outline_view_pasteboard_writer_for_item };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn OutlineViewDataSource_outline_view_dragging_session_will_begin_at_point_for_items_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8, rt::Point, *u8) = { (*c).outline_view_dragging_session_will_begin_at_point_for_items };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn OutlineViewDataSource_outline_view_dragging_session_ended_at_point_operation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, *u8, rt::Point, u64) = { (*c).outline_view_dragging_session_ended_at_point_operation };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
 fn OutlineViewDataSource_outline_view_write_items_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
     let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).outline_view_write_items_to_pasteboard };
@@ -1075,6 +1116,9 @@ fn create_OutlineViewDataSource(ctx: *OutlineViewDataSource) -> *u8 {
         let add_outline_view_set_object_value_for_table_column_by_item: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:setObjectValue:forTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_set_object_value_for_table_column_by_item_imp, #str_ptr("v@:@@@@\0"));
         let add_outline_view_item_for_persistent_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:itemForPersistentObject:\0")), OutlineViewDataSource_outline_view_item_for_persistent_object_imp, #str_ptr("@@:@@\0"));
         let add_outline_view_persistent_object_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:persistentObjectForItem:\0")), OutlineViewDataSource_outline_view_persistent_object_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_pasteboard_writer_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:pasteboardWriterForItem:\0")), OutlineViewDataSource_outline_view_pasteboard_writer_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_dragging_session_will_begin_at_point_for_items: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("outlineView:draggingSession:willBeginAtPoint:forItems:\0")), OutlineViewDataSource_outline_view_dragging_session_will_begin_at_point_for_items_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
+        let add_outline_view_dragging_session_ended_at_point_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("outlineView:draggingSession:endedAtPoint:operation:\0")), OutlineViewDataSource_outline_view_dragging_session_ended_at_point_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
         let add_outline_view_write_items_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("outlineView:writeItems:toPasteboard:\0")), OutlineViewDataSource_outline_view_write_items_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
         let add_outline_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:updateDraggingItemsForDrag:\0")), OutlineViewDataSource_outline_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
         let add_outline_view_validate_drop_proposed_item_proposed_child_index: i8 = cplus_add_method_u64_id_id_id_i64(cls, rt::sel(#str_ptr("outlineView:validateDrop:proposedItem:proposedChildIndex:\0")), OutlineViewDataSource_outline_view_validate_drop_proposed_item_proposed_child_index_imp, #str_ptr("Q@:@@@q\0"));

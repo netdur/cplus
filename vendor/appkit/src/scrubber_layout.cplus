@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "objc/synthesis" as synth;
 
 // `NSScrubber` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Scrubber {
@@ -215,5 +216,49 @@ impl ScrubberProportionalLayout {
     fn drop(ref this) {
         rt::release(this._obj);
     }
+}
+
+// `NSScrubberFlowLayoutDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_size_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64) -> rt::Size, types: *u8) -> i8;
+
+fn ScrubberFlowLayoutDelegate_noop_size_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> rt::Size { return rt::Size { w: 0 as f64, h: 0 as f64 }; }
+
+struct ScrubberFlowLayoutDelegate {
+    scrubber_layout_size_for_item_at_index: fn(*u8, *u8, *u8, i64) -> rt::Size,
+    opaque user: *u8,
+}
+
+fn ScrubberFlowLayoutDelegate_new(user: *u8) -> ScrubberFlowLayoutDelegate {
+    return ScrubberFlowLayoutDelegate { scrubber_layout_size_for_item_at_index: ScrubberFlowLayoutDelegate_noop_size_id_id_i64, user: user };
+}
+
+impl ScrubberFlowLayoutDelegate {
+    fn set_scrubber_layout_size_for_item_at_index(ref this, handler: fn(*u8, *u8, *u8, i64) -> rt::Size) {
+        this.scrubber_layout_size_for_item_at_index = handler;
+        return;
+    }
+}
+
+fn ScrubberFlowLayoutDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn ScrubberFlowLayoutDelegate_scrubber_layout_size_for_item_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> rt::Size {
+    let c: *ScrubberFlowLayoutDelegate = { synth::get_associated(self_obj, ScrubberFlowLayoutDelegate_key()) as *ScrubberFlowLayoutDelegate };
+    let f: fn(*u8, *u8, *u8, i64) -> rt::Size = { (*c).scrubber_layout_size_for_item_at_index };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1, a2);
+}
+
+fn create_ScrubberFlowLayoutDelegate(ctx: *ScrubberFlowLayoutDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_ScrubberFlowLayoutDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_scrubber_layout_size_for_item_at_index: i8 = cplus_add_method_size_id_id_i64(cls, rt::sel(#str_ptr("scrubber:layout:sizeForItemAtIndex:\0")), ScrubberFlowLayoutDelegate_scrubber_layout_size_for_item_at_index_imp, #str_ptr("{CGSize=dd}@:@@q\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, ScrubberFlowLayoutDelegate_key(), { ctx as *u8 });
+    return d;
 }
 

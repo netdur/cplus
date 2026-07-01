@@ -926,7 +926,8 @@ impl Image {
 }
 
 // `NSImageDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `imageDidNotDraw:inRect:`: arg `NSRect` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Rect) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -934,11 +935,13 @@ extern fn cplus_add_method_v_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64), types: *u8) -> i8;
 
+fn ImageDelegate_noop_id_id_rect(user: *u8, a0: *u8, a1: rt::Rect) -> *u8 { return { 0 as *u8 }; }
 fn ImageDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn ImageDelegate_noop_v_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) { return; }
 fn ImageDelegate_noop_v_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) { return; }
 
 struct ImageDelegate {
+    image_did_not_draw_in_rect: fn(*u8, *u8, rt::Rect) -> *u8,
     image_will_load_representation: fn(*u8, *u8, *u8),
     image_did_load_representation_header: fn(*u8, *u8, *u8),
     image_did_load_part_of_representation_with_valid_rows: fn(*u8, *u8, *u8, i64),
@@ -947,10 +950,14 @@ struct ImageDelegate {
 }
 
 fn ImageDelegate_new(user: *u8) -> ImageDelegate {
-    return ImageDelegate { image_will_load_representation: ImageDelegate_noop_v_id_id, image_did_load_representation_header: ImageDelegate_noop_v_id_id, image_did_load_part_of_representation_with_valid_rows: ImageDelegate_noop_v_id_id_i64, image_did_load_representation_with_status: ImageDelegate_noop_v_id_id_u64, user: user };
+    return ImageDelegate { image_did_not_draw_in_rect: ImageDelegate_noop_id_id_rect, image_will_load_representation: ImageDelegate_noop_v_id_id, image_did_load_representation_header: ImageDelegate_noop_v_id_id, image_did_load_part_of_representation_with_valid_rows: ImageDelegate_noop_v_id_id_i64, image_did_load_representation_with_status: ImageDelegate_noop_v_id_id_u64, user: user };
 }
 
 impl ImageDelegate {
+    fn set_image_did_not_draw_in_rect(ref this, handler: fn(*u8, *u8, rt::Rect) -> *u8) {
+        this.image_did_not_draw_in_rect = handler;
+        return;
+    }
     fn set_image_will_load_representation(ref this, handler: fn(*u8, *u8, *u8)) {
         this.image_will_load_representation = handler;
         return;
@@ -970,6 +977,13 @@ impl ImageDelegate {
 }
 
 fn ImageDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn ImageDelegate_image_did_not_draw_in_rect_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Rect) -> *u8 {
+    let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
+    let f: fn(*u8, *u8, rt::Rect) -> *u8 = { (*c).image_did_not_draw_in_rect };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
 
 fn ImageDelegate_image_will_load_representation_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *ImageDelegate = { synth::get_associated(self_obj, ImageDelegate_key()) as *ImageDelegate };
@@ -1008,6 +1022,7 @@ fn create_ImageDelegate(ctx: *ImageDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_image_did_not_draw_in_rect: i8 = cplus_add_method_id_id_rect(cls, rt::sel(#str_ptr("imageDidNotDraw:inRect:\0")), ImageDelegate_image_did_not_draw_in_rect_imp, #str_ptr("@@:@{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
         let add_image_will_load_representation: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("image:willLoadRepresentation:\0")), ImageDelegate_image_will_load_representation_imp, #str_ptr("v@:@@\0"));
         let add_image_did_load_representation_header: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("image:didLoadRepresentationHeader:\0")), ImageDelegate_image_did_load_representation_header_imp, #str_ptr("v@:@@\0"));
         let add_image_did_load_part_of_representation_with_valid_rows: i8 = cplus_add_method_v_id_id_i64(cls, rt::sel(#str_ptr("image:didLoadPartOfRepresentation:withValidRows:\0")), ImageDelegate_image_did_load_part_of_representation_with_valid_rows_imp, #str_ptr("v@:@@q\0"));

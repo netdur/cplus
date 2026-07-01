@@ -6,6 +6,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "objc/synthesis" as synth;
 
 // `NSTextStorageEditActions` (NS_OPTIONS) — bitfield; combine with `|`.
 const text_storage_edit_actions_n_s_text_storage_edited_attributes: u64 = 1 as u64;
@@ -146,6 +147,65 @@ impl TextStorage {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextStorageObserver:\0")), text_storage_observer.raw());
     }
 
+}
+
+// `NSTextStorageDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_u64_range_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, u64, rt::Range, i64), types: *u8) -> i8;
+
+fn TextStorageDelegate_noop_v_id_u64_range_i64(user: *u8, a0: *u8, a1: u64, a2: rt::Range, a3: i64) { return; }
+
+struct TextStorageDelegate {
+    text_storage_will_process_editing_range_change_in_length: fn(*u8, *u8, u64, rt::Range, i64),
+    text_storage_did_process_editing_range_change_in_length: fn(*u8, *u8, u64, rt::Range, i64),
+    opaque user: *u8,
+}
+
+fn TextStorageDelegate_new(user: *u8) -> TextStorageDelegate {
+    return TextStorageDelegate { text_storage_will_process_editing_range_change_in_length: TextStorageDelegate_noop_v_id_u64_range_i64, text_storage_did_process_editing_range_change_in_length: TextStorageDelegate_noop_v_id_u64_range_i64, user: user };
+}
+
+impl TextStorageDelegate {
+    fn set_text_storage_will_process_editing_range_change_in_length(ref this, handler: fn(*u8, *u8, u64, rt::Range, i64)) {
+        this.text_storage_will_process_editing_range_change_in_length = handler;
+        return;
+    }
+    fn set_text_storage_did_process_editing_range_change_in_length(ref this, handler: fn(*u8, *u8, u64, rt::Range, i64)) {
+        this.text_storage_did_process_editing_range_change_in_length = handler;
+        return;
+    }
+}
+
+fn TextStorageDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn TextStorageDelegate_text_storage_will_process_editing_range_change_in_length_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: u64, a2: rt::Range, a3: i64) {
+    let c: *TextStorageDelegate = { synth::get_associated(self_obj, TextStorageDelegate_key()) as *TextStorageDelegate };
+    let f: fn(*u8, *u8, u64, rt::Range, i64) = { (*c).text_storage_will_process_editing_range_change_in_length };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TextStorageDelegate_text_storage_did_process_editing_range_change_in_length_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: u64, a2: rt::Range, a3: i64) {
+    let c: *TextStorageDelegate = { synth::get_associated(self_obj, TextStorageDelegate_key()) as *TextStorageDelegate };
+    let f: fn(*u8, *u8, u64, rt::Range, i64) = { (*c).text_storage_did_process_editing_range_change_in_length };
+    let u: *u8 = { (*c).user };
+    f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn create_TextStorageDelegate(ctx: *TextStorageDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextStorageDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_text_storage_will_process_editing_range_change_in_length: i8 = cplus_add_method_v_id_u64_range_i64(cls, rt::sel(#str_ptr("textStorage:willProcessEditing:range:changeInLength:\0")), TextStorageDelegate_text_storage_will_process_editing_range_change_in_length_imp, #str_ptr("v@:@Q{_NSRange=QQ}q\0"));
+        let add_text_storage_did_process_editing_range_change_in_length: i8 = cplus_add_method_v_id_u64_range_i64(cls, rt::sel(#str_ptr("textStorage:didProcessEditing:range:changeInLength:\0")), TextStorageDelegate_text_storage_did_process_editing_range_change_in_length_imp, #str_ptr("v@:@Q{_NSRange=QQ}q\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, TextStorageDelegate_key(), { ctx as *u8 });
+    return d;
 }
 
 // `NSTextStorageObserving` (ObjC protocol). Non-owning handle; `opaque`, no drop.

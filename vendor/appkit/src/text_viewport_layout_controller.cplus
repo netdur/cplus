@@ -123,16 +123,19 @@ impl TextLocation {
 }
 
 // `NSTextViewportLayoutControllerDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `viewportBoundsForTextViewportLayoutController:`: return `CGRect` not modelled
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_rect_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> rt::Rect, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
 
+fn TextViewportLayoutControllerDelegate_noop_rect_id(user: *u8, a0: *u8) -> rt::Rect { return rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 }; }
 fn TextViewportLayoutControllerDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn TextViewportLayoutControllerDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct TextViewportLayoutControllerDelegate {
+    viewport_bounds_for_text_viewport_layout_controller: fn(*u8, *u8) -> rt::Rect,
     text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: fn(*u8, *u8, *u8),
     text_viewport_layout_controller_will_layout: fn(*u8, *u8),
     text_viewport_layout_controller_did_layout: fn(*u8, *u8),
@@ -140,10 +143,14 @@ struct TextViewportLayoutControllerDelegate {
 }
 
 fn TextViewportLayoutControllerDelegate_new(user: *u8) -> TextViewportLayoutControllerDelegate {
-    return TextViewportLayoutControllerDelegate { text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: TextViewportLayoutControllerDelegate_noop_v_id_id, text_viewport_layout_controller_will_layout: TextViewportLayoutControllerDelegate_noop_v_id, text_viewport_layout_controller_did_layout: TextViewportLayoutControllerDelegate_noop_v_id, user: user };
+    return TextViewportLayoutControllerDelegate { viewport_bounds_for_text_viewport_layout_controller: TextViewportLayoutControllerDelegate_noop_rect_id, text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: TextViewportLayoutControllerDelegate_noop_v_id_id, text_viewport_layout_controller_will_layout: TextViewportLayoutControllerDelegate_noop_v_id, text_viewport_layout_controller_did_layout: TextViewportLayoutControllerDelegate_noop_v_id, user: user };
 }
 
 impl TextViewportLayoutControllerDelegate {
+    fn set_viewport_bounds_for_text_viewport_layout_controller(ref this, handler: fn(*u8, *u8) -> rt::Rect) {
+        this.viewport_bounds_for_text_viewport_layout_controller = handler;
+        return;
+    }
     fn set_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment(ref this, handler: fn(*u8, *u8, *u8)) {
         this.text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment = handler;
         return;
@@ -159,6 +166,13 @@ impl TextViewportLayoutControllerDelegate {
 }
 
 fn TextViewportLayoutControllerDelegate_key() -> *u8 { return { 28672 as *u8 }; }
+
+fn TextViewportLayoutControllerDelegate_viewport_bounds_for_text_viewport_layout_controller_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> rt::Rect {
+    let c: *TextViewportLayoutControllerDelegate = { synth::get_associated(self_obj, TextViewportLayoutControllerDelegate_key()) as *TextViewportLayoutControllerDelegate };
+    let f: fn(*u8, *u8) -> rt::Rect = { (*c).viewport_bounds_for_text_viewport_layout_controller };
+    let u: *u8 = { (*c).user };
+    return f(u, a0);
+}
 
 fn TextViewportLayoutControllerDelegate_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *TextViewportLayoutControllerDelegate = { synth::get_associated(self_obj, TextViewportLayoutControllerDelegate_key()) as *TextViewportLayoutControllerDelegate };
@@ -189,6 +203,7 @@ fn create_TextViewportLayoutControllerDelegate(ctx: *TextViewportLayoutControlle
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_viewport_bounds_for_text_viewport_layout_controller: i8 = cplus_add_method_rect_id(cls, rt::sel(#str_ptr("viewportBoundsForTextViewportLayoutController:\0")), TextViewportLayoutControllerDelegate_viewport_bounds_for_text_viewport_layout_controller_imp, #str_ptr("{CGRect={CGPoint=dd}{CGSize=dd}}@:@\0"));
         let add_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("textViewportLayoutController:configureRenderingSurfaceForTextLayoutFragment:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_configure_rendering_surface_for_text_layout_fragment_imp, #str_ptr("v@:@@\0"));
         let add_text_viewport_layout_controller_will_layout: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewportLayoutControllerWillLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_will_layout_imp, #str_ptr("v@:@\0"));
         let add_text_viewport_layout_controller_did_layout: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewportLayoutControllerDidLayout:\0")), TextViewportLayoutControllerDelegate_text_viewport_layout_controller_did_layout_imp, #str_ptr("v@:@\0"));

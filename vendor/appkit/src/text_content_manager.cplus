@@ -495,3 +495,47 @@ impl TextElementProvider {
 
 }
 
+// `NSTextContentStorageDelegate` delegate protocol -> runtime class-synthesis helper.
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_range(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Range) -> *u8, types: *u8) -> i8;
+
+fn TextContentStorageDelegate_noop_id_id_range(user: *u8, a0: *u8, a1: rt::Range) -> *u8 { return { 0 as *u8 }; }
+
+struct TextContentStorageDelegate {
+    text_content_storage_text_paragraph_with_range: fn(*u8, *u8, rt::Range) -> *u8,
+    opaque user: *u8,
+}
+
+fn TextContentStorageDelegate_new(user: *u8) -> TextContentStorageDelegate {
+    return TextContentStorageDelegate { text_content_storage_text_paragraph_with_range: TextContentStorageDelegate_noop_id_id_range, user: user };
+}
+
+impl TextContentStorageDelegate {
+    fn set_text_content_storage_text_paragraph_with_range(ref this, handler: fn(*u8, *u8, rt::Range) -> *u8) {
+        this.text_content_storage_text_paragraph_with_range = handler;
+        return;
+    }
+}
+
+fn TextContentStorageDelegate_key() -> *u8 { return { 28673 as *u8 }; }
+
+fn TextContentStorageDelegate_text_content_storage_text_paragraph_with_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Range) -> *u8 {
+    let c: *TextContentStorageDelegate = { synth::get_associated(self_obj, TextContentStorageDelegate_key()) as *TextContentStorageDelegate };
+    let f: fn(*u8, *u8, rt::Range) -> *u8 = { (*c).text_content_storage_text_paragraph_with_range };
+    let u: *u8 = { (*c).user };
+    return f(u, a0, a1);
+}
+
+fn create_TextContentStorageDelegate(ctx: *TextContentStorageDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_TextContentStorageDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_text_content_storage_text_paragraph_with_range: i8 = cplus_add_method_id_id_range(cls, rt::sel(#str_ptr("textContentStorage:textParagraphWithRange:\0")), TextContentStorageDelegate_text_content_storage_text_paragraph_with_range_imp, #str_ptr("@@:@{_NSRange=QQ}\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, TextContentStorageDelegate_key(), { ctx as *u8 });
+    return d;
+}
+
