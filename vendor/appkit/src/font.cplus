@@ -199,10 +199,19 @@ impl Font {
         return Font { _obj: rt::msg_id_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("controlContentFontOfSize:\0")), font_size) };
     }
 
-    // SKIPPED `systemFontOfSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `monospacedDigitSystemFontOfSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `systemFontOfSize:weight:width:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `monospacedSystemFontOfSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
+    fn system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
+        return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontOfSize:weight:\0")), font_size, weight) };
+    }
+
+    fn monospaced_digit_system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
+        return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedDigitSystemFontOfSize:weight:\0")), font_size, weight) };
+    }
+
+    // SKIPPED `systemFontOfSize:weight:width:`: msgSend shape `id_f64_f64_f64` not yet modelled
+    fn monospaced_system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
+        return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedSystemFontOfSize:weight:\0")), font_size, weight) };
+    }
+
     fn font_with_size(this, font_size: f64) -> Font {
         return Font::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("fontWithSize:\0")), font_size));
     }
@@ -213,8 +222,14 @@ impl Font {
 
     // SKIPPED `boundingRectForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `advancementForCGGlyph:`: param `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `getBoundingRects:forCGGlyphs:count:`: param `NSRectArray _Nonnull` — unmapped type `NSRectArray`
-    // SKIPPED `getAdvancements:forCGGlyphs:count:`: param `NSSizeArray _Nonnull` — unmapped type `NSSizeArray`
+    fn get_bounding_rects_for_c_g_glyphs_count(this, bounds: *u8, glyphs: *u8, glyph_count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forCGGlyphs:count:\0")), bounds, glyphs, glyph_count);
+    }
+
+    fn get_advancements_for_c_g_glyphs_count(this, advancements: *u8, glyphs: *u8, glyph_count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forCGGlyphs:count:\0")), advancements, glyphs, glyph_count);
+    }
+
     fn set(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("set\0")));
     }
@@ -270,7 +285,10 @@ impl Font {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("numberOfGlyphs\0")));
     }
 
-    // SKIPPED `mostCompatibleStringEncoding`: return `NSStringEncoding` — unmapped type `NSStringEncoding`
+    fn most_compatible_string_encoding(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("mostCompatibleStringEncoding\0")));
+    }
+
     fn covered_character_set(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("coveredCharacterSet\0")));
     }
@@ -327,12 +345,21 @@ impl Font {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVertical\0"))) != (0 as i8);
     }
 
-    // SKIPPED `glyphWithName:`: return `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `boundingRectForGlyph:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `advancementForGlyph:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `getBoundingRects:forGlyphs:count:`: param `NSRectArray _Nonnull` — unmapped type `NSRectArray`
-    // SKIPPED `getAdvancements:forGlyphs:count:`: param `NSSizeArray _Nonnull` — unmapped type `NSSizeArray`
-    // SKIPPED `getAdvancements:forPackedGlyphs:length:`: param `NSSizeArray _Nonnull` — unmapped type `NSSizeArray`
+    // SKIPPED `glyphWithName:`: msgSend shape `u32_id` not yet modelled
+    // SKIPPED `boundingRectForGlyph:`: msgSend shape `rect_u32` not yet modelled
+    // SKIPPED `advancementForGlyph:`: msgSend shape `size_u32` not yet modelled
+    fn get_bounding_rects_for_glyphs_count(this, bounds: *u8, glyphs: *u8, glyph_count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forGlyphs:count:\0")), bounds, glyphs, glyph_count);
+    }
+
+    fn get_advancements_for_glyphs_count(this, advancements: *u8, glyphs: *u8, glyph_count: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forGlyphs:count:\0")), advancements, glyphs, glyph_count);
+    }
+
+    fn get_advancements_for_packed_glyphs_length(this, advancements: *u8, packed_glyphs: *u8, length: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getAdvancements:forPackedGlyphs:length:\0")), advancements, packed_glyphs, length);
+    }
+
     fn screen_font_with_rendering_mode(this, rendering_mode: FontRenderingMode) -> Font {
         return Font::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("screenFontWithRenderingMode:\0")), font_rendering_mode_raw(rendering_mode)));
     }

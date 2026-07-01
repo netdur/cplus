@@ -148,9 +148,9 @@ impl PredicateEditorRowTemplate {
         let n_subpredicates: usize = subpredicates.count();
         var i_subpredicates: usize = 0 as usize;
         while i_subpredicates < n_subpredicates {
-            match subpredicates.at(i_subpredicates) {
-                option::Option[Predicate]::Some(e_subpredicates) => { rt::msg_void_id(arr_subpredicates, add_sel_subpredicates, e_subpredicates.raw()); }
-                option::Option[Predicate]::None => {}
+            match subpredicates.at_ptr(i_subpredicates) {
+                option::Option[*Predicate]::Some(e_subpredicates) => { rt::msg_void_id(arr_subpredicates, add_sel_subpredicates, (*e_subpredicates).raw()); }
+                option::Option[*Predicate]::None => {}
             }
             i_subpredicates = i_subpredicates +% (1 as usize);
         }

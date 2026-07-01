@@ -16,7 +16,7 @@ impl CustomImageRep {
 
     fn from_raw(ptr: *u8) -> CustomImageRep { return CustomImageRep { _obj: ptr }; }
 
-    // SKIPPED `initWithSize:flipped:drawingHandler:`: block method with non-void return
+    // SKIPPED `initWithSize:flipped:drawingHandler:`: block-method msgSend shape not modelled
     fn new_with_draw_selector_delegate(selector: *u8, delegate: *u8) -> CustomImageRep {
         let cls: *u8 = rt::get_class(#str_ptr("NSCustomImageRep\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

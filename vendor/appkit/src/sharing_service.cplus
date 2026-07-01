@@ -44,6 +44,25 @@ fn rect_edge_from_raw(raw: i64) -> RectEdge {
     return RectEdge::MinX;
 }
 
+#[repr(C)]
+struct SharingService_init_with_title_image_alternate_image_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn SharingService_init_with_title_image_alternate_image_handler_invoke(block: *u8) {
+    let bl: *SharingService_init_with_title_image_alternate_image_handler_block = { block as *SharingService_init_with_title_image_alternate_image_handler_block };
+    let f: fn(*u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx);
+    return;
+}
+
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct String {
     opaque _obj: *u8,
@@ -183,7 +202,13 @@ impl SharingService {
         return option::some(SharingService { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `initWithTitle:image:alternateImage:handler:`: block method with non-void return
+    fn init_with_title_image_alternate_image_handler(this, title: str, image: Image, alternate_image: Image, cb: fn(*u8), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SharingService_init_with_title_image_alternate_image_handler_block = SharingService_init_with_title_image_alternate_image_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SharingService_init_with_title_image_alternate_image_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("initWithTitle:image:alternateImage:handler:\0")), bridge::nsstring(title), image.raw(), alternate_image.raw(), bp);
+    }
+
     fn new() -> SharingService {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingService\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

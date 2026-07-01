@@ -92,9 +92,9 @@ impl TreeController {
         let n_nodes: usize = nodes.count();
         var i_nodes: usize = 0 as usize;
         while i_nodes < n_nodes {
-            match nodes.at(i_nodes) {
-                option::Option[TreeNode]::Some(e_nodes) => { rt::msg_void_id(arr_nodes, add_sel_nodes, e_nodes.raw()); }
-                option::Option[TreeNode]::None => {}
+            match nodes.at_ptr(i_nodes) {
+                option::Option[*TreeNode]::Some(e_nodes) => { rt::msg_void_id(arr_nodes, add_sel_nodes, (*e_nodes).raw()); }
+                option::Option[*TreeNode]::None => {}
             }
             i_nodes = i_nodes +% (1 as usize);
         }
@@ -166,9 +166,9 @@ impl TreeController {
         let n_sort_descriptors: usize = sort_descriptors.count();
         var i_sort_descriptors: usize = 0 as usize;
         while i_sort_descriptors < n_sort_descriptors {
-            match sort_descriptors.at(i_sort_descriptors) {
-                option::Option[SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, e_sort_descriptors.raw()); }
-                option::Option[SortDescriptor]::None => {}
+            match sort_descriptors.at_ptr(i_sort_descriptors) {
+                option::Option[*SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, (*e_sort_descriptors).raw()); }
+                option::Option[*SortDescriptor]::None => {}
             }
             i_sort_descriptors = i_sort_descriptors +% (1 as usize);
         }

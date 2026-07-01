@@ -6,6 +6,25 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+#[repr(C)]
+struct StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn StoryboardSegue_segue_with_identifier_source_destination_perform_handler_invoke(block: *u8) {
+    let bl: *StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block = { block as *StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block };
+    let f: fn(*u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx);
+    return;
+}
+
 // `NSStoryboardSegue` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct StoryboardSegue {
     _obj: *u8,
@@ -16,7 +35,13 @@ impl StoryboardSegue {
 
     fn from_raw(ptr: *u8) -> StoryboardSegue { return StoryboardSegue { _obj: ptr }; }
 
-    // SKIPPED `segueWithIdentifier:source:destination:performHandler:`: block method with non-void return
+    fn segue_with_identifier_source_destination_perform_handler(identifier: str, source_controller: *u8, destination_controller: *u8, cb: fn(*u8), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block = StoryboardSegue_segue_with_identifier_source_destination_perform_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StoryboardSegue_segue_with_identifier_source_destination_perform_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSStoryboardSegue\0")), rt::sel(#str_ptr("segueWithIdentifier:source:destination:performHandler:\0")), bridge::nsstring(identifier), source_controller, destination_controller, bp);
+    }
+
     fn new(identifier: str, source_controller: *u8, destination_controller: *u8) -> StoryboardSegue {
         let cls: *u8 = rt::get_class(#str_ptr("NSStoryboardSegue\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

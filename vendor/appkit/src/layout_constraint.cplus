@@ -118,9 +118,9 @@ impl LayoutConstraint {
         let n_constraints: usize = constraints.count();
         var i_constraints: usize = 0 as usize;
         while i_constraints < n_constraints {
-            match constraints.at(i_constraints) {
-                option::Option[LayoutConstraint]::Some(e_constraints) => { rt::msg_void_id(arr_constraints, add_sel_constraints, e_constraints.raw()); }
-                option::Option[LayoutConstraint]::None => {}
+            match constraints.at_ptr(i_constraints) {
+                option::Option[*LayoutConstraint]::Some(e_constraints) => { rt::msg_void_id(arr_constraints, add_sel_constraints, (*e_constraints).raw()); }
+                option::Option[*LayoutConstraint]::None => {}
             }
             i_constraints = i_constraints +% (1 as usize);
         }
@@ -133,17 +133,23 @@ impl LayoutConstraint {
         let n_constraints: usize = constraints.count();
         var i_constraints: usize = 0 as usize;
         while i_constraints < n_constraints {
-            match constraints.at(i_constraints) {
-                option::Option[LayoutConstraint]::Some(e_constraints) => { rt::msg_void_id(arr_constraints, add_sel_constraints, e_constraints.raw()); }
-                option::Option[LayoutConstraint]::None => {}
+            match constraints.at_ptr(i_constraints) {
+                option::Option[*LayoutConstraint]::Some(e_constraints) => { rt::msg_void_id(arr_constraints, add_sel_constraints, (*e_constraints).raw()); }
+                option::Option[*LayoutConstraint]::None => {}
             }
             i_constraints = i_constraints +% (1 as usize);
         }
         rt::msg_void_id(rt::get_class(#str_ptr("NSLayoutConstraint\0")), rt::sel(#str_ptr("deactivateConstraints:\0")), arr_constraints);
     }
 
-    // SKIPPED `priority`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `setPriority:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
+    fn priority(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("priority\0")));
+    }
+
+    fn set_priority(this, priority: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setPriority:\0")), priority);
+    }
+
     fn should_be_archived(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("shouldBeArchived\0"))) != (0 as i8);
     }

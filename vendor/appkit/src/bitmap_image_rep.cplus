@@ -162,7 +162,12 @@ impl BitmapImageRep {
 
     // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
     // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
-    // SKIPPED `initWithCGImage:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
+    fn new_with_c_g_image(cg_image: *u8) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCGImage:\0")), cg_image) };
+    }
+
     fn new_with_c_i_image(ci_image: CIImage) -> BitmapImageRep {
         let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

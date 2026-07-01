@@ -30,7 +30,7 @@ impl TextLineFragment {
         return TextLineFragment { _obj: rt::msg_id(alloced, rt::sel(#str_ptr("init\0"))) };
     }
 
-    // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
+    // SKIPPED `drawAtPoint:inContext:`: msgSend shape `void_point_id` not yet modelled
     // SKIPPED `locationForCharacterAtIndex:`: msgSend shape `point_i64` not yet modelled
     fn character_index_for_point(this, point: rt::Point) -> i64 {
         return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);

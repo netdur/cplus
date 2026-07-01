@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSUserInterfaceCompressionOptions` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct UserInterfaceCompressionOptions {
@@ -90,8 +91,22 @@ impl UserInterfaceCompression {
 
     fn from_raw(ptr: *u8) -> UserInterfaceCompression { return UserInterfaceCompression { _obj: ptr }; }
 
-    // SKIPPED `compressWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
-    // SKIPPED `minimumSizeWithPrioritizedCompressionOptions:`: param `NSArray<NSUserInterfaceCompressionOptions *> * _Nonnull` — generic collection
+    fn compress_with_prioritized_compression_options(this, prioritized_options: vec::Vec[UserInterfaceCompressionOptions]) {
+        let arr_prioritized_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_prioritized_options: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_prioritized_options: usize = prioritized_options.count();
+        var i_prioritized_options: usize = 0 as usize;
+        while i_prioritized_options < n_prioritized_options {
+            match prioritized_options.at_ptr(i_prioritized_options) {
+                option::Option[*UserInterfaceCompressionOptions]::Some(e_prioritized_options) => { rt::msg_void_id(arr_prioritized_options, add_sel_prioritized_options, (*e_prioritized_options).raw()); }
+                option::Option[*UserInterfaceCompressionOptions]::None => {}
+            }
+            i_prioritized_options = i_prioritized_options +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("compressWithPrioritizedCompressionOptions:\0")), arr_prioritized_options);
+    }
+
+    // SKIPPED `minimumSizeWithPrioritizedCompressionOptions:`: msgSend shape `size_id` not yet modelled
     fn active_compression_options(this) -> UserInterfaceCompressionOptions {
         return UserInterfaceCompressionOptions::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("activeCompressionOptions\0"))));
     }

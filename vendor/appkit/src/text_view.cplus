@@ -699,7 +699,11 @@ impl TextView {
     }
 
     // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: msgSend shape `i8_id_size_i8` not yet modelled
-    // SKIPPED `dragImageForSelectionWithEvent:origin:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
+    fn drag_image_for_selection_with_event_origin(this, event: *u8, origin: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForSelectionWithEvent:origin:\0")), event, origin);
+        return bridge::obj_option(obj);
+    }
+
     fn drag_operation_for_dragging_info_type(this, drag_info: *u8, type_: str) -> u64 {
         return rt::msg_u64_id_id(this._obj, rt::sel(#str_ptr("dragOperationForDraggingInfo:type:\0")), drag_info, bridge::nsstring(type_));
     }
@@ -746,9 +750,9 @@ impl TextView {
         let n_affected_ranges: usize = affected_ranges.count();
         var i_affected_ranges: usize = 0 as usize;
         while i_affected_ranges < n_affected_ranges {
-            match affected_ranges.at(i_affected_ranges) {
-                option::Option[Value]::Some(e_affected_ranges) => { rt::msg_void_id(arr_affected_ranges, add_sel_affected_ranges, e_affected_ranges.raw()); }
-                option::Option[Value]::None => {}
+            match affected_ranges.at_ptr(i_affected_ranges) {
+                option::Option[*Value]::Some(e_affected_ranges) => { rt::msg_void_id(arr_affected_ranges, add_sel_affected_ranges, (*e_affected_ranges).raw()); }
+                option::Option[*Value]::None => {}
             }
             i_affected_ranges = i_affected_ranges +% (1 as usize);
         }
@@ -779,9 +783,9 @@ impl TextView {
         let n_selected_ranges: usize = selected_ranges.count();
         var i_selected_ranges: usize = 0 as usize;
         while i_selected_ranges < n_selected_ranges {
-            match selected_ranges.at(i_selected_ranges) {
-                option::Option[Value]::Some(e_selected_ranges) => { rt::msg_void_id(arr_selected_ranges, add_sel_selected_ranges, e_selected_ranges.raw()); }
-                option::Option[Value]::None => {}
+            match selected_ranges.at_ptr(i_selected_ranges) {
+                option::Option[*Value]::Some(e_selected_ranges) => { rt::msg_void_id(arr_selected_ranges, add_sel_selected_ranges, (*e_selected_ranges).raw()); }
+                option::Option[*Value]::None => {}
             }
             i_selected_ranges = i_selected_ranges +% (1 as usize);
         }
@@ -1069,7 +1073,7 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleAutomaticSpellingCorrection:\0")), sender);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
+    // SKIPPED `checkTextInRange:types:options:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nonnull` — generic collection
     // SKIPPED `handleTextCheckingResults:forRange:types:options:orthography:wordCount:`: param `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     fn order_front_substitutions_panel(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontSubstitutionsPanel:\0")), sender);
@@ -1139,8 +1143,14 @@ impl TextView {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutomaticSpellingCorrectionEnabled:\0")), automatic_spelling_correction_enabled as i8);
     }
 
-    // SKIPPED `enabledTextCheckingTypes`: return `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
-    // SKIPPED `setEnabledTextCheckingTypes:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
+    fn enabled_text_checking_types(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("enabledTextCheckingTypes\0")));
+    }
+
+    fn set_enabled_text_checking_types(this, enabled_text_checking_types: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setEnabledTextCheckingTypes:\0")), enabled_text_checking_types);
+    }
+
     fn uses_find_panel(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesFindPanel\0"))) != (0 as i8);
     }

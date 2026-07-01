@@ -71,7 +71,10 @@ impl ATSTypesetter {
         return ATSTypesetter { _obj: rt::msg_id(rt::get_class(#str_ptr("NSATSTypesetter\0")), rt::sel(#str_ptr("sharedTypesetter\0"))) };
     }
 
-    // SKIPPED `lineFragmentRectForProposedRect:remainingRect:`: param `NSRectPointer _Null_unspecified` — unmapped type `NSRectPointer`
+    fn line_fragment_rect_for_proposed_rect_remaining_rect(this, proposed_rect: rt::Rect, remaining_rect: *u8) -> rt::Rect {
+        return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:remainingRect:\0")), proposed_rect, remaining_rect);
+    }
+
     fn substitute_font_for_font(this, original_font: *u8) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("substituteFontForFont:\0")), original_font);
     }
@@ -173,7 +176,7 @@ impl ATSTypesetter {
     }
 
     // SKIPPED `hyphenationFactorForGlyphAtIndex:`: msgSend shape `f32_u64` not yet modelled
-    // SKIPPED `hyphenCharacterForGlyphAtIndex:`: return `UTF32Char` — unmapped type `UTF32Char`
+    // SKIPPED `hyphenCharacterForGlyphAtIndex:`: msgSend shape `u32_u64` not yet modelled
     // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_u64_id_rect_point_u64` not yet modelled
     fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits(this, glyphs_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8) -> u64 {
         return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:\0")), glyphs_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer);

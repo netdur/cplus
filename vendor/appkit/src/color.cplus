@@ -78,6 +78,25 @@ fn color_system_effect_from_raw(raw: i64) -> ColorSystemEffect {
     return ColorSystemEffect::None;
 }
 
+#[repr(C)]
+struct Color_color_with_name_dynamic_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Color_color_with_name_dynamic_provider_invoke(block: *u8, a0: *u8) {
+    let bl: *Color_color_with_name_dynamic_provider_block = { block as *Color_color_with_name_dynamic_provider_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSImage` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Image {
     opaque _obj: *u8,
@@ -189,7 +208,13 @@ impl Color {
         return option::some(Color { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `colorWithName:dynamicProvider:`: block method with non-void return
+    fn color_with_name_dynamic_provider(color_name: str, cb: fn(*u8, *u8), ctx: *u8) -> Color {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Color_color_with_name_dynamic_provider_block = Color_color_with_name_dynamic_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Color_color_with_name_dynamic_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return Color::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithName:dynamicProvider:\0")), bridge::nsstring(color_name), bp));
+    }
+
     fn color_with_device_white_alpha(white: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceWhite:alpha:\0")), white, alpha)) };
     }
@@ -327,7 +352,14 @@ impl Color {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawSwatchInRect:\0")), rect);
     }
 
-    // SKIPPED `colorWithCGColor:`: param `CGColorRef _Nonnull` — unmapped type `CGColorRef`
+    fn color_with_c_g_color(cg_color: *u8) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCGColor:\0")), cg_color);
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color { _obj: rt::retain(obj) });
+    }
+
     fn type_(this) -> ColorType {
         return color_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
     }

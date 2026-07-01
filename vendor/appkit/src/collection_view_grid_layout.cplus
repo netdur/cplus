@@ -118,9 +118,9 @@ impl CollectionViewGridLayout {
         let n_background_colors: usize = background_colors.count();
         var i_background_colors: usize = 0 as usize;
         while i_background_colors < n_background_colors {
-            match background_colors.at(i_background_colors) {
-                option::Option[Color]::Some(e_background_colors) => { rt::msg_void_id(arr_background_colors, add_sel_background_colors, e_background_colors.raw()); }
-                option::Option[Color]::None => {}
+            match background_colors.at_ptr(i_background_colors) {
+                option::Option[*Color]::Some(e_background_colors) => { rt::msg_void_id(arr_background_colors, add_sel_background_colors, (*e_background_colors).raw()); }
+                option::Option[*Color]::None => {}
             }
             i_background_colors = i_background_colors +% (1 as usize);
         }

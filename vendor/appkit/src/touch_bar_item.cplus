@@ -102,8 +102,14 @@ impl TouchBarItem {
 
     // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `identifier`: return `API_AVAILABLE NSTouchBarItemIdentifier` — unmapped type `API_AVAILABLE NSTouchBarItemIdentifier`
-    // SKIPPED `visibilityPriority`: return `NSTouchBarItemPriority` — unmapped type `NSTouchBarItemPriority`
-    // SKIPPED `setVisibilityPriority:`: param `NSTouchBarItemPriority` — unmapped type `NSTouchBarItemPriority`
+    fn visibility_priority(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("visibilityPriority\0")));
+    }
+
+    fn set_visibility_priority(this, visibility_priority: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setVisibilityPriority:\0")), visibility_priority);
+    }
+
     fn view(this) -> option::Option[View] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
         if obj == { 0 as *u8 } {

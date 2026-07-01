@@ -206,7 +206,10 @@ impl Screen {
         return rt::msg_rect(this._obj, rt::sel(#str_ptr("auxiliaryTopRightArea\0")));
     }
 
-    // SKIPPED `CGDirectDisplayID`: return `CGDirectDisplayID` — unmapped type `CGDirectDisplayID`
+    fn c_g_direct_display_i_d(this) -> u32 {
+        return rt::msg_u32(this._obj, rt::sel(#str_ptr("CGDirectDisplayID\0")));
+    }
+
     fn maximum_extended_dynamic_range_color_component_value(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("maximumExtendedDynamicRangeColorComponentValue\0")));
     }

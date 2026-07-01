@@ -320,8 +320,11 @@ impl ImageSymbolConfiguration {
 
     fn from_raw(ptr: *u8) -> ImageSymbolConfiguration { return ImageSymbolConfiguration { _obj: ptr }; }
 
-    // SKIPPED `configurationWithPointSize:weight:scale:`: param `NSFontWeight` — unmapped type `NSFontWeight`
-    // SKIPPED `configurationWithPointSize:weight:`: param `NSFontWeight` — unmapped type `NSFontWeight`
+    // SKIPPED `configurationWithPointSize:weight:scale:`: msgSend shape `id_f64_f64_i64` not yet modelled
+    fn configuration_with_point_size_weight(point_size: f64, weight: f64) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithPointSize:weight:\0")), point_size, weight) };
+    }
+
     fn configuration_with_text_style_scale(style: str, scale: ImageSymbolScale) -> ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_id_i64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithTextStyle:scale:\0")), bridge::nsstring(style), image_symbol_scale_raw(scale)) };
     }
@@ -352,9 +355,9 @@ impl ImageSymbolConfiguration {
         let n_palette_colors: usize = palette_colors.count();
         var i_palette_colors: usize = 0 as usize;
         while i_palette_colors < n_palette_colors {
-            match palette_colors.at(i_palette_colors) {
-                option::Option[Color]::Some(e_palette_colors) => { rt::msg_void_id(arr_palette_colors, add_sel_palette_colors, e_palette_colors.raw()); }
-                option::Option[Color]::None => {}
+            match palette_colors.at_ptr(i_palette_colors) {
+                option::Option[*Color]::Some(e_palette_colors) => { rt::msg_void_id(arr_palette_colors, add_sel_palette_colors, (*e_palette_colors).raw()); }
+                option::Option[*Color]::None => {}
             }
             i_palette_colors = i_palette_colors +% (1 as usize);
         }
@@ -460,7 +463,7 @@ impl Image {
         return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDataIgnoringOrientation:\0")), data) };
     }
 
-    // SKIPPED `imageWithSize:flipped:drawingHandler:`: block method with non-void return
+    // SKIPPED `imageWithSize:flipped:drawingHandler:`: block-method msgSend shape not modelled
     fn set_name(this, string: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(string)) != (0 as i8);
     }
@@ -489,9 +492,9 @@ impl Image {
         let n_image_reps: usize = image_reps.count();
         var i_image_reps: usize = 0 as usize;
         while i_image_reps < n_image_reps {
-            match image_reps.at(i_image_reps) {
-                option::Option[ImageRep]::Some(e_image_reps) => { rt::msg_void_id(arr_image_reps, add_sel_image_reps, e_image_reps.raw()); }
-                option::Option[ImageRep]::None => {}
+            match image_reps.at_ptr(i_image_reps) {
+                option::Option[*ImageRep]::Some(e_image_reps) => { rt::msg_void_id(arr_image_reps, add_sel_image_reps, (*e_image_reps).raw()); }
+                option::Option[*ImageRep]::None => {}
             }
             i_image_reps = i_image_reps +% (1 as usize);
         }
@@ -510,7 +513,7 @@ impl Image {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard) != (0 as i8);
     }
 
-    // SKIPPED `initWithCGImage:size:`: param `CGImageRef _Nonnull` — unmapped type `CGImageRef`
+    // SKIPPED `initWithCGImage:size:`: init arg shape not yet modelled
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
@@ -727,7 +730,12 @@ impl Image {
         return out;
     }
 
-    // SKIPPED `initWithIconRef:`: param `IconRef _Nonnull` — unmapped type `IconRef`
+    fn new_with_icon_ref(icon_ref: *u8) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIconRef:\0")), icon_ref) };
+    }
+
     fn best_representation_for_device(this, device_description: *u8) -> option::Option[ImageRep] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("bestRepresentationForDevice:\0")), device_description);
         if obj == { 0 as *u8 } {

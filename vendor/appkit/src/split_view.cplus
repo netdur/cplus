@@ -74,8 +74,8 @@ impl SplitView {
         rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setPosition:ofDividerAtIndex:\0")), position, divider_index);
     }
 
-    // SKIPPED `holdingPriorityForSubviewAtIndex:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `setHoldingPriority:forSubviewAtIndex:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
+    // SKIPPED `holdingPriorityForSubviewAtIndex:`: msgSend shape `f32_i64` not yet modelled
+    // SKIPPED `setHoldingPriority:forSubviewAtIndex:`: msgSend shape `void_f32_i64` not yet modelled
     fn is_vertical(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVertical\0"))) != (0 as i8);
     }

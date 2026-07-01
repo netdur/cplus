@@ -392,7 +392,10 @@ impl Application {
         rt::msg_void(this._obj, rt::sel(#str_ptr("run\0")));
     }
 
-    // SKIPPED `runModalForWindow:`: return `NSModalResponse` — unmapped type `NSModalResponse`
+    fn run_modal_for_window(this, window: Window) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalForWindow:\0")), window.raw());
+    }
+
     fn stop(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("stop:\0")), sender);
     }
@@ -401,14 +404,26 @@ impl Application {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopModal\0")));
     }
 
-    // SKIPPED `stopModalWithCode:`: param `NSModalResponse` — unmapped type `NSModalResponse`
+    fn stop_modal_with_code(this, return_code: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("stopModalWithCode:\0")), return_code);
+    }
+
     fn abort_modal(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("abortModal\0")));
     }
 
-    // SKIPPED `beginModalSessionForWindow:`: return `NSModalSession _Nonnull` — unmapped type `NSModalSession`
-    // SKIPPED `runModalSession:`: param `NSModalSession _Nonnull` — unmapped type `NSModalSession`
-    // SKIPPED `endModalSession:`: param `NSModalSession _Nonnull` — unmapped type `NSModalSession`
+    fn begin_modal_session_for_window(this, window: Window) -> *u8 {
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("beginModalSessionForWindow:\0")), window.raw());
+    }
+
+    fn run_modal_session(this, session: *u8) -> i64 {
+        return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalSession:\0")), session);
+    }
+
+    fn end_modal_session(this, session: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("endModalSession:\0")), session);
+    }
+
     fn terminate(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
@@ -737,7 +752,10 @@ impl Application {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("runModalForWindow:relativeToWindow:\0")), window.raw(), doc_window.raw());
     }
 
-    // SKIPPED `beginModalSessionForWindow:relativeToWindow:`: return `NSModalSession _Nonnull` — unmapped type `NSModalSession`
+    fn begin_modal_session_for_window_relative_to_window(this, window: Window, doc_window: Window) -> *u8 {
+        return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("beginModalSessionForWindow:relativeToWindow:\0")), window.raw(), doc_window.raw());
+    }
+
     fn application_print_files(this, sender: Application, filenames: vec::Vec[text::Text]) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("application:printFiles:\0")), sender.raw(), bridge::nsarray_of_text(filenames));
     }

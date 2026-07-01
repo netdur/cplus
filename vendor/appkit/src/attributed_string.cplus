@@ -85,7 +85,14 @@ impl AttributedString {
         return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithPath:documentAttributes:\0")), bridge::nsstring(path), dict) };
     }
 
-    // SKIPPED `URLAtIndex:effectiveRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
+    fn u_r_l_at_index_effective_range(this, location: u64, effective_range: *u8) -> option::Option[URL] {
+        let obj: *u8 = rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("URLAtIndex:effectiveRange:\0")), location, effective_range);
+        if obj == { 0 as *u8 } {
+            return option::Option[URL]::None;
+        }
+        return option::some(URL::from_raw(obj));
+    }
+
     fn contains_attachments(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("containsAttachments\0"))) != (0 as i8);
     }

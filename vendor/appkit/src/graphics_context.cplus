@@ -214,7 +214,10 @@ impl GraphicsContext {
         return option::some(GraphicsContext { _obj: obj });
     }
 
-    // SKIPPED `graphicsContextWithCGContext:flipped:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
+    fn graphics_context_with_c_g_context_flipped(graphics_port: *u8, initial_flipped_state: bool) -> GraphicsContext {
+        return GraphicsContext { _obj: rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("graphicsContextWithCGContext:flipped:\0")), graphics_port, initial_flipped_state as i8) };
+    }
+
     fn current_context_drawing_to_screen() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")), rt::sel(#str_ptr("currentContextDrawingToScreen\0"))) != (0 as i8);
     }

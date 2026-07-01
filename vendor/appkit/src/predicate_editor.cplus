@@ -60,9 +60,9 @@ impl PredicateEditor {
         let n_row_templates: usize = row_templates.count();
         var i_row_templates: usize = 0 as usize;
         while i_row_templates < n_row_templates {
-            match row_templates.at(i_row_templates) {
-                option::Option[PredicateEditorRowTemplate]::Some(e_row_templates) => { rt::msg_void_id(arr_row_templates, add_sel_row_templates, e_row_templates.raw()); }
-                option::Option[PredicateEditorRowTemplate]::None => {}
+            match row_templates.at_ptr(i_row_templates) {
+                option::Option[*PredicateEditorRowTemplate]::Some(e_row_templates) => { rt::msg_void_id(arr_row_templates, add_sel_row_templates, (*e_row_templates).raw()); }
+                option::Option[*PredicateEditorRowTemplate]::None => {}
             }
             i_row_templates = i_row_templates +% (1 as usize);
         }

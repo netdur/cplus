@@ -61,7 +61,7 @@ impl GlyphInfo {
         return option::some(GlyphInfo { _obj: obj });
     }
 
-    // SKIPPED `glyphInfoWithGlyph:forFont:baseString:`: param `NSGlyph` — unmapped type `NSGlyph`
+    // SKIPPED `glyphInfoWithGlyph:forFont:baseString:`: msgSend shape `id_u32_id_id` not yet modelled
     // SKIPPED `glyphInfoWithCharacterIdentifier:collection:baseString:`: msgSend shape `id_u64_i64_id` not yet modelled
     fn glyph_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("glyphName\0")));

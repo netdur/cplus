@@ -151,7 +151,7 @@ impl TextLayoutFragment {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateLayout\0")));
     }
 
-    // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
+    // SKIPPED `drawAtPoint:inContext:`: msgSend shape `void_point_id` not yet modelled
     fn frame_for_text_attachment_at_location(this, location: TextLocation) -> rt::Rect {
         return rt::msg_rect_id(this._obj, rt::sel(#str_ptr("frameForTextAttachmentAtLocation:\0")), location.raw());
     }

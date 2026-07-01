@@ -55,7 +55,12 @@ impl ColorPicker {
 
     fn from_raw(ptr: *u8) -> ColorPicker { return ColorPicker { _obj: ptr }; }
 
-    // SKIPPED `initWithPickerMask:colorPanel:`: init arg shape not yet modelled
+    fn new(mask: u64, owning_color_panel: *u8) -> ColorPicker {
+        let cls: *u8 = rt::get_class(#str_ptr("NSColorPicker\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ColorPicker { _obj: rt::msg_id_u64_id(alloced, rt::sel(#str_ptr("initWithPickerMask:colorPanel:\0")), mask, owning_color_panel) };
+    }
+
     fn insert_new_button_image_in(this, new_button_image: *u8, button_cell: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("insertNewButtonImage:in:\0")), new_button_image, button_cell);
     }

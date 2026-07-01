@@ -106,8 +106,14 @@ impl SliderTouchBarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMaximumValueAccessory:\0")), maximum_value_accessory.raw());
     }
 
-    // SKIPPED `valueAccessoryWidth`: return `NSSliderAccessoryWidth` — unmapped type `NSSliderAccessoryWidth`
-    // SKIPPED `setValueAccessoryWidth:`: param `NSSliderAccessoryWidth` — unmapped type `NSSliderAccessoryWidth`
+    fn value_accessory_width(this) -> f64 {
+        return rt::msg_f64(this._obj, rt::sel(#str_ptr("valueAccessoryWidth\0")));
+    }
+
+    fn set_value_accessory_width(this, value_accessory_width: f64) {
+        rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setValueAccessoryWidth:\0")), value_accessory_width);
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

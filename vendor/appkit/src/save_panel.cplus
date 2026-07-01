@@ -183,7 +183,10 @@ impl SavePanel {
         return;
     }
 
-    // SKIPPED `runModal`: return `NSModalResponse` — unmapped type `NSModalResponse`
+    fn run_modal(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
+    }
+
     fn u_r_l(this) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("URL\0")));
         if obj == { 0 as *u8 } {

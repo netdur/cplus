@@ -77,7 +77,12 @@ impl ColorSpace {
         return ColorSpace { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithColorSyncProfile:\0")), prof) };
     }
 
-    // SKIPPED `initWithCGColorSpace:`: param `CGColorSpaceRef _Nonnull` — unmapped type `CGColorSpaceRef`
+    fn new_with_c_g_color_space(cg_color_space: *u8) -> ColorSpace {
+        let cls: *u8 = rt::get_class(#str_ptr("NSColorSpace\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ColorSpace { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCGColorSpace:\0")), cg_color_space) };
+    }
+
     fn available_color_spaces_with_model(model: ColorSpaceModel) -> vec::Vec[ColorSpace] {
         let arr: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("availableColorSpacesWithModel:\0")), color_space_model_raw(model));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

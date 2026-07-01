@@ -343,8 +343,8 @@ impl Menu {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), user_interface_layout_direction_raw(user_interface_layout_direction));
     }
 
-    // SKIPPED `paletteMenuWithColors:titles:selectionHandler:`: block method with non-void return
-    // SKIPPED `paletteMenuWithColors:titles:templateImage:selectionHandler:`: block method with non-void return
+    // SKIPPED `paletteMenuWithColors:titles:selectionHandler:`: leading param `NSArray<NSColor *> * _Nonnull` — generic collection
+    // SKIPPED `paletteMenuWithColors:titles:templateImage:selectionHandler:`: leading param `NSArray<NSColor *> * _Nonnull` — generic collection
     fn presentation_style(this) -> MenuPresentationStyle {
         return menu_presentation_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("presentationStyle\0"))));
     }

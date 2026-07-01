@@ -1179,7 +1179,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endSheet:\0")), sheet_window.raw());
     }
 
-    // SKIPPED `endSheet:returnCode:`: param `NSModalResponse` — unmapped type `NSModalResponse`
+    fn end_sheet_return_code(this, sheet_window: Window, return_code: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("endSheet:returnCode:\0")), sheet_window.raw(), return_code);
+    }
+
     // SKIPPED `standardWindowButton:forStyleMask:`: msgSend shape `id_i64_u64` not yet modelled
     fn standard_window_button(this, b: WindowButton) -> option::Option[Button] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("standardWindowButton:\0")), window_button_raw(b));
@@ -1619,8 +1622,14 @@ impl Window {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBackingType:\0")), backing_store_type_raw(backing_type));
     }
 
-    // SKIPPED `level`: return `NSWindowLevel` — unmapped type `NSWindowLevel`
-    // SKIPPED `setLevel:`: param `NSWindowLevel` — unmapped type `NSWindowLevel`
+    fn level(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("level\0")));
+    }
+
+    fn set_level(this, level: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLevel:\0")), level);
+    }
+
     fn depth_limit(this) -> WindowDepth {
         return window_depth_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("depthLimit\0"))));
     }

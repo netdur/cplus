@@ -105,7 +105,7 @@ impl TextInputClient {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasMarkedText\0"))) != (0 as i8);
     }
 
-    // SKIPPED `attributedSubstringForProposedRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
+    // SKIPPED `attributedSubstringForProposedRange:actualRange:`: msgSend shape `id_range_id` not yet modelled
     fn valid_attributes_for_marked_text(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("validAttributesForMarkedText\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -120,7 +120,7 @@ impl TextInputClient {
         return out;
     }
 
-    // SKIPPED `firstRectForCharacterRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
+    // SKIPPED `firstRectForCharacterRange:actualRange:`: msgSend shape `rect_range_id` not yet modelled
     fn character_index_for_point(this, point: rt::Point) -> u64 {
         return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
     }

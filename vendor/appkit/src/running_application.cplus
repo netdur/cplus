@@ -127,7 +127,14 @@ impl RunningApplication {
         return out;
     }
 
-    // SKIPPED `runningApplicationWithProcessIdentifier:`: param `pid_t` — unmapped type `pid_t`
+    fn running_application_with_process_identifier(pid: i32) -> option::Option[RunningApplication] {
+        let obj: *u8 = rt::msg_id_i32(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("runningApplicationWithProcessIdentifier:\0")), pid);
+        if obj == { 0 as *u8 } {
+            return option::Option[RunningApplication]::None;
+        }
+        return option::some(RunningApplication { _obj: obj });
+    }
+
     fn terminate_automatically_terminable_applications() {
         rt::msg_void(rt::get_class(#str_ptr("NSRunningApplication\0")), rt::sel(#str_ptr("terminateAutomaticallyTerminableApplications\0")));
     }
@@ -182,7 +189,10 @@ impl RunningApplication {
         return option::some(URL::from_raw(obj));
     }
 
-    // SKIPPED `processIdentifier`: return `pid_t` — unmapped type `pid_t`
+    fn process_identifier(this) -> i32 {
+        return rt::msg_i32(this._obj, rt::sel(#str_ptr("processIdentifier\0")));
+    }
+
     fn launch_date(this) -> option::Option[Date] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("launchDate\0")));
         if obj == { 0 as *u8 } {

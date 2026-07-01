@@ -147,6 +147,43 @@ fn event_type_from_raw(raw: i64) -> EventType {
     return EventType::LeftMouseDown;
 }
 
+// `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
+const event_mask_left_mouse_down: u64 = 2 as u64;
+const event_mask_left_mouse_up: u64 = 4 as u64;
+const event_mask_right_mouse_down: u64 = 8 as u64;
+const event_mask_right_mouse_up: u64 = 16 as u64;
+const event_mask_mouse_moved: u64 = 32 as u64;
+const event_mask_left_mouse_dragged: u64 = 64 as u64;
+const event_mask_right_mouse_dragged: u64 = 128 as u64;
+const event_mask_mouse_entered: u64 = 256 as u64;
+const event_mask_mouse_exited: u64 = 512 as u64;
+const event_mask_key_down: u64 = 1024 as u64;
+const event_mask_key_up: u64 = 2048 as u64;
+const event_mask_flags_changed: u64 = 4096 as u64;
+const event_mask_app_kit_defined: u64 = 8192 as u64;
+const event_mask_system_defined: u64 = 16384 as u64;
+const event_mask_application_defined: u64 = 32768 as u64;
+const event_mask_periodic: u64 = 65536 as u64;
+const event_mask_cursor_update: u64 = 131072 as u64;
+const event_mask_scroll_wheel: u64 = 4194304 as u64;
+const event_mask_tablet_point: u64 = 8388608 as u64;
+const event_mask_tablet_proximity: u64 = 16777216 as u64;
+const event_mask_other_mouse_down: u64 = 33554432 as u64;
+const event_mask_other_mouse_up: u64 = 67108864 as u64;
+const event_mask_other_mouse_dragged: u64 = 134217728 as u64;
+const event_mask_gesture: u64 = 536870912 as u64;
+const event_mask_magnify: u64 = 1073741824 as u64;
+const event_mask_swipe: u64 = 2147483648 as u64;
+const event_mask_rotate: u64 = 262144 as u64;
+const event_mask_begin_gesture: u64 = 524288 as u64;
+const event_mask_end_gesture: u64 = 1048576 as u64;
+const event_mask_smart_magnify: u64 = 4294967296 as u64;
+const event_mask_pressure: u64 = 17179869184 as u64;
+const event_mask_direct_touch: u64 = 137438953472 as u64;
+const event_mask_change_mode: u64 = 274877906944 as u64;
+const event_mask_mouse_cancelled: u64 = 1099511627776 as u64;
+const event_mask_any: u64 = 9223372036854775807 as u64;
+
 // `NSEventPhase` (NS_OPTIONS) — bitfield; combine with `|`.
 const event_phase_none: u64 = 0 as u64;
 const event_phase_began: u64 = 1 as u64;
@@ -227,43 +264,6 @@ fn pointing_device_type_from_raw(raw: i64) -> PointingDeviceType {
     return PointingDeviceType::Unknown;
 }
 
-// `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
-const event_mask_left_mouse_down: u64 = 2 as u64;
-const event_mask_left_mouse_up: u64 = 4 as u64;
-const event_mask_right_mouse_down: u64 = 8 as u64;
-const event_mask_right_mouse_up: u64 = 16 as u64;
-const event_mask_mouse_moved: u64 = 32 as u64;
-const event_mask_left_mouse_dragged: u64 = 64 as u64;
-const event_mask_right_mouse_dragged: u64 = 128 as u64;
-const event_mask_mouse_entered: u64 = 256 as u64;
-const event_mask_mouse_exited: u64 = 512 as u64;
-const event_mask_key_down: u64 = 1024 as u64;
-const event_mask_key_up: u64 = 2048 as u64;
-const event_mask_flags_changed: u64 = 4096 as u64;
-const event_mask_app_kit_defined: u64 = 8192 as u64;
-const event_mask_system_defined: u64 = 16384 as u64;
-const event_mask_application_defined: u64 = 32768 as u64;
-const event_mask_periodic: u64 = 65536 as u64;
-const event_mask_cursor_update: u64 = 131072 as u64;
-const event_mask_scroll_wheel: u64 = 4194304 as u64;
-const event_mask_tablet_point: u64 = 8388608 as u64;
-const event_mask_tablet_proximity: u64 = 16777216 as u64;
-const event_mask_other_mouse_down: u64 = 33554432 as u64;
-const event_mask_other_mouse_up: u64 = 67108864 as u64;
-const event_mask_other_mouse_dragged: u64 = 134217728 as u64;
-const event_mask_gesture: u64 = 536870912 as u64;
-const event_mask_magnify: u64 = 1073741824 as u64;
-const event_mask_swipe: u64 = 2147483648 as u64;
-const event_mask_rotate: u64 = 262144 as u64;
-const event_mask_begin_gesture: u64 = 524288 as u64;
-const event_mask_end_gesture: u64 = 1048576 as u64;
-const event_mask_smart_magnify: u64 = 4294967296 as u64;
-const event_mask_pressure: u64 = 17179869184 as u64;
-const event_mask_direct_touch: u64 = 137438953472 as u64;
-const event_mask_change_mode: u64 = 274877906944 as u64;
-const event_mask_mouse_cancelled: u64 = 1099511627776 as u64;
-const event_mask_any: u64 = 9223372036854775807 as u64;
-
 // `NSPressureBehavior` (NS_ENUM)
 enum PressureBehavior {
     Unknown,
@@ -295,6 +295,44 @@ fn pressure_behavior_from_raw(raw: i64) -> PressureBehavior {
     if raw == (5 as i64) { return PressureBehavior::PrimaryDeepClick; }
     if raw == (6 as i64) { return PressureBehavior::PrimaryDeepDrag; }
     return PressureBehavior::Unknown;
+}
+
+#[repr(C)]
+struct Event_add_global_monitor_for_events_matching_mask_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Event_add_global_monitor_for_events_matching_mask_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Event_add_global_monitor_for_events_matching_mask_handler_block = { block as *Event_add_global_monitor_for_events_matching_mask_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Event_add_local_monitor_for_events_matching_mask_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Event_add_local_monitor_for_events_matching_mask_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Event_add_local_monitor_for_events_matching_mask_handler_block = { block as *Event_add_local_monitor_for_events_matching_mask_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
 }
 
 // `NSGraphicsContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -356,7 +394,14 @@ impl Event {
         return option::some(Event { _obj: obj });
     }
 
-    // SKIPPED `eventWithCGEvent:`: param `CGEventRef _Nonnull` — unmapped type `CGEventRef`
+    fn event_with_c_g_event(cg_event: *u8) -> option::Option[Event] {
+        let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("eventWithCGEvent:\0")), cg_event);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event { _obj: obj });
+    }
+
     // SKIPPED `touchesMatchingPhase:inView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `allTouches`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `touchesForView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
@@ -371,8 +416,22 @@ impl Event {
     // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `unsigned short` — unmapped type `unsigned short`
     // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: msgSend shape `id_i64_point_u64_f64_i64_id_i64_i64_id` not yet modelled
     // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `short` — unmapped type `short`
-    // SKIPPED `addGlobalMonitorForEventsMatchingMask:handler:`: block method with non-void return
-    // SKIPPED `addLocalMonitorForEventsMatchingMask:handler:`: block method with non-void return
+    fn add_global_monitor_for_events_matching_mask_handler(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Event_add_global_monitor_for_events_matching_mask_handler_block = Event_add_global_monitor_for_events_matching_mask_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_global_monitor_for_events_matching_mask_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addGlobalMonitorForEventsMatchingMask:handler:\0")), mask, bp);
+        return bridge::obj_option(obj);
+    }
+
+    fn add_local_monitor_for_events_matching_mask_handler(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Event_add_local_monitor_for_events_matching_mask_handler_block = Event_add_local_monitor_for_events_matching_mask_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_add_local_monitor_for_events_matching_mask_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addLocalMonitorForEventsMatchingMask:handler:\0")), mask, bp);
+        return bridge::obj_option(obj);
+    }
+
     fn remove_monitor(event_monitor: *u8) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("removeMonitor:\0")), event_monitor);
     }

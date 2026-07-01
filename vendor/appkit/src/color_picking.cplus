@@ -127,7 +127,10 @@ impl ColorPickingDefault {
 
     fn from_raw(ptr: *u8) -> ColorPickingDefault { return ColorPickingDefault { _obj: ptr }; }
 
-    // SKIPPED `initWithPickerMask:colorPanel:`: msgSend shape `id_u64_id` not yet modelled
+    fn init_with_picker_mask_color_panel(this, mask: u64, owning_color_panel: ColorPanel) -> *u8 {
+        return rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("initWithPickerMask:colorPanel:\0")), mask, owning_color_panel.raw());
+    }
+
     fn provide_new_button_image(this) -> Image {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("provideNewButtonImage\0"))));
     }

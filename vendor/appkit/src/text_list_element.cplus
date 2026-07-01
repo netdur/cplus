@@ -37,7 +37,21 @@ impl TextListElement {
     }
 
     // SKIPPED `textListElementWithContents:markerAttributes:textList:childElements:`: param `NSDictionary<NSAttributedStringKey,id> * _Nullable` — generic collection
-    // SKIPPED `textListElementWithChildElements:textList:nestingLevel:`: param `NSArray<NSTextListElement *> * _Nonnull` — generic collection
+    fn text_list_element_with_child_elements_text_list_nesting_level(children: vec::Vec[TextListElement], text_list: TextList, nesting_level: i64) -> *u8 {
+        let arr_children: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_children: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_children: usize = children.count();
+        var i_children: usize = 0 as usize;
+        while i_children < n_children {
+            match children.at_ptr(i_children) {
+                option::Option[*TextListElement]::Some(e_children) => { rt::msg_void_id(arr_children, add_sel_children, (*e_children).raw()); }
+                option::Option[*TextListElement]::None => {}
+            }
+            i_children = i_children +% (1 as usize);
+        }
+        return rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSTextListElement\0")), rt::sel(#str_ptr("textListElementWithChildElements:textList:nestingLevel:\0")), arr_children, text_list.raw(), nesting_level);
+    }
+
     fn text_list(this) -> TextList {
         return TextList::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("textList\0"))));
     }

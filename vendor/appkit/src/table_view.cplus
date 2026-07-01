@@ -407,7 +407,21 @@ impl TableView {
     }
 
     // SKIPPED `canDragRowsWithIndexes:atPoint:`: msgSend shape `i8_id_point` not yet modelled
-    // SKIPPED `dragImageForRowsWithIndexes:tableColumns:event:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
+    fn drag_image_for_rows_with_indexes_table_columns_event_offset(this, drag_rows: IndexSet, table_columns: vec::Vec[TableColumn], drag_event: *u8, drag_image_offset: *u8) -> *u8 {
+        let arr_table_columns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_table_columns: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_table_columns: usize = table_columns.count();
+        var i_table_columns: usize = 0 as usize;
+        while i_table_columns < n_table_columns {
+            match table_columns.at_ptr(i_table_columns) {
+                option::Option[*TableColumn]::Some(e_table_columns) => { rt::msg_void_id(arr_table_columns, add_sel_table_columns, (*e_table_columns).raw()); }
+                option::Option[*TableColumn]::None => {}
+            }
+            i_table_columns = i_table_columns +% (1 as usize);
+        }
+        return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRowsWithIndexes:tableColumns:event:offset:\0")), drag_rows.raw(), arr_table_columns, drag_event, drag_image_offset);
+    }
+
     fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
         rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
     }
@@ -737,9 +751,9 @@ impl TableView {
         let n_sort_descriptors: usize = sort_descriptors.count();
         var i_sort_descriptors: usize = 0 as usize;
         while i_sort_descriptors < n_sort_descriptors {
-            match sort_descriptors.at(i_sort_descriptors) {
-                option::Option[SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, e_sort_descriptors.raw()); }
-                option::Option[SortDescriptor]::None => {}
+            match sort_descriptors.at_ptr(i_sort_descriptors) {
+                option::Option[*SortDescriptor]::Some(e_sort_descriptors) => { rt::msg_void_id(arr_sort_descriptors, add_sel_sort_descriptors, (*e_sort_descriptors).raw()); }
+                option::Option[*SortDescriptor]::None => {}
             }
             i_sort_descriptors = i_sort_descriptors +% (1 as usize);
         }
@@ -936,7 +950,11 @@ impl TableView {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedRowEnumerator\0")));
     }
 
-    // SKIPPED `dragImageForRows:event:dragImageOffset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
+    fn drag_image_for_rows_event_drag_image_offset(this, drag_rows: *u8, drag_event: *u8, drag_image_offset: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForRows:event:dragImageOffset:\0")), drag_rows, drag_event, drag_image_offset);
+        return bridge::obj_option(obj);
+    }
+
     fn set_autoresizes_all_columns_to_fit(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAutoresizesAllColumnsToFit:\0")), flag as i8);
     }

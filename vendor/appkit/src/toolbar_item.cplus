@@ -273,8 +273,14 @@ impl ToolbarItem {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setMaxSize:\0")), max_size);
     }
 
-    // SKIPPED `visibilityPriority`: return `NSToolbarItemVisibilityPriority` — unmapped type `NSToolbarItemVisibilityPriority`
-    // SKIPPED `setVisibilityPriority:`: param `NSToolbarItemVisibilityPriority` — unmapped type `NSToolbarItemVisibilityPriority`
+    fn visibility_priority(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("visibilityPriority\0")));
+    }
+
+    fn set_visibility_priority(this, visibility_priority: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVisibilityPriority:\0")), visibility_priority);
+    }
+
     fn badge(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("badge\0")));
     }

@@ -383,8 +383,14 @@ impl WorkspaceOpenConfiguration {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAppleEvent:\0")), apple_event.raw());
     }
 
-    // SKIPPED `architecture`: return `cpu_type_t` — unmapped type `cpu_type_t`
-    // SKIPPED `setArchitecture:`: param `cpu_type_t` — unmapped type `cpu_type_t`
+    fn architecture(this) -> i32 {
+        return rt::msg_i32(this._obj, rt::sel(#str_ptr("architecture\0")));
+    }
+
+    fn set_architecture(this, architecture: i32) {
+        rt::msg_void_i32(this._obj, rt::sel(#str_ptr("setArchitecture:\0")), architecture);
+    }
+
     fn requires_universal_links(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("requiresUniversalLinks\0"))) != (0 as i8);
     }
@@ -460,9 +466,9 @@ impl Workspace {
         let n_file_u_r_ls: usize = file_u_r_ls.count();
         var i_file_u_r_ls: usize = 0 as usize;
         while i_file_u_r_ls < n_file_u_r_ls {
-            match file_u_r_ls.at(i_file_u_r_ls) {
-                option::Option[URL]::Some(e_file_u_r_ls) => { rt::msg_void_id(arr_file_u_r_ls, add_sel_file_u_r_ls, e_file_u_r_ls.raw()); }
-                option::Option[URL]::None => {}
+            match file_u_r_ls.at_ptr(i_file_u_r_ls) {
+                option::Option[*URL]::Some(e_file_u_r_ls) => { rt::msg_void_id(arr_file_u_r_ls, add_sel_file_u_r_ls, (*e_file_u_r_ls).raw()); }
+                option::Option[*URL]::None => {}
             }
             i_file_u_r_ls = i_file_u_r_ls +% (1 as usize);
         }

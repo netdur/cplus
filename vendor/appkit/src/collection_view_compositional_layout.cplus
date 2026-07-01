@@ -140,6 +140,63 @@ extern fn objc_msg_collection_view_compositional_layout_DirectionalEdgeInsets(re
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_collection_view_compositional_layout_void_DirectionalEdgeInsets(recv: *u8, sel: *u8, a0: DirectionalEdgeInsets);
 
+#[repr(C)]
+struct CollectionLayoutSection_set_visible_items_invalidation_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn CollectionLayoutSection_set_visible_items_invalidation_handler_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) {
+    let bl: *CollectionLayoutSection_set_visible_items_invalidation_handler_block = { block as *CollectionLayoutSection_set_visible_items_invalidation_handler_block };
+    let f: fn(*u8, *u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn CollectionLayoutGroup_custom_group_with_layout_size_item_provider_invoke(block: *u8, a0: i64) {
+    let bl: *CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block = { block as *CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct CollectionViewCompositionalLayout_init_with_section_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn CollectionViewCompositionalLayout_init_with_section_provider_invoke(block: *u8, a0: i64, a1: i64) {
+    let bl: *CollectionViewCompositionalLayout_init_with_section_provider_block = { block as *CollectionViewCompositionalLayout_init_with_section_provider_block };
+    let f: fn(*u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
 // `NSCollectionLayoutSection` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct CollectionLayoutSection {
     _obj: *u8,
@@ -198,7 +255,21 @@ impl CollectionLayoutSection {
         return out;
     }
 
-    // SKIPPED `setBoundarySupplementaryItems:`: param `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
+    fn set_boundary_supplementary_items(this, boundary_supplementary_items: vec::Vec[CollectionLayoutBoundarySupplementaryItem]) {
+        let arr_boundary_supplementary_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_boundary_supplementary_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_boundary_supplementary_items: usize = boundary_supplementary_items.count();
+        var i_boundary_supplementary_items: usize = 0 as usize;
+        while i_boundary_supplementary_items < n_boundary_supplementary_items {
+            match boundary_supplementary_items.at_ptr(i_boundary_supplementary_items) {
+                option::Option[*CollectionLayoutBoundarySupplementaryItem]::Some(e_boundary_supplementary_items) => { rt::msg_void_id(arr_boundary_supplementary_items, add_sel_boundary_supplementary_items, (*e_boundary_supplementary_items).raw()); }
+                option::Option[*CollectionLayoutBoundarySupplementaryItem]::None => {}
+            }
+            i_boundary_supplementary_items = i_boundary_supplementary_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBoundarySupplementaryItems:\0")), arr_boundary_supplementary_items);
+    }
+
     fn supplementaries_follow_content_insets(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supplementariesFollowContentInsets\0"))) != (0 as i8);
     }
@@ -208,7 +279,14 @@ impl CollectionLayoutSection {
     }
 
     // SKIPPED `visibleItemsInvalidationHandler`: return `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
-    // SKIPPED `setVisibleItemsInvalidationHandler:`: param `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
+    fn set_visible_items_invalidation_handler(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CollectionLayoutSection_set_visible_items_invalidation_handler_block = CollectionLayoutSection_set_visible_items_invalidation_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutSection_set_visible_items_invalidation_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVisibleItemsInvalidationHandler:\0")), bp);
+        return;
+    }
+
     fn decoration_items(this) -> vec::Vec[CollectionLayoutDecorationItem] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("decorationItems\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -222,7 +300,21 @@ impl CollectionLayoutSection {
         return out;
     }
 
-    // SKIPPED `setDecorationItems:`: param `NSArray<NSCollectionLayoutDecorationItem *> * _Nonnull` — generic collection
+    fn set_decoration_items(this, decoration_items: vec::Vec[CollectionLayoutDecorationItem]) {
+        let arr_decoration_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_decoration_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_decoration_items: usize = decoration_items.count();
+        var i_decoration_items: usize = 0 as usize;
+        while i_decoration_items < n_decoration_items {
+            match decoration_items.at_ptr(i_decoration_items) {
+                option::Option[*CollectionLayoutDecorationItem]::Some(e_decoration_items) => { rt::msg_void_id(arr_decoration_items, add_sel_decoration_items, (*e_decoration_items).raw()); }
+                option::Option[*CollectionLayoutDecorationItem]::None => {}
+            }
+            i_decoration_items = i_decoration_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDecorationItems:\0")), arr_decoration_items);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -242,13 +334,47 @@ impl CollectionLayoutGroup {
         return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("horizontalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
     }
 
-    // SKIPPED `horizontalGroupWithLayoutSize:subitems:`: param `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
+    fn horizontal_group_with_layout_size_subitems(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
+        let arr_subitems: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_subitems: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_subitems: usize = subitems.count();
+        var i_subitems: usize = 0 as usize;
+        while i_subitems < n_subitems {
+            match subitems.at_ptr(i_subitems) {
+                option::Option[*CollectionLayoutItem]::Some(e_subitems) => { rt::msg_void_id(arr_subitems, add_sel_subitems, (*e_subitems).raw()); }
+                option::Option[*CollectionLayoutItem]::None => {}
+            }
+            i_subitems = i_subitems +% (1 as usize);
+        }
+        return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("horizontalGroupWithLayoutSize:subitems:\0")), layout_size.raw(), arr_subitems);
+    }
+
     fn vertical_group_with_layout_size_subitem_count(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
         return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("verticalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
     }
 
-    // SKIPPED `verticalGroupWithLayoutSize:subitems:`: param `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
-    // SKIPPED `customGroupWithLayoutSize:itemProvider:`: param `NSCollectionLayoutGroupCustomItemProvider _Nonnull` — unmapped type `NSCollectionLayoutGroupCustomItemProvider`
+    fn vertical_group_with_layout_size_subitems(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> *u8 {
+        let arr_subitems: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_subitems: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_subitems: usize = subitems.count();
+        var i_subitems: usize = 0 as usize;
+        while i_subitems < n_subitems {
+            match subitems.at_ptr(i_subitems) {
+                option::Option[*CollectionLayoutItem]::Some(e_subitems) => { rt::msg_void_id(arr_subitems, add_sel_subitems, (*e_subitems).raw()); }
+                option::Option[*CollectionLayoutItem]::None => {}
+            }
+            i_subitems = i_subitems +% (1 as usize);
+        }
+        return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("verticalGroupWithLayoutSize:subitems:\0")), layout_size.raw(), arr_subitems);
+    }
+
+    fn custom_group_with_layout_size_item_provider(layout_size: CollectionLayoutSize, cb: fn(*u8, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block = CollectionLayoutGroup_custom_group_with_layout_size_item_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionLayoutGroup_custom_group_with_layout_size_item_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("customGroupWithLayoutSize:itemProvider:\0")), layout_size.raw(), bp);
+    }
+
     fn new() -> CollectionLayoutGroup {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutGroup\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -274,7 +400,21 @@ impl CollectionLayoutGroup {
         return out;
     }
 
-    // SKIPPED `setSupplementaryItems:`: param `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
+    fn set_supplementary_items(this, supplementary_items: vec::Vec[CollectionLayoutSupplementaryItem]) {
+        let arr_supplementary_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_supplementary_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_supplementary_items: usize = supplementary_items.count();
+        var i_supplementary_items: usize = 0 as usize;
+        while i_supplementary_items < n_supplementary_items {
+            match supplementary_items.at_ptr(i_supplementary_items) {
+                option::Option[*CollectionLayoutSupplementaryItem]::Some(e_supplementary_items) => { rt::msg_void_id(arr_supplementary_items, add_sel_supplementary_items, (*e_supplementary_items).raw()); }
+                option::Option[*CollectionLayoutSupplementaryItem]::None => {}
+            }
+            i_supplementary_items = i_supplementary_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSupplementaryItems:\0")), arr_supplementary_items);
+    }
+
     fn inter_item_spacing(this) -> option::Option[CollectionLayoutSpacing] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("interItemSpacing\0")));
         if obj == { 0 as *u8 } {
@@ -319,7 +459,21 @@ impl CollectionLayoutItem {
         return CollectionLayoutItem { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionLayoutItem\0")), rt::sel(#str_ptr("itemWithLayoutSize:\0")), layout_size.raw())) };
     }
 
-    // SKIPPED `itemWithLayoutSize:supplementaryItems:`: param `NSArray<NSCollectionLayoutSupplementaryItem *> * _Nonnull` — generic collection
+    fn item_with_layout_size_supplementary_items(layout_size: CollectionLayoutSize, supplementary_items: vec::Vec[CollectionLayoutSupplementaryItem]) -> *u8 {
+        let arr_supplementary_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_supplementary_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_supplementary_items: usize = supplementary_items.count();
+        var i_supplementary_items: usize = 0 as usize;
+        while i_supplementary_items < n_supplementary_items {
+            match supplementary_items.at_ptr(i_supplementary_items) {
+                option::Option[*CollectionLayoutSupplementaryItem]::Some(e_supplementary_items) => { rt::msg_void_id(arr_supplementary_items, add_sel_supplementary_items, (*e_supplementary_items).raw()); }
+                option::Option[*CollectionLayoutSupplementaryItem]::None => {}
+            }
+            i_supplementary_items = i_supplementary_items +% (1 as usize);
+        }
+        return rt::msg_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutItem\0")), rt::sel(#str_ptr("itemWithLayoutSize:supplementaryItems:\0")), layout_size.raw(), arr_supplementary_items);
+    }
+
     fn new() -> CollectionLayoutItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -789,7 +943,21 @@ impl CollectionViewCompositionalLayoutConfiguration {
         return out;
     }
 
-    // SKIPPED `setBoundarySupplementaryItems:`: param `NSArray<NSCollectionLayoutBoundarySupplementaryItem *> * _Nonnull` — generic collection
+    fn set_boundary_supplementary_items(this, boundary_supplementary_items: vec::Vec[CollectionLayoutBoundarySupplementaryItem]) {
+        let arr_boundary_supplementary_items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_boundary_supplementary_items: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_boundary_supplementary_items: usize = boundary_supplementary_items.count();
+        var i_boundary_supplementary_items: usize = 0 as usize;
+        while i_boundary_supplementary_items < n_boundary_supplementary_items {
+            match boundary_supplementary_items.at_ptr(i_boundary_supplementary_items) {
+                option::Option[*CollectionLayoutBoundarySupplementaryItem]::Some(e_boundary_supplementary_items) => { rt::msg_void_id(arr_boundary_supplementary_items, add_sel_boundary_supplementary_items, (*e_boundary_supplementary_items).raw()); }
+                option::Option[*CollectionLayoutBoundarySupplementaryItem]::None => {}
+            }
+            i_boundary_supplementary_items = i_boundary_supplementary_items +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBoundarySupplementaryItems:\0")), arr_boundary_supplementary_items);
+    }
+
 }
 
 // `NSCollectionViewCompositionalLayout` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
@@ -814,8 +982,14 @@ impl CollectionViewCompositionalLayout {
         return CollectionViewCompositionalLayout { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithSection:configuration:\0")), section.raw(), configuration.raw()) };
     }
 
-    // SKIPPED `initWithSectionProvider:`: param `NSCollectionViewCompositionalLayoutSectionProvider _Nonnull` — unmapped type `NSCollectionViewCompositionalLayoutSectionProvider`
-    // SKIPPED `initWithSectionProvider:configuration:`: param `NSCollectionViewCompositionalLayoutSectionProvider _Nonnull` — unmapped type `NSCollectionViewCompositionalLayoutSectionProvider`
+    fn init_with_section_provider(this, cb: fn(*u8, i64, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CollectionViewCompositionalLayout_init_with_section_provider_block = CollectionViewCompositionalLayout_init_with_section_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CollectionViewCompositionalLayout_init_with_section_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initWithSectionProvider:\0")), bp);
+    }
+
+    // SKIPPED `initWithSectionProvider:configuration:`: params after the block not modelled
     // SKIPPED `init`: `new` already defined (extra constructor)
     // SKIPPED `new`: method `new` already defined
     fn configuration(this) -> CollectionViewCompositionalLayoutConfiguration {

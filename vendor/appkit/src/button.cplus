@@ -513,8 +513,14 @@ impl Button {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), symbol_configuration);
     }
 
-    // SKIPPED `state`: return `NSControlStateValue` — unmapped type `NSControlStateValue`
-    // SKIPPED `setState:`: param `NSControlStateValue` — unmapped type `NSControlStateValue`
+    fn state(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0")));
+    }
+
+    fn set_state(this, state: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setState:\0")), state);
+    }
+
     fn allows_mixed_state(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowsMixedState\0"))) != (0 as i8);
     }

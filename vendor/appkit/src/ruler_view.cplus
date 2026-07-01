@@ -194,9 +194,9 @@ impl RulerView {
         let n_markers: usize = markers.count();
         var i_markers: usize = 0 as usize;
         while i_markers < n_markers {
-            match markers.at(i_markers) {
-                option::Option[RulerMarker]::Some(e_markers) => { rt::msg_void_id(arr_markers, add_sel_markers, e_markers.raw()); }
-                option::Option[RulerMarker]::None => {}
+            match markers.at_ptr(i_markers) {
+                option::Option[*RulerMarker]::Some(e_markers) => { rt::msg_void_id(arr_markers, add_sel_markers, (*e_markers).raw()); }
+                option::Option[*RulerMarker]::None => {}
             }
             i_markers = i_markers +% (1 as usize);
         }

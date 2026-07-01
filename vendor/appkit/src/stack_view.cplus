@@ -197,9 +197,9 @@ impl StackView {
         let n_views: usize = views.count();
         var i_views: usize = 0 as usize;
         while i_views < n_views {
-            match views.at(i_views) {
-                option::Option[View]::Some(e_views) => { rt::msg_void_id(arr_views, add_sel_views, e_views.raw()); }
-                option::Option[View]::None => {}
+            match views.at_ptr(i_views) {
+                option::Option[*View]::Some(e_views) => { rt::msg_void_id(arr_views, add_sel_views, (*e_views).raw()); }
+                option::Option[*View]::None => {}
             }
             i_views = i_views +% (1 as usize);
         }
@@ -223,12 +223,12 @@ impl StackView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
 
-    // SKIPPED `setVisibilityPriority:forView:`: param `NSStackViewVisibilityPriority` — unmapped type `NSStackViewVisibilityPriority`
-    // SKIPPED `visibilityPriorityForView:`: return `NSStackViewVisibilityPriority` — unmapped type `NSStackViewVisibilityPriority`
-    // SKIPPED `clippingResistancePriorityForOrientation:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `setClippingResistancePriority:forOrientation:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `huggingPriorityForOrientation:`: return `NSLayoutPriority` — unmapped type `NSLayoutPriority`
-    // SKIPPED `setHuggingPriority:forOrientation:`: param `NSLayoutPriority` — unmapped type `NSLayoutPriority`
+    // SKIPPED `setVisibilityPriority:forView:`: msgSend shape `void_f32_id` not yet modelled
+    // SKIPPED `visibilityPriorityForView:`: msgSend shape `f32_id` not yet modelled
+    // SKIPPED `clippingResistancePriorityForOrientation:`: msgSend shape `f32_i64` not yet modelled
+    // SKIPPED `setClippingResistancePriority:forOrientation:`: msgSend shape `void_f32_i64` not yet modelled
+    // SKIPPED `huggingPriorityForOrientation:`: msgSend shape `f32_i64` not yet modelled
+    // SKIPPED `setHuggingPriority:forOrientation:`: msgSend shape `void_f32_i64` not yet modelled
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -304,9 +304,9 @@ impl StackView {
         let n_views: usize = views.count();
         var i_views: usize = 0 as usize;
         while i_views < n_views {
-            match views.at(i_views) {
-                option::Option[View]::Some(e_views) => { rt::msg_void_id(arr_views, add_sel_views, e_views.raw()); }
-                option::Option[View]::None => {}
+            match views.at_ptr(i_views) {
+                option::Option[*View]::Some(e_views) => { rt::msg_void_id(arr_views, add_sel_views, (*e_views).raw()); }
+                option::Option[*View]::None => {}
             }
             i_views = i_views +% (1 as usize);
         }

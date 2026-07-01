@@ -151,9 +151,9 @@ impl SpellChecker {
     }
 
     // SKIPPED `checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:`: param `NSArray<NSDictionary<NSString *,id> *> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
-    // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with non-void return
-    // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: block method with non-void return
+    // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
+    // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: leading param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
+    // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: leading param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
     // SKIPPED `menuForResult:string:options:atLocation:inView:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nullable` — generic collection
     fn user_quotes_array_for_language(this, language: str) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("userQuotesArrayForLanguage:\0")), bridge::nsstring(language));

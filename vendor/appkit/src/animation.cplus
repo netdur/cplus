@@ -102,10 +102,16 @@ impl Animation {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stopAnimation\0")));
     }
 
-    // SKIPPED `addProgressMark:`: param `NSAnimationProgress` — unmapped type `NSAnimationProgress`
-    // SKIPPED `removeProgressMark:`: param `NSAnimationProgress` — unmapped type `NSAnimationProgress`
-    // SKIPPED `startWhenAnimation:reachesProgress:`: param `NSAnimationProgress` — unmapped type `NSAnimationProgress`
-    // SKIPPED `stopWhenAnimation:reachesProgress:`: param `NSAnimationProgress` — unmapped type `NSAnimationProgress`
+    fn add_progress_mark(this, progress_mark: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("addProgressMark:\0")), progress_mark);
+    }
+
+    fn remove_progress_mark(this, progress_mark: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("removeProgressMark:\0")), progress_mark);
+    }
+
+    // SKIPPED `startWhenAnimation:reachesProgress:`: msgSend shape `void_id_f32` not yet modelled
+    // SKIPPED `stopWhenAnimation:reachesProgress:`: msgSend shape `void_id_f32` not yet modelled
     fn clear_start_animation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("clearStartAnimation\0")));
     }
@@ -118,8 +124,14 @@ impl Animation {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isAnimating\0"))) != (0 as i8);
     }
 
-    // SKIPPED `currentProgress`: return `NSAnimationProgress` — unmapped type `NSAnimationProgress`
-    // SKIPPED `setCurrentProgress:`: param `NSAnimationProgress` — unmapped type `NSAnimationProgress`
+    fn current_progress(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("currentProgress\0")));
+    }
+
+    fn set_current_progress(this, current_progress: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setCurrentProgress:\0")), current_progress);
+    }
+
     fn duration(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("duration\0")));
     }

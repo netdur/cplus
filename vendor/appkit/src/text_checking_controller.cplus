@@ -44,7 +44,7 @@ impl TextCheckingController {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("considerTextCheckingForRange:\0")), range);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: param `NSTextCheckingTypes` — unmapped type `NSTextCheckingTypes`
+    // SKIPPED `checkTextInRange:types:options:`: param `NSDictionary<NSTextCheckingOptionKey,id> * _Nonnull` — generic collection
     fn check_text_in_selection(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("checkTextInSelection:\0")), sender);
     }
@@ -91,7 +91,7 @@ impl TextCheckingController {
         return out;
     }
 
-    // SKIPPED `menuAtIndex:clickedOnSelection:effectiveRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
+    // SKIPPED `menuAtIndex:clickedOnSelection:effectiveRange:`: msgSend shape `id_u64_i8_id` not yet modelled
     fn client(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("client\0")));
     }

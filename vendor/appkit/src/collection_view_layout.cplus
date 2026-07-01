@@ -375,9 +375,9 @@ impl CollectionViewLayout {
         let n_update_items: usize = update_items.count();
         var i_update_items: usize = 0 as usize;
         while i_update_items < n_update_items {
-            match update_items.at(i_update_items) {
-                option::Option[CollectionViewUpdateItem]::Some(e_update_items) => { rt::msg_void_id(arr_update_items, add_sel_update_items, e_update_items.raw()); }
-                option::Option[CollectionViewUpdateItem]::None => {}
+            match update_items.at_ptr(i_update_items) {
+                option::Option[*CollectionViewUpdateItem]::Some(e_update_items) => { rt::msg_void_id(arr_update_items, add_sel_update_items, (*e_update_items).raw()); }
+                option::Option[*CollectionViewUpdateItem]::None => {}
             }
             i_update_items = i_update_items +% (1 as usize);
         }

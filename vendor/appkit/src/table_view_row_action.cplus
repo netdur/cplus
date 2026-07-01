@@ -70,7 +70,7 @@ impl TableViewRowAction {
 
     fn from_raw(ptr: *u8) -> TableViewRowAction { return TableViewRowAction { _obj: ptr }; }
 
-    // SKIPPED `rowActionWithStyle:title:handler:`: block method with non-void return
+    // SKIPPED `rowActionWithStyle:title:handler:`: block-method msgSend shape not modelled
     fn style(this) -> TableViewRowActionStyle {
         return table_view_row_action_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("style\0"))));
     }

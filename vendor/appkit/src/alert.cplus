@@ -142,7 +142,10 @@ impl Alert {
         rt::msg_void(this._obj, rt::sel(#str_ptr("layout\0")));
     }
 
-    // SKIPPED `runModal`: return `NSModalResponse` — unmapped type `NSModalResponse`
+    fn run_modal(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("runModal\0")));
+    }
+
     fn begin_sheet_modal_for_window_completion_handler(this, sheet_window: Window, cb: fn(*u8, i64), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Alert_begin_sheet_modal_for_window_completion_handler_block = Alert_begin_sheet_modal_for_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Alert_begin_sheet_modal_for_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };

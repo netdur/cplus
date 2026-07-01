@@ -760,8 +760,11 @@ impl View {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("didCloseMenu:withEvent:\0")), menu, event);
     }
 
-    // SKIPPED `addToolTipRect:owner:userData:`: return `NSToolTipTag` — unmapped type `NSToolTipTag`
-    // SKIPPED `removeToolTip:`: param `NSToolTipTag` — unmapped type `NSToolTipTag`
+    // SKIPPED `addToolTipRect:owner:userData:`: msgSend shape `i64_rect_id_id` not yet modelled
+    fn remove_tool_tip(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeToolTip:\0")), tag);
+    }
+
     fn remove_all_tool_tips(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("removeAllToolTips\0")));
     }
@@ -1227,7 +1230,10 @@ impl View {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("print:\0")), sender);
     }
 
-    // SKIPPED `knowsPageRange:`: param `NSRangePointer _Nonnull` — unmapped type `NSRangePointer`
+    fn knows_page_range(this, range: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("knowsPageRange:\0")), range) != (0 as i8);
+    }
+
     // SKIPPED `adjustPageWidthNew:left:right:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
     // SKIPPED `adjustPageHeightNew:top:bottom:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
     fn rect_for_page(this, page: i64) -> rt::Rect {
@@ -1393,8 +1399,11 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }
 
-    // SKIPPED `addTrackingRect:owner:userData:assumeInside:`: return `NSTrackingRectTag` — unmapped type `NSTrackingRectTag`
-    // SKIPPED `removeTrackingRect:`: param `NSTrackingRectTag` — unmapped type `NSTrackingRectTag`
+    // SKIPPED `addTrackingRect:owner:userData:assumeInside:`: msgSend shape `i64_rect_id_id_i8` not yet modelled
+    fn remove_tracking_rect(this, tag: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeTrackingRect:\0")), tag);
+    }
+
     // SKIPPED `trackingAreas`: return `API_AVAILABLE NSArray<NSTrackingArea *> *` — generic collection
     fn display_link_with_target_selector(this, target: *u8, selector: *u8) -> CADisplayLink {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
@@ -1494,7 +1503,7 @@ impl ViewToolTipOwner {
 
     fn from_raw(ptr: *u8) -> ViewToolTipOwner { return ViewToolTipOwner { _obj: ptr }; }
 
-    // SKIPPED `view:stringForToolTip:point:userData:`: param `NSToolTipTag` — unmapped type `NSToolTipTag`
+    // SKIPPED `view:stringForToolTip:point:userData:`: msgSend shape `id_id_i64_point_id` not yet modelled
 }
 
 // `NSViewContentSelectionInfo` (ObjC protocol). Non-owning handle; `opaque`, no drop.

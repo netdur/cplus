@@ -15,6 +15,63 @@ const table_view_animation_options_n_s_table_view_animation_slide_down: u64 = 32
 const table_view_animation_options_n_s_table_view_animation_slide_left: u64 = 48 as u64;
 const table_view_animation_options_n_s_table_view_animation_slide_right: u64 = 64 as u64;
 
+#[repr(C)]
+struct TableViewDiffableDataSource_init_with_table_view_cell_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64, a3: i64) {
+    let bl: *TableViewDiffableDataSource_init_with_table_view_cell_provider_block = { block as *TableViewDiffableDataSource_init_with_table_view_cell_provider_block };
+    let f: fn(*u8, *u8, *u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2, a3);
+    return;
+}
+
+#[repr(C)]
+struct TableViewDiffableDataSource_set_row_view_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn TableViewDiffableDataSource_set_row_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) {
+    let bl: *TableViewDiffableDataSource_set_row_view_provider_block = { block as *TableViewDiffableDataSource_set_row_view_provider_block };
+    let f: fn(*u8, *u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct TableViewDiffableDataSource_set_section_header_view_provider_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn TableViewDiffableDataSource_set_section_header_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) {
+    let bl: *TableViewDiffableDataSource_set_section_header_view_provider_block = { block as *TableViewDiffableDataSource_set_section_header_view_provider_block };
+    let f: fn(*u8, *u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
 // `NSTableRowView` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct TableRowView {
     opaque _obj: *u8,
@@ -61,7 +118,13 @@ impl TableViewDiffableDataSource {
 
     fn from_raw(ptr: *u8) -> TableViewDiffableDataSource { return TableViewDiffableDataSource { _obj: ptr }; }
 
-    // SKIPPED `initWithTableView:cellProvider:`: param `NSTableViewDiffableDataSourceCellProvider _Nonnull` — unmapped type `NSTableViewDiffableDataSourceCellProvider`
+    fn init_with_table_view_cell_provider(this, table_view: *u8, cb: fn(*u8, *u8, *u8, i64, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TableViewDiffableDataSource_init_with_table_view_cell_provider_block = TableViewDiffableDataSource_init_with_table_view_cell_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithTableView:cellProvider:\0")), table_view, bp);
+    }
+
     fn new() -> TableViewDiffableDataSource {
         let cls: *u8 = rt::get_class(#str_ptr("NSTableViewDiffableDataSource\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -77,9 +140,23 @@ impl TableViewDiffableDataSource {
     // SKIPPED `sectionIdentifierForRow:`: return `SectionIdentifierType _Nullable` — unmapped type `SectionIdentifierType`
     // SKIPPED `rowForSectionIdentifier:`: param `SectionIdentifierType _Nonnull` — unmapped type `SectionIdentifierType`
     // SKIPPED `rowViewProvider`: return `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
-    // SKIPPED `setRowViewProvider:`: param `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
+    fn set_row_view_provider(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TableViewDiffableDataSource_set_row_view_provider_block = TableViewDiffableDataSource_set_row_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_row_view_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRowViewProvider:\0")), bp);
+        return;
+    }
+
     // SKIPPED `sectionHeaderViewProvider`: return `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
-    // SKIPPED `setSectionHeaderViewProvider:`: param `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
+    fn set_section_header_view_provider(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TableViewDiffableDataSource_set_section_header_view_provider_block = TableViewDiffableDataSource_set_section_header_view_provider_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewDiffableDataSource_set_section_header_view_provider_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSectionHeaderViewProvider:\0")), bp);
+        return;
+    }
+
     fn default_row_animation(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("defaultRowAnimation\0")));
     }

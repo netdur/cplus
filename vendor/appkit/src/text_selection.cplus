@@ -100,9 +100,9 @@ impl TextSelection {
         let n_text_ranges: usize = text_ranges.count();
         var i_text_ranges: usize = 0 as usize;
         while i_text_ranges < n_text_ranges {
-            match text_ranges.at(i_text_ranges) {
-                option::Option[TextRange]::Some(e_text_ranges) => { rt::msg_void_id(arr_text_ranges, add_sel_text_ranges, e_text_ranges.raw()); }
-                option::Option[TextRange]::None => {}
+            match text_ranges.at_ptr(i_text_ranges) {
+                option::Option[*TextRange]::Some(e_text_ranges) => { rt::msg_void_id(arr_text_ranges, add_sel_text_ranges, (*e_text_ranges).raw()); }
+                option::Option[*TextRange]::None => {}
             }
             i_text_ranges = i_text_ranges +% (1 as usize);
         }

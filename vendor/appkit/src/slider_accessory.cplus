@@ -6,6 +6,25 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+#[repr(C)]
+struct SliderAccessoryBehavior_behavior_with_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn SliderAccessoryBehavior_behavior_with_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *SliderAccessoryBehavior_behavior_with_handler_block = { block as *SliderAccessoryBehavior_behavior_with_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSSlider` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Slider {
     opaque _obj: *u8,
@@ -32,7 +51,13 @@ impl SliderAccessoryBehavior {
         return SliderAccessoryBehavior { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSliderAccessoryBehavior\0")), rt::sel(#str_ptr("behaviorWithTarget:action:\0")), target, action) };
     }
 
-    // SKIPPED `behaviorWithHandler:`: block method with non-void return
+    fn behavior_with_handler(cb: fn(*u8, *u8), ctx: *u8) -> SliderAccessoryBehavior {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SliderAccessoryBehavior_behavior_with_handler_block = SliderAccessoryBehavior_behavior_with_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SliderAccessoryBehavior_behavior_with_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return SliderAccessoryBehavior::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("NSSliderAccessoryBehavior\0")), rt::sel(#str_ptr("behaviorWithHandler:\0")), bp));
+    }
+
     fn handle_action(this, sender: SliderAccessory) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("handleAction:\0")), sender.raw());
     }

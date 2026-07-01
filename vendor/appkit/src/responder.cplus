@@ -277,9 +277,9 @@ impl Responder {
         let n_event_array: usize = event_array.count();
         var i_event_array: usize = 0 as usize;
         while i_event_array < n_event_array {
-            match event_array.at(i_event_array) {
-                option::Option[Event]::Some(e_event_array) => { rt::msg_void_id(arr_event_array, add_sel_event_array, e_event_array.raw()); }
-                option::Option[Event]::None => {}
+            match event_array.at_ptr(i_event_array) {
+                option::Option[*Event]::Some(e_event_array) => { rt::msg_void_id(arr_event_array, add_sel_event_array, (*e_event_array).raw()); }
+                option::Option[*Event]::None => {}
             }
             i_event_array = i_event_array +% (1 as usize);
         }

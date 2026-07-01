@@ -229,7 +229,7 @@ impl TextCheckingClient {
 
     fn from_raw(ptr: *u8) -> TextCheckingClient { return TextCheckingClient { _obj: ptr }; }
 
-    // SKIPPED `annotatedSubstringForProposedRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
+    // SKIPPED `annotatedSubstringForProposedRange:actualRange:`: msgSend shape `id_range_id` not yet modelled
     // SKIPPED `setAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
     // SKIPPED `addAnnotations:range:`: param `NSDictionary<NSAttributedStringKey,NSString *> * _Nonnull` — generic collection
     fn remove_annotation_range(this, annotation_name: str, range: rt::Range) {
@@ -244,7 +244,7 @@ impl TextCheckingClient {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("selectAndShowRange:\0")), range);
     }
 
-    // SKIPPED `viewForRange:firstRect:actualRange:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
+    // SKIPPED `viewForRange:firstRect:actualRange:`: msgSend shape `id_range_id_id` not yet modelled
     fn candidate_list_touch_bar_item(this) -> option::Option[CandidateListTouchBarItem] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("candidateListTouchBarItem\0")));
         if obj == { 0 as *u8 } {

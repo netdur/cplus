@@ -627,8 +627,14 @@ impl Cell {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setType:\0")), cell_type_raw(type_));
     }
 
-    // SKIPPED `state`: return `NSControlStateValue` — unmapped type `NSControlStateValue`
-    // SKIPPED `setState:`: param `NSControlStateValue` — unmapped type `NSControlStateValue`
+    fn state(this) -> i64 {
+        return rt::msg_i64(this._obj, rt::sel(#str_ptr("state\0")));
+    }
+
+    fn set_state(this, state: i64) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setState:\0")), state);
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

@@ -116,9 +116,9 @@ impl AlignmentFeedbackFilter {
         let n_alignment_feedback_tokens: usize = alignment_feedback_tokens.count();
         var i_alignment_feedback_tokens: usize = 0 as usize;
         while i_alignment_feedback_tokens < n_alignment_feedback_tokens {
-            match alignment_feedback_tokens.at(i_alignment_feedback_tokens) {
-                option::Option[AlignmentFeedbackToken]::Some(e_alignment_feedback_tokens) => { rt::msg_void_id(arr_alignment_feedback_tokens, add_sel_alignment_feedback_tokens, e_alignment_feedback_tokens.raw()); }
-                option::Option[AlignmentFeedbackToken]::None => {}
+            match alignment_feedback_tokens.at_ptr(i_alignment_feedback_tokens) {
+                option::Option[*AlignmentFeedbackToken]::Some(e_alignment_feedback_tokens) => { rt::msg_void_id(arr_alignment_feedback_tokens, add_sel_alignment_feedback_tokens, (*e_alignment_feedback_tokens).raw()); }
+                option::Option[*AlignmentFeedbackToken]::None => {}
             }
             i_alignment_feedback_tokens = i_alignment_feedback_tokens +% (1 as usize);
         }

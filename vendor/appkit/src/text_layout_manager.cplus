@@ -7,6 +7,13 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 
+// `NSTextLayoutFragmentEnumerationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const text_layout_fragment_enumeration_options_none: u64 = 0 as u64;
+const text_layout_fragment_enumeration_options_reverse: u64 = 1 as u64;
+const text_layout_fragment_enumeration_options_estimates_size: u64 = 2 as u64;
+const text_layout_fragment_enumeration_options_ensures_layout: u64 = 4 as u64;
+const text_layout_fragment_enumeration_options_ensures_extra_line_fragment: u64 = 8 as u64;
+
 // `NSTextLayoutManagerSegmentType` (NS_ENUM)
 enum TextLayoutManagerSegmentType {
     Standard,
@@ -35,6 +42,25 @@ const text_layout_manager_segment_options_middle_fragments_excluded: u64 = 2 as 
 const text_layout_manager_segment_options_head_segment_extended: u64 = 4 as u64;
 const text_layout_manager_segment_options_tail_segment_extended: u64 = 8 as u64;
 const text_layout_manager_segment_options_upstream_affinity: u64 = 16 as u64;
+
+#[repr(C)]
+struct TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_invoke(block: *u8, a0: *u8) {
+    let bl: *TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block = { block as *TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
 
 #[repr(C)]
 struct TextLayoutManager_set_rendering_attributes_validator_block {
@@ -187,7 +213,17 @@ impl TextLayoutManager {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `enumerateTextLayoutFragmentsFromLocation:options:usingBlock:`: block method with non-void return
+    fn enumerate_text_layout_fragments_from_location_options_using_block(this, location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block = TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_layout_fragments_from_location_options_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextLayoutFragmentsFromLocation:options:usingBlock:\0")), location.raw(), options, bp);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextLocation]::None;
+        }
+        return option::some(TextLocation::from_raw(obj));
+    }
+
     // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `setRenderingAttributes:forTextRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn add_rendering_attribute_value_for_text_range(this, rendering_attribute: str, value: *u8, text_range: TextRange) {
@@ -210,9 +246,9 @@ impl TextLayoutManager {
         let n_text_elements: usize = text_elements.count();
         var i_text_elements: usize = 0 as usize;
         while i_text_elements < n_text_elements {
-            match text_elements.at(i_text_elements) {
-                option::Option[TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, e_text_elements.raw()); }
-                option::Option[TextElement]::None => {}
+            match text_elements.at_ptr(i_text_elements) {
+                option::Option[*TextElement]::Some(e_text_elements) => { rt::msg_void_id(arr_text_elements, add_sel_text_elements, (*e_text_elements).raw()); }
+                option::Option[*TextElement]::None => {}
             }
             i_text_elements = i_text_elements +% (1 as usize);
         }
@@ -320,9 +356,9 @@ impl TextLayoutManager {
         let n_text_selections: usize = text_selections.count();
         var i_text_selections: usize = 0 as usize;
         while i_text_selections < n_text_selections {
-            match text_selections.at(i_text_selections) {
-                option::Option[TextSelection]::Some(e_text_selections) => { rt::msg_void_id(arr_text_selections, add_sel_text_selections, e_text_selections.raw()); }
-                option::Option[TextSelection]::None => {}
+            match text_selections.at_ptr(i_text_selections) {
+                option::Option[*TextSelection]::Some(e_text_selections) => { rt::msg_void_id(arr_text_selections, add_sel_text_selections, (*e_text_selections).raw()); }
+                option::Option[*TextSelection]::None => {}
             }
             i_text_selections = i_text_selections +% (1 as usize);
         }

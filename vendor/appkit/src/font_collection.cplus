@@ -40,9 +40,9 @@ impl FontCollection {
         let n_query_descriptors: usize = query_descriptors.count();
         var i_query_descriptors: usize = 0 as usize;
         while i_query_descriptors < n_query_descriptors {
-            match query_descriptors.at(i_query_descriptors) {
-                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match query_descriptors.at_ptr(i_query_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, (*e_query_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_query_descriptors = i_query_descriptors +% (1 as usize);
         }
@@ -166,9 +166,9 @@ impl MutableFontCollection {
         let n_query_descriptors: usize = query_descriptors.count();
         var i_query_descriptors: usize = 0 as usize;
         while i_query_descriptors < n_query_descriptors {
-            match query_descriptors.at(i_query_descriptors) {
-                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match query_descriptors.at_ptr(i_query_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, (*e_query_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_query_descriptors = i_query_descriptors +% (1 as usize);
         }
@@ -201,9 +201,9 @@ impl MutableFontCollection {
         let n_descriptors: usize = descriptors.count();
         var i_descriptors: usize = 0 as usize;
         while i_descriptors < n_descriptors {
-            match descriptors.at(i_descriptors) {
-                option::Option[FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, e_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match descriptors.at_ptr(i_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, (*e_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_descriptors = i_descriptors +% (1 as usize);
         }
@@ -216,9 +216,9 @@ impl MutableFontCollection {
         let n_descriptors: usize = descriptors.count();
         var i_descriptors: usize = 0 as usize;
         while i_descriptors < n_descriptors {
-            match descriptors.at(i_descriptors) {
-                option::Option[FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, e_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match descriptors.at_ptr(i_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_descriptors) => { rt::msg_void_id(arr_descriptors, add_sel_descriptors, (*e_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_descriptors = i_descriptors +% (1 as usize);
         }
@@ -248,9 +248,9 @@ impl MutableFontCollection {
         let n_query_descriptors: usize = query_descriptors.count();
         var i_query_descriptors: usize = 0 as usize;
         while i_query_descriptors < n_query_descriptors {
-            match query_descriptors.at(i_query_descriptors) {
-                option::Option[FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, e_query_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match query_descriptors.at_ptr(i_query_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_query_descriptors) => { rt::msg_void_id(arr_query_descriptors, add_sel_query_descriptors, (*e_query_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_query_descriptors = i_query_descriptors +% (1 as usize);
         }
@@ -276,9 +276,9 @@ impl MutableFontCollection {
         let n_exclusion_descriptors: usize = exclusion_descriptors.count();
         var i_exclusion_descriptors: usize = 0 as usize;
         while i_exclusion_descriptors < n_exclusion_descriptors {
-            match exclusion_descriptors.at(i_exclusion_descriptors) {
-                option::Option[FontDescriptor]::Some(e_exclusion_descriptors) => { rt::msg_void_id(arr_exclusion_descriptors, add_sel_exclusion_descriptors, e_exclusion_descriptors.raw()); }
-                option::Option[FontDescriptor]::None => {}
+            match exclusion_descriptors.at_ptr(i_exclusion_descriptors) {
+                option::Option[*FontDescriptor]::Some(e_exclusion_descriptors) => { rt::msg_void_id(arr_exclusion_descriptors, add_sel_exclusion_descriptors, (*e_exclusion_descriptors).raw()); }
+                option::Option[*FontDescriptor]::None => {}
             }
             i_exclusion_descriptors = i_exclusion_descriptors +% (1 as usize);
         }

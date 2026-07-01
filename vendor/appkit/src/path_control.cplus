@@ -202,9 +202,9 @@ impl PathControl {
         let n_cells: usize = cells.count();
         var i_cells: usize = 0 as usize;
         while i_cells < n_cells {
-            match cells.at(i_cells) {
-                option::Option[PathComponentCell]::Some(e_cells) => { rt::msg_void_id(arr_cells, add_sel_cells, e_cells.raw()); }
-                option::Option[PathComponentCell]::None => {}
+            match cells.at_ptr(i_cells) {
+                option::Option[*PathComponentCell]::Some(e_cells) => { rt::msg_void_id(arr_cells, add_sel_cells, (*e_cells).raw()); }
+                option::Option[*PathComponentCell]::None => {}
             }
             i_cells = i_cells +% (1 as usize);
         }

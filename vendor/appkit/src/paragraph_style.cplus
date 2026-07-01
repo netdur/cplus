@@ -423,7 +423,21 @@ impl MutableParagraphStyle {
         return out;
     }
 
-    // SKIPPED `setTabStops:`: param `NSArray<NSTextTab *> * _Nullable` — generic collection
+    fn set_tab_stops(this, tab_stops: vec::Vec[TextTab]) {
+        let arr_tab_stops: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_tab_stops: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_tab_stops: usize = tab_stops.count();
+        var i_tab_stops: usize = 0 as usize;
+        while i_tab_stops < n_tab_stops {
+            match tab_stops.at_ptr(i_tab_stops) {
+                option::Option[*TextTab]::Some(e_tab_stops) => { rt::msg_void_id(arr_tab_stops, add_sel_tab_stops, (*e_tab_stops).raw()); }
+                option::Option[*TextTab]::None => {}
+            }
+            i_tab_stops = i_tab_stops +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTabStops:\0")), arr_tab_stops);
+    }
+
     fn default_tab_interval(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("defaultTabInterval\0")));
     }
@@ -467,9 +481,9 @@ impl MutableParagraphStyle {
         let n_text_lists: usize = text_lists.count();
         var i_text_lists: usize = 0 as usize;
         while i_text_lists < n_text_lists {
-            match text_lists.at(i_text_lists) {
-                option::Option[TextList]::Some(e_text_lists) => { rt::msg_void_id(arr_text_lists, add_sel_text_lists, e_text_lists.raw()); }
-                option::Option[TextList]::None => {}
+            match text_lists.at_ptr(i_text_lists) {
+                option::Option[*TextList]::Some(e_text_lists) => { rt::msg_void_id(arr_text_lists, add_sel_text_lists, (*e_text_lists).raw()); }
+                option::Option[*TextList]::None => {}
             }
             i_text_lists = i_text_lists +% (1 as usize);
         }

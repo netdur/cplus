@@ -115,9 +115,9 @@ impl Pasteboard {
         let n_objects: usize = objects.count();
         var i_objects: usize = 0 as usize;
         while i_objects < n_objects {
-            match objects.at(i_objects) {
-                option::Option[PasteboardWriting]::Some(e_objects) => { rt::msg_void_id(arr_objects, add_sel_objects, e_objects.raw()); }
-                option::Option[PasteboardWriting]::None => {}
+            match objects.at_ptr(i_objects) {
+                option::Option[*PasteboardWriting]::Some(e_objects) => { rt::msg_void_id(arr_objects, add_sel_objects, (*e_objects).raw()); }
+                option::Option[*PasteboardWriting]::None => {}
             }
             i_objects = i_objects +% (1 as usize);
         }

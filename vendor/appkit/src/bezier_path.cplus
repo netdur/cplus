@@ -131,7 +131,10 @@ impl BezierPath {
     }
 
     // SKIPPED `bezierPathWithRoundedRect:xRadius:yRadius:`: msgSend shape `id_rect_f64_f64` not yet modelled
-    // SKIPPED `bezierPathWithCGPath:`: param `CGPathRef _Nonnull` — unmapped type `CGPathRef`
+    fn bezier_path_with_c_g_path(cg_path: *u8) -> BezierPath {
+        return BezierPath { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("bezierPathWithCGPath:\0")), cg_path) };
+    }
+
     fn fill_rect(rect: rt::Rect) {
         rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("fillRect:\0")), rect);
     }
@@ -211,12 +214,15 @@ impl BezierPath {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("transformUsingAffineTransform:\0")), transform.raw());
     }
 
-    // SKIPPED `elementAtIndex:associatedPoints:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
+    // SKIPPED `elementAtIndex:associatedPoints:`: msgSend shape `i64_i64_id` not yet modelled
     fn element_at_index(this, index: i64) -> BezierPathElement {
         return bezier_path_element_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("elementAtIndex:\0")), index));
     }
 
-    // SKIPPED `setAssociatedPoints:atIndex:`: param `NSPointArray _Nullable` — unmapped type `NSPointArray`
+    fn set_associated_points_at_index(this, points: *u8, index: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setAssociatedPoints:atIndex:\0")), points, index);
+    }
+
     fn append_bezier_path(this, path: BezierPath) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendBezierPath:\0")), path.raw());
     }
@@ -225,7 +231,10 @@ impl BezierPath {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
     }
 
-    // SKIPPED `appendBezierPathWithPoints:count:`: param `NSPointArray _Nonnull` — unmapped type `NSPointArray`
+    fn append_bezier_path_with_points_count(this, points: *u8, count: i64) {
+        rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("appendBezierPathWithPoints:count:\0")), points, count);
+    }
+
     fn append_bezier_path_with_oval_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
@@ -377,7 +386,7 @@ impl BezierPath {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setCachesBezierPath:\0")), flag as i8);
     }
 
-    // SKIPPED `appendBezierPathWithGlyph:inFont:`: param `NSGlyph` — unmapped type `NSGlyph`
+    // SKIPPED `appendBezierPathWithGlyph:inFont:`: msgSend shape `void_u32_id` not yet modelled
     fn append_bezier_path_with_glyphs_count_in_font(this, glyphs: *u8, count: i64, font: *u8) {
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyphs:count:inFont:\0")), glyphs, count, font);
     }

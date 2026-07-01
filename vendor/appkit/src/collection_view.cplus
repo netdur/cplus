@@ -203,7 +203,10 @@ impl CollectionView {
     }
 
     // SKIPPED `draggingImageForItemsAtIndexPaths:withEvent:offset:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `draggingImageForItemsAtIndexes:withEvent:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
+    fn dragging_image_for_items_at_indexes_with_event_offset(this, indexes: IndexSet, event: *u8, drag_image_offset: *u8) -> *u8 {
+        return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("draggingImageForItemsAtIndexes:withEvent:offset:\0")), indexes.raw(), event, drag_image_offset);
+    }
+
     // SKIPPED `dataSource`: return `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection
     // SKIPPED `setDataSource:`: param `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection
     // SKIPPED `prefetchDataSource`: return `API_AVAILABLE id<NSCollectionViewPrefetching>` — generic collection

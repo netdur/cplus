@@ -6,6 +6,25 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+#[repr(C)]
+struct StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64),
+    opaque ctx: *u8,
+}
+
+fn StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke(block: *u8, a0: i64, a1: i64) {
+    let bl: *StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block = { block as *StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block };
+    let f: fn(*u8, i64, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
 // `NSStepperTouchBarItem` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct StepperTouchBarItem {
     opaque _obj: *u8,
@@ -20,7 +39,13 @@ impl StepperTouchBarItem {
         return StepperTouchBarItem { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSStepperTouchBarItem\0")), rt::sel(#str_ptr("stepperTouchBarItemWithIdentifier:formatter:\0")), bridge::nsstring(identifier), formatter) };
     }
 
-    // SKIPPED `stepperTouchBarItemWithIdentifier:drawingHandler:`: block method with non-void return
+    fn stepper_touch_bar_item_with_identifier_drawing_handler(identifier: str, cb: fn(*u8, i64, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block = StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return rt::msg_id_id_id(rt::get_class(#str_ptr("NSStepperTouchBarItem\0")), rt::sel(#str_ptr("stepperTouchBarItemWithIdentifier:drawingHandler:\0")), bridge::nsstring(identifier), bp);
+    }
+
     fn max_value(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("maxValue\0")));
     }

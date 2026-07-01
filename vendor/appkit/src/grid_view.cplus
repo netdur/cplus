@@ -161,9 +161,9 @@ impl GridCell {
         let n_custom_placement_constraints: usize = custom_placement_constraints.count();
         var i_custom_placement_constraints: usize = 0 as usize;
         while i_custom_placement_constraints < n_custom_placement_constraints {
-            match custom_placement_constraints.at(i_custom_placement_constraints) {
-                option::Option[LayoutConstraint]::Some(e_custom_placement_constraints) => { rt::msg_void_id(arr_custom_placement_constraints, add_sel_custom_placement_constraints, e_custom_placement_constraints.raw()); }
-                option::Option[LayoutConstraint]::None => {}
+            match custom_placement_constraints.at_ptr(i_custom_placement_constraints) {
+                option::Option[*LayoutConstraint]::Some(e_custom_placement_constraints) => { rt::msg_void_id(arr_custom_placement_constraints, add_sel_custom_placement_constraints, (*e_custom_placement_constraints).raw()); }
+                option::Option[*LayoutConstraint]::None => {}
             }
             i_custom_placement_constraints = i_custom_placement_constraints +% (1 as usize);
         }
