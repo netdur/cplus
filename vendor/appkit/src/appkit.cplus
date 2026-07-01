@@ -17724,7 +17724,44 @@ impl Pasteboard {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("writeObjects:\0")), arr_objects) != (0 as i8);
     }
 
-    // SKIPPED `readObjectsForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
+    fn read_objects_for_classes(this, class_array: vec::Vec[AnyObject], options: string_map::StringMap[AnyObject]) -> option::Option[Array] {
+        let arr_class_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_class_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_class_array: usize = class_array.count();
+        var i_class_array: usize = 0 as usize;
+        while i_class_array < n_class_array {
+            match class_array.at_ptr(i_class_array) {
+                option::Option[*AnyObject]::Some(e_class_array) => { rt::msg_void_id(arr_class_array, add_sel_class_array, (*e_class_array).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_class_array = i_class_array +% (1 as usize);
+        }
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("readObjectsForClasses:options:\0")), arr_class_array, dict_options);
+        if obj == { 0 as *u8 } {
+            return option::Option[Array]::None;
+        }
+        return option::some(Array::from_raw(obj));
+    }
+
     fn index_of_pasteboard_item(this, pasteboard_item: PasteboardItem) -> u64 {
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("indexOfPasteboardItem:\0")), pasteboard_item.raw());
     }
@@ -17733,7 +17770,40 @@ impl Pasteboard {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canReadItemWithDataConformingToTypes:\0")), bridge::nsarray_of_text(types)) != (0 as i8);
     }
 
-    // SKIPPED `canReadObjectForClasses:options:`: param `NSArray<Class> * _Nonnull` — generic collection
+    fn can_read_object_for_classes(this, class_array: vec::Vec[AnyObject], options: string_map::StringMap[AnyObject]) -> bool {
+        let arr_class_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_class_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_class_array: usize = class_array.count();
+        var i_class_array: usize = 0 as usize;
+        while i_class_array < n_class_array {
+            match class_array.at_ptr(i_class_array) {
+                option::Option[*AnyObject]::Some(e_class_array) => { rt::msg_void_id(arr_class_array, add_sel_class_array, (*e_class_array).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_class_array = i_class_array +% (1 as usize);
+        }
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("canReadObjectForClasses:options:\0")), arr_class_array, dict_options) != (0 as i8);
+    }
+
     fn declare_types(this, new_types: vec::Vec[text::Text], owner: *u8) -> i64 {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("declareTypes:owner:\0")), bridge::nsarray_of_text(new_types), owner);
     }
@@ -18707,7 +18777,19 @@ impl Responder {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateRestorableState\0")));
     }
 
-    // SKIPPED `allowedClassesForRestorableStateKeyPath:`: return `NSArray<Class> * _Nonnull` — generic collection
+    fn allowed_classes_for_restorable_state_key_path(key_path: str) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSResponder\0")), rt::sel(#str_ptr("allowedClassesForRestorableStateKeyPath:\0")), bridge::nsstring(key_path));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn restorable_state_key_paths() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSResponder\0")), rt::sel(#str_ptr("restorableStateKeyPaths\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -19178,7 +19260,7 @@ impl DraggingSession {
 
     fn from_raw(ptr: *u8) -> DraggingSession { return DraggingSession { _obj: ptr }; }
 
-    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: leading param `NSArray<Class> * _Nonnull` — generic collection
+    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: block method with a built-collection param not modelled
     fn dragging_formation(this) -> DraggingFormation {
         return dragging_formation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingFormation\0"))));
     }
@@ -26799,7 +26881,19 @@ impl Document {
         rt::msg_void(this._obj, rt::sel(#str_ptr("invalidateRestorableState\0")));
     }
 
-    // SKIPPED `allowedClassesForRestorableStateKeyPath:`: return `NSArray<Class> * _Nonnull` — generic collection
+    fn allowed_classes_for_restorable_state_key_path(key_path: str) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("allowedClassesForRestorableStateKeyPath:\0")), bridge::nsstring(key_path));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn restorable_state_key_paths() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSDocument\0")), rt::sel(#str_ptr("restorableStateKeyPaths\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -31310,8 +31404,34 @@ impl CollectionView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrefetchDataSource:\0")), prefetch_data_source.raw());
     }
 
-    // SKIPPED `content`: return `NSArray<id> * _Nonnull` — generic collection
-    // SKIPPED `setContent:`: param `NSArray<id> * _Nonnull` — generic collection
+    fn content(this) -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("content\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_content(this, content: vec::Vec[AnyObject]) {
+        let arr_content: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_content: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_content: usize = content.count();
+        var i_content: usize = 0 as usize;
+        while i_content < n_content {
+            match content.at_ptr(i_content) {
+                option::Option[*AnyObject]::Some(e_content) => { rt::msg_void_id(arr_content, add_sel_content, (*e_content).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_content = i_content +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setContent:\0")), arr_content);
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -36725,7 +36845,19 @@ impl ImageRep {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setLayoutDirection:\0")), image_layout_direction_raw(layout_direction));
     }
 
-    // SKIPPED `registeredImageRepClasses`: return `NSArray<Class> * _Nonnull` — generic collection
+    fn registered_image_rep_classes() -> vec::Vec[AnyObject] {
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("registeredImageRepClasses\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AnyObject] = vec::Vec[AnyObject]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AnyObject::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn image_unfiltered_types() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("imageUnfilteredTypes\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -58465,7 +58597,7 @@ impl DraggingInfo {
         return out;
     }
 
-    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: leading param `NSArray<Class> * _Nonnull` — generic collection
+    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: block method with a built-collection param not modelled
     fn reset_spring_loading(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetSpringLoading\0")));
     }
