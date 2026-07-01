@@ -11632,7 +11632,34 @@ impl FunctionStitchingFunctionNode {
 
     fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: ptr }; }
 
-    // SKIPPED `initWithName:arguments:controlDependencies:`: init with an NSArray<id> param not modelled
+    fn new(name: str, arguments: vec::Vec[FunctionStitchingNode], control_dependencies: vec::Vec[FunctionStitchingFunctionNode]) -> FunctionStitchingFunctionNode {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingFunctionNode\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_arguments: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_arguments: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_arguments: usize = arguments.count();
+        var i_arguments: usize = 0 as usize;
+        while i_arguments < n_arguments {
+            match arguments.at_ptr(i_arguments) {
+                option::Option[*FunctionStitchingNode]::Some(e_arguments) => { rt::msg_void_id(arr_arguments, add_sel_arguments, (*e_arguments).raw()); }
+                option::Option[*FunctionStitchingNode]::None => {}
+            }
+            i_arguments = i_arguments +% (1 as usize);
+        }
+        let arr_control_dependencies: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_control_dependencies: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_control_dependencies: usize = control_dependencies.count();
+        var i_control_dependencies: usize = 0 as usize;
+        while i_control_dependencies < n_control_dependencies {
+            match control_dependencies.at_ptr(i_control_dependencies) {
+                option::Option[*FunctionStitchingFunctionNode]::Some(e_control_dependencies) => { rt::msg_void_id(arr_control_dependencies, add_sel_control_dependencies, (*e_control_dependencies).raw()); }
+                option::Option[*FunctionStitchingFunctionNode]::None => {}
+            }
+            i_control_dependencies = i_control_dependencies +% (1 as usize);
+        }
+        return FunctionStitchingFunctionNode { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithName:arguments:controlDependencies:\0")), bridge::nsstring(name), arr_arguments, arr_control_dependencies) };
+    }
+
     fn name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text(ns);
@@ -11713,7 +11740,34 @@ impl FunctionStitchingGraph {
 
     fn from_raw(ptr: *u8) -> FunctionStitchingGraph { return FunctionStitchingGraph { _obj: ptr }; }
 
-    // SKIPPED `initWithFunctionName:nodes:outputNode:attributes:`: init with an NSArray<id> param not modelled
+    fn new(function_name: str, nodes: vec::Vec[FunctionStitchingFunctionNode], output_node: FunctionStitchingFunctionNode, attributes: vec::Vec[FunctionStitchingAttribute]) -> FunctionStitchingGraph {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingGraph\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_nodes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_nodes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_nodes: usize = nodes.count();
+        var i_nodes: usize = 0 as usize;
+        while i_nodes < n_nodes {
+            match nodes.at_ptr(i_nodes) {
+                option::Option[*FunctionStitchingFunctionNode]::Some(e_nodes) => { rt::msg_void_id(arr_nodes, add_sel_nodes, (*e_nodes).raw()); }
+                option::Option[*FunctionStitchingFunctionNode]::None => {}
+            }
+            i_nodes = i_nodes +% (1 as usize);
+        }
+        let arr_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_attributes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_attributes: usize = attributes.count();
+        var i_attributes: usize = 0 as usize;
+        while i_attributes < n_attributes {
+            match attributes.at_ptr(i_attributes) {
+                option::Option[*FunctionStitchingAttribute]::Some(e_attributes) => { rt::msg_void_id(arr_attributes, add_sel_attributes, (*e_attributes).raw()); }
+                option::Option[*FunctionStitchingAttribute]::None => {}
+            }
+            i_attributes = i_attributes +% (1 as usize);
+        }
+        return FunctionStitchingGraph { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithFunctionName:nodes:outputNode:attributes:\0")), bridge::nsstring(function_name), arr_nodes, output_node.raw(), arr_attributes) };
+    }
+
     fn function_name(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionName\0")));
         return bridge::to_text(ns);
