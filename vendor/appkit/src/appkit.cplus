@@ -7,6 +7,8 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/string_map" as string_map;
+import "stdlib/string_set" as string_set;
+import "stdlib/status" as status;
 import "objc/synthesis" as synth;
 
 // `NSItemProviderRepresentationVisibility` (NS_ENUM)
@@ -10342,7 +10344,21 @@ impl UserActivity {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setUserInfo:\0")), user_info.raw());
     }
 
-    // SKIPPED `requiredUserInfoKeys`: return `NSSet<NSString *> * _Nullable` — generic collection
+    fn required_user_info_keys(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("requiredUserInfoKeys\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setRequiredUserInfoKeys:`: param `NSSet<NSString *> * _Nullable` — generic collection
     fn needs_save(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("needsSave\0"))) != (0 as i8);
@@ -10388,7 +10404,21 @@ impl UserActivity {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setExpirationDate:\0")), expiration_date.raw());
     }
 
-    // SKIPPED `keywords`: return `NSSet<NSString *> * _Nonnull` — generic collection
+    fn keywords(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("keywords\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setKeywords:`: param `NSSet<NSString *> * _Nonnull` — generic collection
     fn supports_continuation_streams(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("supportsContinuationStreams\0"))) != (0 as i8);
@@ -26357,7 +26387,21 @@ impl Document {
         return URL::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("presentedItemURL\0"))));
     }
 
-    // SKIPPED `observedPresentedItemUbiquityAttributes`: return `API_AVAILABLE NSSet<NSURLResourceKey> *` — generic collection
+    fn observed_presented_item_ubiquity_attributes(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("observedPresentedItemUbiquityAttributes\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn save_to_u_r_l_of_type(this, url: URL, type_name: str, for_save_operation: SaveOperationType, error: *u8) -> bool {
         return rt::msg_i8_id_id_i64_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:error:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(for_save_operation), error) != (0 as i8);
     }
@@ -30255,7 +30299,21 @@ impl ToolbarItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPaletteLabel:\0")), bridge::nsstring(palette_label));
     }
 
-    // SKIPPED `possibleLabels`: return `API_AVAILABLE NSSet<NSString *> *` — generic collection
+    fn possible_labels(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("possibleLabels\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setPossibleLabels:`: param `API_AVAILABLE NSSet<NSString *> *` — generic collection
     fn tool_tip(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("toolTip\0")));
@@ -33919,7 +33977,21 @@ impl Toolbar {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setItemIdentifiers:\0")), bridge::nsarray_of_text(item_identifiers));
     }
 
-    // SKIPPED `centeredItemIdentifiers`: return `NSSet<NSToolbarItemIdentifier> * _Nonnull` — generic collection
+    fn centered_item_identifiers(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("centeredItemIdentifiers\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     // SKIPPED `setCenteredItemIdentifiers:`: param `NSSet<NSToolbarItemIdentifier> * _Nonnull` — generic collection
     fn autosaves_configuration(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autosavesConfiguration\0"))) != (0 as i8);
@@ -63084,7 +63156,21 @@ impl PrintPanelAccessorizing {
     fn from_raw(ptr: *u8) -> PrintPanelAccessorizing { return PrintPanelAccessorizing { _obj: ptr }; }
 
     // SKIPPED `localizedSummaryItems`: return `NSArray<NSDictionary<NSPrintPanelAccessorySummaryKey,NSString *> *> * _Nonnull` — generic collection
-    // SKIPPED `keyPathsForValuesAffectingPreview`: return `NSSet<NSString *> * _Nonnull` — generic collection
+    fn key_paths_for_values_affecting_preview(this) -> string_set::StringSet {
+        let set: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("keyPathsForValuesAffectingPreview\0")));
+        let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: string_set::StringSet = string_set::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            let _st: status::Status = out.insert(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `NSTextFinderClient` (ObjC protocol). Non-owning handle; `opaque`, no drop.
