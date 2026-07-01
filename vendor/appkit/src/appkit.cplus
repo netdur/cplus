@@ -6485,6 +6485,44 @@ fn ItemProvider_load_in_place_file_representation_for_type_identifier_invoke(blo
 }
 
 #[repr(C)]
+struct ItemProvider_register_object_of_class_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn ItemProvider_register_object_of_class_invoke(block: *u8, a0: i64) {
+    let bl: *ItemProvider_register_object_of_class_block = { block as *ItemProvider_register_object_of_class_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct ItemProvider_load_object_of_class_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn ItemProvider_load_object_of_class_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *ItemProvider_load_object_of_class_block = { block as *ItemProvider_load_object_of_class_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
 struct ItemProvider_register_item_for_type_identifier_block {
     opaque isa: *u8,
     flags: i32,
@@ -8640,9 +8678,25 @@ impl ItemProvider {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("registerObject:visibility:\0")), object.raw(), item_provider_representation_visibility_raw(visibility));
     }
 
-    // SKIPPED `registerObjectOfClass:visibility:loadHandler:`: leading param `Class<NSItemProviderWriting> _Nonnull` — generic collection
-    // SKIPPED `canLoadObjectOfClass:`: param `Class<NSItemProviderReading> _Nonnull` — generic collection
-    // SKIPPED `loadObjectOfClass:completionHandler:`: leading param `Class<NSItemProviderReading> _Nonnull` — generic collection
+    fn register_object_of_class(this, a_class: *u8, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: ItemProvider_register_object_of_class_block = ItemProvider_register_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("registerObjectOfClass:visibility:loadHandler:\0")), a_class, item_provider_representation_visibility_raw(visibility), bp);
+        return;
+    }
+
+    fn can_load_object_of_class(this, a_class: *u8) -> bool {
+        return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("canLoadObjectOfClass:\0")), a_class) != (0 as i8);
+    }
+
+    fn load_object_of_class(this, a_class: *u8, cb: fn(*u8, i64, *u8), ctx: *u8) -> Progress {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: ItemProvider_load_object_of_class_block = ItemProvider_load_object_of_class_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_load_object_of_class_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return Progress::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("loadObjectOfClass:completionHandler:\0")), a_class, bp));
+    }
+
     fn new_with_item_type_identifier(item: *u8, type_identifier: str) -> ItemProvider {
         let cls: *u8 = rt::get_class(#str_ptr("NSItemProvider\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -14722,8 +14776,14 @@ impl Window {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setRestorable:\0")), restorable as i8);
     }
 
-    // SKIPPED `restorationClass`: return `API_AVAILABLE Class<NSWindowRestoration>` — generic collection
-    // SKIPPED `setRestorationClass:`: param `API_AVAILABLE Class<NSWindowRestoration>` — generic collection
+    fn restoration_class(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("restorationClass\0")));
+    }
+
+    fn set_restoration_class(this, restoration_class: *u8) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRestorationClass:\0")), restoration_class);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -31330,7 +31390,19 @@ impl CollectionView {
         return option::some(View::from_raw(obj));
     }
 
-    // SKIPPED `visibleSupplementaryViewsOfKind:`: return `NSArray<NSView<NSCollectionViewElement> *> * _Nonnull` — generic collection
+    fn visible_supplementary_views_of_kind(this, element_kind: str) -> vec::Vec[View] {
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("visibleSupplementaryViewsOfKind:\0")), bridge::nsstring(element_kind));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn index_paths_for_visible_supplementary_elements_of_kind(this, element_kind: str) -> vec::Vec[IndexPath] {
         let set: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("indexPathsForVisibleSupplementaryElementsOfKind:\0")), bridge::nsstring(element_kind));
         let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
