@@ -180,9 +180,39 @@ fn generate_merged(
             home_set.insert(h);
         }
     }
-    let ast = match clang_ast(&umbrella, sdk) {
-        Some(a) => a,
+    // Parse a SYNTHETIC umbrella that #imports the real umbrella AND every header
+    // physically in the framework's `Headers/` dir. The real umbrella misses some
+    // headers entirely (AppKit's `<AppKit/AppKit.h>` reaches 279 of 297) — decls
+    // in those are absent from a bare-umbrella parse, so every accessor referencing
+    // their types (`NSArray<NSMenuItem *>`, cross-module object returns, ...) either
+    // degrades to `*u8` or skips. Import guards make the redundant imports harmless
+    // (the synthetic header compiles clean); the real umbrella still leads so its
+    // include ordering holds. clang stamps each decl's true home-header loc, and
+    // `home_set` already accepts every physical framework header, so the wider parse
+    // adds only genuinely-owned decls, never foreign ones.
+    let ast_source = umbrella.parent().and_then(|dir| {
+        let mut synthetic = format!("#import <{name}/{name}.h>\n");
+        for h in list_headers(dir, name) {
+            synthetic.push_str(&format!("#import <{name}/{h}>\n"));
+        }
+        let path = std::env::temp_dir().join(format!("cpc_merge_umbrella_{name}.h"));
+        std::fs::write(&path, synthetic).ok().map(|_| path)
+    });
+    let (parse_target, is_synthetic) = match &ast_source {
+        Some(p) => (p.as_path(), true),
+        None => (umbrella.as_path(), false),
+    };
+    let ast = match clang_ast(parse_target, sdk) {
+        Some(a) => {
+            if is_synthetic {
+                let _ = std::fs::remove_file(parse_target);
+            }
+            a
+        }
         None => {
+            if is_synthetic {
+                let _ = std::fs::remove_file(parse_target);
+            }
             eprintln!("cpc-bindgen --merge: clang failed on {}", umbrella.display());
             return 1;
         }
