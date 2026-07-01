@@ -4394,8 +4394,14 @@ impl FunctionConstantValues {
 
     fn from_raw(ptr: *u8) -> FunctionConstantValues { return FunctionConstantValues { _obj: ptr }; }
 
-    // SKIPPED `setConstantValue:type:atIndex:`: msgSend shape `void_id_i64_u64` not yet modelled
-    // SKIPPED `setConstantValues:type:withRange:`: msgSend shape `void_id_i64_range` not yet modelled
+    fn set_constant_value_type_at_index(this, value: *u8, type_: DataType, index: u64) {
+        rt::msg_void_id_i64_u64(this._obj, rt::sel(#str_ptr("setConstantValue:type:atIndex:\0")), value, data_type_raw(type_), index);
+    }
+
+    fn set_constant_values_type_with_range(this, values: *u8, type_: DataType, range: rt::Range) {
+        rt::msg_void_id_i64_range(this._obj, rt::sel(#str_ptr("setConstantValues:type:withRange:\0")), values, data_type_raw(type_), range);
+    }
+
     fn set_constant_value_type_with_name(this, value: *u8, type_: DataType, name: str) {
         rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("setConstantValue:type:withName:\0")), value, data_type_raw(type_), bridge::nsstring(name));
     }
@@ -16221,12 +16227,18 @@ impl ResourceStateCommandEncoder {
 
     fn from_raw(ptr: *u8) -> ResourceStateCommandEncoder { return ResourceStateCommandEncoder { _obj: ptr }; }
 
-    // SKIPPED `updateTextureMappings:mode:regions:mipLevels:slices:numRegions:`: msgSend shape `void_id_i64_id_id_id_u64` not yet modelled
+    fn update_texture_mappings_mode_regions_mip_levels_slices_num_regions(this, texture: Texture, mode: SparseTextureMappingMode, regions: *u8, mip_levels: *u8, slices: *u8, num_regions: u64) {
+        rt::msg_void_id_i64_id_id_id_u64(this._obj, rt::sel(#str_ptr("updateTextureMappings:mode:regions:mipLevels:slices:numRegions:\0")), texture.raw(), sparse_texture_mapping_mode_raw(mode), regions, mip_levels, slices, num_regions);
+    }
+
     fn update_texture_mapping_mode_region_mip_level_slice(this, texture: Texture, mode: SparseTextureMappingMode, region: Region, mip_level: u64, slice: u64) {
         objc_msg_void_id_i64_Region_u64_u64(this._obj, rt::sel(#str_ptr("updateTextureMapping:mode:region:mipLevel:slice:\0")), texture.raw(), sparse_texture_mapping_mode_raw(mode), region, mip_level, slice);
     }
 
-    // SKIPPED `updateTextureMapping:mode:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_id_i64_id_u64` not yet modelled
+    fn update_texture_mapping_mode_indirect_buffer_indirect_buffer_offset(this, texture: Texture, mode: SparseTextureMappingMode, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
+        rt::msg_void_id_i64_id_u64(this._obj, rt::sel(#str_ptr("updateTextureMapping:mode:indirectBuffer:indirectBufferOffset:\0")), texture.raw(), sparse_texture_mapping_mode_raw(mode), indirect_buffer.raw(), indirect_buffer_offset);
+    }
+
     fn update_fence(this, fence: Fence) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence.raw());
     }
