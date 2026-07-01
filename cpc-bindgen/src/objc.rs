@@ -137,6 +137,8 @@ fn tdcanon_kind(c: TdCanon) -> (&'static str, &'static str, &'static str, &'stat
         TdCanon::F32 => ("f32", "f", "f32", "0 as f32"),
         TdCanon::I32 => ("i32", "i", "i32", "0 as i32"),
         TdCanon::U32 => ("u32", "I", "u32", "0 as u32"),
+        TdCanon::I16 => ("i16", "s", "i16", "0 as i16"),
+        TdCanon::U16 => ("u16", "S", "u16", "0 as u16"),
         TdCanon::Ptr => ("*u8", "@", "id", "{ 0 as *u8 }"),
     }
 }
@@ -189,6 +191,8 @@ enum Ret {
     ScalarF64, // double / CGFloat / NSTimeInterval
     ScalarI32, // int
     ScalarU32, // unsigned int
+    ScalarI16, // short / int16_t (sign-extended by cpc's C-ABI codegen)
+    ScalarU16, // unsigned short / uint16_t / unichar / CGGlyph (zero-extended)
     ScalarU8,  // uint8_t / unsigned char (zero-extended by cpc's C-ABI codegen)
     ScalarF32, // float
     EnumTy(String),
@@ -229,6 +233,8 @@ enum Arg {
     ScalarF64(String), // double / CGFloat / NSTimeInterval
     ScalarI32(String), // int
     ScalarU32(String), // unsigned int
+    ScalarI16(String), // short / int16_t
+    ScalarU16(String), // unsigned short / uint16_t / unichar / CGGlyph
     ScalarU8(String),  // uint8_t / unsigned char
     ScalarF32(String), // float
     Range(String),
@@ -1796,6 +1802,8 @@ impl ObjcEmitter {
             Ret::ScalarI32 => (" -> i32".into(), format!("        return {send};\n")),
             Ret::ScalarU32 => (" -> u32".into(), format!("        return {send};\n")),
             Ret::ScalarU8 => (" -> u8".into(), format!("        return {send};\n")),
+            Ret::ScalarI16 => (" -> i16".into(), format!("        return {send};\n")),
+            Ret::ScalarU16 => (" -> u16".into(), format!("        return {send};\n")),
             Ret::ScalarF32 => (" -> f32".into(), format!("        return {send};\n")),
             Ret::Range => (" -> rt::Range".into(), format!("        return {send};\n")),
             Ret::Rect => (" -> rt::Rect".into(), format!("        return {send};\n")),
@@ -2195,6 +2203,8 @@ impl ObjcEmitter {
             // 32-bit scalars ride their own msgSend widths (vendor/objc shims).
             "int" | "int32_t" => return Ret::ScalarI32,
             "unsigned int" | "unsigned" | "uint32_t" => return Ret::ScalarU32,
+            "short" | "short int" | "int16_t" => return Ret::ScalarI16,
+            "unsigned short" | "unsigned short int" | "uint16_t" | "unichar" => return Ret::ScalarU16,
             "uint8_t" | "unsigned char" => return Ret::ScalarU8,
             "float" => return Ret::ScalarF32,
             _ => {}
@@ -2274,6 +2284,8 @@ impl ObjcEmitter {
             Some(TdCanon::F32) => return Ret::ScalarF32,
             Some(TdCanon::I32) => return Ret::ScalarI32,
             Some(TdCanon::U32) => return Ret::ScalarU32,
+            Some(TdCanon::I16) => return Ret::ScalarI16,
+            Some(TdCanon::U16) => return Ret::ScalarU16,
             Some(TdCanon::Ptr) => {
                 return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) }
             }
@@ -2351,6 +2363,10 @@ impl ObjcEmitter {
             }
             "int" | "int32_t" => return Arg::ScalarI32(pname.to_string()),
             "unsigned int" | "unsigned" | "uint32_t" => return Arg::ScalarU32(pname.to_string()),
+            "short" | "short int" | "int16_t" => return Arg::ScalarI16(pname.to_string()),
+            "unsigned short" | "unsigned short int" | "uint16_t" | "unichar" => {
+                return Arg::ScalarU16(pname.to_string())
+            }
             "uint8_t" | "unsigned char" => return Arg::ScalarU8(pname.to_string()),
             "float" => return Arg::ScalarF32(pname.to_string()),
             _ => {}
@@ -2424,6 +2440,8 @@ impl ObjcEmitter {
             Some(TdCanon::F32) => return Arg::ScalarF32(pname.to_string()),
             Some(TdCanon::I32) => return Arg::ScalarI32(pname.to_string()),
             Some(TdCanon::U32) => return Arg::ScalarU32(pname.to_string()),
+            Some(TdCanon::I16) => return Arg::ScalarI16(pname.to_string()),
+            Some(TdCanon::U16) => return Arg::ScalarU16(pname.to_string()),
             Some(TdCanon::Ptr) => return Arg::Id(pname.to_string()),
             None => {}
         }
@@ -2506,6 +2524,8 @@ impl ObjcEmitter {
             "BOOL" | "_Bool" | "bool" => "bool".to_string(),
             "int" | "int32_t" => "i32".to_string(),
             "unsigned int" | "unsigned" | "uint32_t" => "u32".to_string(),
+            "short" | "short int" | "int16_t" => "i16".to_string(),
+            "unsigned short" | "unsigned short int" | "uint16_t" | "unichar" => "u16".to_string(),
             "uint8_t" | "unsigned char" => "u8".to_string(),
             "float" => "f32".to_string(),
             // A by-value C struct (after the explicit scalar typedefs above, so
@@ -2523,6 +2543,8 @@ impl ObjcEmitter {
                 Some(TdCanon::F32) => "f32".to_string(),
                 Some(TdCanon::I32) => "i32".to_string(),
                 Some(TdCanon::U32) => "u32".to_string(),
+                Some(TdCanon::I16) => "i16".to_string(),
+                Some(TdCanon::U16) => "u16".to_string(),
                 Some(TdCanon::Ptr) | None => "*u8".to_string(),
             },
         }
@@ -2531,8 +2553,9 @@ impl ObjcEmitter {
     /// Last-resort mapping for an otherwise-unmapped type: follow the Pass-1
     /// typedef chain until it bottoms out in a scalar the rt:: shim zoo supports,
     /// or any pointer (→ untyped `*u8` handle, like bare `id`). Returns None for
-    /// 8/16-bit scalars, function pointers, and unknown leaves — those stay
-    /// skipped rather than risk a wrong ABI width. Following the *declared*
+    /// 8-bit scalars, function pointers, and unknown leaves — those stay
+    /// skipped rather than risk a wrong ABI width. (16-bit resolves to I16/U16 —
+    /// cpc zero/sign-extends them at the C boundary, same as u8.) Following the *declared*
     /// underlying type (not a hardcoded name→width guess) keeps it C-ABI-correct
     /// by construction: `NSLayoutPriority`→float→f32, `NSModalResponse`→NSInteger→i64,
     /// `dispatch_queue_t`→`… *`→handle. Used as the tail of map_ret/map_arg/param_sig_type
@@ -2550,6 +2573,9 @@ impl ObjcEmitter {
                 "float" => return Some(TdCanon::F32),
                 "int" | "int32_t" => return Some(TdCanon::I32),
                 "unsigned int" | "unsigned" | "uint32_t" => return Some(TdCanon::U32),
+                "short" | "short int" | "int16_t" => return Some(TdCanon::I16),
+                // `unichar`/`CGGlyph`/`CGFontIndex` all bottom out here as unsigned short.
+                "unsigned short" | "unsigned short int" | "uint16_t" => return Some(TdCanon::U16),
                 _ => {}
             }
             if c.ends_with('*') {
@@ -2795,6 +2821,8 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::ScalarF64 => "f64".into(),
         Ret::ScalarI32 => "i32".into(),
         Ret::ScalarU32 => "u32".into(),
+        Ret::ScalarI16 => "i16".into(),
+        Ret::ScalarU16 => "u16".into(),
         Ret::ScalarU8 => "u8".into(),
         Ret::ScalarF32 => "f32".into(),
         Ret::Range => "range".into(),
@@ -2820,6 +2848,8 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::ScalarF64(_) => "f64".into(),
         Arg::ScalarI32(_) => "i32".into(),
         Arg::ScalarU32(_) => "u32".into(),
+        Arg::ScalarI16(_) => "i16".into(),
+        Arg::ScalarU16(_) => "u16".into(),
         Arg::ScalarU8(_) => "u8".into(),
         Arg::ScalarF32(_) => "f32".into(),
         Arg::Range(_) => "range".into(),
@@ -2852,6 +2882,8 @@ fn tag_to_type(tag: &str) -> String {
         "i8" => "i8",
         "i32" => "i32",
         "u32" => "u32",
+        "i16" => "i16",
+        "u16" => "u16",
         "u8" => "u8",
         "f32" => "f32",
         "f64" => "f64",
@@ -2874,6 +2906,8 @@ fn arg_expr(a: &Arg) -> Option<String> {
         | Arg::ScalarF64(e)
         | Arg::ScalarI32(e)
         | Arg::ScalarU32(e)
+        | Arg::ScalarI16(e)
+        | Arg::ScalarU16(e)
         | Arg::ScalarU8(e)
         | Arg::ScalarF32(e)
         | Arg::Range(e)
@@ -3294,6 +3328,8 @@ fn read_int(node: &serde_json::Value) -> Option<i64> {
 /// `ObjcEmitter::typedef_canon`). Only the widths the rt:: shim zoo models —
 /// `Ptr` is any pointer typedef, lowered to an untyped `*u8` handle.
 enum TdCanon {
+    I16,
+    U16,
     I32,
     U32,
     I64,
@@ -3451,6 +3487,26 @@ mod tests {
     }
 
     #[test]
+    fn sixteen_bit_scalars_map_to_i16_u16() {
+        // short/int16_t -> i16 (sign-extended), unsigned short/uint16_t/unichar/CGGlyph
+        // -> u16 (zero-extended). cpc extends narrow ints at the C boundary (verified
+        // in cplus-core), so these are ABI-safe; typedefs resolve through the chain.
+        let mut e = emitter();
+        assert!(matches!(e.map_ret("short"), Ret::ScalarI16));
+        assert!(matches!(e.map_ret("unsigned short"), Ret::ScalarU16));
+        assert!(matches!(e.map_ret("unichar"), Ret::ScalarU16));
+        assert!(matches!(e.map_arg("int16_t", "n"), Arg::ScalarI16(_)));
+        assert!(matches!(e.map_arg("uint16_t", "n"), Arg::ScalarU16(_)));
+        assert_eq!(e.param_sig_type("unsigned short"), "u16");
+        assert_eq!(e.param_sig_type("short"), "i16");
+        // Exotic shapes bind through a module-local objc_msgSend shim (u16 not in the zoo).
+        let call = e
+            .send_expr("r", "glyphAt:", &Ret::ScalarU16, &[Arg::ScalarU16("g".into())])
+            .expect("u16_u16 shape binds via a local shim");
+        assert!(call.contains("u16_u16"), "shape suffix in the call: {call}");
+    }
+
+    #[test]
     fn maps_32bit_scalar_args_to_i32_u32_f32() {
         let mut e = emitter();
         assert!(matches!(e.map_arg("int", "n"), Arg::ScalarI32(_)));
@@ -3538,10 +3594,11 @@ mod tests {
     #[test]
     fn unmodelled_widths_skip_but_exotic_shapes_get_a_local_shim() {
         let mut e = emitter();
-        // `short` is still not a modelled width -> Unsupported (negative case): a
-        // type with no tag can't be shaped at all.
-        assert!(matches!(e.map_ret("short"), Ret::Unsupported(_)));
-        assert!(matches!(e.map_arg("short", "n"), Arg::Unsupported(_)));
+        // `long double` is still not a modelled width -> Unsupported (negative case):
+        // a type with no tag can't be shaped at all. (`short`/`unsigned short` are now
+        // modelled as i16/u16 — see `sixteen_bit_scalars_map_to_i16_u16`.)
+        assert!(matches!(e.map_ret("long double"), Ret::Unsupported(_)));
+        assert!(matches!(e.map_arg("long double", "n"), Arg::Unsupported(_)));
         // A shape the shared rt:: zoo doesn't carry (two i32 args) no longer skips —
         // it binds through a MODULE-LOCAL `objc_msgSend` shim, not the zoo.
         let call = e
@@ -4021,8 +4078,10 @@ mod tests {
         assert!(out.contains("fn apply_image(this, image: *u8, response: i64)"),
             "pointer + scalar typedef params:\n{out}");
         assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
-        // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
-        assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
+        // 16-bit typedef now resolves through the chain to u16 (CGGlyph -> unsigned
+        // short); cpc zero-extends it at the C boundary, so it's ABI-safe.
+        assert!(out.contains("fn glyph_at(this, g: u16)"), "CGGlyph->u16 param:\n{out}");
+        assert!(!out.contains("SKIPPED `glyphAt:`"), "CGGlyph no longer skipped:\n{out}");
     }
 
     // A synthetic ("fake package") interface exercising the naming_guideline.md
