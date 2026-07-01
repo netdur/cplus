@@ -1881,8 +1881,12 @@ impl ObjcEmitter {
                     String::new(),
                     "rt::msg_f64(nsval, rt::sel(#str_ptr(\"doubleValue\\0\")))".to_string(),
                 ),
-                // Non-owning wrapper value: wrap the +0 dict element via from_raw.
-                MapVal::Object(w) => (w.clone(), String::new(), format!("{w}::from_raw(nsval)")),
+                // Wrapper value: wrap the +0 dict element via from_raw. An owning
+                // wrapper's `drop` releases, so retain each on wrap to balance it.
+                MapVal::Object(w) => {
+                    let handle = if self.owning_types.contains(w.as_str()) { "rt::retain(nsval)" } else { "nsval" };
+                    (w.clone(), String::new(), format!("{w}::from_raw({handle})"))
+                }
                 // NSArray value: build an inner Vec[W] from it (non-owning elems, +0).
                 MapVal::ObjectArray(w) => {
                     let prep = format!(
@@ -2415,11 +2419,11 @@ impl ObjcEmitter {
                     }
                 }
             }
-            // A NON-owning wrapper value (opaque handle, no drop) -> StringMap[Wrapper]:
-            // each value wraps +0 via `from_raw`, so the map's drop doesn't over-release.
-            // Owning values would need retain-on-wrap, so they stay skipped.
+            // A wrapper value -> StringMap[Wrapper]: a non-owning value wraps +0 via
+            // `from_raw`; an owning value is `retain`ed on wrap so the map's per-entry
+            // `drop` is balanced (the retain is emitted in the codegen).
             if let Some(w) = self.wrapper_name_of(&v) {
-                if self.non_owning_types.contains(&w) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                     self.needs_string_map = true;
                     return Ret::TextMap(MapVal::Object(w));
                 }
@@ -2946,6 +2950,11 @@ impl ObjcEmitter {
         if self.is_nsstring(v) {
             return Some((MapVal::Text, "text::Text".to_string()));
         }
+        // An NSNumber value bridges from f64 (boxed via +[NSNumber numberWithDouble:]
+        // in the build prologue) — the reverse of the dict-return NSNumber bridge.
+        if self.is_nsnumber(v) {
+            return Some((MapVal::ScalarF64, "f64".to_string()));
+        }
         if let Some(elem) = array_element(v) {
             if let Some(w) = self.wrapper_name_of(&elem) {
                 if self.non_owning_types.contains(&w) {
@@ -2953,8 +2962,11 @@ impl ObjcEmitter {
                 }
             }
         }
+        // A wrapper value (owning OR non-owning): the build reads the caller's handle
+        // via `.raw()` (a +0 borrow) and `setObject:` takes its own retain, so an owning
+        // value's `drop` is never over-run — same reasoning as an object array param.
         if let Some(w) = self.wrapper_name_of(v) {
-            if self.non_owning_types.contains(&w) {
+            if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                 return Some((MapVal::Object(w.clone()), w));
             }
         }
@@ -3579,8 +3591,10 @@ fn build_id_array_prologue(args: &[Arg]) -> String {
                      \x20                       daj_{pname} = daj_{pname} +% (1 as usize);\n\
                      \x20                   }}\n"
                 ),
-                // dict_param_value never yields ScalarF64; keep the match exhaustive.
-                MapVal::ScalarF64 => format!("                    let dval_{pname}: *u8 = 0 as *u8;\n"),
+                // Box the f64 value as an NSNumber (+[NSNumber numberWithDouble:]).
+                MapVal::ScalarF64 => format!(
+                    "                    let dval_{pname}: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr(\"NSNumber\\0\")), rt::sel(#str_ptr(\"numberWithDouble:\\0\")), *dvp_{pname});\n"
+                ),
             };
             prologue.push_str(&format!(
                 "        let dict_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableDictionary\\0\")), rt::sel(#str_ptr(\"dictionary\\0\")));\n\
@@ -5070,6 +5084,33 @@ mod tests {
         assert!(out.contains("fn matrix(this) -> CGAffineTransform"), "by-value struct return:\n{out}");
         assert!(out.contains("CGAffineTransform(recv: *u8, sel: *u8) -> CGAffineTransform;"), "module-local struct-return shim:\n{out}");
         assert!(!out.contains("unmapped type `CGAffineTransform`"), "no unmapped skip:\n{out}");
+    }
+
+    #[test]
+    fn dict_values_cover_nsnumber_and_owning_wrappers() {
+        // NSDictionary values now bridge NSNumber (<-> f64) and owning wrappers
+        // (return retains on wrap; param reads .raw()).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSFileWrapper", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setOptions:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "options", "type": { "qualType": "NSDictionary<NSString *,NSNumber *> * _Nonnull" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "fileWrappers", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSDictionary<NSString *,NSFileWrapper *> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // NSNumber value param -> StringMap[f64], boxed via numberWithDouble:.
+        assert!(out.contains("fn set_options(this, options: string_map::StringMap[f64])"), "NSNumber dict param:\n{out}");
+        assert!(out.contains("numberWithDouble:"), "box f64 -> NSNumber:\n{out}");
+        // Owning-wrapper value return -> StringMap[FileWrapper], retained on wrap.
+        assert!(out.contains("fn file_wrappers(this) -> string_map::StringMap[FileWrapper]"), "owning-wrapper dict return:\n{out}");
+        assert!(out.contains("FileWrapper::from_raw(rt::retain(nsval))"), "retain-on-wrap for owning value:\n{out}");
+        assert!(!out.contains("// SKIPPED `setOptions:`") && !out.contains("// SKIPPED `fileWrappers`"), "no skips:\n{out}");
     }
 
     #[test]
