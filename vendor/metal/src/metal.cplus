@@ -17089,7 +17089,10 @@ impl BlitCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("generateMipmapsForTexture:\0")), texture.raw());
     }
 
-    // SKIPPED `fillBuffer:range:value:`: param `uint8_t` — unmapped type `uint8_t`
+    fn fill_buffer_range_value(this, buffer: Buffer, range: rt::Range, value: u8) {
+        rt::msg_void_id_range_u8(this._obj, rt::sel(#str_ptr("fillBuffer:range:value:\0")), buffer.raw(), range, value);
+    }
+
     fn copy_from_texture_source_slice_source_level_to_texture_destination_slice_destination_level_slice_count_level_count(this, source_texture: Texture, source_slice: u64, source_level: u64, destination_texture: Texture, destination_slice: u64, destination_level: u64, slice_count: u64, level_count: u64) {
         rt::msg_void_id_u64_u64_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:\0")), source_texture.raw(), source_slice, source_level, destination_texture.raw(), destination_slice, destination_level, slice_count, level_count);
     }
@@ -18588,7 +18591,10 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("generateMipmapsForTexture:\0")), texture.raw());
     }
 
-    // SKIPPED `fillBuffer:range:value:`: param `uint8_t` — unmapped type `uint8_t`
+    fn fill_buffer_range_value(this, buffer: Buffer, range: rt::Range, value: u8) {
+        rt::msg_void_id_range_u8(this._obj, rt::sel(#str_ptr("fillBuffer:range:value:\0")), buffer.raw(), range, value);
+    }
+
     fn optimize_contents_for_g_p_u_access(this, texture: Texture) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("optimizeContentsForGPUAccess:\0")), texture.raw());
     }
