@@ -487,7 +487,7 @@ impl ObjcEmitter {
                  }\n\n",
             );
         }
-        out.push_str(&self.render_struct_shims());
+        out.push_str(&self.render_msg_shims());
         out.push_str(&self.block_helpers);
         out.push_str(&self.body);
         out
@@ -522,7 +522,7 @@ impl ObjcEmitter {
     /// module's signature, so the return type mismatches its own struct (E0302).
     /// `--merge` emits the whole framework as one module: no recurrence, no
     /// collision, so the bare prefix is kept and merged output stays byte-stable.
-    fn struct_shim_prefix(&self) -> String {
+    fn msg_shim_prefix(&self) -> String {
         if self.merge {
             return "objc_msg_".to_string();
         }
@@ -533,13 +533,15 @@ impl ObjcEmitter {
         format!("objc_msg_{}_", crate::sanitize_ident(&snake(chosen)))
     }
 
-    /// Module-local `objc_msgSend` shims for the by-value-struct call shapes used.
-    /// The struct types ride registers/indirect per the platform ABI (verified
-    /// against clang for the 24-byte case); cpc lowers the by-value extern the same.
-    fn render_struct_shims(&self) -> String {
+    /// Module-local `objc_msgSend` shims for every call shape the shared rt:: zoo
+    /// doesn't model: by-value-struct shapes (which ride registers/indirect per the
+    /// platform ABI, verified against clang) and exotic scalar/object arities. Each
+    /// is a typed `#[link_name = "objc_msgSend"]` extern; cpc lowers the by-value
+    /// extern the same as clang, so any tagged shape binds without growing the zoo.
+    fn render_msg_shims(&self) -> String {
         let mut shapes: Vec<&String> = self.used_struct_shapes.iter().collect();
         shapes.sort();
-        let shim_prefix = self.struct_shim_prefix();
+        let shim_prefix = self.msg_shim_prefix();
         let mut s = String::new();
         for suffix in shapes {
             let parts: Vec<&str> = suffix.split('_').collect();
@@ -1949,20 +1951,20 @@ impl ObjcEmitter {
     /// enum returns the raw integer call is produced (caller wraps in from_raw).
     fn send_expr(&mut self, recv: &str, sel: &str, ret: &Ret, args: &[Arg]) -> Option<String> {
         let suffix = msg_shape(ret, args)?;
-        // A by-value-struct shape uses a module-local `objc_msg_*` shim (emitted
-        // alongside the struct); everything else uses the shared rt:: zoo, which
-        // only models a fixed set of shapes (others SKIP to stay compilable).
-        let prefix: String = if msg_shape_has_struct(&suffix) {
-            // Record it here (not in the caller) so every path — factory/init/
-            // collection helpers included — gets its shim emitted. The shim name
-            // is module-discriminated (see `struct_shim_prefix`) so per-header
-            // modules sharing a value struct don't collide on one extern name.
-            self.used_struct_shapes.insert(suffix.clone());
-            self.struct_shim_prefix()
-        } else if msg_shape_is_known(&suffix) {
+        // A shape the shared rt:: zoo models (a fixed set of scalar/object arities)
+        // uses that zoo. Everything else — a by-value-struct shape, or an exotic
+        // scalar/object arity the zoo doesn't carry — gets a MODULE-LOCAL typed
+        // `objc_msgSend` shim (`render_msg_shims`) rather than skipping. The shim is
+        // just a `#[link_name = "objc_msgSend"]` extern with the exact signature, so
+        // any shape whose every arg/return has a tag binds. Recorded here (not in the
+        // caller) so every path — factory/init/collection helpers included — emits it;
+        // the name is module-discriminated (`msg_shim_prefix`) so per-header modules
+        // sharing a shape don't collide on one extern.
+        let prefix: String = if msg_shape_is_known(&suffix) && !msg_shape_has_struct(&suffix) {
             "rt::msg_".to_string()
         } else {
-            return None;
+            self.used_struct_shapes.insert(suffix.clone());
+            self.msg_shim_prefix()
         };
         let sl = format!("rt::sel(#str_ptr(\"{sel}\\0\"))");
         let mut call = format!("{prefix}{suffix}({recv}, {sl}");
@@ -3229,19 +3231,44 @@ mod tests {
     }
 
     #[test]
-    fn unmodelled_widths_and_shapes_stay_unsupported() {
+    fn unmodelled_widths_skip_but_exotic_shapes_get_a_local_shim() {
         let mut e = emitter();
-        // `short` is still not a modelled width -> Unsupported (negative case).
+        // `short` is still not a modelled width -> Unsupported (negative case): a
+        // type with no tag can't be shaped at all.
         assert!(matches!(e.map_ret("short"), Ret::Unsupported(_)));
         assert!(matches!(e.map_arg("short", "n"), Arg::Unsupported(_)));
-        // A shape with no msgSend shim (two i32 args) has no KNOWN tag -> None.
-        let none = e.send_expr(
-            "r",
-            "a:b:",
-            &Ret::Void,
-            &[Arg::ScalarI32("a".into()), Arg::ScalarI32("b".into())],
-        );
-        assert!(none.is_none());
+        // A shape the shared rt:: zoo doesn't carry (two i32 args) no longer skips —
+        // it binds through a MODULE-LOCAL `objc_msgSend` shim, not the zoo.
+        let call = e
+            .send_expr("r", "a:b:", &Ret::Void, &[Arg::ScalarI32("a".into()), Arg::ScalarI32("b".into())])
+            .expect("an exotic all-tagged shape now binds via a local shim");
+        assert!(call.contains("void_i32_i32"), "shape suffix in the call: {call}");
+        assert!(!call.contains("rt::msg_"), "uses the module-local shim, not the zoo: {call}");
+    }
+
+    #[test]
+    fn exotic_msgsend_shape_emits_a_module_local_shim_end_to_end() {
+        // A whole-method path: `-(id)combine:(NSInteger)a with:(NSInteger)b and:(id)c`
+        // is the shape `id_i64_i64_id`, absent from the rt:: zoo. It must bind (not
+        // skip) and emit its own `#[link_name = "objc_msgSend"]` extern.
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [{
+                    "kind": "ObjCMethodDecl", "name": "combine:with:and:", "instance": true, "loc": { "file": "test.h" },
+                    "returnType": { "qualType": "id" },
+                    "inner": [
+                        { "kind": "ParmVarDecl", "name": "a", "type": { "qualType": "NSInteger" } },
+                        { "kind": "ParmVarDecl", "name": "b", "type": { "qualType": "NSInteger" } },
+                        { "kind": "ParmVarDecl", "name": "c", "type": { "qualType": "id" } } ]
+                }]
+            }]
+        });
+        // --merge so the shim prefix is the bare `objc_msg_`.
+        let out = ObjcEmitter::new_merged("test.h", "NS", serde_json::json!({}), std::iter::once("test.h".to_string()).collect()).run(&tu);
+        assert!(out.contains("#[link_name = \"objc_msgSend\"]\nextern fn objc_msg_id_i64_i64_id(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: *u8) -> *u8;"),
+            "module-local shim for the exotic shape:\n{out}");
+        assert!(out.contains("fn combine("), "the method binds:\n{out}");
+        assert!(!out.contains("msgSend shape"), "no shape-not-modelled skip:\n{out}");
     }
 
     #[test]
