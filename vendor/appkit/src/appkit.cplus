@@ -59269,23 +59269,51 @@ impl UserActivityRestoring {
 }
 
 // `NSApplicationDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `application:openURLs:`: arg `NSArray<NSURL *> * _Nonnull` not modelled
-// SKIPPED `application:openFiles:`: arg `NSArray<NSString *> * _Nonnull` not modelled
-// SKIPPED `application:printFiles:withSettings:showPrintPanels:`: arg `NSArray<NSString *> * _Nonnull` not modelled
 // SKIPPED `application:didReceiveRemoteNotification:`: arg `NSDictionary<NSString *,id> * _Nonnull` not modelled
 // SKIPPED `application:continueUserActivity:restorationHandler:`: arg `void (^ _Nonnull)(NSArray<id<NSUserActivityRestoring>> * _Nonnull)` not modelled
+fn cplus_darg_arr_URL(src: *u8) -> vec::Vec[URL] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[URL] = vec::Vec[URL]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(URL::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
+fn cplus_darg_arr_text(src: *u8) -> vec::Vec[text::Text] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(bridge::to_text(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_u64_id_id_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i8) -> u64, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
 
 fn ApplicationDelegate_noop_u64_id(user: *u8, a0: *u8) -> u64 { return 0 as u64; }
+fn ApplicationDelegate_noop_v_id_arrURL(user: *u8, a0: *u8, a1: vec::Vec[URL]) { return; }
 fn ApplicationDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
+fn ApplicationDelegate_noop_v_id_arrtext(user: *u8, a0: *u8, a1: vec::Vec[text::Text]) { return; }
 fn ApplicationDelegate_noop_i8_id(user: *u8, a0: *u8) -> i8 { return 0 as i8; }
+fn ApplicationDelegate_noop_u64_id_arrtext_id_i8(user: *u8, a0: *u8, a1: vec::Vec[text::Text], a2: *u8, a3: i8) -> u64 { return 0 as u64; }
 fn ApplicationDelegate_noop_i8_id_i8(user: *u8, a0: *u8, a1: i8) -> i8 { return 0 as i8; }
 fn ApplicationDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
 fn ApplicationDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
@@ -59295,12 +59323,15 @@ fn ApplicationDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct ApplicationDelegate {
     application_should_terminate: fn(*u8, *u8) -> u64,
+    application_open_u_r_ls: fn(*u8, *u8, vec::Vec[URL]),
     application_open_file: fn(*u8, *u8, *u8) -> i8,
+    application_open_files: fn(*u8, *u8, vec::Vec[text::Text]),
     application_open_temp_file: fn(*u8, *u8, *u8) -> i8,
     application_should_open_untitled_file: fn(*u8, *u8) -> i8,
     application_open_untitled_file: fn(*u8, *u8) -> i8,
     application_open_file_without_u_i: fn(*u8, *u8, *u8) -> i8,
     application_print_file: fn(*u8, *u8, *u8) -> i8,
+    application_print_files_with_settings_show_print_panels: fn(*u8, *u8, vec::Vec[text::Text], *u8, i8) -> u64,
     application_should_terminate_after_last_window_closed: fn(*u8, *u8) -> i8,
     application_should_handle_reopen_has_visible_windows: fn(*u8, *u8, i8) -> i8,
     application_dock_menu: fn(*u8, *u8) -> *u8,
@@ -59338,7 +59369,7 @@ struct ApplicationDelegate {
 }
 
 fn ApplicationDelegate_new(user: *u8) -> ApplicationDelegate {
-    return ApplicationDelegate { application_should_terminate: ApplicationDelegate_noop_u64_id, application_open_file: ApplicationDelegate_noop_i8_id_id, application_open_temp_file: ApplicationDelegate_noop_i8_id_id, application_should_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_file_without_u_i: ApplicationDelegate_noop_i8_id_id, application_print_file: ApplicationDelegate_noop_i8_id_id, application_should_terminate_after_last_window_closed: ApplicationDelegate_noop_i8_id, application_should_handle_reopen_has_visible_windows: ApplicationDelegate_noop_i8_id_i8, application_dock_menu: ApplicationDelegate_noop_id_id, application_will_present_error: ApplicationDelegate_noop_id_id_id, application_did_register_for_remote_notifications_with_device_token: ApplicationDelegate_noop_v_id_id, application_did_fail_to_register_for_remote_notifications_with_error: ApplicationDelegate_noop_v_id_id, application_supports_secure_restorable_state: ApplicationDelegate_noop_i8_id, application_handler_for_intent: ApplicationDelegate_noop_id_id_id, application_will_encode_restorable_state: ApplicationDelegate_noop_v_id_id, application_did_decode_restorable_state: ApplicationDelegate_noop_v_id_id, application_will_continue_user_activity_with_type: ApplicationDelegate_noop_i8_id_id, application_did_fail_to_continue_user_activity_with_type_error: ApplicationDelegate_noop_v_id_id_id, application_did_update_user_activity: ApplicationDelegate_noop_v_id_id, application_user_did_accept_cloud_kit_share_with_metadata: ApplicationDelegate_noop_v_id_id, application_delegate_handles_key: ApplicationDelegate_noop_i8_id_id, application_should_automatically_localize_key_equivalents: ApplicationDelegate_noop_i8_id, application_will_finish_launching: ApplicationDelegate_noop_v_id, application_did_finish_launching: ApplicationDelegate_noop_v_id, application_will_hide: ApplicationDelegate_noop_v_id, application_did_hide: ApplicationDelegate_noop_v_id, application_will_unhide: ApplicationDelegate_noop_v_id, application_did_unhide: ApplicationDelegate_noop_v_id, application_will_become_active: ApplicationDelegate_noop_v_id, application_did_become_active: ApplicationDelegate_noop_v_id, application_will_resign_active: ApplicationDelegate_noop_v_id, application_did_resign_active: ApplicationDelegate_noop_v_id, application_will_update: ApplicationDelegate_noop_v_id, application_did_update: ApplicationDelegate_noop_v_id, application_will_terminate: ApplicationDelegate_noop_v_id, application_did_change_screen_parameters: ApplicationDelegate_noop_v_id, application_did_change_occlusion_state: ApplicationDelegate_noop_v_id, application_protected_data_will_become_unavailable: ApplicationDelegate_noop_v_id, application_protected_data_did_become_available: ApplicationDelegate_noop_v_id, user: user };
+    return ApplicationDelegate { application_should_terminate: ApplicationDelegate_noop_u64_id, application_open_u_r_ls: ApplicationDelegate_noop_v_id_arrURL, application_open_file: ApplicationDelegate_noop_i8_id_id, application_open_files: ApplicationDelegate_noop_v_id_arrtext, application_open_temp_file: ApplicationDelegate_noop_i8_id_id, application_should_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_untitled_file: ApplicationDelegate_noop_i8_id, application_open_file_without_u_i: ApplicationDelegate_noop_i8_id_id, application_print_file: ApplicationDelegate_noop_i8_id_id, application_print_files_with_settings_show_print_panels: ApplicationDelegate_noop_u64_id_arrtext_id_i8, application_should_terminate_after_last_window_closed: ApplicationDelegate_noop_i8_id, application_should_handle_reopen_has_visible_windows: ApplicationDelegate_noop_i8_id_i8, application_dock_menu: ApplicationDelegate_noop_id_id, application_will_present_error: ApplicationDelegate_noop_id_id_id, application_did_register_for_remote_notifications_with_device_token: ApplicationDelegate_noop_v_id_id, application_did_fail_to_register_for_remote_notifications_with_error: ApplicationDelegate_noop_v_id_id, application_supports_secure_restorable_state: ApplicationDelegate_noop_i8_id, application_handler_for_intent: ApplicationDelegate_noop_id_id_id, application_will_encode_restorable_state: ApplicationDelegate_noop_v_id_id, application_did_decode_restorable_state: ApplicationDelegate_noop_v_id_id, application_will_continue_user_activity_with_type: ApplicationDelegate_noop_i8_id_id, application_did_fail_to_continue_user_activity_with_type_error: ApplicationDelegate_noop_v_id_id_id, application_did_update_user_activity: ApplicationDelegate_noop_v_id_id, application_user_did_accept_cloud_kit_share_with_metadata: ApplicationDelegate_noop_v_id_id, application_delegate_handles_key: ApplicationDelegate_noop_i8_id_id, application_should_automatically_localize_key_equivalents: ApplicationDelegate_noop_i8_id, application_will_finish_launching: ApplicationDelegate_noop_v_id, application_did_finish_launching: ApplicationDelegate_noop_v_id, application_will_hide: ApplicationDelegate_noop_v_id, application_did_hide: ApplicationDelegate_noop_v_id, application_will_unhide: ApplicationDelegate_noop_v_id, application_did_unhide: ApplicationDelegate_noop_v_id, application_will_become_active: ApplicationDelegate_noop_v_id, application_did_become_active: ApplicationDelegate_noop_v_id, application_will_resign_active: ApplicationDelegate_noop_v_id, application_did_resign_active: ApplicationDelegate_noop_v_id, application_will_update: ApplicationDelegate_noop_v_id, application_did_update: ApplicationDelegate_noop_v_id, application_will_terminate: ApplicationDelegate_noop_v_id, application_did_change_screen_parameters: ApplicationDelegate_noop_v_id, application_did_change_occlusion_state: ApplicationDelegate_noop_v_id, application_protected_data_will_become_unavailable: ApplicationDelegate_noop_v_id, application_protected_data_did_become_available: ApplicationDelegate_noop_v_id, user: user };
 }
 
 impl ApplicationDelegate {
@@ -59346,8 +59377,16 @@ impl ApplicationDelegate {
         this.application_should_terminate = handler;
         return;
     }
+    fn set_application_open_u_r_ls(ref this, handler: fn(*u8, *u8, vec::Vec[URL])) {
+        this.application_open_u_r_ls = handler;
+        return;
+    }
     fn set_application_open_file(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.application_open_file = handler;
+        return;
+    }
+    fn set_application_open_files(ref this, handler: fn(*u8, *u8, vec::Vec[text::Text])) {
+        this.application_open_files = handler;
         return;
     }
     fn set_application_open_temp_file(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
@@ -59368,6 +59407,10 @@ impl ApplicationDelegate {
     }
     fn set_application_print_file(ref this, handler: fn(*u8, *u8, *u8) -> i8) {
         this.application_print_file = handler;
+        return;
+    }
+    fn set_application_print_files_with_settings_show_print_panels(ref this, handler: fn(*u8, *u8, vec::Vec[text::Text], *u8, i8) -> u64) {
+        this.application_print_files_with_settings_show_print_panels = handler;
         return;
     }
     fn set_application_should_terminate_after_last_window_closed(ref this, handler: fn(*u8, *u8) -> i8) {
@@ -59513,11 +59556,29 @@ fn ApplicationDelegate_application_should_terminate_imp(self_obj: *u8, cmd: *u8,
     return f(u, a0);
 }
 
+fn ApplicationDelegate_application_open_u_r_ls_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
+    let f: fn(*u8, *u8, vec::Vec[URL]) = { (*c).application_open_u_r_ls };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[URL] = cplus_darg_arr_URL(a1);
+    f(u, a0, b1);
+    return;
+}
+
 fn ApplicationDelegate_application_open_file_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
     let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).application_open_file };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn ApplicationDelegate_application_open_files_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
+    let f: fn(*u8, *u8, vec::Vec[text::Text]) = { (*c).application_open_files };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[text::Text] = cplus_darg_arr_text(a1);
+    f(u, a0, b1);
+    return;
 }
 
 fn ApplicationDelegate_application_open_temp_file_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
@@ -59553,6 +59614,14 @@ fn ApplicationDelegate_application_print_file_imp(self_obj: *u8, cmd: *u8, a0: *
     let f: fn(*u8, *u8, *u8) -> i8 = { (*c).application_print_file };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn ApplicationDelegate_application_print_files_with_settings_show_print_panels_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i8) -> u64 {
+    let c: *ApplicationDelegate = { synth::get_associated(self_obj, ApplicationDelegate_key()) as *ApplicationDelegate };
+    let f: fn(*u8, *u8, vec::Vec[text::Text], *u8, i8) -> u64 = { (*c).application_print_files_with_settings_show_print_panels };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[text::Text] = cplus_darg_arr_text(a1);
+    return f(u, a0, b1, a2, a3);
 }
 
 fn ApplicationDelegate_application_should_terminate_after_last_window_closed_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
@@ -59816,12 +59885,15 @@ fn create_ApplicationDelegate(ctx: *ApplicationDelegate) -> *u8 {
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
         let add_application_should_terminate: i8 = cplus_add_method_u64_id(cls, rt::sel(#str_ptr("applicationShouldTerminate:\0")), ApplicationDelegate_application_should_terminate_imp, #str_ptr("Q@:@\0"));
+        let add_application_open_u_r_ls: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:openURLs:\0")), ApplicationDelegate_application_open_u_r_ls_imp, #str_ptr("v@:@@\0"));
         let add_application_open_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openFile:\0")), ApplicationDelegate_application_open_file_imp, #str_ptr("c@:@@\0"));
+        let add_application_open_files: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("application:openFiles:\0")), ApplicationDelegate_application_open_files_imp, #str_ptr("v@:@@\0"));
         let add_application_open_temp_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openTempFile:\0")), ApplicationDelegate_application_open_temp_file_imp, #str_ptr("c@:@@\0"));
         let add_application_should_open_untitled_file: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationShouldOpenUntitledFile:\0")), ApplicationDelegate_application_should_open_untitled_file_imp, #str_ptr("c@:@\0"));
         let add_application_open_untitled_file: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationOpenUntitledFile:\0")), ApplicationDelegate_application_open_untitled_file_imp, #str_ptr("c@:@\0"));
         let add_application_open_file_without_u_i: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:openFileWithoutUI:\0")), ApplicationDelegate_application_open_file_without_u_i_imp, #str_ptr("c@:@@\0"));
         let add_application_print_file: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("application:printFile:\0")), ApplicationDelegate_application_print_file_imp, #str_ptr("c@:@@\0"));
+        let add_application_print_files_with_settings_show_print_panels: i8 = cplus_add_method_u64_id_id_id_i8(cls, rt::sel(#str_ptr("application:printFiles:withSettings:showPrintPanels:\0")), ApplicationDelegate_application_print_files_with_settings_show_print_panels_imp, #str_ptr("Q@:@@@c\0"));
         let add_application_should_terminate_after_last_window_closed: i8 = cplus_add_method_i8_id(cls, rt::sel(#str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0")), ApplicationDelegate_application_should_terminate_after_last_window_closed_imp, #str_ptr("c@:@\0"));
         let add_application_should_handle_reopen_has_visible_windows: i8 = cplus_add_method_i8_id_i8(cls, rt::sel(#str_ptr("applicationShouldHandleReopen:hasVisibleWindows:\0")), ApplicationDelegate_application_should_handle_reopen_has_visible_windows_imp, #str_ptr("c@:@c\0"));
         let add_application_dock_menu: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("applicationDockMenu:\0")), ApplicationDelegate_application_dock_menu_imp, #str_ptr("@@:@\0"));
@@ -59942,14 +60014,16 @@ fn create_AlertDelegate(ctx: *AlertDelegate) -> *u8 {
 }
 
 // `NSControlTextEditingDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `control:textView:completions:forPartialWordRange:indexOfSelectedItem:`: arg `NSArray<NSString *> * _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_id_range_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, rt::Range, *u8) -> *u8, types: *u8) -> i8;
 
 fn ControlTextEditingDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 fn ControlTextEditingDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
 fn ControlTextEditingDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
 fn ControlTextEditingDelegate_noop_v_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
+fn ControlTextEditingDelegate_noop_id_id_id_arrtext_range_id(user: *u8, a0: *u8, a1: *u8, a2: vec::Vec[text::Text], a3: rt::Range, a4: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct ControlTextEditingDelegate {
     control_text_did_begin_editing: fn(*u8, *u8),
@@ -59961,11 +60035,12 @@ struct ControlTextEditingDelegate {
     control_did_fail_to_validate_partial_string_error_description: fn(*u8, *u8, *u8, *u8),
     control_is_valid_object: fn(*u8, *u8, *u8) -> i8,
     control_text_view_do_command_by_selector: fn(*u8, *u8, *u8, *u8) -> i8,
+    control_text_view_completions_for_partial_word_range_index_of_selected_item: fn(*u8, *u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8,
     opaque user: *u8,
 }
 
 fn ControlTextEditingDelegate_new(user: *u8) -> ControlTextEditingDelegate {
-    return ControlTextEditingDelegate { control_text_did_begin_editing: ControlTextEditingDelegate_noop_v_id, control_text_did_end_editing: ControlTextEditingDelegate_noop_v_id, control_text_did_change: ControlTextEditingDelegate_noop_v_id, control_text_should_begin_editing: ControlTextEditingDelegate_noop_i8_id_id, control_text_should_end_editing: ControlTextEditingDelegate_noop_i8_id_id, control_did_fail_to_format_string_error_description: ControlTextEditingDelegate_noop_i8_id_id_id, control_did_fail_to_validate_partial_string_error_description: ControlTextEditingDelegate_noop_v_id_id_id, control_is_valid_object: ControlTextEditingDelegate_noop_i8_id_id, control_text_view_do_command_by_selector: ControlTextEditingDelegate_noop_i8_id_id_id, user: user };
+    return ControlTextEditingDelegate { control_text_did_begin_editing: ControlTextEditingDelegate_noop_v_id, control_text_did_end_editing: ControlTextEditingDelegate_noop_v_id, control_text_did_change: ControlTextEditingDelegate_noop_v_id, control_text_should_begin_editing: ControlTextEditingDelegate_noop_i8_id_id, control_text_should_end_editing: ControlTextEditingDelegate_noop_i8_id_id, control_did_fail_to_format_string_error_description: ControlTextEditingDelegate_noop_i8_id_id_id, control_did_fail_to_validate_partial_string_error_description: ControlTextEditingDelegate_noop_v_id_id_id, control_is_valid_object: ControlTextEditingDelegate_noop_i8_id_id, control_text_view_do_command_by_selector: ControlTextEditingDelegate_noop_i8_id_id_id, control_text_view_completions_for_partial_word_range_index_of_selected_item: ControlTextEditingDelegate_noop_id_id_id_arrtext_range_id, user: user };
 }
 
 impl ControlTextEditingDelegate {
@@ -60003,6 +60078,10 @@ impl ControlTextEditingDelegate {
     }
     fn set_control_text_view_do_command_by_selector(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.control_text_view_do_command_by_selector = handler;
+        return;
+    }
+    fn set_control_text_view_completions_for_partial_word_range_index_of_selected_item(ref this, handler: fn(*u8, *u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8) {
+        this.control_text_view_completions_for_partial_word_range_index_of_selected_item = handler;
         return;
     }
 }
@@ -60076,6 +60155,14 @@ fn ControlTextEditingDelegate_control_text_view_do_command_by_selector_imp(self_
     return f(u, a0, a1, a2);
 }
 
+fn ControlTextEditingDelegate_control_text_view_completions_for_partial_word_range_index_of_selected_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: rt::Range, a4: *u8) -> *u8 {
+    let c: *ControlTextEditingDelegate = { synth::get_associated(self_obj, ControlTextEditingDelegate_key()) as *ControlTextEditingDelegate };
+    let f: fn(*u8, *u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8 = { (*c).control_text_view_completions_for_partial_word_range_index_of_selected_item };
+    let u: *u8 = { (*c).user };
+    let b2: vec::Vec[text::Text] = cplus_darg_arr_text(a2);
+    return f(u, a0, a1, b2, a3, a4);
+}
+
 fn create_ControlTextEditingDelegate(ctx: *ControlTextEditingDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_ControlTextEditingDelegate\0");
     var cls: *u8 = rt::get_class(name);
@@ -60090,6 +60177,7 @@ fn create_ControlTextEditingDelegate(ctx: *ControlTextEditingDelegate) -> *u8 {
         let add_control_did_fail_to_validate_partial_string_error_description: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("control:didFailToValidatePartialString:errorDescription:\0")), ControlTextEditingDelegate_control_did_fail_to_validate_partial_string_error_description_imp, #str_ptr("v@:@@@\0"));
         let add_control_is_valid_object: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("control:isValidObject:\0")), ControlTextEditingDelegate_control_is_valid_object_imp, #str_ptr("c@:@@\0"));
         let add_control_text_view_do_command_by_selector: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("control:textView:doCommandBySelector:\0")), ControlTextEditingDelegate_control_text_view_do_command_by_selector_imp, #str_ptr("c@:@@:\0"));
+        let add_control_text_view_completions_for_partial_word_range_index_of_selected_item: i8 = cplus_add_method_id_id_id_id_range_id(cls, rt::sel(#str_ptr("control:textView:completions:forPartialWordRange:indexOfSelectedItem:\0")), ControlTextEditingDelegate_control_text_view_completions_for_partial_word_range_index_of_selected_item_imp, #str_ptr("@@:@@@{_NSRange=QQ}@\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -60687,18 +60775,20 @@ fn create_CollectionViewDataSource(ctx: *CollectionViewDataSource) -> *u8 {
 }
 
 // `NSCollectionViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `collectionView:canDragItemsAtIndexPaths:withEvent:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:writeItemsAtIndexPaths:toPasteboard:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:namesOfPromisedFilesDroppedAtDestination:forDraggedItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:draggingImageForItemsAtIndexPaths:withEvent:offset:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
 // SKIPPED `collectionView:validateDrop:proposedIndexPath:dropOperation:`: arg `NSIndexPath * _Nonnull * _Nonnull` not modelled
-// SKIPPED `collectionView:draggingSession:willBeginAtPoint:forItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:shouldChangeItemsAtIndexPaths:toHighlightState:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:didChangeItemsAtIndexPaths:toHighlightState:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:shouldSelectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:shouldDeselectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:didSelectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
-// SKIPPED `collectionView:didDeselectItemsAtIndexPaths:`: arg `NSSet<NSIndexPath *> * _Nonnull` not modelled
+fn cplus_darg_set_IndexPath(src: *u8) -> vec::Vec[IndexPath] {
+        let arr: *u8 = rt::msg_id(src, rt::sel(#str_ptr("allObjects\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[IndexPath] = vec::Vec[IndexPath]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(IndexPath::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -60714,35 +60804,58 @@ extern fn cplus_add_method_v_id_id_point_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_point_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Point, u64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_v_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8), types: *u8) -> i8;
 
+fn CollectionViewDelegate_noop_i8_id_setIndexPath_id(user: *u8, a0: *u8, a1: vec::Vec[IndexPath], a2: *u8) -> i8 { return 0 as i8; }
 fn CollectionViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
+fn CollectionViewDelegate_noop_id_id_id_setIndexPath(user: *u8, a0: *u8, a1: *u8, a2: vec::Vec[IndexPath]) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
+fn CollectionViewDelegate_noop_id_id_setIndexPath_id_id(user: *u8, a0: *u8, a1: vec::Vec[IndexPath], a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDelegate_noop_u64_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> u64 { return 0 as u64; }
 fn CollectionViewDelegate_noop_i8_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: u64) -> i8 { return 0 as i8; }
 fn CollectionViewDelegate_noop_i8_id_id_i64_u64(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: u64) -> i8 { return 0 as i8; }
 fn CollectionViewDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 fn CollectionViewDelegate_noop_id_id_u64(user: *u8, a0: *u8, a1: u64) -> *u8 { return { 0 as *u8 }; }
+fn CollectionViewDelegate_noop_v_id_id_point_setIndexPath(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: vec::Vec[IndexPath]) { return; }
 fn CollectionViewDelegate_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) { return; }
 fn CollectionViewDelegate_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
 fn CollectionViewDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
+fn CollectionViewDelegate_noop_id_id_setIndexPath_u64(user: *u8, a0: *u8, a1: vec::Vec[IndexPath], a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn CollectionViewDelegate_noop_v_id_setIndexPath_u64(user: *u8, a0: *u8, a1: vec::Vec[IndexPath], a2: u64) { return; }
+fn CollectionViewDelegate_noop_id_id_setIndexPath(user: *u8, a0: *u8, a1: vec::Vec[IndexPath]) -> *u8 { return { 0 as *u8 }; }
+fn CollectionViewDelegate_noop_v_id_setIndexPath(user: *u8, a0: *u8, a1: vec::Vec[IndexPath]) { return; }
 fn CollectionViewDelegate_noop_v_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) { return; }
 fn CollectionViewDelegate_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
 
 struct CollectionViewDelegate {
+    collection_view_can_drag_items_at_index_paths_with_event: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8,
     collection_view_can_drag_items_at_indexes_with_event: fn(*u8, *u8, *u8, *u8) -> i8,
+    collection_view_write_items_at_index_paths_to_pasteboard: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8,
     collection_view_write_items_at_indexes_to_pasteboard: fn(*u8, *u8, *u8, *u8) -> i8,
+    collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths: fn(*u8, *u8, *u8, vec::Vec[IndexPath]) -> *u8,
     collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: fn(*u8, *u8, *u8, *u8) -> *u8,
+    collection_view_dragging_image_for_items_at_index_paths_with_event_offset: fn(*u8, *u8, vec::Vec[IndexPath], *u8, *u8) -> *u8,
     collection_view_dragging_image_for_items_at_indexes_with_event_offset: fn(*u8, *u8, *u8, *u8, *u8) -> *u8,
     collection_view_validate_drop_proposed_index_drop_operation: fn(*u8, *u8, *u8, *u8, *u8) -> u64,
     collection_view_accept_drop_index_path_drop_operation: fn(*u8, *u8, *u8, *u8, u64) -> i8,
     collection_view_accept_drop_index_drop_operation: fn(*u8, *u8, *u8, i64, u64) -> i8,
     collection_view_pasteboard_writer_for_item_at_index_path: fn(*u8, *u8, *u8) -> *u8,
     collection_view_pasteboard_writer_for_item_at_index: fn(*u8, *u8, u64) -> *u8,
+    collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths: fn(*u8, *u8, *u8, rt::Point, vec::Vec[IndexPath]),
     collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: fn(*u8, *u8, *u8, rt::Point, *u8),
     collection_view_dragging_session_ended_at_point_drag_operation: fn(*u8, *u8, *u8, rt::Point, u64),
     collection_view_update_dragging_items_for_drag: fn(*u8, *u8, *u8),
+    collection_view_should_change_items_at_index_paths_to_highlight_state: fn(*u8, *u8, vec::Vec[IndexPath], u64) -> *u8,
+    collection_view_did_change_items_at_index_paths_to_highlight_state: fn(*u8, *u8, vec::Vec[IndexPath], u64),
+    collection_view_should_select_items_at_index_paths: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8,
+    collection_view_should_deselect_items_at_index_paths: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8,
+    collection_view_did_select_items_at_index_paths: fn(*u8, *u8, vec::Vec[IndexPath]),
+    collection_view_did_deselect_items_at_index_paths: fn(*u8, *u8, vec::Vec[IndexPath]),
     collection_view_will_display_item_for_represented_object_at_index_path: fn(*u8, *u8, *u8, *u8),
     collection_view_will_display_supplementary_view_for_element_kind_at_index_path: fn(*u8, *u8, *u8, *u8, *u8),
     collection_view_did_end_displaying_item_for_represented_object_at_index_path: fn(*u8, *u8, *u8, *u8),
@@ -60752,20 +60865,36 @@ struct CollectionViewDelegate {
 }
 
 fn CollectionViewDelegate_new(user: *u8) -> CollectionViewDelegate {
-    return CollectionViewDelegate { collection_view_can_drag_items_at_indexes_with_event: CollectionViewDelegate_noop_i8_id_id_id, collection_view_write_items_at_indexes_to_pasteboard: CollectionViewDelegate_noop_i8_id_id_id, collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: CollectionViewDelegate_noop_id_id_id_id, collection_view_dragging_image_for_items_at_indexes_with_event_offset: CollectionViewDelegate_noop_id_id_id_id_id, collection_view_validate_drop_proposed_index_drop_operation: CollectionViewDelegate_noop_u64_id_id_id_id, collection_view_accept_drop_index_path_drop_operation: CollectionViewDelegate_noop_i8_id_id_id_u64, collection_view_accept_drop_index_drop_operation: CollectionViewDelegate_noop_i8_id_id_i64_u64, collection_view_pasteboard_writer_for_item_at_index_path: CollectionViewDelegate_noop_id_id_id, collection_view_pasteboard_writer_for_item_at_index: CollectionViewDelegate_noop_id_id_u64, collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: CollectionViewDelegate_noop_v_id_id_point_id, collection_view_dragging_session_ended_at_point_drag_operation: CollectionViewDelegate_noop_v_id_id_point_u64, collection_view_update_dragging_items_for_drag: CollectionViewDelegate_noop_v_id_id, collection_view_will_display_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_will_display_supplementary_view_for_element_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_did_end_displaying_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_transition_layout_for_old_layout_new_layout: CollectionViewDelegate_noop_id_id_id_id, user: user };
+    return CollectionViewDelegate { collection_view_can_drag_items_at_index_paths_with_event: CollectionViewDelegate_noop_i8_id_setIndexPath_id, collection_view_can_drag_items_at_indexes_with_event: CollectionViewDelegate_noop_i8_id_id_id, collection_view_write_items_at_index_paths_to_pasteboard: CollectionViewDelegate_noop_i8_id_setIndexPath_id, collection_view_write_items_at_indexes_to_pasteboard: CollectionViewDelegate_noop_i8_id_id_id, collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths: CollectionViewDelegate_noop_id_id_id_setIndexPath, collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: CollectionViewDelegate_noop_id_id_id_id, collection_view_dragging_image_for_items_at_index_paths_with_event_offset: CollectionViewDelegate_noop_id_id_setIndexPath_id_id, collection_view_dragging_image_for_items_at_indexes_with_event_offset: CollectionViewDelegate_noop_id_id_id_id_id, collection_view_validate_drop_proposed_index_drop_operation: CollectionViewDelegate_noop_u64_id_id_id_id, collection_view_accept_drop_index_path_drop_operation: CollectionViewDelegate_noop_i8_id_id_id_u64, collection_view_accept_drop_index_drop_operation: CollectionViewDelegate_noop_i8_id_id_i64_u64, collection_view_pasteboard_writer_for_item_at_index_path: CollectionViewDelegate_noop_id_id_id, collection_view_pasteboard_writer_for_item_at_index: CollectionViewDelegate_noop_id_id_u64, collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths: CollectionViewDelegate_noop_v_id_id_point_setIndexPath, collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: CollectionViewDelegate_noop_v_id_id_point_id, collection_view_dragging_session_ended_at_point_drag_operation: CollectionViewDelegate_noop_v_id_id_point_u64, collection_view_update_dragging_items_for_drag: CollectionViewDelegate_noop_v_id_id, collection_view_should_change_items_at_index_paths_to_highlight_state: CollectionViewDelegate_noop_id_id_setIndexPath_u64, collection_view_did_change_items_at_index_paths_to_highlight_state: CollectionViewDelegate_noop_v_id_setIndexPath_u64, collection_view_should_select_items_at_index_paths: CollectionViewDelegate_noop_id_id_setIndexPath, collection_view_should_deselect_items_at_index_paths: CollectionViewDelegate_noop_id_id_setIndexPath, collection_view_did_select_items_at_index_paths: CollectionViewDelegate_noop_v_id_setIndexPath, collection_view_did_deselect_items_at_index_paths: CollectionViewDelegate_noop_v_id_setIndexPath, collection_view_will_display_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_will_display_supplementary_view_for_element_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_did_end_displaying_item_for_represented_object_at_index_path: CollectionViewDelegate_noop_v_id_id_id, collection_view_did_end_displaying_supplementary_view_for_element_of_kind_at_index_path: CollectionViewDelegate_noop_v_id_id_id_id, collection_view_transition_layout_for_old_layout_new_layout: CollectionViewDelegate_noop_id_id_id_id, user: user };
 }
 
 impl CollectionViewDelegate {
+    fn set_collection_view_can_drag_items_at_index_paths_with_event(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8) {
+        this.collection_view_can_drag_items_at_index_paths_with_event = handler;
+        return;
+    }
     fn set_collection_view_can_drag_items_at_indexes_with_event(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.collection_view_can_drag_items_at_indexes_with_event = handler;
+        return;
+    }
+    fn set_collection_view_write_items_at_index_paths_to_pasteboard(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8) {
+        this.collection_view_write_items_at_index_paths_to_pasteboard = handler;
         return;
     }
     fn set_collection_view_write_items_at_indexes_to_pasteboard(ref this, handler: fn(*u8, *u8, *u8, *u8) -> i8) {
         this.collection_view_write_items_at_indexes_to_pasteboard = handler;
         return;
     }
+    fn set_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths(ref this, handler: fn(*u8, *u8, *u8, vec::Vec[IndexPath]) -> *u8) {
+        this.collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths = handler;
+        return;
+    }
     fn set_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes(ref this, handler: fn(*u8, *u8, *u8, *u8) -> *u8) {
         this.collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes = handler;
+        return;
+    }
+    fn set_collection_view_dragging_image_for_items_at_index_paths_with_event_offset(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath], *u8, *u8) -> *u8) {
+        this.collection_view_dragging_image_for_items_at_index_paths_with_event_offset = handler;
         return;
     }
     fn set_collection_view_dragging_image_for_items_at_indexes_with_event_offset(ref this, handler: fn(*u8, *u8, *u8, *u8, *u8) -> *u8) {
@@ -60792,6 +60921,10 @@ impl CollectionViewDelegate {
         this.collection_view_pasteboard_writer_for_item_at_index = handler;
         return;
     }
+    fn set_collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths(ref this, handler: fn(*u8, *u8, *u8, rt::Point, vec::Vec[IndexPath])) {
+        this.collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths = handler;
+        return;
+    }
     fn set_collection_view_dragging_session_will_begin_at_point_for_items_at_indexes(ref this, handler: fn(*u8, *u8, *u8, rt::Point, *u8)) {
         this.collection_view_dragging_session_will_begin_at_point_for_items_at_indexes = handler;
         return;
@@ -60802,6 +60935,30 @@ impl CollectionViewDelegate {
     }
     fn set_collection_view_update_dragging_items_for_drag(ref this, handler: fn(*u8, *u8, *u8)) {
         this.collection_view_update_dragging_items_for_drag = handler;
+        return;
+    }
+    fn set_collection_view_should_change_items_at_index_paths_to_highlight_state(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath], u64) -> *u8) {
+        this.collection_view_should_change_items_at_index_paths_to_highlight_state = handler;
+        return;
+    }
+    fn set_collection_view_did_change_items_at_index_paths_to_highlight_state(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath], u64)) {
+        this.collection_view_did_change_items_at_index_paths_to_highlight_state = handler;
+        return;
+    }
+    fn set_collection_view_should_select_items_at_index_paths(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8) {
+        this.collection_view_should_select_items_at_index_paths = handler;
+        return;
+    }
+    fn set_collection_view_should_deselect_items_at_index_paths(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8) {
+        this.collection_view_should_deselect_items_at_index_paths = handler;
+        return;
+    }
+    fn set_collection_view_did_select_items_at_index_paths(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath])) {
+        this.collection_view_did_select_items_at_index_paths = handler;
+        return;
+    }
+    fn set_collection_view_did_deselect_items_at_index_paths(ref this, handler: fn(*u8, *u8, vec::Vec[IndexPath])) {
+        this.collection_view_did_deselect_items_at_index_paths = handler;
         return;
     }
     fn set_collection_view_will_display_item_for_represented_object_at_index_path(ref this, handler: fn(*u8, *u8, *u8, *u8)) {
@@ -60828,11 +60985,27 @@ impl CollectionViewDelegate {
 
 fn CollectionViewDelegate_key() -> *u8 { return { 28686 as *u8 }; }
 
+fn CollectionViewDelegate_collection_view_can_drag_items_at_index_paths_with_event_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8 = { (*c).collection_view_can_drag_items_at_index_paths_with_event };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1, a2);
+}
+
 fn CollectionViewDelegate_collection_view_can_drag_items_at_indexes_with_event_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
     let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> i8 = { (*c).collection_view_can_drag_items_at_indexes_with_event };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn CollectionViewDelegate_collection_view_write_items_at_index_paths_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath], *u8) -> i8 = { (*c).collection_view_write_items_at_index_paths_to_pasteboard };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1, a2);
 }
 
 fn CollectionViewDelegate_collection_view_write_items_at_indexes_to_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
@@ -60842,11 +61015,27 @@ fn CollectionViewDelegate_collection_view_write_items_at_indexes_to_pasteboard_i
     return f(u, a0, a1, a2);
 }
 
+fn CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, *u8, vec::Vec[IndexPath]) -> *u8 = { (*c).collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b2: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a2);
+    return f(u, a0, a1, b2);
+}
+
 fn CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
     let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
     let f: fn(*u8, *u8, *u8, *u8) -> *u8 = { (*c).collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn CollectionViewDelegate_collection_view_dragging_image_for_items_at_index_paths_with_event_offset_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath], *u8, *u8) -> *u8 = { (*c).collection_view_dragging_image_for_items_at_index_paths_with_event_offset };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1, a2, a3);
 }
 
 fn CollectionViewDelegate_collection_view_dragging_image_for_items_at_indexes_with_event_offset_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> *u8 {
@@ -60891,6 +61080,15 @@ fn CollectionViewDelegate_collection_view_pasteboard_writer_for_item_at_index_im
     return f(u, a0, a1);
 }
 
+fn CollectionViewDelegate_collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, *u8, rt::Point, vec::Vec[IndexPath]) = { (*c).collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b3: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a3);
+    f(u, a0, a1, a2, b3);
+    return;
+}
+
 fn CollectionViewDelegate_collection_view_dragging_session_will_begin_at_point_for_items_at_indexes_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) {
     let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
     let f: fn(*u8, *u8, *u8, rt::Point, *u8) = { (*c).collection_view_dragging_session_will_begin_at_point_for_items_at_indexes };
@@ -60912,6 +61110,57 @@ fn CollectionViewDelegate_collection_view_update_dragging_items_for_drag_imp(sel
     let f: fn(*u8, *u8, *u8) = { (*c).collection_view_update_dragging_items_for_drag };
     let u: *u8 = { (*c).user };
     f(u, a0, a1);
+    return;
+}
+
+fn CollectionViewDelegate_collection_view_should_change_items_at_index_paths_to_highlight_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath], u64) -> *u8 = { (*c).collection_view_should_change_items_at_index_paths_to_highlight_state };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1, a2);
+}
+
+fn CollectionViewDelegate_collection_view_did_change_items_at_index_paths_to_highlight_state_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath], u64) = { (*c).collection_view_did_change_items_at_index_paths_to_highlight_state };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    f(u, a0, b1, a2);
+    return;
+}
+
+fn CollectionViewDelegate_collection_view_should_select_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8 = { (*c).collection_view_should_select_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1);
+}
+
+fn CollectionViewDelegate_collection_view_should_deselect_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath]) -> *u8 = { (*c).collection_view_should_deselect_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    return f(u, a0, b1);
+}
+
+fn CollectionViewDelegate_collection_view_did_select_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath]) = { (*c).collection_view_did_select_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    f(u, a0, b1);
+    return;
+}
+
+fn CollectionViewDelegate_collection_view_did_deselect_items_at_index_paths_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *CollectionViewDelegate = { synth::get_associated(self_obj, CollectionViewDelegate_key()) as *CollectionViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[IndexPath]) = { (*c).collection_view_did_deselect_items_at_index_paths };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[IndexPath] = cplus_darg_set_IndexPath(a1);
+    f(u, a0, b1);
     return;
 }
 
@@ -60959,18 +61208,29 @@ fn create_CollectionViewDelegate(ctx: *CollectionViewDelegate) -> *u8 {
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_collection_view_can_drag_items_at_index_paths_with_event: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:canDragItemsAtIndexPaths:withEvent:\0")), CollectionViewDelegate_collection_view_can_drag_items_at_index_paths_with_event_imp, #str_ptr("c@:@@@\0"));
         let add_collection_view_can_drag_items_at_indexes_with_event: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:canDragItemsAtIndexes:withEvent:\0")), CollectionViewDelegate_collection_view_can_drag_items_at_indexes_with_event_imp, #str_ptr("c@:@@@\0"));
+        let add_collection_view_write_items_at_index_paths_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:writeItemsAtIndexPaths:toPasteboard:\0")), CollectionViewDelegate_collection_view_write_items_at_index_paths_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
         let add_collection_view_write_items_at_indexes_to_pasteboard: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("collectionView:writeItemsAtIndexes:toPasteboard:\0")), CollectionViewDelegate_collection_view_write_items_at_indexes_to_pasteboard_imp, #str_ptr("c@:@@@\0"));
+        let add_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:namesOfPromisedFilesDroppedAtDestination:forDraggedItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_index_paths_imp, #str_ptr("@@:@@@\0"));
         let add_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:namesOfPromisedFilesDroppedAtDestination:forDraggedItemsAtIndexes:\0")), CollectionViewDelegate_collection_view_names_of_promised_files_dropped_at_destination_for_dragged_items_at_indexes_imp, #str_ptr("@@:@@@\0"));
+        let add_collection_view_dragging_image_for_items_at_index_paths_with_event_offset: i8 = cplus_add_method_id_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:draggingImageForItemsAtIndexPaths:withEvent:offset:\0")), CollectionViewDelegate_collection_view_dragging_image_for_items_at_index_paths_with_event_offset_imp, #str_ptr("@@:@@@@\0"));
         let add_collection_view_dragging_image_for_items_at_indexes_with_event_offset: i8 = cplus_add_method_id_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:draggingImageForItemsAtIndexes:withEvent:offset:\0")), CollectionViewDelegate_collection_view_dragging_image_for_items_at_indexes_with_event_offset_imp, #str_ptr("@@:@@@@\0"));
         let add_collection_view_validate_drop_proposed_index_drop_operation: i8 = cplus_add_method_u64_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:validateDrop:proposedIndex:dropOperation:\0")), CollectionViewDelegate_collection_view_validate_drop_proposed_index_drop_operation_imp, #str_ptr("Q@:@@@@\0"));
         let add_collection_view_accept_drop_index_path_drop_operation: i8 = cplus_add_method_i8_id_id_id_u64(cls, rt::sel(#str_ptr("collectionView:acceptDrop:indexPath:dropOperation:\0")), CollectionViewDelegate_collection_view_accept_drop_index_path_drop_operation_imp, #str_ptr("c@:@@@Q\0"));
         let add_collection_view_accept_drop_index_drop_operation: i8 = cplus_add_method_i8_id_id_i64_u64(cls, rt::sel(#str_ptr("collectionView:acceptDrop:index:dropOperation:\0")), CollectionViewDelegate_collection_view_accept_drop_index_drop_operation_imp, #str_ptr("c@:@@qQ\0"));
         let add_collection_view_pasteboard_writer_for_item_at_index_path: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("collectionView:pasteboardWriterForItemAtIndexPath:\0")), CollectionViewDelegate_collection_view_pasteboard_writer_for_item_at_index_path_imp, #str_ptr("@@:@@\0"));
         let add_collection_view_pasteboard_writer_for_item_at_index: i8 = cplus_add_method_id_id_u64(cls, rt::sel(#str_ptr("collectionView:pasteboardWriterForItemAtIndex:\0")), CollectionViewDelegate_collection_view_pasteboard_writer_for_item_at_index_imp, #str_ptr("@@:@Q\0"));
+        let add_collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("collectionView:draggingSession:willBeginAtPoint:forItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_dragging_session_will_begin_at_point_for_items_at_index_paths_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
         let add_collection_view_dragging_session_will_begin_at_point_for_items_at_indexes: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("collectionView:draggingSession:willBeginAtPoint:forItemsAtIndexes:\0")), CollectionViewDelegate_collection_view_dragging_session_will_begin_at_point_for_items_at_indexes_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
         let add_collection_view_dragging_session_ended_at_point_drag_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("collectionView:draggingSession:endedAtPoint:dragOperation:\0")), CollectionViewDelegate_collection_view_dragging_session_ended_at_point_drag_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
         let add_collection_view_update_dragging_items_for_drag: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("collectionView:updateDraggingItemsForDrag:\0")), CollectionViewDelegate_collection_view_update_dragging_items_for_drag_imp, #str_ptr("v@:@@\0"));
+        let add_collection_view_should_change_items_at_index_paths_to_highlight_state: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("collectionView:shouldChangeItemsAtIndexPaths:toHighlightState:\0")), CollectionViewDelegate_collection_view_should_change_items_at_index_paths_to_highlight_state_imp, #str_ptr("@@:@@Q\0"));
+        let add_collection_view_did_change_items_at_index_paths_to_highlight_state: i8 = cplus_add_method_v_id_id_u64(cls, rt::sel(#str_ptr("collectionView:didChangeItemsAtIndexPaths:toHighlightState:\0")), CollectionViewDelegate_collection_view_did_change_items_at_index_paths_to_highlight_state_imp, #str_ptr("v@:@@Q\0"));
+        let add_collection_view_should_select_items_at_index_paths: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("collectionView:shouldSelectItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_should_select_items_at_index_paths_imp, #str_ptr("@@:@@\0"));
+        let add_collection_view_should_deselect_items_at_index_paths: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("collectionView:shouldDeselectItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_should_deselect_items_at_index_paths_imp, #str_ptr("@@:@@\0"));
+        let add_collection_view_did_select_items_at_index_paths: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("collectionView:didSelectItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_did_select_items_at_index_paths_imp, #str_ptr("v@:@@\0"));
+        let add_collection_view_did_deselect_items_at_index_paths: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("collectionView:didDeselectItemsAtIndexPaths:\0")), CollectionViewDelegate_collection_view_did_deselect_items_at_index_paths_imp, #str_ptr("v@:@@\0"));
         let add_collection_view_will_display_item_for_represented_object_at_index_path: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("collectionView:willDisplayItem:forRepresentedObjectAtIndexPath:\0")), CollectionViewDelegate_collection_view_will_display_item_for_represented_object_at_index_path_imp, #str_ptr("v@:@@@\0"));
         let add_collection_view_will_display_supplementary_view_for_element_kind_at_index_path: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:\0")), CollectionViewDelegate_collection_view_will_display_supplementary_view_for_element_kind_at_index_path_imp, #str_ptr("v@:@@@@\0"));
         let add_collection_view_did_end_displaying_item_for_represented_object_at_index_path: i8 = cplus_add_method_v_id_id_id(cls, rt::sel(#str_ptr("collectionView:didEndDisplayingItem:forRepresentedObjectAtIndexPath:\0")), CollectionViewDelegate_collection_view_did_end_displaying_item_for_represented_object_at_index_path_imp, #str_ptr("v@:@@@\0"));
@@ -62866,8 +63126,6 @@ fn create_GestureRecognizerDelegate(ctx: *GestureRecognizerDelegate) -> *u8 {
 extern fn cplus_add_method_id_id_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Rect) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
-#[link_name = "class_addMethod"]
-extern fn cplus_add_method_v_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64), types: *u8) -> i8;
 
 fn ImageDelegate_noop_id_id_rect(user: *u8, a0: *u8, a1: rt::Rect) -> *u8 { return { 0 as *u8 }; }
 fn ImageDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
@@ -63400,13 +63658,27 @@ fn create_CloudSharingServiceDelegate(ctx: *CloudSharingServiceDelegate) -> *u8 
 }
 
 // `NSSharingServicePickerDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `sharingServicePicker:sharingServicesForItems:proposedSharingServices:`: arg `NSArray<NSSharingService *> * _Nonnull` not modelled
+fn cplus_darg_arr_SharingService(src: *u8) -> vec::Vec[SharingService] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[SharingService] = vec::Vec[SharingService]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(SharingService::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
 
+
+fn SharingServicePickerDelegate_noop_id_id_id_arrSharingService(user: *u8, a0: *u8, a1: *u8, a2: vec::Vec[SharingService]) -> *u8 { return { 0 as *u8 }; }
 fn SharingServicePickerDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
 fn SharingServicePickerDelegate_noop_v_id_id(user: *u8, a0: *u8, a1: *u8) { return; }
 fn SharingServicePickerDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
 
 struct SharingServicePickerDelegate {
+    sharing_service_picker_sharing_services_for_items_proposed_sharing_services: fn(*u8, *u8, *u8, vec::Vec[SharingService]) -> *u8,
     sharing_service_picker_delegate_for_sharing_service: fn(*u8, *u8, *u8) -> *u8,
     sharing_service_picker_did_choose_sharing_service: fn(*u8, *u8, *u8),
     sharing_service_picker_collaboration_mode_restrictions: fn(*u8, *u8) -> *u8,
@@ -63414,10 +63686,14 @@ struct SharingServicePickerDelegate {
 }
 
 fn SharingServicePickerDelegate_new(user: *u8) -> SharingServicePickerDelegate {
-    return SharingServicePickerDelegate { sharing_service_picker_delegate_for_sharing_service: SharingServicePickerDelegate_noop_id_id_id, sharing_service_picker_did_choose_sharing_service: SharingServicePickerDelegate_noop_v_id_id, sharing_service_picker_collaboration_mode_restrictions: SharingServicePickerDelegate_noop_id_id, user: user };
+    return SharingServicePickerDelegate { sharing_service_picker_sharing_services_for_items_proposed_sharing_services: SharingServicePickerDelegate_noop_id_id_id_arrSharingService, sharing_service_picker_delegate_for_sharing_service: SharingServicePickerDelegate_noop_id_id_id, sharing_service_picker_did_choose_sharing_service: SharingServicePickerDelegate_noop_v_id_id, sharing_service_picker_collaboration_mode_restrictions: SharingServicePickerDelegate_noop_id_id, user: user };
 }
 
 impl SharingServicePickerDelegate {
+    fn set_sharing_service_picker_sharing_services_for_items_proposed_sharing_services(ref this, handler: fn(*u8, *u8, *u8, vec::Vec[SharingService]) -> *u8) {
+        this.sharing_service_picker_sharing_services_for_items_proposed_sharing_services = handler;
+        return;
+    }
     fn set_sharing_service_picker_delegate_for_sharing_service(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.sharing_service_picker_delegate_for_sharing_service = handler;
         return;
@@ -63433,6 +63709,14 @@ impl SharingServicePickerDelegate {
 }
 
 fn SharingServicePickerDelegate_key() -> *u8 { return { 28697 as *u8 }; }
+
+fn SharingServicePickerDelegate_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *SharingServicePickerDelegate = { synth::get_associated(self_obj, SharingServicePickerDelegate_key()) as *SharingServicePickerDelegate };
+    let f: fn(*u8, *u8, *u8, vec::Vec[SharingService]) -> *u8 = { (*c).sharing_service_picker_sharing_services_for_items_proposed_sharing_services };
+    let u: *u8 = { (*c).user };
+    let b2: vec::Vec[SharingService] = cplus_darg_arr_SharingService(a2);
+    return f(u, a0, a1, b2);
+}
 
 fn SharingServicePickerDelegate_sharing_service_picker_delegate_for_sharing_service_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *SharingServicePickerDelegate = { synth::get_associated(self_obj, SharingServicePickerDelegate_key()) as *SharingServicePickerDelegate };
@@ -63461,6 +63745,7 @@ fn create_SharingServicePickerDelegate(ctx: *SharingServicePickerDelegate) -> *u
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_sharing_service_picker_sharing_services_for_items_proposed_sharing_services: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("sharingServicePicker:sharingServicesForItems:proposedSharingServices:\0")), SharingServicePickerDelegate_sharing_service_picker_sharing_services_for_items_proposed_sharing_services_imp, #str_ptr("@@:@@@\0"));
         let add_sharing_service_picker_delegate_for_sharing_service: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("sharingServicePicker:delegateForSharingService:\0")), SharingServicePickerDelegate_sharing_service_picker_delegate_for_sharing_service_imp, #str_ptr("@@:@@\0"));
         let add_sharing_service_picker_did_choose_sharing_service: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("sharingServicePicker:didChooseSharingService:\0")), SharingServicePickerDelegate_sharing_service_picker_did_choose_sharing_service_imp, #str_ptr("v@:@@\0"));
         let add_sharing_service_picker_collaboration_mode_restrictions: i8 = cplus_add_method_id_id(cls, rt::sel(#str_ptr("sharingServicePickerCollaborationModeRestrictions:\0")), SharingServicePickerDelegate_sharing_service_picker_collaboration_mode_restrictions_imp, #str_ptr("@@:@\0"));
@@ -64201,6 +64486,78 @@ impl TextFinderBarContainer {
 
 }
 
+// `NSStackViewDelegate` delegate protocol -> runtime class-synthesis helper.
+fn cplus_darg_arr_View(src: *u8) -> vec::Vec[View] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[View] = vec::Vec[View]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(View::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
+
+fn StackViewDelegate_noop_v_id_arrView(user: *u8, a0: *u8, a1: vec::Vec[View]) { return; }
+
+struct StackViewDelegate {
+    stack_view_will_detach_views: fn(*u8, *u8, vec::Vec[View]),
+    stack_view_did_reattach_views: fn(*u8, *u8, vec::Vec[View]),
+    opaque user: *u8,
+}
+
+fn StackViewDelegate_new(user: *u8) -> StackViewDelegate {
+    return StackViewDelegate { stack_view_will_detach_views: StackViewDelegate_noop_v_id_arrView, stack_view_did_reattach_views: StackViewDelegate_noop_v_id_arrView, user: user };
+}
+
+impl StackViewDelegate {
+    fn set_stack_view_will_detach_views(ref this, handler: fn(*u8, *u8, vec::Vec[View])) {
+        this.stack_view_will_detach_views = handler;
+        return;
+    }
+    fn set_stack_view_did_reattach_views(ref this, handler: fn(*u8, *u8, vec::Vec[View])) {
+        this.stack_view_did_reattach_views = handler;
+        return;
+    }
+}
+
+fn StackViewDelegate_key() -> *u8 { return { 28703 as *u8 }; }
+
+fn StackViewDelegate_stack_view_will_detach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[View]) = { (*c).stack_view_will_detach_views };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[View] = cplus_darg_arr_View(a1);
+    f(u, a0, b1);
+    return;
+}
+
+fn StackViewDelegate_stack_view_did_reattach_views_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *StackViewDelegate = { synth::get_associated(self_obj, StackViewDelegate_key()) as *StackViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[View]) = { (*c).stack_view_did_reattach_views };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[View] = cplus_darg_arr_View(a1);
+    f(u, a0, b1);
+    return;
+}
+
+fn create_StackViewDelegate(ctx: *StackViewDelegate) -> *u8 {
+    let name: *u8 = #str_ptr("Cplus_StackViewDelegate\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let add_stack_view_will_detach_views: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("stackView:willDetachViews:\0")), StackViewDelegate_stack_view_will_detach_views_imp, #str_ptr("v@:@@\0"));
+        let add_stack_view_did_reattach_views: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("stackView:didReattachViews:\0")), StackViewDelegate_stack_view_did_reattach_views_imp, #str_ptr("v@:@@\0"));
+        synth::register_class_pair(cls);
+    }
+    let d: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(d, StackViewDelegate_key(), { ctx as *u8 });
+    return d;
+}
+
 // `NSTextInputTraits` (ObjC protocol). Non-owning handle; `opaque`, no drop.
 struct TextInputTraits {
     opaque _obj: *u8,
@@ -64471,7 +64828,7 @@ impl TextFieldDelegate {
     }
 }
 
-fn TextFieldDelegate_key() -> *u8 { return { 28703 as *u8 }; }
+fn TextFieldDelegate_key() -> *u8 { return { 28704 as *u8 }; }
 
 fn TextFieldDelegate_text_field_text_view_candidates_for_selected_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Range) -> *u8 {
     let c: *TextFieldDelegate = { synth::get_associated(self_obj, TextFieldDelegate_key()) as *TextFieldDelegate };
@@ -64528,7 +64885,7 @@ impl TextStorageDelegate {
     }
 }
 
-fn TextStorageDelegate_key() -> *u8 { return { 28704 as *u8 }; }
+fn TextStorageDelegate_key() -> *u8 { return { 28705 as *u8 }; }
 
 fn TextStorageDelegate_text_storage_will_process_editing_range_change_in_length_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: u64, a2: rt::Range, a3: i64) {
     let c: *TextStorageDelegate = { synth::get_associated(self_obj, TextStorageDelegate_key()) as *TextStorageDelegate };
@@ -64731,7 +65088,7 @@ impl LayoutManagerDelegate {
     }
 }
 
-fn LayoutManagerDelegate_key() -> *u8 { return { 28705 as *u8 }; }
+fn LayoutManagerDelegate_key() -> *u8 { return { 28706 as *u8 }; }
 
 fn LayoutManagerDelegate_layout_manager_should_generate_glyphs_properties_character_indexes_font_for_glyph_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: rt::Range) -> u64 {
     let c: *LayoutManagerDelegate = { synth::get_associated(self_obj, LayoutManagerDelegate_key()) as *LayoutManagerDelegate };
@@ -64871,8 +65228,6 @@ impl TextLayoutOrientationProvider {
 // `NSTokenFieldCellDelegate` delegate protocol -> runtime class-synthesis helper.
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, *u8) -> *u8, types: *u8) -> i8;
-#[link_name = "class_addMethod"]
-extern fn cplus_add_method_id_id_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64) -> *u8, types: *u8) -> i8;
 
 fn TokenFieldCellDelegate_noop_id_id_id_i64_id(user: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn TokenFieldCellDelegate_noop_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 { return { 0 as *u8 }; }
@@ -64942,7 +65297,7 @@ impl TokenFieldCellDelegate {
     }
 }
 
-fn TokenFieldCellDelegate_key() -> *u8 { return { 28706 as *u8 }; }
+fn TokenFieldCellDelegate_key() -> *u8 { return { 28707 as *u8 }; }
 
 fn TokenFieldCellDelegate_token_field_cell_completions_for_substring_index_of_token_index_of_selected_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 {
     let c: *TokenFieldCellDelegate = { synth::get_associated(self_obj, TokenFieldCellDelegate_key()) as *TokenFieldCellDelegate };
@@ -65106,7 +65461,7 @@ impl TokenFieldDelegate {
     }
 }
 
-fn TokenFieldDelegate_key() -> *u8 { return { 28707 as *u8 }; }
+fn TokenFieldDelegate_key() -> *u8 { return { 28708 as *u8 }; }
 
 fn TokenFieldDelegate_token_field_completions_for_substring_index_of_token_index_of_selected_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 {
     let c: *TokenFieldDelegate = { synth::get_associated(self_obj, TokenFieldDelegate_key()) as *TokenFieldDelegate };
@@ -65258,7 +65613,7 @@ impl ToolbarDelegate {
     }
 }
 
-fn ToolbarDelegate_key() -> *u8 { return { 28708 as *u8 }; }
+fn ToolbarDelegate_key() -> *u8 { return { 28709 as *u8 }; }
 
 fn ToolbarDelegate_toolbar_item_for_item_identifier_will_be_inserted_into_toolbar_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i8) -> *u8 {
     let c: *ToolbarDelegate = { synth::get_associated(self_obj, ToolbarDelegate_key()) as *ToolbarDelegate };
@@ -65412,7 +65767,7 @@ impl ComboBoxDataSource {
     }
 }
 
-fn ComboBoxDataSource_key() -> *u8 { return { 28709 as *u8 }; }
+fn ComboBoxDataSource_key() -> *u8 { return { 28710 as *u8 }; }
 
 fn ComboBoxDataSource_number_of_items_in_combo_box_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
     let c: *ComboBoxDataSource = { synth::get_associated(self_obj, ComboBoxDataSource_key()) as *ComboBoxDataSource };
@@ -65493,7 +65848,7 @@ impl ComboBoxDelegate {
     }
 }
 
-fn ComboBoxDelegate_key() -> *u8 { return { 28710 as *u8 }; }
+fn ComboBoxDelegate_key() -> *u8 { return { 28711 as *u8 }; }
 
 fn ComboBoxDelegate_combo_box_will_pop_up_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *ComboBoxDelegate = { synth::get_associated(self_obj, ComboBoxDelegate_key()) as *ComboBoxDelegate };
@@ -65581,7 +65936,7 @@ impl ComboBoxCellDataSource {
     }
 }
 
-fn ComboBoxCellDataSource_key() -> *u8 { return { 28711 as *u8 }; }
+fn ComboBoxCellDataSource_key() -> *u8 { return { 28712 as *u8 }; }
 
 fn ComboBoxCellDataSource_number_of_items_in_combo_box_cell_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
     let c: *ComboBoxCellDataSource = { synth::get_associated(self_obj, ComboBoxCellDataSource_key()) as *ComboBoxCellDataSource };
@@ -65874,12 +66229,22 @@ impl TextAttachmentContainer {
 }
 
 // `NSTextViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
-// SKIPPED `textView:shouldChangeTextInRanges:replacementStrings:`: arg `NSArray<NSValue *> * _Nonnull` not modelled
 // SKIPPED `textView:shouldChangeTypingAttributes:toAttributes:`: arg `NSDictionary<NSString *,id> * _Nonnull` not modelled
-// SKIPPED `textView:completions:forPartialWordRange:indexOfSelectedItem:`: arg `NSArray<NSString *> * _Nonnull` not modelled
 // SKIPPED `textView:didCheckTextInRange:types:options:results:orthography:wordCount:`: arg shape (>6 args not modelled)
 // SKIPPED `textView:candidates:forSelectedRange:`: arg `NSArray<NSTextCheckingResult *> * _Nonnull` not modelled
+fn cplus_darg_arr_Value(src: *u8) -> vec::Vec[Value] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Value] = vec::Vec[Value]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Value::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_rect_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Rect, u64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -65888,6 +66253,8 @@ extern fn cplus_add_method_v_id_id_rect_id_u64(cls: *u8, sel: *u8, imp: fn(*u8, 
 extern fn cplus_add_method_i8_id_id_u64_id_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, u64, *u8, *u8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_range_id_range_range(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Range, rt::Range) -> rt::Range, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn cplus_add_method_id_id_id_range_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, rt::Range, *u8) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_i8_id_range_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Range, *u8) -> i8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -65907,7 +66274,10 @@ fn TextViewDelegate_noop_v_id_id_rect_id_u64(user: *u8, a0: *u8, a1: *u8, a2: rt
 fn TextViewDelegate_noop_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: u64) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_i8_id_id_u64_id_id(user: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_range_id_range_range(user: *u8, a0: *u8, a1: rt::Range, a2: rt::Range) -> rt::Range { return rt::Range { location: 0 as u64, length: 0 as u64 }; }
+fn TextViewDelegate_noop_id_id_arrValue_arrValue(user: *u8, a0: *u8, a1: vec::Vec[Value], a2: vec::Vec[Value]) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_i8_id_arrValue_arrtext(user: *u8, a0: *u8, a1: vec::Vec[Value], a2: vec::Vec[text::Text]) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
+fn TextViewDelegate_noop_id_id_arrtext_range_id(user: *u8, a0: *u8, a1: vec::Vec[text::Text], a2: rt::Range, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_i8_id_range_id(user: *u8, a0: *u8, a1: rt::Range, a2: *u8) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_i64_id_i64_range(user: *u8, a0: *u8, a1: i64, a2: rt::Range) -> i64 { return 0 as i64; }
@@ -65915,7 +66285,7 @@ fn TextViewDelegate_noop_id_id_id_id_u64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a
 fn TextViewDelegate_noop_id_id_range_id_id(user: *u8, a0: *u8, a1: rt::Range, a2: *u8, a3: *u8) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_id_id(user: *u8, a0: *u8) -> *u8 { return { 0 as *u8 }; }
-fn TextViewDelegate_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn TextViewDelegate_noop_id_id_arrtext(user: *u8, a0: *u8, a1: vec::Vec[text::Text]) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_id_id_range(user: *u8, a0: *u8, a1: rt::Range) -> *u8 { return { 0 as *u8 }; }
 fn TextViewDelegate_noop_i8_id_u64(user: *u8, a0: *u8, a1: u64) -> i8 { return 0 as i8; }
 fn TextViewDelegate_noop_v_id_id_rect(user: *u8, a0: *u8, a1: *u8, a2: rt::Rect) { return; }
@@ -65929,9 +66299,12 @@ struct TextViewDelegate {
     text_view_writable_pasteboard_types_for_cell_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
     text_view_write_cell_at_index_to_pasteboard_type: fn(*u8, *u8, *u8, u64, *u8, *u8) -> i8,
     text_view_will_change_selection_from_character_range_to_character_range: fn(*u8, *u8, rt::Range, rt::Range) -> rt::Range,
+    text_view_will_change_selection_from_character_ranges_to_character_ranges: fn(*u8, *u8, vec::Vec[Value], vec::Vec[Value]) -> *u8,
+    text_view_should_change_text_in_ranges_replacement_strings: fn(*u8, *u8, vec::Vec[Value], vec::Vec[text::Text]) -> i8,
     text_view_did_change_selection: fn(*u8, *u8),
     text_view_did_change_typing_attributes: fn(*u8, *u8),
     text_view_will_display_tool_tip_for_character_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
+    text_view_completions_for_partial_word_range_index_of_selected_item: fn(*u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8,
     text_view_should_change_text_in_range_replacement_string: fn(*u8, *u8, rt::Range, *u8) -> i8,
     text_view_do_command_by_selector: fn(*u8, *u8, *u8) -> i8,
     text_view_should_set_spelling_state_range: fn(*u8, *u8, i64, rt::Range) -> i64,
@@ -65940,7 +66313,7 @@ struct TextViewDelegate {
     text_view_u_r_l_for_contents_of_text_attachment_at_index: fn(*u8, *u8, *u8, u64) -> *u8,
     text_view_will_show_sharing_service_picker_for_items: fn(*u8, *u8, *u8, *u8) -> *u8,
     undo_manager_for_text_view: fn(*u8, *u8) -> *u8,
-    text_view_should_update_touch_bar_item_identifiers: fn(*u8, *u8, *u8) -> *u8,
+    text_view_should_update_touch_bar_item_identifiers: fn(*u8, *u8, vec::Vec[text::Text]) -> *u8,
     text_view_candidates_for_selected_range: fn(*u8, *u8, rt::Range) -> *u8,
     text_view_should_select_candidate_at_index: fn(*u8, *u8, u64) -> i8,
     text_view_writing_tools_will_begin: fn(*u8, *u8),
@@ -65954,7 +66327,7 @@ struct TextViewDelegate {
 }
 
 fn TextViewDelegate_new(user: *u8) -> TextViewDelegate {
-    return TextViewDelegate { text_view_clicked_on_link_at_index: TextViewDelegate_noop_i8_id_id_u64, text_view_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_double_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_dragged_cell_in_rect_event_at_index: TextViewDelegate_noop_v_id_id_rect_id_u64, text_view_writable_pasteboard_types_for_cell_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_write_cell_at_index_to_pasteboard_type: TextViewDelegate_noop_i8_id_id_u64_id_id, text_view_will_change_selection_from_character_range_to_character_range: TextViewDelegate_noop_range_id_range_range, text_view_did_change_selection: TextViewDelegate_noop_v_id, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_id, text_view_will_display_tool_tip_for_character_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_should_change_text_in_range_replacement_string: TextViewDelegate_noop_i8_id_range_id, text_view_do_command_by_selector: TextViewDelegate_noop_i8_id_id, text_view_should_set_spelling_state_range: TextViewDelegate_noop_i64_id_i64_range, text_view_menu_for_event_at_index: TextViewDelegate_noop_id_id_id_id_u64, text_view_will_check_text_in_range_options_types: TextViewDelegate_noop_id_id_range_id_id, text_view_u_r_l_for_contents_of_text_attachment_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_id_id_id, undo_manager_for_text_view: TextViewDelegate_noop_id_id, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_id_id, text_view_candidates_for_selected_range: TextViewDelegate_noop_id_id_range, text_view_should_select_candidate_at_index: TextViewDelegate_noop_i8_id_u64, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_id, text_view_writing_tools_did_end: TextViewDelegate_noop_v_id, text_view_writing_tools_ignored_ranges_in_enclosing_range: TextViewDelegate_noop_id_id_range, text_view_clicked_on_link: TextViewDelegate_noop_i8_id_id, text_view_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_double_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_dragged_cell_in_rect_event: TextViewDelegate_noop_v_id_id_rect_id, user: user };
+    return TextViewDelegate { text_view_clicked_on_link_at_index: TextViewDelegate_noop_i8_id_id_u64, text_view_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_double_clicked_on_cell_in_rect_at_index: TextViewDelegate_noop_v_id_id_rect_u64, text_view_dragged_cell_in_rect_event_at_index: TextViewDelegate_noop_v_id_id_rect_id_u64, text_view_writable_pasteboard_types_for_cell_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_write_cell_at_index_to_pasteboard_type: TextViewDelegate_noop_i8_id_id_u64_id_id, text_view_will_change_selection_from_character_range_to_character_range: TextViewDelegate_noop_range_id_range_range, text_view_will_change_selection_from_character_ranges_to_character_ranges: TextViewDelegate_noop_id_id_arrValue_arrValue, text_view_should_change_text_in_ranges_replacement_strings: TextViewDelegate_noop_i8_id_arrValue_arrtext, text_view_did_change_selection: TextViewDelegate_noop_v_id, text_view_did_change_typing_attributes: TextViewDelegate_noop_v_id, text_view_will_display_tool_tip_for_character_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_completions_for_partial_word_range_index_of_selected_item: TextViewDelegate_noop_id_id_arrtext_range_id, text_view_should_change_text_in_range_replacement_string: TextViewDelegate_noop_i8_id_range_id, text_view_do_command_by_selector: TextViewDelegate_noop_i8_id_id, text_view_should_set_spelling_state_range: TextViewDelegate_noop_i64_id_i64_range, text_view_menu_for_event_at_index: TextViewDelegate_noop_id_id_id_id_u64, text_view_will_check_text_in_range_options_types: TextViewDelegate_noop_id_id_range_id_id, text_view_u_r_l_for_contents_of_text_attachment_at_index: TextViewDelegate_noop_id_id_id_u64, text_view_will_show_sharing_service_picker_for_items: TextViewDelegate_noop_id_id_id_id, undo_manager_for_text_view: TextViewDelegate_noop_id_id, text_view_should_update_touch_bar_item_identifiers: TextViewDelegate_noop_id_id_arrtext, text_view_candidates_for_selected_range: TextViewDelegate_noop_id_id_range, text_view_should_select_candidate_at_index: TextViewDelegate_noop_i8_id_u64, text_view_writing_tools_will_begin: TextViewDelegate_noop_v_id, text_view_writing_tools_did_end: TextViewDelegate_noop_v_id, text_view_writing_tools_ignored_ranges_in_enclosing_range: TextViewDelegate_noop_id_id_range, text_view_clicked_on_link: TextViewDelegate_noop_i8_id_id, text_view_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_double_clicked_on_cell_in_rect: TextViewDelegate_noop_v_id_id_rect, text_view_dragged_cell_in_rect_event: TextViewDelegate_noop_v_id_id_rect_id, user: user };
 }
 
 impl TextViewDelegate {
@@ -65986,6 +66359,14 @@ impl TextViewDelegate {
         this.text_view_will_change_selection_from_character_range_to_character_range = handler;
         return;
     }
+    fn set_text_view_will_change_selection_from_character_ranges_to_character_ranges(ref this, handler: fn(*u8, *u8, vec::Vec[Value], vec::Vec[Value]) -> *u8) {
+        this.text_view_will_change_selection_from_character_ranges_to_character_ranges = handler;
+        return;
+    }
+    fn set_text_view_should_change_text_in_ranges_replacement_strings(ref this, handler: fn(*u8, *u8, vec::Vec[Value], vec::Vec[text::Text]) -> i8) {
+        this.text_view_should_change_text_in_ranges_replacement_strings = handler;
+        return;
+    }
     fn set_text_view_did_change_selection(ref this, handler: fn(*u8, *u8)) {
         this.text_view_did_change_selection = handler;
         return;
@@ -65996,6 +66377,10 @@ impl TextViewDelegate {
     }
     fn set_text_view_will_display_tool_tip_for_character_at_index(ref this, handler: fn(*u8, *u8, *u8, u64) -> *u8) {
         this.text_view_will_display_tool_tip_for_character_at_index = handler;
+        return;
+    }
+    fn set_text_view_completions_for_partial_word_range_index_of_selected_item(ref this, handler: fn(*u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8) {
+        this.text_view_completions_for_partial_word_range_index_of_selected_item = handler;
         return;
     }
     fn set_text_view_should_change_text_in_range_replacement_string(ref this, handler: fn(*u8, *u8, rt::Range, *u8) -> i8) {
@@ -66030,7 +66415,7 @@ impl TextViewDelegate {
         this.undo_manager_for_text_view = handler;
         return;
     }
-    fn set_text_view_should_update_touch_bar_item_identifiers(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
+    fn set_text_view_should_update_touch_bar_item_identifiers(ref this, handler: fn(*u8, *u8, vec::Vec[text::Text]) -> *u8) {
         this.text_view_should_update_touch_bar_item_identifiers = handler;
         return;
     }
@@ -66072,7 +66457,7 @@ impl TextViewDelegate {
     }
 }
 
-fn TextViewDelegate_key() -> *u8 { return { 28712 as *u8 }; }
+fn TextViewDelegate_key() -> *u8 { return { 28713 as *u8 }; }
 
 fn TextViewDelegate_text_view_clicked_on_link_at_index_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> i8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
@@ -66126,6 +66511,24 @@ fn TextViewDelegate_text_view_will_change_selection_from_character_range_to_char
     return f(u, a0, a1, a2);
 }
 
+fn TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[Value], vec::Vec[Value]) -> *u8 = { (*c).text_view_will_change_selection_from_character_ranges_to_character_ranges };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[Value] = cplus_darg_arr_Value(a1);
+    let b2: vec::Vec[Value] = cplus_darg_arr_Value(a2);
+    return f(u, a0, b1, b2);
+}
+
+fn TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[Value], vec::Vec[text::Text]) -> i8 = { (*c).text_view_should_change_text_in_ranges_replacement_strings };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[Value] = cplus_darg_arr_Value(a1);
+    let b2: vec::Vec[text::Text] = cplus_darg_arr_text(a2);
+    return f(u, a0, b1, b2);
+}
+
 fn TextViewDelegate_text_view_did_change_selection_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
     let f: fn(*u8, *u8) = { (*c).text_view_did_change_selection };
@@ -66147,6 +66550,14 @@ fn TextViewDelegate_text_view_will_display_tool_tip_for_character_at_index_imp(s
     let f: fn(*u8, *u8, *u8, u64) -> *u8 = { (*c).text_view_will_display_tool_tip_for_character_at_index };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1, a2);
+}
+
+fn TextViewDelegate_text_view_completions_for_partial_word_range_index_of_selected_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: rt::Range, a3: *u8) -> *u8 {
+    let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[text::Text], rt::Range, *u8) -> *u8 = { (*c).text_view_completions_for_partial_word_range_index_of_selected_item };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[text::Text] = cplus_darg_arr_text(a1);
+    return f(u, a0, b1, a2, a3);
 }
 
 fn TextViewDelegate_text_view_should_change_text_in_range_replacement_string_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Range, a2: *u8) -> i8 {
@@ -66207,9 +66618,10 @@ fn TextViewDelegate_undo_manager_for_text_view_imp(self_obj: *u8, cmd: *u8, a0: 
 
 fn TextViewDelegate_text_view_should_update_touch_bar_item_identifiers_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *TextViewDelegate = { synth::get_associated(self_obj, TextViewDelegate_key()) as *TextViewDelegate };
-    let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).text_view_should_update_touch_bar_item_identifiers };
+    let f: fn(*u8, *u8, vec::Vec[text::Text]) -> *u8 = { (*c).text_view_should_update_touch_bar_item_identifiers };
     let u: *u8 = { (*c).user };
-    return f(u, a0, a1);
+    let b1: vec::Vec[text::Text] = cplus_darg_arr_text(a1);
+    return f(u, a0, b1);
 }
 
 fn TextViewDelegate_text_view_candidates_for_selected_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Range) -> *u8 {
@@ -66292,9 +66704,12 @@ fn create_TextViewDelegate(ctx: *TextViewDelegate) -> *u8 {
         let add_text_view_writable_pasteboard_types_for_cell_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:writablePasteboardTypesForCell:atIndex:\0")), TextViewDelegate_text_view_writable_pasteboard_types_for_cell_at_index_imp, #str_ptr("@@:@@Q\0"));
         let add_text_view_write_cell_at_index_to_pasteboard_type: i8 = cplus_add_method_i8_id_id_u64_id_id(cls, rt::sel(#str_ptr("textView:writeCell:atIndex:toPasteboard:type:\0")), TextViewDelegate_text_view_write_cell_at_index_to_pasteboard_type_imp, #str_ptr("c@:@@Q@@\0"));
         let add_text_view_will_change_selection_from_character_range_to_character_range: i8 = cplus_add_method_range_id_range_range(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRange:toCharacterRange:\0")), TextViewDelegate_text_view_will_change_selection_from_character_range_to_character_range_imp, #str_ptr("{_NSRange=QQ}@:@{_NSRange=QQ}{_NSRange=QQ}\0"));
+        let add_text_view_will_change_selection_from_character_ranges_to_character_ranges: i8 = cplus_add_method_id_id_id_id(cls, rt::sel(#str_ptr("textView:willChangeSelectionFromCharacterRanges:toCharacterRanges:\0")), TextViewDelegate_text_view_will_change_selection_from_character_ranges_to_character_ranges_imp, #str_ptr("@@:@@@\0"));
+        let add_text_view_should_change_text_in_ranges_replacement_strings: i8 = cplus_add_method_i8_id_id_id(cls, rt::sel(#str_ptr("textView:shouldChangeTextInRanges:replacementStrings:\0")), TextViewDelegate_text_view_should_change_text_in_ranges_replacement_strings_imp, #str_ptr("c@:@@@\0"));
         let add_text_view_did_change_selection: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")), TextViewDelegate_text_view_did_change_selection_imp, #str_ptr("v@:@\0"));
         let add_text_view_did_change_typing_attributes: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("textViewDidChangeTypingAttributes:\0")), TextViewDelegate_text_view_did_change_typing_attributes_imp, #str_ptr("v@:@\0"));
         let add_text_view_will_display_tool_tip_for_character_at_index: i8 = cplus_add_method_id_id_id_u64(cls, rt::sel(#str_ptr("textView:willDisplayToolTip:forCharacterAtIndex:\0")), TextViewDelegate_text_view_will_display_tool_tip_for_character_at_index_imp, #str_ptr("@@:@@Q\0"));
+        let add_text_view_completions_for_partial_word_range_index_of_selected_item: i8 = cplus_add_method_id_id_id_range_id(cls, rt::sel(#str_ptr("textView:completions:forPartialWordRange:indexOfSelectedItem:\0")), TextViewDelegate_text_view_completions_for_partial_word_range_index_of_selected_item_imp, #str_ptr("@@:@@{_NSRange=QQ}@\0"));
         let add_text_view_should_change_text_in_range_replacement_string: i8 = cplus_add_method_i8_id_range_id(cls, rt::sel(#str_ptr("textView:shouldChangeTextInRange:replacementString:\0")), TextViewDelegate_text_view_should_change_text_in_range_replacement_string_imp, #str_ptr("c@:@{_NSRange=QQ}@\0"));
         let add_text_view_do_command_by_selector: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("textView:doCommandBySelector:\0")), TextViewDelegate_text_view_do_command_by_selector_imp, #str_ptr("c@:@:\0"));
         let add_text_view_should_set_spelling_state_range: i8 = cplus_add_method_i64_id_i64_range(cls, rt::sel(#str_ptr("textView:shouldSetSpellingState:range:\0")), TextViewDelegate_text_view_should_set_spelling_state_range_imp, #str_ptr("q@:@q{_NSRange=QQ}\0"));
@@ -66333,7 +66748,19 @@ impl QLPreviewItem {
 }
 
 // `NSTableViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `tableView:userDidChangeVisibilityOfTableColumns:`: arg `NSArray<NSTableColumn *> * _Nonnull` not modelled
+fn cplus_darg_arr_TableColumn(src: *u8) -> vec::Vec[TableColumn] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TableColumn] = vec::Vec[TableColumn]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TableColumn::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_v_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -66362,6 +66789,7 @@ fn TableViewDelegate_noop_i64_id_i64_i64_id(user: *u8, a0: *u8, a1: i64, a2: i64
 fn TableViewDelegate_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
 fn TableViewDelegate_noop_i8_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) -> i8 { return 0 as i8; }
 fn TableViewDelegate_noop_id_id_i64_u64(user: *u8, a0: *u8, a1: i64, a2: u64) -> *u8 { return { 0 as *u8 }; }
+fn TableViewDelegate_noop_v_id_arrTableColumn(user: *u8, a0: *u8, a1: vec::Vec[TableColumn]) { return; }
 fn TableViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct TableViewDelegate {
@@ -66391,6 +66819,7 @@ struct TableViewDelegate {
     table_view_should_reorder_column_to_column: fn(*u8, *u8, i64, i64) -> i8,
     table_view_row_actions_for_row_edge: fn(*u8, *u8, i64, u64) -> *u8,
     table_view_user_can_change_visibility_of_table_column: fn(*u8, *u8, *u8) -> i8,
+    table_view_user_did_change_visibility_of_table_columns: fn(*u8, *u8, vec::Vec[TableColumn]),
     table_view_selection_did_change: fn(*u8, *u8),
     table_view_column_did_move: fn(*u8, *u8),
     table_view_column_did_resize: fn(*u8, *u8),
@@ -66399,7 +66828,7 @@ struct TableViewDelegate {
 }
 
 fn TableViewDelegate_new(user: *u8) -> TableViewDelegate {
-    return TableViewDelegate { table_view_view_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_row_view_for_row: TableViewDelegate_noop_id_id_i64, table_view_did_add_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_did_remove_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_will_display_cell_for_table_column_row: TableViewDelegate_noop_v_id_id_id_i64, table_view_should_edit_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_tool_tip_for_cell_rect_table_column_row_mouse_location: TableViewDelegate_noop_id_id_id_id_id_i64_point, table_view_should_show_cell_expansion_for_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_should_track_cell_for_table_column_row: TableViewDelegate_noop_i8_id_id_id_i64, table_view_data_cell_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, selection_should_change_in_table_view: TableViewDelegate_noop_i8_id, table_view_should_select_row: TableViewDelegate_noop_i8_id_i64, table_view_selection_indexes_for_proposed_selection: TableViewDelegate_noop_id_id_id, table_view_should_select_table_column: TableViewDelegate_noop_i8_id_id, table_view_mouse_down_in_header_of_table_column: TableViewDelegate_noop_v_id_id, table_view_did_click_table_column: TableViewDelegate_noop_v_id_id, table_view_did_drag_table_column: TableViewDelegate_noop_v_id_id, table_view_height_of_row: TableViewDelegate_noop_f64_id_i64, table_view_type_select_string_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_next_type_select_match_from_row_to_row_for_string: TableViewDelegate_noop_i64_id_i64_i64_id, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegate_noop_i8_id_id_id, table_view_is_group_row: TableViewDelegate_noop_i8_id_i64, table_view_size_to_fit_width_of_column: TableViewDelegate_noop_f64_id_i64, table_view_should_reorder_column_to_column: TableViewDelegate_noop_i8_id_i64_i64, table_view_row_actions_for_row_edge: TableViewDelegate_noop_id_id_i64_u64, table_view_user_can_change_visibility_of_table_column: TableViewDelegate_noop_i8_id_id, table_view_selection_did_change: TableViewDelegate_noop_v_id, table_view_column_did_move: TableViewDelegate_noop_v_id, table_view_column_did_resize: TableViewDelegate_noop_v_id, table_view_selection_is_changing: TableViewDelegate_noop_v_id, user: user };
+    return TableViewDelegate { table_view_view_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_row_view_for_row: TableViewDelegate_noop_id_id_i64, table_view_did_add_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_did_remove_row_view_for_row: TableViewDelegate_noop_v_id_id_i64, table_view_will_display_cell_for_table_column_row: TableViewDelegate_noop_v_id_id_id_i64, table_view_should_edit_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_tool_tip_for_cell_rect_table_column_row_mouse_location: TableViewDelegate_noop_id_id_id_id_id_i64_point, table_view_should_show_cell_expansion_for_table_column_row: TableViewDelegate_noop_i8_id_id_i64, table_view_should_track_cell_for_table_column_row: TableViewDelegate_noop_i8_id_id_id_i64, table_view_data_cell_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, selection_should_change_in_table_view: TableViewDelegate_noop_i8_id, table_view_should_select_row: TableViewDelegate_noop_i8_id_i64, table_view_selection_indexes_for_proposed_selection: TableViewDelegate_noop_id_id_id, table_view_should_select_table_column: TableViewDelegate_noop_i8_id_id, table_view_mouse_down_in_header_of_table_column: TableViewDelegate_noop_v_id_id, table_view_did_click_table_column: TableViewDelegate_noop_v_id_id, table_view_did_drag_table_column: TableViewDelegate_noop_v_id_id, table_view_height_of_row: TableViewDelegate_noop_f64_id_i64, table_view_type_select_string_for_table_column_row: TableViewDelegate_noop_id_id_id_i64, table_view_next_type_select_match_from_row_to_row_for_string: TableViewDelegate_noop_i64_id_i64_i64_id, table_view_should_type_select_for_event_with_current_search_string: TableViewDelegate_noop_i8_id_id_id, table_view_is_group_row: TableViewDelegate_noop_i8_id_i64, table_view_size_to_fit_width_of_column: TableViewDelegate_noop_f64_id_i64, table_view_should_reorder_column_to_column: TableViewDelegate_noop_i8_id_i64_i64, table_view_row_actions_for_row_edge: TableViewDelegate_noop_id_id_i64_u64, table_view_user_can_change_visibility_of_table_column: TableViewDelegate_noop_i8_id_id, table_view_user_did_change_visibility_of_table_columns: TableViewDelegate_noop_v_id_arrTableColumn, table_view_selection_did_change: TableViewDelegate_noop_v_id, table_view_column_did_move: TableViewDelegate_noop_v_id, table_view_column_did_resize: TableViewDelegate_noop_v_id, table_view_selection_is_changing: TableViewDelegate_noop_v_id, user: user };
 }
 
 impl TableViewDelegate {
@@ -66507,6 +66936,10 @@ impl TableViewDelegate {
         this.table_view_user_can_change_visibility_of_table_column = handler;
         return;
     }
+    fn set_table_view_user_did_change_visibility_of_table_columns(ref this, handler: fn(*u8, *u8, vec::Vec[TableColumn])) {
+        this.table_view_user_did_change_visibility_of_table_columns = handler;
+        return;
+    }
     fn set_table_view_selection_did_change(ref this, handler: fn(*u8, *u8)) {
         this.table_view_selection_did_change = handler;
         return;
@@ -66525,7 +66958,7 @@ impl TableViewDelegate {
     }
 }
 
-fn TableViewDelegate_key() -> *u8 { return { 28713 as *u8 }; }
+fn TableViewDelegate_key() -> *u8 { return { 28714 as *u8 }; }
 
 fn TableViewDelegate_table_view_view_for_table_column_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 {
     let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
@@ -66715,6 +67148,15 @@ fn TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp(s
     return f(u, a0, a1);
 }
 
+fn TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[TableColumn]) = { (*c).table_view_user_did_change_visibility_of_table_columns };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[TableColumn] = cplus_darg_arr_TableColumn(a1);
+    f(u, a0, b1);
+    return;
+}
+
 fn TableViewDelegate_table_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *TableViewDelegate = { synth::get_associated(self_obj, TableViewDelegate_key()) as *TableViewDelegate };
     let f: fn(*u8, *u8) = { (*c).table_view_selection_did_change };
@@ -66778,6 +67220,7 @@ fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
         let add_table_view_should_reorder_column_to_column: i8 = cplus_add_method_i8_id_i64_i64(cls, rt::sel(#str_ptr("tableView:shouldReorderColumn:toColumn:\0")), TableViewDelegate_table_view_should_reorder_column_to_column_imp, #str_ptr("c@:@qq\0"));
         let add_table_view_row_actions_for_row_edge: i8 = cplus_add_method_id_id_i64_u64(cls, rt::sel(#str_ptr("tableView:rowActionsForRow:edge:\0")), TableViewDelegate_table_view_row_actions_for_row_edge_imp, #str_ptr("@@:@qQ\0"));
         let add_table_view_user_can_change_visibility_of_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("tableView:userCanChangeVisibilityOfTableColumn:\0")), TableViewDelegate_table_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_table_view_user_did_change_visibility_of_table_columns: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:userDidChangeVisibilityOfTableColumns:\0")), TableViewDelegate_table_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
         let add_table_view_selection_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), TableViewDelegate_table_view_selection_did_change_imp, #str_ptr("v@:@\0"));
         let add_table_view_column_did_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewColumnDidMove:\0")), TableViewDelegate_table_view_column_did_move_imp, #str_ptr("v@:@\0"));
         let add_table_view_column_did_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("tableViewColumnDidResize:\0")), TableViewDelegate_table_view_column_did_resize_imp, #str_ptr("v@:@\0"));
@@ -66790,13 +67233,26 @@ fn create_TableViewDelegate(ctx: *TableViewDelegate) -> *u8 {
 }
 
 // `NSTableViewDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `tableView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
+fn cplus_darg_arr_SortDescriptor(src: *u8) -> vec::Vec[SortDescriptor] {
+        let arr: *u8 = src;
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[SortDescriptor] = vec::Vec[SortDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(SortDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+}
+
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_i64_u64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64, u64) -> u64, types: *u8) -> i8;
 
 fn TableViewDataSource_noop_i64_id(user: *u8, a0: *u8) -> i64 { return 0 as i64; }
 fn TableViewDataSource_noop_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: i64) -> *u8 { return { 0 as *u8 }; }
 fn TableViewDataSource_noop_v_id_id_id_i64(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: i64) { return; }
+fn TableViewDataSource_noop_v_id_arrSortDescriptor(user: *u8, a0: *u8, a1: vec::Vec[SortDescriptor]) { return; }
 fn TableViewDataSource_noop_id_id_i64(user: *u8, a0: *u8, a1: i64) -> *u8 { return { 0 as *u8 }; }
 fn TableViewDataSource_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) { return; }
 fn TableViewDataSource_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
@@ -66810,6 +67266,7 @@ struct TableViewDataSource {
     number_of_rows_in_table_view: fn(*u8, *u8) -> i64,
     table_view_object_value_for_table_column_row: fn(*u8, *u8, *u8, i64) -> *u8,
     table_view_set_object_value_for_table_column_row: fn(*u8, *u8, *u8, *u8, i64),
+    table_view_sort_descriptors_did_change: fn(*u8, *u8, vec::Vec[SortDescriptor]),
     table_view_pasteboard_writer_for_row: fn(*u8, *u8, i64) -> *u8,
     table_view_dragging_session_will_begin_at_point_for_row_indexes: fn(*u8, *u8, *u8, rt::Point, *u8),
     table_view_dragging_session_ended_at_point_operation: fn(*u8, *u8, *u8, rt::Point, u64),
@@ -66822,7 +67279,7 @@ struct TableViewDataSource {
 }
 
 fn TableViewDataSource_new(user: *u8) -> TableViewDataSource {
-    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_id, table_view_object_value_for_table_column_row: TableViewDataSource_noop_id_id_id_i64, table_view_set_object_value_for_table_column_row: TableViewDataSource_noop_v_id_id_id_i64, table_view_pasteboard_writer_for_row: TableViewDataSource_noop_id_id_i64, table_view_dragging_session_will_begin_at_point_for_row_indexes: TableViewDataSource_noop_v_id_id_point_id, table_view_dragging_session_ended_at_point_operation: TableViewDataSource_noop_v_id_id_point_u64, table_view_update_dragging_items_for_drag: TableViewDataSource_noop_v_id_id, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_id_id_id, table_view_validate_drop_proposed_row_proposed_drop_operation: TableViewDataSource_noop_u64_id_id_i64_u64, table_view_accept_drop_row_drop_operation: TableViewDataSource_noop_i8_id_id_i64_u64, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_id_id_id, user: user };
+    return TableViewDataSource { number_of_rows_in_table_view: TableViewDataSource_noop_i64_id, table_view_object_value_for_table_column_row: TableViewDataSource_noop_id_id_id_i64, table_view_set_object_value_for_table_column_row: TableViewDataSource_noop_v_id_id_id_i64, table_view_sort_descriptors_did_change: TableViewDataSource_noop_v_id_arrSortDescriptor, table_view_pasteboard_writer_for_row: TableViewDataSource_noop_id_id_i64, table_view_dragging_session_will_begin_at_point_for_row_indexes: TableViewDataSource_noop_v_id_id_point_id, table_view_dragging_session_ended_at_point_operation: TableViewDataSource_noop_v_id_id_point_u64, table_view_update_dragging_items_for_drag: TableViewDataSource_noop_v_id_id, table_view_write_rows_with_indexes_to_pasteboard: TableViewDataSource_noop_i8_id_id_id, table_view_validate_drop_proposed_row_proposed_drop_operation: TableViewDataSource_noop_u64_id_id_i64_u64, table_view_accept_drop_row_drop_operation: TableViewDataSource_noop_i8_id_id_i64_u64, table_view_names_of_promised_files_dropped_at_destination_for_dragged_rows_with_indexes: TableViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl TableViewDataSource {
@@ -66836,6 +67293,10 @@ impl TableViewDataSource {
     }
     fn set_table_view_set_object_value_for_table_column_row(ref this, handler: fn(*u8, *u8, *u8, *u8, i64)) {
         this.table_view_set_object_value_for_table_column_row = handler;
+        return;
+    }
+    fn set_table_view_sort_descriptors_did_change(ref this, handler: fn(*u8, *u8, vec::Vec[SortDescriptor])) {
+        this.table_view_sort_descriptors_did_change = handler;
         return;
     }
     fn set_table_view_pasteboard_writer_for_row(ref this, handler: fn(*u8, *u8, i64) -> *u8) {
@@ -66872,7 +67333,7 @@ impl TableViewDataSource {
     }
 }
 
-fn TableViewDataSource_key() -> *u8 { return { 28714 as *u8 }; }
+fn TableViewDataSource_key() -> *u8 { return { 28715 as *u8 }; }
 
 fn TableViewDataSource_number_of_rows_in_table_view_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i64 {
     let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
@@ -66893,6 +67354,15 @@ fn TableViewDataSource_table_view_set_object_value_for_table_column_row_imp(self
     let f: fn(*u8, *u8, *u8, *u8, i64) = { (*c).table_view_set_object_value_for_table_column_row };
     let u: *u8 = { (*c).user };
     f(u, a0, a1, a2, a3);
+    return;
+}
+
+fn TableViewDataSource_table_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *TableViewDataSource = { synth::get_associated(self_obj, TableViewDataSource_key()) as *TableViewDataSource };
+    let f: fn(*u8, *u8, vec::Vec[SortDescriptor]) = { (*c).table_view_sort_descriptors_did_change };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[SortDescriptor] = cplus_darg_arr_SortDescriptor(a1);
+    f(u, a0, b1);
     return;
 }
 
@@ -66963,6 +67433,7 @@ fn create_TableViewDataSource(ctx: *TableViewDataSource) -> *u8 {
         let add_number_of_rows_in_table_view: i8 = cplus_add_method_i64_id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), TableViewDataSource_number_of_rows_in_table_view_imp, #str_ptr("q@:@\0"));
         let add_table_view_object_value_for_table_column_row: i8 = cplus_add_method_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0")), TableViewDataSource_table_view_object_value_for_table_column_row_imp, #str_ptr("@@:@@q\0"));
         let add_table_view_set_object_value_for_table_column_row: i8 = cplus_add_method_v_id_id_id_i64(cls, rt::sel(#str_ptr("tableView:setObjectValue:forTableColumn:row:\0")), TableViewDataSource_table_view_set_object_value_for_table_column_row_imp, #str_ptr("v@:@@@q\0"));
+        let add_table_view_sort_descriptors_did_change: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("tableView:sortDescriptorsDidChange:\0")), TableViewDataSource_table_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
         let add_table_view_pasteboard_writer_for_row: i8 = cplus_add_method_id_id_i64(cls, rt::sel(#str_ptr("tableView:pasteboardWriterForRow:\0")), TableViewDataSource_table_view_pasteboard_writer_for_row_imp, #str_ptr("@@:@q\0"));
         let add_table_view_dragging_session_will_begin_at_point_for_row_indexes: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("tableView:draggingSession:willBeginAtPoint:forRowIndexes:\0")), TableViewDataSource_table_view_dragging_session_will_begin_at_point_for_row_indexes_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
         let add_table_view_dragging_session_ended_at_point_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("tableView:draggingSession:endedAtPoint:operation:\0")), TableViewDataSource_table_view_dragging_session_ended_at_point_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
@@ -66979,7 +67450,6 @@ fn create_TableViewDataSource(ctx: *TableViewDataSource) -> *u8 {
 }
 
 // `NSOutlineViewDelegate` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `outlineView:userDidChangeVisibilityOfTableColumns:`: arg `NSArray<NSTableColumn *> * _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_id_id_id_id_id_id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8, rt::Point) -> *u8, types: *u8) -> i8;
 #[link_name = "class_addMethod"]
@@ -66999,6 +67469,7 @@ fn OutlineViewDelegate_noop_id_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8,
 fn OutlineViewDelegate_noop_i8_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8 { return 0 as i8; }
 fn OutlineViewDelegate_noop_f64_id_i64(user: *u8, a0: *u8, a1: i64) -> f64 { return 0 as f64; }
 fn OutlineViewDelegate_noop_i8_id_i64_i64(user: *u8, a0: *u8, a1: i64, a2: i64) -> i8 { return 0 as i8; }
+fn OutlineViewDelegate_noop_v_id_arrTableColumn(user: *u8, a0: *u8, a1: vec::Vec[TableColumn]) { return; }
 fn OutlineViewDelegate_noop_v_id(user: *u8, a0: *u8) { return; }
 
 struct OutlineViewDelegate {
@@ -67032,6 +67503,7 @@ struct OutlineViewDelegate {
     outline_view_should_reorder_column_to_column: fn(*u8, *u8, i64, i64) -> i8,
     outline_view_should_show_outline_cell_for_item: fn(*u8, *u8, *u8) -> i8,
     outline_view_user_can_change_visibility_of_table_column: fn(*u8, *u8, *u8) -> i8,
+    outline_view_user_did_change_visibility_of_table_columns: fn(*u8, *u8, vec::Vec[TableColumn]),
     outline_view_selection_did_change: fn(*u8, *u8),
     outline_view_column_did_move: fn(*u8, *u8),
     outline_view_column_did_resize: fn(*u8, *u8),
@@ -67044,7 +67516,7 @@ struct OutlineViewDelegate {
 }
 
 fn OutlineViewDelegate_new(user: *u8) -> OutlineViewDelegate {
-    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_did_add_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_did_remove_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_id, outline_view_should_select_item: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_id_id, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location: OutlineViewDelegate_noop_id_id_id_id_id_id_point, outline_view_height_of_row_by_item: OutlineViewDelegate_noop_f64_id_id, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_id_id_id_id, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_track_cell_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id_id, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_is_group_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_id_id, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_size_to_fit_width_of_column: OutlineViewDelegate_noop_f64_id_i64, outline_view_should_reorder_column_to_column: OutlineViewDelegate_noop_i8_id_i64_i64, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_id_id, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_did_change: OutlineViewDelegate_noop_v_id, outline_view_column_did_move: OutlineViewDelegate_noop_v_id, outline_view_column_did_resize: OutlineViewDelegate_noop_v_id, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_id, outline_view_item_will_expand: OutlineViewDelegate_noop_v_id, outline_view_item_did_expand: OutlineViewDelegate_noop_v_id, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_id, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_id, user: user };
+    return OutlineViewDelegate { outline_view_view_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_row_view_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_did_add_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_did_remove_row_view_for_row: OutlineViewDelegate_noop_v_id_id_i64, outline_view_will_display_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_should_edit_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, selection_should_change_in_outline_view: OutlineViewDelegate_noop_i8_id, outline_view_should_select_item: OutlineViewDelegate_noop_i8_id_id, outline_view_selection_indexes_for_proposed_selection: OutlineViewDelegate_noop_id_id_id, outline_view_should_select_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_mouse_down_in_header_of_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_click_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_did_drag_table_column: OutlineViewDelegate_noop_v_id_id, outline_view_tool_tip_for_cell_rect_table_column_item_mouse_location: OutlineViewDelegate_noop_id_id_id_id_id_id_point, outline_view_height_of_row_by_item: OutlineViewDelegate_noop_f64_id_id, outline_view_tint_configuration_for_item: OutlineViewDelegate_noop_id_id_id, outline_view_type_select_string_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_next_type_select_match_from_item_to_item_for_string: OutlineViewDelegate_noop_id_id_id_id_id, outline_view_should_type_select_for_event_with_current_search_string: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_show_cell_expansion_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id, outline_view_should_track_cell_for_table_column_item: OutlineViewDelegate_noop_i8_id_id_id_id, outline_view_data_cell_for_table_column_item: OutlineViewDelegate_noop_id_id_id_id, outline_view_is_group_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_expand_item: OutlineViewDelegate_noop_i8_id_id, outline_view_should_collapse_item: OutlineViewDelegate_noop_i8_id_id, outline_view_will_display_outline_cell_for_table_column_item: OutlineViewDelegate_noop_v_id_id_id_id, outline_view_size_to_fit_width_of_column: OutlineViewDelegate_noop_f64_id_i64, outline_view_should_reorder_column_to_column: OutlineViewDelegate_noop_i8_id_i64_i64, outline_view_should_show_outline_cell_for_item: OutlineViewDelegate_noop_i8_id_id, outline_view_user_can_change_visibility_of_table_column: OutlineViewDelegate_noop_i8_id_id, outline_view_user_did_change_visibility_of_table_columns: OutlineViewDelegate_noop_v_id_arrTableColumn, outline_view_selection_did_change: OutlineViewDelegate_noop_v_id, outline_view_column_did_move: OutlineViewDelegate_noop_v_id, outline_view_column_did_resize: OutlineViewDelegate_noop_v_id, outline_view_selection_is_changing: OutlineViewDelegate_noop_v_id, outline_view_item_will_expand: OutlineViewDelegate_noop_v_id, outline_view_item_did_expand: OutlineViewDelegate_noop_v_id, outline_view_item_will_collapse: OutlineViewDelegate_noop_v_id, outline_view_item_did_collapse: OutlineViewDelegate_noop_v_id, user: user };
 }
 
 impl OutlineViewDelegate {
@@ -67168,6 +67640,10 @@ impl OutlineViewDelegate {
         this.outline_view_user_can_change_visibility_of_table_column = handler;
         return;
     }
+    fn set_outline_view_user_did_change_visibility_of_table_columns(ref this, handler: fn(*u8, *u8, vec::Vec[TableColumn])) {
+        this.outline_view_user_did_change_visibility_of_table_columns = handler;
+        return;
+    }
     fn set_outline_view_selection_did_change(ref this, handler: fn(*u8, *u8)) {
         this.outline_view_selection_did_change = handler;
         return;
@@ -67202,7 +67678,7 @@ impl OutlineViewDelegate {
     }
 }
 
-fn OutlineViewDelegate_key() -> *u8 { return { 28715 as *u8 }; }
+fn OutlineViewDelegate_key() -> *u8 { return { 28716 as *u8 }; }
 
 fn OutlineViewDelegate_outline_view_view_for_table_column_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
     let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
@@ -67421,6 +67897,15 @@ fn OutlineViewDelegate_outline_view_user_can_change_visibility_of_table_column_i
     return f(u, a0, a1);
 }
 
+fn OutlineViewDelegate_outline_view_user_did_change_visibility_of_table_columns_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
+    let f: fn(*u8, *u8, vec::Vec[TableColumn]) = { (*c).outline_view_user_did_change_visibility_of_table_columns };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[TableColumn] = cplus_darg_arr_TableColumn(a1);
+    f(u, a0, b1);
+    return;
+}
+
 fn OutlineViewDelegate_outline_view_selection_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *OutlineViewDelegate = { synth::get_associated(self_obj, OutlineViewDelegate_key()) as *OutlineViewDelegate };
     let f: fn(*u8, *u8) = { (*c).outline_view_selection_did_change };
@@ -67520,6 +68005,7 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
         let add_outline_view_should_reorder_column_to_column: i8 = cplus_add_method_i8_id_i64_i64(cls, rt::sel(#str_ptr("outlineView:shouldReorderColumn:toColumn:\0")), OutlineViewDelegate_outline_view_should_reorder_column_to_column_imp, #str_ptr("c@:@qq\0"));
         let add_outline_view_should_show_outline_cell_for_item: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:shouldShowOutlineCellForItem:\0")), OutlineViewDelegate_outline_view_should_show_outline_cell_for_item_imp, #str_ptr("c@:@@\0"));
         let add_outline_view_user_can_change_visibility_of_table_column: i8 = cplus_add_method_i8_id_id(cls, rt::sel(#str_ptr("outlineView:userCanChangeVisibilityOfTableColumn:\0")), OutlineViewDelegate_outline_view_user_can_change_visibility_of_table_column_imp, #str_ptr("c@:@@\0"));
+        let add_outline_view_user_did_change_visibility_of_table_columns: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:userDidChangeVisibilityOfTableColumns:\0")), OutlineViewDelegate_outline_view_user_did_change_visibility_of_table_columns_imp, #str_ptr("v@:@@\0"));
         let add_outline_view_selection_did_change: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewSelectionDidChange:\0")), OutlineViewDelegate_outline_view_selection_did_change_imp, #str_ptr("v@:@\0"));
         let add_outline_view_column_did_move: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewColumnDidMove:\0")), OutlineViewDelegate_outline_view_column_did_move_imp, #str_ptr("v@:@\0"));
         let add_outline_view_column_did_resize: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("outlineViewColumnDidResize:\0")), OutlineViewDelegate_outline_view_column_did_resize_imp, #str_ptr("v@:@\0"));
@@ -67536,7 +68022,6 @@ fn create_OutlineViewDelegate(ctx: *OutlineViewDelegate) -> *u8 {
 }
 
 // `NSOutlineViewDataSource` delegate protocol -> runtime class-synthesis helper.
-// SKIPPED `outlineView:sortDescriptorsDidChange:`: arg `NSArray<NSSortDescriptor *> * _Nonnull` not modelled
 #[link_name = "class_addMethod"]
 extern fn cplus_add_method_u64_id_id_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8, i64) -> u64, types: *u8) -> i8;
 
@@ -67546,6 +68031,7 @@ fn OutlineViewDataSource_noop_i8_id_id(user: *u8, a0: *u8, a1: *u8) -> i8 { retu
 fn OutlineViewDataSource_noop_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 { return { 0 as *u8 }; }
 fn OutlineViewDataSource_noop_v_id_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) { return; }
 fn OutlineViewDataSource_noop_id_id_id(user: *u8, a0: *u8, a1: *u8) -> *u8 { return { 0 as *u8 }; }
+fn OutlineViewDataSource_noop_v_id_arrSortDescriptor(user: *u8, a0: *u8, a1: vec::Vec[SortDescriptor]) { return; }
 fn OutlineViewDataSource_noop_v_id_id_point_id(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: *u8) { return; }
 fn OutlineViewDataSource_noop_v_id_id_point_u64(user: *u8, a0: *u8, a1: *u8, a2: rt::Point, a3: u64) { return; }
 fn OutlineViewDataSource_noop_i8_id_id_id(user: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 { return 0 as i8; }
@@ -67561,6 +68047,7 @@ struct OutlineViewDataSource {
     outline_view_set_object_value_for_table_column_by_item: fn(*u8, *u8, *u8, *u8, *u8),
     outline_view_item_for_persistent_object: fn(*u8, *u8, *u8) -> *u8,
     outline_view_persistent_object_for_item: fn(*u8, *u8, *u8) -> *u8,
+    outline_view_sort_descriptors_did_change: fn(*u8, *u8, vec::Vec[SortDescriptor]),
     outline_view_pasteboard_writer_for_item: fn(*u8, *u8, *u8) -> *u8,
     outline_view_dragging_session_will_begin_at_point_for_items: fn(*u8, *u8, *u8, rt::Point, *u8),
     outline_view_dragging_session_ended_at_point_operation: fn(*u8, *u8, *u8, rt::Point, u64),
@@ -67573,7 +68060,7 @@ struct OutlineViewDataSource {
 }
 
 fn OutlineViewDataSource_new(user: *u8) -> OutlineViewDataSource {
-    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_id_id, outline_view_child_of_item: OutlineViewDataSource_noop_id_id_i64_id, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_id_id, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_id_id_id, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_id_id_id_id, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_id_id, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_pasteboard_writer_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_dragging_session_will_begin_at_point_for_items: OutlineViewDataSource_noop_v_id_id_point_id, outline_view_dragging_session_ended_at_point_operation: OutlineViewDataSource_noop_v_id_id_point_u64, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_id_id_id, outline_view_update_dragging_items_for_drag: OutlineViewDataSource_noop_v_id_id, outline_view_validate_drop_proposed_item_proposed_child_index: OutlineViewDataSource_noop_u64_id_id_id_i64, outline_view_accept_drop_item_child_index: OutlineViewDataSource_noop_i8_id_id_id_i64, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_id_id_id, user: user };
+    return OutlineViewDataSource { outline_view_number_of_children_of_item: OutlineViewDataSource_noop_i64_id_id, outline_view_child_of_item: OutlineViewDataSource_noop_id_id_i64_id, outline_view_is_item_expandable: OutlineViewDataSource_noop_i8_id_id, outline_view_object_value_for_table_column_by_item: OutlineViewDataSource_noop_id_id_id_id, outline_view_set_object_value_for_table_column_by_item: OutlineViewDataSource_noop_v_id_id_id_id, outline_view_item_for_persistent_object: OutlineViewDataSource_noop_id_id_id, outline_view_persistent_object_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_sort_descriptors_did_change: OutlineViewDataSource_noop_v_id_arrSortDescriptor, outline_view_pasteboard_writer_for_item: OutlineViewDataSource_noop_id_id_id, outline_view_dragging_session_will_begin_at_point_for_items: OutlineViewDataSource_noop_v_id_id_point_id, outline_view_dragging_session_ended_at_point_operation: OutlineViewDataSource_noop_v_id_id_point_u64, outline_view_write_items_to_pasteboard: OutlineViewDataSource_noop_i8_id_id_id, outline_view_update_dragging_items_for_drag: OutlineViewDataSource_noop_v_id_id, outline_view_validate_drop_proposed_item_proposed_child_index: OutlineViewDataSource_noop_u64_id_id_id_i64, outline_view_accept_drop_item_child_index: OutlineViewDataSource_noop_i8_id_id_id_i64, outline_view_names_of_promised_files_dropped_at_destination_for_dragged_items: OutlineViewDataSource_noop_id_id_id_id, user: user };
 }
 
 impl OutlineViewDataSource {
@@ -67603,6 +68090,10 @@ impl OutlineViewDataSource {
     }
     fn set_outline_view_persistent_object_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
         this.outline_view_persistent_object_for_item = handler;
+        return;
+    }
+    fn set_outline_view_sort_descriptors_did_change(ref this, handler: fn(*u8, *u8, vec::Vec[SortDescriptor])) {
+        this.outline_view_sort_descriptors_did_change = handler;
         return;
     }
     fn set_outline_view_pasteboard_writer_for_item(ref this, handler: fn(*u8, *u8, *u8) -> *u8) {
@@ -67639,7 +68130,7 @@ impl OutlineViewDataSource {
     }
 }
 
-fn OutlineViewDataSource_key() -> *u8 { return { 28716 as *u8 }; }
+fn OutlineViewDataSource_key() -> *u8 { return { 28717 as *u8 }; }
 
 fn OutlineViewDataSource_outline_view_number_of_children_of_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i64 {
     let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
@@ -67689,6 +68180,15 @@ fn OutlineViewDataSource_outline_view_persistent_object_for_item_imp(self_obj: *
     let f: fn(*u8, *u8, *u8) -> *u8 = { (*c).outline_view_persistent_object_for_item };
     let u: *u8 = { (*c).user };
     return f(u, a0, a1);
+}
+
+fn OutlineViewDataSource_outline_view_sort_descriptors_did_change_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
+    let c: *OutlineViewDataSource = { synth::get_associated(self_obj, OutlineViewDataSource_key()) as *OutlineViewDataSource };
+    let f: fn(*u8, *u8, vec::Vec[SortDescriptor]) = { (*c).outline_view_sort_descriptors_did_change };
+    let u: *u8 = { (*c).user };
+    let b1: vec::Vec[SortDescriptor] = cplus_darg_arr_SortDescriptor(a1);
+    f(u, a0, b1);
+    return;
 }
 
 fn OutlineViewDataSource_outline_view_pasteboard_writer_for_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
@@ -67762,6 +68262,7 @@ fn create_OutlineViewDataSource(ctx: *OutlineViewDataSource) -> *u8 {
         let add_outline_view_set_object_value_for_table_column_by_item: i8 = cplus_add_method_v_id_id_id_id(cls, rt::sel(#str_ptr("outlineView:setObjectValue:forTableColumn:byItem:\0")), OutlineViewDataSource_outline_view_set_object_value_for_table_column_by_item_imp, #str_ptr("v@:@@@@\0"));
         let add_outline_view_item_for_persistent_object: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:itemForPersistentObject:\0")), OutlineViewDataSource_outline_view_item_for_persistent_object_imp, #str_ptr("@@:@@\0"));
         let add_outline_view_persistent_object_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:persistentObjectForItem:\0")), OutlineViewDataSource_outline_view_persistent_object_for_item_imp, #str_ptr("@@:@@\0"));
+        let add_outline_view_sort_descriptors_did_change: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("outlineView:sortDescriptorsDidChange:\0")), OutlineViewDataSource_outline_view_sort_descriptors_did_change_imp, #str_ptr("v@:@@\0"));
         let add_outline_view_pasteboard_writer_for_item: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("outlineView:pasteboardWriterForItem:\0")), OutlineViewDataSource_outline_view_pasteboard_writer_for_item_imp, #str_ptr("@@:@@\0"));
         let add_outline_view_dragging_session_will_begin_at_point_for_items: i8 = cplus_add_method_v_id_id_point_id(cls, rt::sel(#str_ptr("outlineView:draggingSession:willBeginAtPoint:forItems:\0")), OutlineViewDataSource_outline_view_dragging_session_will_begin_at_point_for_items_imp, #str_ptr("v@:@@{CGPoint=dd}@\0"));
         let add_outline_view_dragging_session_ended_at_point_operation: i8 = cplus_add_method_v_id_id_point_u64(cls, rt::sel(#str_ptr("outlineView:draggingSession:endedAtPoint:operation:\0")), OutlineViewDataSource_outline_view_dragging_session_ended_at_point_operation_imp, #str_ptr("v@:@@{CGPoint=dd}Q\0"));
@@ -67910,7 +68411,7 @@ impl TabViewDelegate {
     }
 }
 
-fn TabViewDelegate_key() -> *u8 { return { 28717 as *u8 }; }
+fn TabViewDelegate_key() -> *u8 { return { 28718 as *u8 }; }
 
 fn TabViewDelegate_tab_view_should_select_tab_view_item_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> i8 {
     let c: *TabViewDelegate = { synth::get_associated(self_obj, TabViewDelegate_key()) as *TabViewDelegate };
@@ -67979,7 +68480,7 @@ impl SoundDelegate {
     }
 }
 
-fn SoundDelegate_key() -> *u8 { return { 28718 as *u8 }; }
+fn SoundDelegate_key() -> *u8 { return { 28719 as *u8 }; }
 
 fn SoundDelegate_sound_did_finish_playing_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i8) {
     let c: *SoundDelegate = { synth::get_associated(self_obj, SoundDelegate_key()) as *SoundDelegate };
@@ -68054,7 +68555,7 @@ impl DrawerDelegate {
     }
 }
 
-fn DrawerDelegate_key() -> *u8 { return { 28719 as *u8 }; }
+fn DrawerDelegate_key() -> *u8 { return { 28720 as *u8 }; }
 
 fn DrawerDelegate_drawer_should_open_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> i8 {
     let c: *DrawerDelegate = { synth::get_associated(self_obj, DrawerDelegate_key()) as *DrawerDelegate };
@@ -68148,7 +68649,7 @@ impl SharingServicePickerToolbarItemDelegate {
     }
 }
 
-fn SharingServicePickerToolbarItemDelegate_key() -> *u8 { return { 28720 as *u8 }; }
+fn SharingServicePickerToolbarItemDelegate_key() -> *u8 { return { 28721 as *u8 }; }
 
 fn SharingServicePickerToolbarItemDelegate_items_for_sharing_service_picker_toolbar_item_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> *u8 {
     let c: *SharingServicePickerToolbarItemDelegate = { synth::get_associated(self_obj, SharingServicePickerToolbarItemDelegate_key()) as *SharingServicePickerToolbarItemDelegate };
@@ -68195,7 +68696,7 @@ impl SearchFieldDelegate {
     }
 }
 
-fn SearchFieldDelegate_key() -> *u8 { return { 28721 as *u8 }; }
+fn SearchFieldDelegate_key() -> *u8 { return { 28722 as *u8 }; }
 
 fn SearchFieldDelegate_search_field_did_start_searching_imp(self_obj: *u8, cmd: *u8, a0: *u8) {
     let c: *SearchFieldDelegate = { synth::get_associated(self_obj, SearchFieldDelegate_key()) as *SearchFieldDelegate };
@@ -68275,7 +68776,7 @@ impl RuleEditorDelegate {
     }
 }
 
-fn RuleEditorDelegate_key() -> *u8 { return { 28722 as *u8 }; }
+fn RuleEditorDelegate_key() -> *u8 { return { 28723 as *u8 }; }
 
 fn RuleEditorDelegate_rule_editor_number_of_children_for_criterion_with_row_type_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: u64) -> i64 {
     let c: *RuleEditorDelegate = { synth::get_associated(self_obj, RuleEditorDelegate_key()) as *RuleEditorDelegate };
@@ -68355,7 +68856,7 @@ impl PathCellDelegate {
     }
 }
 
-fn PathCellDelegate_key() -> *u8 { return { 28723 as *u8 }; }
+fn PathCellDelegate_key() -> *u8 { return { 28724 as *u8 }; }
 
 fn PathCellDelegate_path_cell_will_display_open_panel_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) {
     let c: *PathCellDelegate = { synth::get_associated(self_obj, PathCellDelegate_key()) as *PathCellDelegate };
@@ -68435,7 +68936,7 @@ impl PathControlDelegate {
     }
 }
 
-fn PathControlDelegate_key() -> *u8 { return { 28724 as *u8 }; }
+fn PathControlDelegate_key() -> *u8 { return { 28725 as *u8 }; }
 
 fn PathControlDelegate_path_control_should_drag_item_with_pasteboard_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 {
     let c: *PathControlDelegate = { synth::get_associated(self_obj, PathControlDelegate_key()) as *PathControlDelegate };
@@ -68553,7 +69054,7 @@ impl PageControllerDelegate {
     }
 }
 
-fn PageControllerDelegate_key() -> *u8 { return { 28725 as *u8 }; }
+fn PageControllerDelegate_key() -> *u8 { return { 28726 as *u8 }; }
 
 fn PageControllerDelegate_page_controller_identifier_for_object_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *PageControllerDelegate = { synth::get_associated(self_obj, PageControllerDelegate_key()) as *PageControllerDelegate };
@@ -68781,7 +69282,7 @@ impl TextSelectionDataSource {
     }
 }
 
-fn TextSelectionDataSource_key() -> *u8 { return { 28726 as *u8 }; }
+fn TextSelectionDataSource_key() -> *u8 { return { 28727 as *u8 }; }
 
 fn TextSelectionDataSource_text_range_for_selection_granularity_enclosing_location_imp(self_obj: *u8, cmd: *u8, a0: u64, a1: *u8) -> *u8 {
     let c: *TextSelectionDataSource = { synth::get_associated(self_obj, TextSelectionDataSource_key()) as *TextSelectionDataSource };
@@ -68877,7 +69378,7 @@ impl TextContentManagerDelegate {
     }
 }
 
-fn TextContentManagerDelegate_key() -> *u8 { return { 28727 as *u8 }; }
+fn TextContentManagerDelegate_key() -> *u8 { return { 28728 as *u8 }; }
 
 fn TextContentManagerDelegate_text_content_manager_text_element_at_location_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8) -> *u8 {
     let c: *TextContentManagerDelegate = { synth::get_associated(self_obj, TextContentManagerDelegate_key()) as *TextContentManagerDelegate };
@@ -68997,7 +69498,7 @@ impl TextContentStorageDelegate {
     }
 }
 
-fn TextContentStorageDelegate_key() -> *u8 { return { 28728 as *u8 }; }
+fn TextContentStorageDelegate_key() -> *u8 { return { 28729 as *u8 }; }
 
 fn TextContentStorageDelegate_text_content_storage_text_paragraph_with_range_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: rt::Range) -> *u8 {
     let c: *TextContentStorageDelegate = { synth::get_associated(self_obj, TextContentStorageDelegate_key()) as *TextContentStorageDelegate };
@@ -69053,7 +69554,7 @@ impl TextLayoutManagerDelegate {
     }
 }
 
-fn TextLayoutManagerDelegate_key() -> *u8 { return { 28729 as *u8 }; }
+fn TextLayoutManagerDelegate_key() -> *u8 { return { 28730 as *u8 }; }
 
 fn TextLayoutManagerDelegate_text_layout_manager_text_layout_fragment_for_location_in_text_element_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 {
     let c: *TextLayoutManagerDelegate = { synth::get_associated(self_obj, TextLayoutManagerDelegate_key()) as *TextLayoutManagerDelegate };
@@ -69130,7 +69631,7 @@ impl TextViewportLayoutControllerDelegate {
     }
 }
 
-fn TextViewportLayoutControllerDelegate_key() -> *u8 { return { 28730 as *u8 }; }
+fn TextViewportLayoutControllerDelegate_key() -> *u8 { return { 28731 as *u8 }; }
 
 fn TextViewportLayoutControllerDelegate_viewport_bounds_for_text_viewport_layout_controller_imp(self_obj: *u8, cmd: *u8, a0: *u8) -> rt::Rect {
     let c: *TextViewportLayoutControllerDelegate = { synth::get_associated(self_obj, TextViewportLayoutControllerDelegate_key()) as *TextViewportLayoutControllerDelegate };
