@@ -148,9 +148,10 @@ enum Ret {
 // `-doubleValue`; nested strings come out as owned `Text`.
 #[derive(Clone)]
 enum MapVal {
-    Text,           // NSString * value -> Text
-    ScalarF64,      // NSNumber * value -> f64 (via doubleValue)
-    Object(String), // a NON-owning wrapper value -> StringMap[Wrapper] (from_raw, +0)
+    Text,                // NSString * value -> Text
+    ScalarF64,           // NSNumber * value -> f64 (via doubleValue)
+    Object(String),      // a NON-owning wrapper value -> StringMap[Wrapper] (from_raw, +0)
+    ObjectArray(String), // NSArray<W> value (non-owning W) -> StringMap[Vec[W]]
 }
 
 enum Arg {
@@ -1375,15 +1376,31 @@ impl ObjcEmitter {
                 }
             };
             self.needs_string_map = true;
-            // Key is always NSString -> Text; the value bridge depends on V.
-            let (val_ty, val_bridge): (String, String) = match val {
-                MapVal::Text => ("text::Text".to_string(), "bridge::to_text(nsval)".to_string()),
+            // Key is always NSString -> Text. `val_prep` is inner statements run per
+            // entry (empty for scalar/object values; for a nested NSArray value it
+            // builds the inner Vec[W]); `val_expr` is what gets inserted.
+            let (val_ty, val_prep, val_expr): (String, String, String) = match val {
+                MapVal::Text => ("text::Text".to_string(), String::new(), "bridge::to_text(nsval)".to_string()),
                 MapVal::ScalarF64 => (
                     "f64".to_string(),
+                    String::new(),
                     "rt::msg_f64(nsval, rt::sel(#str_ptr(\"doubleValue\\0\")))".to_string(),
                 ),
                 // Non-owning wrapper value: wrap the +0 dict element via from_raw.
-                MapVal::Object(w) => (w.clone(), format!("{w}::from_raw(nsval)")),
+                MapVal::Object(w) => (w.clone(), String::new(), format!("{w}::from_raw(nsval)")),
+                // NSArray value: build an inner Vec[W] from it (non-owning elems, +0).
+                MapVal::ObjectArray(w) => {
+                    let prep = format!(
+                        "            let vn: u64 = rt::msg_u64(nsval, rt::sel(#str_ptr(\"count\\0\")));\n\
+                         \x20           var vvec: vec::Vec[{w}] = vec::Vec[{w}]::with_capacity(vn as usize);\n\
+                         \x20           var vj: u64 = 0 as u64;\n\
+                         \x20           while vj < vn {{\n\
+                         \x20               vvec.append({w}::from_raw(rt::msg_id_u64(nsval, at_sel, vj)));\n\
+                         \x20               vj = vj +% (1 as u64);\n\
+                         \x20           }}\n"
+                    );
+                    (format!("vec::Vec[{w}]"), prep, "vvec".to_string())
+                }
             };
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
             self.body.push_str(&format!(
@@ -1398,7 +1415,8 @@ impl ObjcEmitter {
                  \x20       while i < n {{\n\
                  \x20           let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);\n\
                  \x20           let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);\n\
-                 \x20           out.insert(bridge::to_text(nskey), {val_bridge});\n\
+                 {val_prep}\
+                 \x20           out.insert(bridge::to_text(nskey), {val_expr});\n\
                  \x20           i = i +% (1 as u64);\n\
                  \x20       }}\n\
                  \x20       return out;\n    }}\n\n"
@@ -1837,6 +1855,17 @@ impl ObjcEmitter {
                 self.needs_string_map = true;
                 return Ret::TextMap(MapVal::ScalarF64);
             }
+            // A NSArray<W> value (non-owning W) -> StringMap[Vec[W]]: each entry's
+            // inner array bridges to a Vec[W] (elements +0 via from_raw).
+            if let Some(elem) = array_element(&v) {
+                if let Some(w) = self.wrapper_name_of(&elem) {
+                    if self.non_owning_types.contains(&w) {
+                        self.needs_string_map = true;
+                        self.needs_vec = true;
+                        return Ret::TextMap(MapVal::ObjectArray(w));
+                    }
+                }
+            }
             // A NON-owning wrapper value (opaque handle, no drop) -> StringMap[Wrapper]:
             // each value wraps +0 via `from_raw`, so the map's drop doesn't over-release.
             // Owning values would need retain-on-wrap, so they stay skipped.
@@ -1847,7 +1876,7 @@ impl ObjcEmitter {
                 }
             }
             return Ret::Unsupported(format!(
-                "NSDictionary value `{v}` not modelled (NSString / NSNumber / non-owning object)"
+                "NSDictionary value `{v}` not modelled (NSString / NSNumber / non-owning object[array])"
             ));
         }
         // A protocol-qualified id (`id<MTLDevice>`, `id<A,B>`) is an ordinary ObjC
@@ -2869,6 +2898,26 @@ mod tests {
         let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
         assert!(out.contains("fn constants(this) -> string_map::StringMap[Thing]"), "dict->StringMap[Wrapper]:\n{out}");
         assert!(out.contains("Thing::from_raw(nsval)"), "value wrapped via from_raw:\n{out}");
+    }
+
+    #[test]
+    fn string_dict_with_nsarray_value_binds_to_stringmap_of_vec() {
+        // NSDictionary<NSString *, NSArray<MTLThing *>> -> StringMap[Vec[Thing]]:
+        // each entry's inner array bridges to a Vec[Thing] (non-owning elems, +0).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "MTLThing", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCProtocolDecl", "name": "MTLDevice", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "groups", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSDictionary<NSString *,NSArray<MTLThing *> *> * _Nullable" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn groups(this) -> string_map::StringMap[vec::Vec[Thing]]"), "dict->StringMap[Vec[W]]:\n{out}");
+        // Inner Vec is built per entry, then inserted.
+        assert!(out.contains("var vvec: vec::Vec[Thing] = vec::Vec[Thing]::with_capacity"), "inner Vec built:\n{out}");
+        assert!(out.contains("vvec.append(Thing::from_raw("), "inner elems wrapped:\n{out}");
+        assert!(out.contains("out.insert(bridge::to_text(nskey), vvec)"), "Vec inserted:\n{out}");
     }
 
     #[test]
