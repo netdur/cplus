@@ -66,7 +66,10 @@ impl Printer {
         return option::some(Printer { _obj: obj });
     }
 
-    // SKIPPED `pageSizeForPaper:`: msgSend shape `size_id` not yet modelled
+    fn page_size_for_paper(this, paper_name: str) -> rt::Size {
+        return rt::msg_size_id(this._obj, rt::sel(#str_ptr("pageSizeForPaper:\0")), bridge::nsstring(paper_name));
+    }
+
     fn printer_names() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPrinter\0")), rt::sel(#str_ptr("printerNames\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -122,10 +125,22 @@ impl Printer {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("booleanForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table)) != (0 as i8);
     }
 
-    // SKIPPED `floatForKey:inTable:`: msgSend shape `f32_id_id` not yet modelled
-    // SKIPPED `intForKey:inTable:`: msgSend shape `i32_id_id` not yet modelled
-    // SKIPPED `rectForKey:inTable:`: msgSend shape `rect_id_id` not yet modelled
-    // SKIPPED `sizeForKey:inTable:`: msgSend shape `size_id_id` not yet modelled
+    fn float_for_key_in_table(this, key: str, table: str) -> f32 {
+        return rt::msg_f32_id_id(this._obj, rt::sel(#str_ptr("floatForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    }
+
+    fn int_for_key_in_table(this, key: str, table: str) -> i32 {
+        return rt::msg_i32_id_id(this._obj, rt::sel(#str_ptr("intForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    }
+
+    fn rect_for_key_in_table(this, key: str, table: str) -> rt::Rect {
+        return rt::msg_rect_id_id(this._obj, rt::sel(#str_ptr("rectForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    }
+
+    fn size_for_key_in_table(this, key: str, table: str) -> rt::Size {
+        return rt::msg_size_id_id(this._obj, rt::sel(#str_ptr("sizeForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
+    }
+
     fn string_for_key_in_table(this, key: str, table: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("stringForKey:inTable:\0")), bridge::nsstring(key), bridge::nsstring(table));
         return bridge::to_text_option(ns);
@@ -156,7 +171,14 @@ impl Printer {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isOutputStackInReverseOrder\0"))) != (0 as i8);
     }
 
-    // SKIPPED `printerWithName:domain:includeUnavailable:`: msgSend shape `id_id_id_i8` not yet modelled
+    fn printer_with_name_domain_include_unavailable(name: str, domain: str, flag: bool) -> option::Option[Printer] {
+        let obj: *u8 = rt::msg_id_id_id_i8(rt::get_class(#str_ptr("NSPrinter\0")), rt::sel(#str_ptr("printerWithName:domain:includeUnavailable:\0")), bridge::nsstring(name), bridge::nsstring(domain), flag as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[Printer]::None;
+        }
+        return option::some(Printer { _obj: obj });
+    }
+
     fn domain(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("domain\0")));
         return bridge::to_text(ns);

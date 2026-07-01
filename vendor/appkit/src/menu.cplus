@@ -138,7 +138,10 @@ impl Menu {
         rt::msg_void_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:withFont:\0")), menu.raw(), event.raw(), view.raw(), font.raw());
     }
 
-    // SKIPPED `popUpMenuPositioningItem:atLocation:inView:`: msgSend shape `i8_id_point_id` not yet modelled
+    fn pop_up_menu_positioning_item_at_location_in_view(this, item: *u8, location: rt::Point, view: View) -> bool {
+        return rt::msg_i8_id_point_id(this._obj, rt::sel(#str_ptr("popUpMenuPositioningItem:atLocation:inView:\0")), item, location, view.raw()) != (0 as i8);
+    }
+
     fn set_menu_bar_visible(visible: bool) {
         rt::msg_void_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("setMenuBarVisible:\0")), visible as i8);
     }
@@ -155,7 +158,10 @@ impl Menu {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItem:\0")), new_item);
     }
 
-    // SKIPPED `insertItemWithTitle:action:keyEquivalent:atIndex:`: msgSend shape `id_id_id_id_i64` not yet modelled
+    fn insert_item_with_title_action_key_equivalent_at_index(this, string: str, selector: *u8, char_code: str, index: i64) -> *u8 {
+        return rt::msg_id_id_id_id_i64(this._obj, rt::sel(#str_ptr("insertItemWithTitle:action:keyEquivalent:atIndex:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code), index);
+    }
+
     fn add_item_with_title_action_key_equivalent(this, string: str, selector: *u8, char_code: str) -> *u8 {
         return rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:action:keyEquivalent:\0")), bridge::nsstring(string), selector, bridge::nsstring(char_code));
     }

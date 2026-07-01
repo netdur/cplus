@@ -110,8 +110,14 @@ impl Animation {
         rt::msg_void_f32(this._obj, rt::sel(#str_ptr("removeProgressMark:\0")), progress_mark);
     }
 
-    // SKIPPED `startWhenAnimation:reachesProgress:`: msgSend shape `void_id_f32` not yet modelled
-    // SKIPPED `stopWhenAnimation:reachesProgress:`: msgSend shape `void_id_f32` not yet modelled
+    fn start_when_animation_reaches_progress(this, animation: Animation, start_progress: f32) {
+        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("startWhenAnimation:reachesProgress:\0")), animation.raw(), start_progress);
+    }
+
+    fn stop_when_animation_reaches_progress(this, animation: Animation, stop_progress: f32) {
+        rt::msg_void_id_f32(this._obj, rt::sel(#str_ptr("stopWhenAnimation:reachesProgress:\0")), animation.raw(), stop_progress);
+    }
+
     fn clear_start_animation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("clearStartAnimation\0")));
     }

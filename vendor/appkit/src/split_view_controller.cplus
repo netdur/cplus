@@ -49,9 +49,18 @@ impl SplitViewController {
         return rt::msg_i8_id_id_i64(this._obj, rt::sel(#str_ptr("splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:\0")), split_view, subview, divider_index) != (0 as i8);
     }
 
-    // SKIPPED `splitView:shouldHideDividerAtIndex:`: msgSend shape `i8_id_i64` not yet modelled
-    // SKIPPED `splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:`: msgSend shape `rect_id_rect_rect_i64` not yet modelled
-    // SKIPPED `splitView:additionalEffectiveRectOfDividerAtIndex:`: msgSend shape `rect_id_i64` not yet modelled
+    fn split_view_should_hide_divider_at_index(this, split_view: *u8, divider_index: i64) -> bool {
+        return rt::msg_i8_id_i64(this._obj, rt::sel(#str_ptr("splitView:shouldHideDividerAtIndex:\0")), split_view, divider_index) != (0 as i8);
+    }
+
+    fn split_view_effective_rect_for_drawn_rect_of_divider_at_index(this, split_view: *u8, proposed_effective_rect: rt::Rect, drawn_rect: rt::Rect, divider_index: i64) -> rt::Rect {
+        return rt::msg_rect_id_rect_rect_i64(this._obj, rt::sel(#str_ptr("splitView:effectiveRect:forDrawnRect:ofDividerAtIndex:\0")), split_view, proposed_effective_rect, drawn_rect, divider_index);
+    }
+
+    fn split_view_additional_effective_rect_of_divider_at_index(this, split_view: *u8, divider_index: i64) -> rt::Rect {
+        return rt::msg_rect_id_i64(this._obj, rt::sel(#str_ptr("splitView:additionalEffectiveRectOfDividerAtIndex:\0")), split_view, divider_index);
+    }
+
     fn split_view(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("splitView\0")));
     }

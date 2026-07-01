@@ -57,9 +57,18 @@ impl FontCollection {
         return option::some(FontCollection { _obj: obj });
     }
 
-    // SKIPPED `showFontCollection:withName:visibility:error:`: msgSend shape `i8_id_id_u64_id` not yet modelled
-    // SKIPPED `hideFontCollectionWithName:visibility:error:`: msgSend shape `i8_id_u64_id` not yet modelled
-    // SKIPPED `renameFontCollectionWithName:visibility:toName:error:`: msgSend shape `i8_id_u64_id_id` not yet modelled
+    fn show_font_collection_with_name_visibility_error(collection: FontCollection, name: str, visibility: u64, error: *u8) -> bool {
+        return rt::msg_i8_id_id_u64_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("showFontCollection:withName:visibility:error:\0")), collection.raw(), bridge::nsstring(name), visibility, error) != (0 as i8);
+    }
+
+    fn hide_font_collection_with_name_visibility_error(name: str, visibility: u64, error: *u8) -> bool {
+        return rt::msg_i8_id_u64_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("hideFontCollectionWithName:visibility:error:\0")), bridge::nsstring(name), visibility, error) != (0 as i8);
+    }
+
+    fn rename_font_collection_with_name_visibility_to_name_error(old_name: str, visibility: u64, new_name: str, out_error: *u8) -> bool {
+        return rt::msg_i8_id_u64_id_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("renameFontCollectionWithName:visibility:toName:error:\0")), bridge::nsstring(old_name), visibility, bridge::nsstring(new_name), out_error) != (0 as i8);
+    }
+
     fn font_collection_with_name(name: str) -> option::Option[FontCollection] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithName:\0")), bridge::nsstring(name));
         if obj == { 0 as *u8 } {

@@ -139,7 +139,10 @@ impl OpenGLPixelFormat {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAttributes:\0")), attribs.raw());
     }
 
-    // SKIPPED `getValues:forAttribute:forVirtualScreen:`: msgSend shape `void_id_u32_i32` not yet modelled
+    fn get_values_for_attribute_for_virtual_screen(this, vals: *u8, attrib: u32, screen: i32) {
+        rt::msg_void_id_u32_i32(this._obj, rt::sel(#str_ptr("getValues:forAttribute:forVirtualScreen:\0")), vals, attrib, screen);
+    }
+
     fn number_of_virtual_screens(this) -> i32 {
         return rt::msg_i32(this._obj, rt::sel(#str_ptr("numberOfVirtualScreens\0")));
     }
@@ -223,7 +226,10 @@ impl OpenGLContext {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setFullScreen\0")));
     }
 
-    // SKIPPED `setOffScreen:width:height:rowbytes:`: msgSend shape `void_id_i32_i32_i32` not yet modelled
+    fn set_off_screen_width_height_rowbytes(this, baseaddr: *u8, width: i32, height: i32, rowbytes: i32) {
+        rt::msg_void_id_i32_i32_i32(this._obj, rt::sel(#str_ptr("setOffScreen:width:height:rowbytes:\0")), baseaddr, width, height, rowbytes);
+    }
+
     fn clear_drawable(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("clearDrawable\0")));
     }
@@ -244,7 +250,10 @@ impl OpenGLContext {
         rt::msg_void(rt::get_class(#str_ptr("NSOpenGLContext\0")), rt::sel(#str_ptr("clearCurrentContext\0")));
     }
 
-    // SKIPPED `copyAttributesFromContext:withMask:`: msgSend shape `void_id_u32` not yet modelled
+    fn copy_attributes_from_context_with_mask(this, context: OpenGLContext, mask: u32) {
+        rt::msg_void_id_u32(this._obj, rt::sel(#str_ptr("copyAttributesFromContext:withMask:\0")), context.raw(), mask);
+    }
+
     fn set_values_for_parameter(this, vals: *u8, param: OpenGLContextParameter) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setValues:forParameter:\0")), vals, open_g_l_context_parameter_raw(param));
     }
@@ -253,7 +262,10 @@ impl OpenGLContext {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("getValues:forParameter:\0")), vals, open_g_l_context_parameter_raw(param));
     }
 
-    // SKIPPED `createTexture:fromView:internalFormat:`: msgSend shape `void_u32_id_u32` not yet modelled
+    fn create_texture_from_view_internal_format(this, target: u32, view: View, format: u32) {
+        rt::msg_void_u32_id_u32(this._obj, rt::sel(#str_ptr("createTexture:fromView:internalFormat:\0")), target, view.raw(), format);
+    }
+
     fn pixel_format(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0")));
     }
@@ -279,7 +291,10 @@ impl OpenGLContext {
     }
 
     // SKIPPED `CGLContextObj`: return `NS_RETURNS_INNER_POINTER CGLContextObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLContextObj`
-    // SKIPPED `setPixelBuffer:cubeMapFace:mipMapLevel:currentVirtualScreen:`: msgSend shape `void_id_u32_i32_i32` not yet modelled
+    fn set_pixel_buffer_cube_map_face_mip_map_level_current_virtual_screen(this, pixel_buffer: OpenGLPixelBuffer, face: u32, level: i32, screen: i32) {
+        rt::msg_void_id_u32_i32_i32(this._obj, rt::sel(#str_ptr("setPixelBuffer:cubeMapFace:mipMapLevel:currentVirtualScreen:\0")), pixel_buffer.raw(), face, level, screen);
+    }
+
     fn pixel_buffer(this) -> option::Option[OpenGLPixelBuffer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pixelBuffer\0")));
         if obj == { 0 as *u8 } {
@@ -296,7 +311,10 @@ impl OpenGLContext {
         return rt::msg_i32(this._obj, rt::sel(#str_ptr("pixelBufferMipMapLevel\0")));
     }
 
-    // SKIPPED `setTextureImageToPixelBuffer:colorBuffer:`: msgSend shape `void_id_u32` not yet modelled
+    fn set_texture_image_to_pixel_buffer_color_buffer(this, pixel_buffer: OpenGLPixelBuffer, source: u32) {
+        rt::msg_void_id_u32(this._obj, rt::sel(#str_ptr("setTextureImageToPixelBuffer:colorBuffer:\0")), pixel_buffer.raw(), source);
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

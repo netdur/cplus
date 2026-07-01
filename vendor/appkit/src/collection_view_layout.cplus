@@ -352,7 +352,10 @@ impl CollectionViewLayout {
         return CollectionViewLayoutInvalidationContext::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("invalidationContextForPreferredLayoutAttributes:withOriginalAttributes:\0")), preferred_attributes.raw(), original_attributes.raw()));
     }
 
-    // SKIPPED `targetContentOffsetForProposedContentOffset:withScrollingVelocity:`: msgSend shape `point_point_point` not yet modelled
+    fn target_content_offset_for_proposed_content_offset_with_scrolling_velocity(this, proposed_content_offset: rt::Point, velocity: rt::Point) -> rt::Point {
+        return rt::msg_point_point_point(this._obj, rt::sel(#str_ptr("targetContentOffsetForProposedContentOffset:withScrollingVelocity:\0")), proposed_content_offset, velocity);
+    }
+
     fn target_content_offset_for_proposed_content_offset(this, proposed_content_offset: rt::Point) -> rt::Point {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("targetContentOffsetForProposedContentOffset:\0")), proposed_content_offset);
     }

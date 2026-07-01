@@ -72,8 +72,14 @@ impl TextAttachmentCellProtocol {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsToTrackMouse\0"))) != (0 as i8);
     }
 
-    // SKIPPED `highlight:withFrame:inView:`: msgSend shape `void_i8_rect_id` not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: msgSend shape `i8_id_rect_id_i8` not yet modelled
+    fn highlight_with_frame_in_view(this, flag: bool, cell_frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_i8_rect_id(this._obj, rt::sel(#str_ptr("highlight:withFrame:inView:\0")), flag as i8, cell_frame, control_view);
+    }
+
+    fn track_mouse_in_rect_of_view_until_mouse_up(this, the_event: *u8, cell_frame: rt::Rect, control_view: *u8, flag: bool) -> bool {
+        return rt::msg_i8_id_rect_id_i8(this._obj, rt::sel(#str_ptr("trackMouse:inRect:ofView:untilMouseUp:\0")), the_event, cell_frame, control_view, flag as i8) != (0 as i8);
+    }
+
     fn cell_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("cellSize\0")));
     }
@@ -82,11 +88,26 @@ impl TextAttachmentCellProtocol {
         return rt::msg_point(this._obj, rt::sel(#str_ptr("cellBaselineOffset\0")));
     }
 
-    // SKIPPED `drawWithFrame:inView:characterIndex:`: msgSend shape `void_rect_id_u64` not yet modelled
-    // SKIPPED `drawWithFrame:inView:characterIndex:layoutManager:`: msgSend shape `void_rect_id_u64_id` not yet modelled
-    // SKIPPED `wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:`: msgSend shape `i8_id_rect_id_u64` not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:`: msgSend shape `i8_id_rect_id_u64_i8` not yet modelled
-    // SKIPPED `cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_id_rect_point_u64` not yet modelled
+    fn draw_with_frame_in_view_character_index(this, cell_frame: rt::Rect, control_view: *u8, char_index: u64) {
+        rt::msg_void_rect_id_u64(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:characterIndex:\0")), cell_frame, control_view, char_index);
+    }
+
+    fn draw_with_frame_in_view_character_index_layout_manager(this, cell_frame: rt::Rect, control_view: *u8, char_index: u64, layout_manager: LayoutManager) {
+        rt::msg_void_rect_id_u64_id(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:characterIndex:layoutManager:\0")), cell_frame, control_view, char_index, layout_manager.raw());
+    }
+
+    fn wants_to_track_mouse_for_event_in_rect_of_view_at_character_index(this, the_event: *u8, cell_frame: rt::Rect, control_view: *u8, char_index: u64) -> bool {
+        return rt::msg_i8_id_rect_id_u64(this._obj, rt::sel(#str_ptr("wantsToTrackMouseForEvent:inRect:ofView:atCharacterIndex:\0")), the_event, cell_frame, control_view, char_index) != (0 as i8);
+    }
+
+    fn track_mouse_in_rect_of_view_at_character_index_until_mouse_up(this, the_event: *u8, cell_frame: rt::Rect, control_view: *u8, char_index: u64, flag: bool) -> bool {
+        return rt::msg_i8_id_rect_id_u64_i8(this._obj, rt::sel(#str_ptr("trackMouse:inRect:ofView:atCharacterIndex:untilMouseUp:\0")), the_event, cell_frame, control_view, char_index, flag as i8) != (0 as i8);
+    }
+
+    fn cell_frame_for_text_container_proposed_line_fragment_glyph_position_character_index(this, text_container: TextContainer, line_frag: rt::Rect, position: rt::Point, char_index: u64) -> rt::Rect {
+        return rt::msg_rect_id_rect_point_u64(this._obj, rt::sel(#str_ptr("cellFrameForTextContainer:proposedLineFragment:glyphPosition:characterIndex:\0")), text_container.raw(), line_frag, position, char_index);
+    }
+
     fn attachment(this) -> option::Option[TextAttachment] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("attachment\0")));
         if obj == { 0 as *u8 } {

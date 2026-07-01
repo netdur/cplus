@@ -142,7 +142,10 @@ impl Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("rowResizeCursorInDirections:\0")), directions)) };
     }
 
-    // SKIPPED `frameResizeCursorFromPosition:inDirections:`: msgSend shape `id_i64_u64` not yet modelled
+    fn frame_resize_cursor_from_position_in_directions(position: CursorFrameResizePosition, directions: u64) -> Cursor {
+        return Cursor { _obj: rt::retain(rt::msg_id_i64_u64(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("frameResizeCursorFromPosition:inDirections:\0")), cursor_frame_resize_position_raw(position), directions)) };
+    }
+
     fn image(this) -> Image {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }

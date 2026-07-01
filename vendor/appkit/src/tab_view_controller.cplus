@@ -85,7 +85,11 @@ impl TabViewController {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("tabView:shouldSelectTabViewItem:\0")), tab_view, tab_view_item) != (0 as i8);
     }
 
-    // SKIPPED `toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:`: msgSend shape `id_id_id_i8` not yet modelled
+    fn toolbar_item_for_item_identifier_will_be_inserted_into_toolbar(this, toolbar: *u8, item_identifier: str, flag: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_i8(this._obj, rt::sel(#str_ptr("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:\0")), toolbar, bridge::nsstring(item_identifier), flag as i8);
+        return bridge::obj_option(obj);
+    }
+
     fn toolbar_default_item_identifiers(this, toolbar: *u8) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), toolbar);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

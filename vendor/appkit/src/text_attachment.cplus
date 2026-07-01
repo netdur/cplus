@@ -321,7 +321,17 @@ impl TextAttachmentContainer {
 
     fn from_raw(ptr: *u8) -> TextAttachmentContainer { return TextAttachmentContainer { _obj: ptr }; }
 
-    // SKIPPED `imageForBounds:textContainer:characterIndex:`: msgSend shape `id_rect_id_u64` not yet modelled
-    // SKIPPED `attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_id_rect_point_u64` not yet modelled
+    fn image_for_bounds_text_container_character_index(this, image_bounds: rt::Rect, text_container: TextContainer, char_index: u64) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_rect_id_u64(this._obj, rt::sel(#str_ptr("imageForBounds:textContainer:characterIndex:\0")), image_bounds, text_container.raw(), char_index);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
+    }
+
+    fn attachment_bounds_for_text_container_proposed_line_fragment_glyph_position_character_index(this, text_container: TextContainer, line_frag: rt::Rect, position: rt::Point, char_index: u64) -> rt::Rect {
+        return rt::msg_rect_id_rect_point_u64(this._obj, rt::sel(#str_ptr("attachmentBoundsForTextContainer:proposedLineFragment:glyphPosition:characterIndex:\0")), text_container.raw(), line_frag, position, char_index);
+    }
+
 }
 

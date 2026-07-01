@@ -206,7 +206,10 @@ impl StackView {
         return rt::msg_id_id(rt::get_class(#str_ptr("NSStackView\0")), rt::sel(#str_ptr("stackViewWithViews:\0")), arr_views);
     }
 
-    // SKIPPED `setCustomSpacing:afterView:`: msgSend shape `void_f64_id` not yet modelled
+    fn set_custom_spacing_after_view(this, spacing: f64, view: View) {
+        rt::msg_void_f64_id(this._obj, rt::sel(#str_ptr("setCustomSpacing:afterView:\0")), spacing, view.raw());
+    }
+
     fn custom_spacing_after_view(this, view: View) -> f64 {
         return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("customSpacingAfterView:\0")), view.raw());
     }
@@ -223,12 +226,30 @@ impl StackView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view.raw());
     }
 
-    // SKIPPED `setVisibilityPriority:forView:`: msgSend shape `void_f32_id` not yet modelled
-    // SKIPPED `visibilityPriorityForView:`: msgSend shape `f32_id` not yet modelled
-    // SKIPPED `clippingResistancePriorityForOrientation:`: msgSend shape `f32_i64` not yet modelled
-    // SKIPPED `setClippingResistancePriority:forOrientation:`: msgSend shape `void_f32_i64` not yet modelled
-    // SKIPPED `huggingPriorityForOrientation:`: msgSend shape `f32_i64` not yet modelled
-    // SKIPPED `setHuggingPriority:forOrientation:`: msgSend shape `void_f32_i64` not yet modelled
+    fn set_visibility_priority_for_view(this, priority: f32, view: View) {
+        rt::msg_void_f32_id(this._obj, rt::sel(#str_ptr("setVisibilityPriority:forView:\0")), priority, view.raw());
+    }
+
+    fn visibility_priority_for_view(this, view: View) -> f32 {
+        return rt::msg_f32_id(this._obj, rt::sel(#str_ptr("visibilityPriorityForView:\0")), view.raw());
+    }
+
+    fn clipping_resistance_priority_for_orientation(this, orientation: LayoutConstraintOrientation) -> f32 {
+        return rt::msg_f32_i64(this._obj, rt::sel(#str_ptr("clippingResistancePriorityForOrientation:\0")), layout_constraint_orientation_raw(orientation));
+    }
+
+    fn set_clipping_resistance_priority_for_orientation(this, clipping_resistance_priority: f32, orientation: LayoutConstraintOrientation) {
+        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setClippingResistancePriority:forOrientation:\0")), clipping_resistance_priority, layout_constraint_orientation_raw(orientation));
+    }
+
+    fn hugging_priority_for_orientation(this, orientation: LayoutConstraintOrientation) -> f32 {
+        return rt::msg_f32_i64(this._obj, rt::sel(#str_ptr("huggingPriorityForOrientation:\0")), layout_constraint_orientation_raw(orientation));
+    }
+
+    fn set_hugging_priority_for_orientation(this, hugging_priority: f32, orientation: LayoutConstraintOrientation) {
+        rt::msg_void_f32_i64(this._obj, rt::sel(#str_ptr("setHuggingPriority:forOrientation:\0")), hugging_priority, layout_constraint_orientation_raw(orientation));
+    }
+
     fn delegate(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("delegate\0")));
         return bridge::obj_option(obj);
@@ -292,7 +313,10 @@ impl StackView {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("addView:inGravity:\0")), view.raw(), stack_view_gravity_raw(gravity));
     }
 
-    // SKIPPED `insertView:atIndex:inGravity:`: msgSend shape `void_id_u64_i64` not yet modelled
+    fn insert_view_at_index_in_gravity(this, view: View, index: u64, gravity: StackViewGravity) {
+        rt::msg_void_id_u64_i64(this._obj, rt::sel(#str_ptr("insertView:atIndex:inGravity:\0")), view.raw(), index, stack_view_gravity_raw(gravity));
+    }
+
     fn remove_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeView:\0")), view.raw());
     }

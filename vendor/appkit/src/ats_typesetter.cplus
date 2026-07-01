@@ -79,8 +79,15 @@ impl ATSTypesetter {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("substituteFontForFont:\0")), original_font);
     }
 
-    // SKIPPED `textTabForGlyphLocation:writingDirection:maxLocation:`: msgSend shape `id_f64_i64_f64` not yet modelled
-    // SKIPPED `setParagraphGlyphRange:separatorGlyphRange:`: msgSend shape `void_range_range` not yet modelled
+    fn text_tab_for_glyph_location_writing_direction_max_location(this, glyph_location: f64, direction: WritingDirection, max_location: f64) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_f64_i64_f64(this._obj, rt::sel(#str_ptr("textTabForGlyphLocation:writingDirection:maxLocation:\0")), glyph_location, writing_direction_raw(direction), max_location);
+        return bridge::obj_option(obj);
+    }
+
+    fn set_paragraph_glyph_range_separator_glyph_range(this, paragraph_range: rt::Range, paragraph_separator_range: rt::Range) {
+        rt::msg_void_range_range(this._obj, rt::sel(#str_ptr("setParagraphGlyphRange:separatorGlyphRange:\0")), paragraph_range, paragraph_separator_range);
+    }
+
     fn layout_paragraph_at_point(this, line_fragment_origin: *u8) -> u64 {
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("layoutParagraphAtPoint:\0")), line_fragment_origin);
     }
@@ -97,8 +104,14 @@ impl ATSTypesetter {
         return rt::msg_f64_u64_rect(this._obj, rt::sel(#str_ptr("paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:\0")), glyph_index, rect);
     }
 
-    // SKIPPED `setHardInvalidation:forGlyphRange:`: msgSend shape `void_i8_range` not yet modelled
-    // SKIPPED `getLineFragmentRect:usedRect:forParagraphSeparatorGlyphRange:atProposedOrigin:`: msgSend shape `void_id_id_range_point` not yet modelled
+    fn set_hard_invalidation_for_glyph_range(this, flag: bool, glyph_range: rt::Range) {
+        rt::msg_void_i8_range(this._obj, rt::sel(#str_ptr("setHardInvalidation:forGlyphRange:\0")), flag as i8, glyph_range);
+    }
+
+    fn get_line_fragment_rect_used_rect_for_paragraph_separator_glyph_range_at_proposed_origin(this, line_fragment_rect: *u8, line_fragment_used_rect: *u8, paragraph_separator_glyph_range: rt::Range, line_origin: rt::Point) {
+        rt::msg_void_id_id_range_point(this._obj, rt::sel(#str_ptr("getLineFragmentRect:usedRect:forParagraphSeparatorGlyphRange:atProposedOrigin:\0")), line_fragment_rect, line_fragment_used_rect, paragraph_separator_glyph_range, line_origin);
+    }
+
     fn uses_font_leading(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesFontLeading\0"))) != (0 as i8);
     }
@@ -166,7 +179,10 @@ impl ATSTypesetter {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `willSetLineFragmentRect:forGlyphRange:usedRect:baselineOffset:`: msgSend shape `void_id_range_id_id` not yet modelled
+    fn will_set_line_fragment_rect_for_glyph_range_used_rect_baseline_offset(this, line_rect: *u8, glyph_range: rt::Range, used_rect: *u8, baseline_offset: *u8) {
+        rt::msg_void_id_range_id_id(this._obj, rt::sel(#str_ptr("willSetLineFragmentRect:forGlyphRange:usedRect:baselineOffset:\0")), line_rect, glyph_range, used_rect, baseline_offset);
+    }
+
     fn should_break_line_by_word_before_character_at_index(this, char_index: u64) -> bool {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("shouldBreakLineByWordBeforeCharacterAtIndex:\0")), char_index) != (0 as i8);
     }
@@ -175,9 +191,18 @@ impl ATSTypesetter {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("shouldBreakLineByHyphenatingBeforeCharacterAtIndex:\0")), char_index) != (0 as i8);
     }
 
-    // SKIPPED `hyphenationFactorForGlyphAtIndex:`: msgSend shape `f32_u64` not yet modelled
-    // SKIPPED `hyphenCharacterForGlyphAtIndex:`: msgSend shape `u32_u64` not yet modelled
-    // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_u64_id_rect_point_u64` not yet modelled
+    fn hyphenation_factor_for_glyph_at_index(this, glyph_index: u64) -> f32 {
+        return rt::msg_f32_u64(this._obj, rt::sel(#str_ptr("hyphenationFactorForGlyphAtIndex:\0")), glyph_index);
+    }
+
+    fn hyphen_character_for_glyph_at_index(this, glyph_index: u64) -> u32 {
+        return rt::msg_u32_u64(this._obj, rt::sel(#str_ptr("hyphenCharacterForGlyphAtIndex:\0")), glyph_index);
+    }
+
+    fn bounding_box_for_control_glyph_at_index_for_text_container_proposed_line_fragment_glyph_position_character_index(this, glyph_index: u64, text_container: *u8, proposed_rect: rt::Rect, glyph_position: rt::Point, char_index: u64) -> rt::Rect {
+        return rt::msg_rect_u64_id_rect_point_u64(this._obj, rt::sel(#str_ptr("boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:\0")), glyph_index, text_container, proposed_rect, glyph_position, char_index);
+    }
+
     fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits(this, glyphs_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8) -> u64 {
         return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:\0")), glyphs_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer);
     }

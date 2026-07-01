@@ -150,7 +150,14 @@ impl FontManager {
         return option::some(FontPanel::from_raw(obj));
     }
 
-    // SKIPPED `fontWithFamily:traits:weight:size:`: msgSend shape `id_id_u64_i64_f64` not yet modelled
+    fn font_with_family_traits_weight_size(this, family: str, traits: u64, weight: i64, size: f64) -> option::Option[Font] {
+        let obj: *u8 = rt::msg_id_id_u64_i64_f64(this._obj, rt::sel(#str_ptr("fontWithFamily:traits:weight:size:\0")), bridge::nsstring(family), traits, weight, size);
+        if obj == { 0 as *u8 } {
+            return option::Option[Font]::None;
+        }
+        return option::some(Font::from_raw(obj));
+    }
+
     fn traits_of_font(this, font_obj: Font) -> u64 {
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("traitsOfFont:\0")), font_obj.raw());
     }

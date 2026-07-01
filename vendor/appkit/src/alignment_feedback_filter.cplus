@@ -107,9 +107,30 @@ impl AlignmentFeedbackFilter {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateWithPanRecognizer:\0")), pan_recognizer.raw());
     }
 
-    // SKIPPED `alignmentFeedbackTokenForMovementInView:previousPoint:alignedPoint:defaultPoint:`: msgSend shape `id_id_point_point_point` not yet modelled
-    // SKIPPED `alignmentFeedbackTokenForHorizontalMovementInView:previousX:alignedX:defaultX:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
-    // SKIPPED `alignmentFeedbackTokenForVerticalMovementInView:previousY:alignedY:defaultY:`: msgSend shape `id_id_f64_f64_f64` not yet modelled
+    fn alignment_feedback_token_for_movement_in_view_previous_point_aligned_point_default_point(this, view: View, previous_point: rt::Point, aligned_point: rt::Point, default_point: rt::Point) -> option::Option[AlignmentFeedbackToken] {
+        let obj: *u8 = rt::msg_id_id_point_point_point(this._obj, rt::sel(#str_ptr("alignmentFeedbackTokenForMovementInView:previousPoint:alignedPoint:defaultPoint:\0")), view.raw(), previous_point, aligned_point, default_point);
+        if obj == { 0 as *u8 } {
+            return option::Option[AlignmentFeedbackToken]::None;
+        }
+        return option::some(AlignmentFeedbackToken::from_raw(obj));
+    }
+
+    fn alignment_feedback_token_for_horizontal_movement_in_view_previous_x_aligned_x_default_x(this, view: View, previous_x: f64, aligned_x: f64, default_x: f64) -> option::Option[AlignmentFeedbackToken] {
+        let obj: *u8 = rt::msg_id_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("alignmentFeedbackTokenForHorizontalMovementInView:previousX:alignedX:defaultX:\0")), view.raw(), previous_x, aligned_x, default_x);
+        if obj == { 0 as *u8 } {
+            return option::Option[AlignmentFeedbackToken]::None;
+        }
+        return option::some(AlignmentFeedbackToken::from_raw(obj));
+    }
+
+    fn alignment_feedback_token_for_vertical_movement_in_view_previous_y_aligned_y_default_y(this, view: View, previous_y: f64, aligned_y: f64, default_y: f64) -> option::Option[AlignmentFeedbackToken] {
+        let obj: *u8 = rt::msg_id_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("alignmentFeedbackTokenForVerticalMovementInView:previousY:alignedY:defaultY:\0")), view.raw(), previous_y, aligned_y, default_y);
+        if obj == { 0 as *u8 } {
+            return option::Option[AlignmentFeedbackToken]::None;
+        }
+        return option::some(AlignmentFeedbackToken::from_raw(obj));
+    }
+
     fn perform_feedback_performance_time(this, alignment_feedback_tokens: vec::Vec[AlignmentFeedbackToken], performance_time: HapticFeedbackPerformanceTime) {
         let arr_alignment_feedback_tokens: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_alignment_feedback_tokens: *u8 = rt::sel(#str_ptr("addObject:\0"));

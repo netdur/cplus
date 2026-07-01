@@ -619,7 +619,11 @@ impl Application {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event, at_start as i8);
     }
 
-    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
+    fn next_event_matching_mask_until_date_in_mode_dequeue(this, mask: u64, expiration: Date, mode: str, deq_flag: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, expiration.raw(), bridge::nsstring(mode), deq_flag as i8);
+        return bridge::obj_option(obj);
+    }
+
     fn discard_events_matching_mask_before_event(this, mask: u64, last_event: *u8) {
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, last_event);
     }

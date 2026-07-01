@@ -406,7 +406,10 @@ impl TableView {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `canDragRowsWithIndexes:atPoint:`: msgSend shape `i8_id_point` not yet modelled
+    fn can_drag_rows_with_indexes_at_point(this, row_indexes: IndexSet, mouse_down_point: rt::Point) -> bool {
+        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("canDragRowsWithIndexes:atPoint:\0")), row_indexes.raw(), mouse_down_point) != (0 as i8);
+    }
+
     fn drag_image_for_rows_with_indexes_table_columns_event_offset(this, drag_rows: IndexSet, table_columns: vec::Vec[TableColumn], drag_event: *u8, drag_image_offset: *u8) -> *u8 {
         let arr_table_columns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_table_columns: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -474,7 +477,10 @@ impl TableView {
         return IndexSet::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("columnIndexesInRect:\0")), rect));
     }
 
-    // SKIPPED `rowsInRect:`: msgSend shape `range_rect` not yet modelled
+    fn rows_in_rect(this, rect: rt::Rect) -> rt::Range {
+        return rt::msg_range_rect(this._obj, rt::sel(#str_ptr("rowsInRect:\0")), rect);
+    }
+
     fn column_at_point(this, point: rt::Point) -> i64 {
         return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("columnAtPoint:\0")), point);
     }
@@ -487,8 +493,14 @@ impl TableView {
         return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfCellAtColumn:row:\0")), column, row);
     }
 
-    // SKIPPED `editColumn:row:withEvent:select:`: msgSend shape `void_i64_i64_id_i8` not yet modelled
-    // SKIPPED `drawRow:clipRect:`: msgSend shape `void_i64_rect` not yet modelled
+    fn edit_column_row_with_event_select(this, column: i64, row: i64, event: *u8, select: bool) {
+        rt::msg_void_i64_i64_id_i8(this._obj, rt::sel(#str_ptr("editColumn:row:withEvent:select:\0")), column, row, event, select as i8);
+    }
+
+    fn draw_row_clip_rect(this, row: i64, clip_rect: rt::Rect) {
+        rt::msg_void_i64_rect(this._obj, rt::sel(#str_ptr("drawRow:clipRect:\0")), row, clip_rect);
+    }
+
     fn highlight_selection_in_clip_rect(this, clip_rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("highlightSelectionInClipRect:\0")), clip_rect);
     }
@@ -501,8 +513,19 @@ impl TableView {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawBackgroundInClipRect:\0")), clip_rect);
     }
 
-    // SKIPPED `viewAtColumn:row:makeIfNecessary:`: msgSend shape `id_i64_i64_i8` not yet modelled
-    // SKIPPED `rowViewAtRow:makeIfNecessary:`: msgSend shape `id_i64_i8` not yet modelled
+    fn view_at_column_row_make_if_necessary(this, column: i64, row: i64, make_if_necessary: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")), column, row, make_if_necessary as i8);
+        return bridge::obj_option(obj);
+    }
+
+    fn row_view_at_row_make_if_necessary(this, row: i64, make_if_necessary: bool) -> option::Option[TableRowView] {
+        let obj: *u8 = rt::msg_id_i64_i8(this._obj, rt::sel(#str_ptr("rowViewAtRow:makeIfNecessary:\0")), row, make_if_necessary as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TableRowView]::None;
+        }
+        return option::some(TableRowView::from_raw(obj));
+    }
+
     fn row_for_view(this, view: *u8) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("rowForView:\0")), view);
     }
@@ -963,7 +986,10 @@ impl TableView {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("autoresizesAllColumnsToFit\0"))) != (0 as i8);
     }
 
-    // SKIPPED `columnsInRect:`: msgSend shape `range_rect` not yet modelled
+    fn columns_in_rect(this, rect: rt::Rect) -> rt::Range {
+        return rt::msg_range_rect(this._obj, rt::sel(#str_ptr("columnsInRect:\0")), rect);
+    }
+
     fn prepared_cell_at_column_row(this, column: i64, row: i64) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("preparedCellAtColumn:row:\0")), column, row);
         return bridge::obj_option(obj);
@@ -989,7 +1015,10 @@ impl TableView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textDidChange:\0")), notification);
     }
 
-    // SKIPPED `shouldFocusCell:atColumn:row:`: msgSend shape `i8_id_i64_i64` not yet modelled
+    fn should_focus_cell_at_column_row(this, cell: *u8, column: i64, row: i64) -> bool {
+        return rt::msg_i8_id_i64_i64(this._obj, rt::sel(#str_ptr("shouldFocusCell:atColumn:row:\0")), cell, column, row) != (0 as i8);
+    }
+
     fn focused_column(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("focusedColumn\0")));
     }

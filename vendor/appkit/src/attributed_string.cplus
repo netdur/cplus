@@ -20,8 +20,14 @@ impl AttributedString {
     // SKIPPED `initWithData:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentReadingOptionKey,id> * _Nonnull` — generic collection
     // SKIPPED `dataFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `fileWrapperFromRange:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
-    // SKIPPED `containsAttachmentsInRange:`: msgSend shape `i8_range` not yet modelled
-    // SKIPPED `prefersRTFDInRange:`: msgSend shape `i8_range` not yet modelled
+    fn contains_attachments_in_range(this, range: rt::Range) -> bool {
+        return rt::msg_i8_range(this._obj, rt::sel(#str_ptr("containsAttachmentsInRange:\0")), range) != (0 as i8);
+    }
+
+    fn prefers_r_t_f_d_in_range(this, range: rt::Range) -> bool {
+        return rt::msg_i8_range(this._obj, rt::sel(#str_ptr("prefersRTFDInRange:\0")), range) != (0 as i8);
+    }
+
     // SKIPPED `initWithRTF:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
     // SKIPPED `initWithRTFD:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
     // SKIPPED `initWithHTML:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
@@ -35,13 +41,22 @@ impl AttributedString {
     // SKIPPED `docFormatFromRange:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `fontAttributesInRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `rulerAttributesInRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
-    // SKIPPED `lineBreakBeforeIndex:withinRange:`: msgSend shape `u64_u64_range` not yet modelled
-    // SKIPPED `lineBreakByHyphenatingBeforeIndex:withinRange:`: msgSend shape `u64_u64_range` not yet modelled
+    fn line_break_before_index_within_range(this, location: u64, a_range: rt::Range) -> u64 {
+        return rt::msg_u64_u64_range(this._obj, rt::sel(#str_ptr("lineBreakBeforeIndex:withinRange:\0")), location, a_range);
+    }
+
+    fn line_break_by_hyphenating_before_index_within_range(this, location: u64, a_range: rt::Range) -> u64 {
+        return rt::msg_u64_u64_range(this._obj, rt::sel(#str_ptr("lineBreakByHyphenatingBeforeIndex:withinRange:\0")), location, a_range);
+    }
+
     fn double_click_at_index(this, location: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("doubleClickAtIndex:\0")), location);
     }
 
-    // SKIPPED `nextWordFromIndex:forward:`: msgSend shape `u64_u64_i8` not yet modelled
+    fn next_word_from_index_forward(this, location: u64, is_forward: bool) -> u64 {
+        return rt::msg_u64_u64_i8(this._obj, rt::sel(#str_ptr("nextWordFromIndex:forward:\0")), location, is_forward as i8);
+    }
+
     fn range_of_text_block_at_index(this, block: TextBlock, location: u64) -> rt::Range {
         return rt::msg_range_id_u64(this._obj, rt::sel(#str_ptr("rangeOfTextBlock:atIndex:\0")), block.raw(), location);
     }
@@ -54,7 +69,10 @@ impl AttributedString {
         return rt::msg_range_id_u64(this._obj, rt::sel(#str_ptr("rangeOfTextList:atIndex:\0")), list.raw(), location);
     }
 
-    // SKIPPED `itemNumberInTextList:atIndex:`: msgSend shape `i64_id_u64` not yet modelled
+    fn item_number_in_text_list_at_index(this, list: TextList, location: u64) -> i64 {
+        return rt::msg_i64_id_u64(this._obj, rt::sel(#str_ptr("itemNumberInTextList:atIndex:\0")), list.raw(), location);
+    }
+
     // SKIPPED `textTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     // SKIPPED `textUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     fn text_file_types() -> *u8 {

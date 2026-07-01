@@ -341,7 +341,10 @@ impl DraggingSource {
 
     fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
 
-    // SKIPPED `draggingSession:sourceOperationMaskForDraggingContext:`: msgSend shape `u64_id_i64` not yet modelled
+    fn dragging_session_source_operation_mask_for_dragging_context(this, session: DraggingSession, context: DraggingContext) -> u64 {
+        return rt::msg_u64_id_i64(this._obj, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), session.raw(), dragging_context_raw(context));
+    }
+
     fn dragging_session_will_begin_at_point(this, session: DraggingSession, screen_point: rt::Point) {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("draggingSession:willBeginAtPoint:\0")), session.raw(), screen_point);
     }
@@ -350,7 +353,10 @@ impl DraggingSource {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("draggingSession:movedToPoint:\0")), session.raw(), screen_point);
     }
 
-    // SKIPPED `draggingSession:endedAtPoint:operation:`: msgSend shape `void_id_point_u64` not yet modelled
+    fn dragging_session_ended_at_point_operation(this, session: DraggingSession, screen_point: rt::Point, operation: u64) {
+        rt::msg_void_id_point_u64(this._obj, rt::sel(#str_ptr("draggingSession:endedAtPoint:operation:\0")), session.raw(), screen_point, operation);
+    }
+
     fn ignore_modifier_keys_for_dragging_session(this, session: DraggingSession) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("ignoreModifierKeysForDraggingSession:\0")), session.raw()) != (0 as i8);
     }
@@ -367,7 +373,10 @@ impl SpringLoadingDestination {
 
     fn from_raw(ptr: *u8) -> SpringLoadingDestination { return SpringLoadingDestination { _obj: ptr }; }
 
-    // SKIPPED `springLoadingActivated:draggingInfo:`: msgSend shape `void_i8_id` not yet modelled
+    fn spring_loading_activated_dragging_info(this, activated: bool, dragging_info: DraggingInfo) {
+        rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("springLoadingActivated:draggingInfo:\0")), activated as i8, dragging_info.raw());
+    }
+
     fn spring_loading_highlight_changed(this, dragging_info: DraggingInfo) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("springLoadingHighlightChanged:\0")), dragging_info.raw());
     }

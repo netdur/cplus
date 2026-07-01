@@ -203,7 +203,10 @@ impl TextInput {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("selectedRange\0")));
     }
 
-    // SKIPPED `firstRectForCharacterRange:`: msgSend shape `rect_range` not yet modelled
+    fn first_rect_for_character_range(this, range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_range(this._obj, rt::sel(#str_ptr("firstRectForCharacterRange:\0")), range);
+    }
+
     fn character_index_for_point(this, point: rt::Point) -> u64 {
         return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
     }

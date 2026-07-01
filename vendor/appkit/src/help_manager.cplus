@@ -56,7 +56,10 @@ impl HelpManager {
         return option::some(AttributedString::from_raw(obj));
     }
 
-    // SKIPPED `showContextHelpForObject:locationHint:`: msgSend shape `i8_id_point` not yet modelled
+    fn show_context_help_for_object_location_hint(this, object: *u8, pt: rt::Point) -> bool {
+        return rt::msg_i8_id_point(this._obj, rt::sel(#str_ptr("showContextHelpForObject:locationHint:\0")), object, pt) != (0 as i8);
+    }
+
     fn open_help_anchor_in_book(this, anchor: str, book: str) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("openHelpAnchor:inBook:\0")), bridge::nsstring(anchor), bridge::nsstring(book));
     }

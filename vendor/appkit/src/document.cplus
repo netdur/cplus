@@ -74,6 +74,25 @@ fn document_change_type_from_raw(raw: i64) -> DocumentChangeType {
 }
 
 #[repr(C)]
+struct Document_perform_activity_with_synchronous_waiting_using_block_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Document_perform_activity_with_synchronous_waiting_using_block_invoke(block: *u8, a0: i64) {
+    let bl: *Document_perform_activity_with_synchronous_waiting_using_block_block = { block as *Document_perform_activity_with_synchronous_waiting_using_block_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct Document_continue_activity_using_block_block {
     opaque isa: *u8,
     flags: i32,
@@ -144,6 +163,25 @@ struct Document_perform_asynchronous_file_access_using_block_block {
 fn Document_perform_asynchronous_file_access_using_block_invoke(block: *u8, a0: i64) {
     let bl: *Document_perform_asynchronous_file_access_using_block_block = { block as *Document_perform_asynchronous_file_access_using_block_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Document_autosave_with_implicit_cancellability_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Document_autosave_with_implicit_cancellability_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Document_autosave_with_implicit_cancellability_completion_handler_block = { block as *Document_autosave_with_implicit_cancellability_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
     return;
@@ -605,7 +643,14 @@ impl Document {
         return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("initForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), contents_u_r_l.raw(), bridge::nsstring(type_name), out_error);
     }
 
-    // SKIPPED `performActivityWithSynchronousWaiting:usingBlock:`: block-method msgSend shape not modelled
+    fn perform_activity_with_synchronous_waiting_using_block(this, wait_synchronously: bool, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Document_perform_activity_with_synchronous_waiting_using_block_block = Document_perform_activity_with_synchronous_waiting_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_perform_activity_with_synchronous_waiting_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("performActivityWithSynchronousWaiting:usingBlock:\0")), wait_synchronously as i8, bp);
+        return;
+    }
+
     fn continue_activity_using_block(this, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Document_continue_activity_using_block_block = Document_continue_activity_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_continue_activity_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -682,8 +727,14 @@ impl Document {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unblockUserInteraction\0")));
     }
 
-    // SKIPPED `writeSafelyToURL:ofType:forSaveOperation:error:`: msgSend shape `i8_id_id_i64_id` not yet modelled
-    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: msgSend shape `i8_id_id_i64_id_id` not yet modelled
+    fn write_safely_to_u_r_l_of_type_for_save_operation_error(this, url: URL, type_name: str, save_operation: SaveOperationType, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_i64_id(this._obj, rt::sel(#str_ptr("writeSafelyToURL:ofType:forSaveOperation:error:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation), out_error) != (0 as i8);
+    }
+
+    fn write_to_u_r_l_of_type_for_save_operation_original_contents_u_r_l_error(this, url: URL, type_name: str, save_operation: SaveOperationType, absolute_original_contents_u_r_l: URL, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:forSaveOperation:originalContentsURL:error:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation), absolute_original_contents_u_r_l.raw(), out_error) != (0 as i8);
+    }
+
     // SKIPPED `fileAttributesToWriteToURL:ofType:forSaveOperation:originalContentsURL:error:`: return `NSDictionary<NSString *,id> * _Nullable` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn save_document(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveDocument:\0")), sender);
@@ -701,12 +752,18 @@ impl Document {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("saveDocumentWithDelegate:didSaveSelector:contextInfo:\0")), delegate, did_save_selector, context_info);
     }
 
-    // SKIPPED `runModalSavePanelForSaveOperation:delegate:didSaveSelector:contextInfo:`: msgSend shape `void_i64_id_id_id` not yet modelled
+    fn run_modal_save_panel_for_save_operation_delegate_did_save_selector_context_info(this, save_operation: SaveOperationType, delegate: *u8, did_save_selector: *u8, context_info: *u8) {
+        rt::msg_void_i64_id_id_id(this._obj, rt::sel(#str_ptr("runModalSavePanelForSaveOperation:delegate:didSaveSelector:contextInfo:\0")), save_operation_type_raw(save_operation), delegate, did_save_selector, context_info);
+    }
+
     fn prepare_save_panel(this, save_panel: SavePanel) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("prepareSavePanel:\0")), save_panel.raw()) != (0 as i8);
     }
 
-    // SKIPPED `saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:`: msgSend shape `void_id_id_i64_id_id_id` not yet modelled
+    fn save_to_u_r_l_of_type_for_save_operation_delegate_did_save_selector_context_info(this, url: URL, type_name: str, save_operation: SaveOperationType, delegate: *u8, did_save_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_i64_id_id_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation), delegate, did_save_selector, context_info);
+    }
+
     // SKIPPED `saveToURL:ofType:forSaveOperation:completionHandler:`: block-method msgSend shape not modelled
     fn can_asynchronously_write_to_u_r_l_of_type_for_save_operation(this, url: URL, type_name: str, save_operation: SaveOperationType) -> bool {
         return rt::msg_i8_id_id_i64(this._obj, rt::sel(#str_ptr("canAsynchronouslyWriteToURL:ofType:forSaveOperation:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation)) != (0 as i8);
@@ -724,7 +781,14 @@ impl Document {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("autosaveDocumentWithDelegate:didAutosaveSelector:contextInfo:\0")), delegate, did_autosave_selector, context_info);
     }
 
-    // SKIPPED `autosaveWithImplicitCancellability:completionHandler:`: block-method msgSend shape not modelled
+    fn autosave_with_implicit_cancellability_completion_handler(this, autosaving_is_implicitly_cancellable: bool, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Document_autosave_with_implicit_cancellability_completion_handler_block = Document_autosave_with_implicit_cancellability_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_autosave_with_implicit_cancellability_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_i8_id(this._obj, rt::sel(#str_ptr("autosaveWithImplicitCancellability:completionHandler:\0")), autosaving_is_implicitly_cancellable as i8, bp);
+        return;
+    }
+
     fn browse_document_versions(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("browseDocumentVersions:\0")), sender);
     }
@@ -1233,7 +1297,10 @@ impl Document {
     }
 
     // SKIPPED `observedPresentedItemUbiquityAttributes`: return `API_AVAILABLE NSSet<NSURLResourceKey> *` — generic collection
-    // SKIPPED `saveToURL:ofType:forSaveOperation:error:`: msgSend shape `i8_id_id_i64_id` not yet modelled
+    fn save_to_u_r_l_of_type_for_save_operation_error(this, url: URL, type_name: str, save_operation: SaveOperationType, out_error: *u8) -> bool {
+        return rt::msg_i8_id_id_i64_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:error:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation), out_error) != (0 as i8);
+    }
+
     fn data_representation_of_type(this, type_: str) -> option::Option[Data] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("dataRepresentationOfType:\0")), bridge::nsstring(type_));
         if obj == { 0 as *u8 } {
@@ -1304,7 +1371,10 @@ impl Document {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalPageLayoutWithPrintInfo:\0")), print_info.raw());
     }
 
-    // SKIPPED `saveToFile:saveOperation:delegate:didSaveSelector:contextInfo:`: msgSend shape `void_id_i64_id_id_id` not yet modelled
+    fn save_to_file_save_operation_delegate_did_save_selector_context_info(this, file_name: str, save_operation: SaveOperationType, delegate: *u8, did_save_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_i64_id_id_id(this._obj, rt::sel(#str_ptr("saveToFile:saveOperation:delegate:didSaveSelector:contextInfo:\0")), bridge::nsstring(file_name), save_operation_type_raw(save_operation), delegate, did_save_selector, context_info);
+    }
+
     fn set_file_name(this, file_name: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFileName:\0")), bridge::nsstring(file_name));
     }
@@ -1313,7 +1383,10 @@ impl Document {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToFile:ofType:\0")), bridge::nsstring(file_name), bridge::nsstring(type_)) != (0 as i8);
     }
 
-    // SKIPPED `writeToFile:ofType:originalFile:saveOperation:`: msgSend shape `i8_id_id_id_i64` not yet modelled
+    fn write_to_file_of_type_original_file_save_operation(this, full_document_path: str, document_type_name: str, full_original_document_path: str, save_operation_type: SaveOperationType) -> bool {
+        return rt::msg_i8_id_id_id_i64(this._obj, rt::sel(#str_ptr("writeToFile:ofType:originalFile:saveOperation:\0")), bridge::nsstring(full_document_path), bridge::nsstring(document_type_name), bridge::nsstring(full_original_document_path), save_operation_type_raw(save_operation_type)) != (0 as i8);
+    }
+
     fn write_to_u_r_l_of_type(this, url: URL, type_: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
     }

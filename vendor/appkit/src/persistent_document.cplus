@@ -79,7 +79,10 @@ impl PersistentDocument {
         return bridge::to_text(ns);
     }
 
-    // SKIPPED `writeToURL:ofType:forSaveOperation:originalContentsURL:error:`: msgSend shape `i8_id_id_i64_id_id` not yet modelled
+    fn write_to_u_r_l_of_type_for_save_operation_original_contents_u_r_l_error(this, absolute_u_r_l: *u8, type_name: str, save_operation: SaveOperationType, absolute_original_contents_u_r_l: *u8, error: *u8) -> bool {
+        return rt::msg_i8_id_id_i64_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:forSaveOperation:originalContentsURL:error:\0")), absolute_u_r_l, bridge::nsstring(type_name), save_operation_type_raw(save_operation), absolute_original_contents_u_r_l, error) != (0 as i8);
+    }
+
     fn read_from_u_r_l_of_type_error(this, absolute_u_r_l: *u8, type_name: str, error: *u8) -> bool {
         return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("readFromURL:ofType:error:\0")), absolute_u_r_l, bridge::nsstring(type_name), error) != (0 as i8);
     }

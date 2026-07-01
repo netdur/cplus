@@ -254,12 +254,22 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveAllDocuments:\0")), sender);
     }
 
-    // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: msgSend shape `void_id_i8_id_id_id` not yet modelled
+    fn review_unsaved_documents_with_alert_title_cancellable_delegate_did_review_all_selector_context_info(this, title: str, cancellable: bool, delegate: *u8, did_review_all_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_i8_id_id_id(this._obj, rt::sel(#str_ptr("reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:\0")), bridge::nsstring(title), cancellable as i8, delegate, did_review_all_selector, context_info);
+    }
+
     fn close_all_documents_with_delegate_did_close_all_selector_context_info(this, delegate: *u8, did_close_all_selector: *u8, context_info: *u8) {
         rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:\0")), delegate, did_close_all_selector, context_info);
     }
 
-    // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: msgSend shape `id_id_i8_id_id` not yet modelled
+    fn duplicate_document_with_contents_of_u_r_l_copying_display_name_error(this, url: URL, duplicate_by_copying: bool, display_name_or_nil: str, out_error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_i8_id_id(this._obj, rt::sel(#str_ptr("duplicateDocumentWithContentsOfURL:copying:displayName:error:\0")), url.raw(), duplicate_by_copying as i8, bridge::nsstring(display_name_or_nil), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
+    }
+
     fn standard_share_menu_item(this) -> MenuItem {
         return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
@@ -376,7 +386,11 @@ impl DocumentController {
         return out;
     }
 
-    // SKIPPED `openDocumentWithContentsOfURL:display:error:`: msgSend shape `id_id_i8_id` not yet modelled
+    fn open_document_with_contents_of_u_r_l_display_error(this, url: URL, display_document: bool, out_error: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_i8_id(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfURL:display:error:\0")), url.raw(), display_document as i8, out_error);
+        return bridge::obj_option(obj);
+    }
+
     fn reopen_document_for_u_r_l_with_contents_of_u_r_l_error(this, url: URL, contents_u_r_l: URL, out_error: *u8) -> bool {
         return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:error:\0")), url.raw(), contents_u_r_l.raw(), out_error) != (0 as i8);
     }

@@ -320,7 +320,10 @@ impl ImageSymbolConfiguration {
 
     fn from_raw(ptr: *u8) -> ImageSymbolConfiguration { return ImageSymbolConfiguration { _obj: ptr }; }
 
-    // SKIPPED `configurationWithPointSize:weight:scale:`: msgSend shape `id_f64_f64_i64` not yet modelled
+    fn configuration_with_point_size_weight_scale(point_size: f64, weight: f64, scale: ImageSymbolScale) -> ImageSymbolConfiguration {
+        return ImageSymbolConfiguration { _obj: rt::msg_id_f64_f64_i64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithPointSize:weight:scale:\0")), point_size, weight, image_symbol_scale_raw(scale)) };
+    }
+
     fn configuration_with_point_size_weight(point_size: f64, weight: f64) -> ImageSymbolConfiguration {
         return ImageSymbolConfiguration { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSImageSymbolConfiguration\0")), rt::sel(#str_ptr("configurationWithPointSize:weight:\0")), point_size, weight) };
     }
@@ -408,7 +411,14 @@ impl Image {
         return option::some(Image { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `imageWithSystemSymbolName:variableValue:accessibilityDescription:`: msgSend shape `id_id_f64_id` not yet modelled
+    fn image_with_system_symbol_name_variable_value_accessibility_description(name: str, value: f64, description: str) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_id_f64_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSystemSymbolName:variableValue:accessibilityDescription:\0")), bridge::nsstring(name), value, bridge::nsstring(description));
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image { _obj: rt::retain(obj) });
+    }
+
     fn image_with_symbol_name_variable_value(name: str, value: f64) -> option::Option[Image] {
         let obj: *u8 = rt::msg_id_id_f64(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSymbolName:variableValue:\0")), bridge::nsstring(name), value);
         if obj == { 0 as *u8 } {
@@ -417,7 +427,14 @@ impl Image {
         return option::some(Image { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `imageWithSymbolName:bundle:variableValue:`: msgSend shape `id_id_id_f64` not yet modelled
+    fn image_with_symbol_name_bundle_variable_value(name: str, bundle: *u8, value: f64) -> option::Option[Image] {
+        let obj: *u8 = rt::msg_id_id_id_f64(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSymbolName:bundle:variableValue:\0")), bridge::nsstring(name), bundle, value);
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image { _obj: rt::retain(obj) });
+    }
+
     // SKIPPED `initWithSize:`: init arg shape not yet modelled
     fn new_with_coder(coder: *u8) -> Image {
         let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
@@ -473,10 +490,19 @@ impl Image {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `drawAtPoint:fromRect:operation:fraction:`: msgSend shape `void_point_rect_i64_f64` not yet modelled
-    // SKIPPED `drawInRect:fromRect:operation:fraction:`: msgSend shape `void_rect_rect_i64_f64` not yet modelled
+    fn draw_at_point_from_rect_operation_fraction(this, point: rt::Point, from_rect: rt::Rect, op: CompositingOperation, delta: f64) {
+        rt::msg_void_point_rect_i64_f64(this._obj, rt::sel(#str_ptr("drawAtPoint:fromRect:operation:fraction:\0")), point, from_rect, compositing_operation_raw(op), delta);
+    }
+
+    fn draw_in_rect_from_rect_operation_fraction(this, rect: rt::Rect, from_rect: rt::Rect, op: CompositingOperation, delta: f64) {
+        rt::msg_void_rect_rect_i64_f64(this._obj, rt::sel(#str_ptr("drawInRect:fromRect:operation:fraction:\0")), rect, from_rect, compositing_operation_raw(op), delta);
+    }
+
     // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `drawRepresentation:inRect:`: msgSend shape `i8_id_rect` not yet modelled
+    fn draw_representation_in_rect(this, image_rep: ImageRep, rect: rt::Rect) -> bool {
+        return rt::msg_i8_id_rect(this._obj, rt::sel(#str_ptr("drawRepresentation:inRect:\0")), image_rep.raw(), rect) != (0 as i8);
+    }
+
     fn draw_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
     }
@@ -485,7 +511,11 @@ impl Image {
         rt::msg_void(this._obj, rt::sel(#str_ptr("recache\0")));
     }
 
-    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: msgSend shape `id_i64_f32` not yet modelled
+    fn t_i_f_f_representation_using_compression_factor(this, comp: TIFFCompression, factor: f32) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_f32(this._obj, rt::sel(#str_ptr("TIFFRepresentationUsingCompression:factor:\0")), t_i_f_f_compression_raw(comp), factor);
+        return bridge::obj_option(obj);
+    }
+
     fn add_representations(this, image_reps: vec::Vec[ImageRep]) {
         let arr_image_reps: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_image_reps: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -796,12 +826,30 @@ impl Image {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("cacheDepthMatchesImageDepth\0"))) != (0 as i8);
     }
 
-    // SKIPPED `dissolveToPoint:fraction:`: msgSend shape `void_point_f64` not yet modelled
-    // SKIPPED `dissolveToPoint:fromRect:fraction:`: msgSend shape `void_point_rect_f64` not yet modelled
-    // SKIPPED `compositeToPoint:operation:`: msgSend shape `void_point_i64` not yet modelled
-    // SKIPPED `compositeToPoint:fromRect:operation:`: msgSend shape `void_point_rect_i64` not yet modelled
-    // SKIPPED `compositeToPoint:operation:fraction:`: msgSend shape `void_point_i64_f64` not yet modelled
-    // SKIPPED `compositeToPoint:fromRect:operation:fraction:`: msgSend shape `void_point_rect_i64_f64` not yet modelled
+    fn dissolve_to_point_fraction(this, point: rt::Point, fraction: f64) {
+        rt::msg_void_point_f64(this._obj, rt::sel(#str_ptr("dissolveToPoint:fraction:\0")), point, fraction);
+    }
+
+    fn dissolve_to_point_from_rect_fraction(this, point: rt::Point, rect: rt::Rect, fraction: f64) {
+        rt::msg_void_point_rect_f64(this._obj, rt::sel(#str_ptr("dissolveToPoint:fromRect:fraction:\0")), point, rect, fraction);
+    }
+
+    fn composite_to_point_operation(this, point: rt::Point, operation: CompositingOperation) {
+        rt::msg_void_point_i64(this._obj, rt::sel(#str_ptr("compositeToPoint:operation:\0")), point, compositing_operation_raw(operation));
+    }
+
+    fn composite_to_point_from_rect_operation(this, point: rt::Point, rect: rt::Rect, operation: CompositingOperation) {
+        rt::msg_void_point_rect_i64(this._obj, rt::sel(#str_ptr("compositeToPoint:fromRect:operation:\0")), point, rect, compositing_operation_raw(operation));
+    }
+
+    fn composite_to_point_operation_fraction(this, point: rt::Point, operation: CompositingOperation, fraction: f64) {
+        rt::msg_void_point_i64_f64(this._obj, rt::sel(#str_ptr("compositeToPoint:operation:fraction:\0")), point, compositing_operation_raw(operation), fraction);
+    }
+
+    fn composite_to_point_from_rect_operation_fraction(this, point: rt::Point, rect: rt::Rect, operation: CompositingOperation, fraction: f64) {
+        rt::msg_void_point_rect_i64_f64(this._obj, rt::sel(#str_ptr("compositeToPoint:fromRect:operation:fraction:\0")), point, rect, compositing_operation_raw(operation), fraction);
+    }
+
     fn lock_focus_on_representation(this, image_representation: ImageRep) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("lockFocusOnRepresentation:\0")), image_representation.raw());
     }

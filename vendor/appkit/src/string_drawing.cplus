@@ -37,10 +37,22 @@ impl AttributedString {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect);
     }
 
-    // SKIPPED `drawWithRect:options:context:`: msgSend shape `void_rect_u64_id` not yet modelled
-    // SKIPPED `boundingRectWithSize:options:context:`: msgSend shape `rect_size_u64_id` not yet modelled
-    // SKIPPED `drawWithRect:options:`: msgSend shape `void_rect_u64` not yet modelled
-    // SKIPPED `boundingRectWithSize:options:`: msgSend shape `rect_size_u64` not yet modelled
+    fn draw_with_rect_options_context(this, rect: rt::Rect, options: u64, context: StringDrawingContext) {
+        rt::msg_void_rect_u64_id(this._obj, rt::sel(#str_ptr("drawWithRect:options:context:\0")), rect, options, context.raw());
+    }
+
+    fn bounding_rect_with_size_options_context(this, size: rt::Size, options: u64, context: StringDrawingContext) -> rt::Rect {
+        return rt::msg_rect_size_u64_id(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:context:\0")), size, options, context.raw());
+    }
+
+    fn draw_with_rect_options(this, rect: rt::Rect, options: u64) {
+        rt::msg_void_rect_u64(this._obj, rt::sel(#str_ptr("drawWithRect:options:\0")), rect, options);
+    }
+
+    fn bounding_rect_with_size_options(this, size: rt::Size, options: u64) -> rt::Rect {
+        return rt::msg_rect_size_u64(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:\0")), size, options);
+    }
+
 }
 
 // `NSString` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.

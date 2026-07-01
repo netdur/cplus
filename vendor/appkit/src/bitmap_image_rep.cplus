@@ -197,8 +197,15 @@ impl BitmapImageRep {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getCompression:factor:\0")), compression, factor);
     }
 
-    // SKIPPED `setCompression:factor:`: msgSend shape `void_i64_f32` not yet modelled
-    // SKIPPED `TIFFRepresentationUsingCompression:factor:`: msgSend shape `id_i64_f32` not yet modelled
+    fn set_compression_factor(this, compression: TIFFCompression, factor: f32) {
+        rt::msg_void_i64_f32(this._obj, rt::sel(#str_ptr("setCompression:factor:\0")), t_i_f_f_compression_raw(compression), factor);
+    }
+
+    fn t_i_f_f_representation_using_compression_factor(this, comp: TIFFCompression, factor: f32) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_f32(this._obj, rt::sel(#str_ptr("TIFFRepresentationUsingCompression:factor:\0")), t_i_f_f_compression_raw(comp), factor);
+        return bridge::obj_option(obj);
+    }
+
     // SKIPPED `TIFFRepresentationOfImageRepsInArray:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
     // SKIPPED `TIFFRepresentationOfImageRepsInArray:usingCompression:factor:`: param `NSArray<NSImageRep *> * _Nonnull` — generic collection
     fn get_t_i_f_f_compression_types_count(list: *u8, num_types: *u8) {
@@ -214,12 +221,18 @@ impl BitmapImageRep {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("canBeCompressedUsing:\0")), t_i_f_f_compression_raw(compression)) != (0 as i8);
     }
 
-    // SKIPPED `colorizeByMappingGray:toColor:blackMapping:whiteMapping:`: msgSend shape `void_f64_id_id_id` not yet modelled
+    fn colorize_by_mapping_gray_to_color_black_mapping_white_mapping(this, mid_point: f64, mid_point_color: Color, shadow_color: Color, light_color: Color) {
+        rt::msg_void_f64_id_id_id(this._obj, rt::sel(#str_ptr("colorizeByMappingGray:toColor:blackMapping:whiteMapping:\0")), mid_point, mid_point_color.raw(), shadow_color.raw(), light_color.raw());
+    }
+
     fn init_for_incremental_load(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("initForIncrementalLoad\0")));
     }
 
-    // SKIPPED `incrementalLoadFromData:complete:`: msgSend shape `i64_id_i8` not yet modelled
+    fn incremental_load_from_data_complete(this, data: *u8, complete: bool) -> i64 {
+        return rt::msg_i64_id_i8(this._obj, rt::sel(#str_ptr("incrementalLoadFromData:complete:\0")), data, complete as i8);
+    }
+
     fn set_color_at_x_y(this, color: Color, x: i64, y: i64) {
         rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("setColor:atX:y:\0")), color.raw(), x, y);
     }

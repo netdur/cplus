@@ -503,10 +503,16 @@ impl Workspace {
         return Image::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("iconForContentType:\0")), content_type.raw()));
     }
 
-    // SKIPPED `setIcon:forFile:options:`: msgSend shape `i8_id_id_u64` not yet modelled
+    fn set_icon_for_file_options(this, image: Image, full_path: str, options: u64) -> bool {
+        return rt::msg_i8_id_id_u64(this._obj, rt::sel(#str_ptr("setIcon:forFile:options:\0")), image.raw(), bridge::nsstring(full_path), options) != (0 as i8);
+    }
+
     // SKIPPED `recycleURLs:completionHandler:`: block method with an NSArray<id> param not modelled
     // SKIPPED `duplicateURLs:completionHandler:`: block method with an NSArray<id> param not modelled
-    // SKIPPED `getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:`: msgSend shape `i8_id_id_id_id_id_id` not yet modelled
+    fn get_file_system_info_for_path_is_removable_is_writable_is_unmountable_description_type(this, full_path: str, removable_flag: *u8, writable_flag: *u8, unmountable_flag: *u8, description: *u8, file_system_type: *u8) -> bool {
+        return rt::msg_i8_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:\0")), bridge::nsstring(full_path), removable_flag, writable_flag, unmountable_flag, description, file_system_type) != (0 as i8);
+    }
+
     fn unmount_and_eject_device_at_path(this, path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("unmountAndEjectDeviceAtPath:\0")), bridge::nsstring(path)) != (0 as i8);
     }
@@ -655,7 +661,10 @@ impl Workspace {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("openFile:withApplication:\0")), bridge::nsstring(full_path), bridge::nsstring(app_name)) != (0 as i8);
     }
 
-    // SKIPPED `openFile:withApplication:andDeactivate:`: msgSend shape `i8_id_id_i8` not yet modelled
+    fn open_file_with_application_and_deactivate(this, full_path: str, app_name: str, flag: bool) -> bool {
+        return rt::msg_i8_id_id_i8(this._obj, rt::sel(#str_ptr("openFile:withApplication:andDeactivate:\0")), bridge::nsstring(full_path), bridge::nsstring(app_name), flag as i8) != (0 as i8);
+    }
+
     fn launch_application(this, app_name: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("launchApplication:\0")), bridge::nsstring(app_name)) != (0 as i8);
     }
@@ -663,7 +672,10 @@ impl Workspace {
     // SKIPPED `launchApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `openURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
     // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: param `NSDictionary<NSWorkspaceLaunchConfigurationKey,id> * _Nonnull` — generic collection
-    // SKIPPED `launchApplication:showIcon:autolaunch:`: msgSend shape `i8_id_i8_i8` not yet modelled
+    fn launch_application_show_icon_autolaunch(this, app_name: str, show_icon: bool, autolaunch: bool) -> bool {
+        return rt::msg_i8_id_i8_i8(this._obj, rt::sel(#str_ptr("launchApplication:showIcon:autolaunch:\0")), bridge::nsstring(app_name), show_icon as i8, autolaunch as i8) != (0 as i8);
+    }
+
     fn full_path_for_application(this, app_name: str) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fullPathForApplication:\0")), bridge::nsstring(app_name));
         return bridge::to_text_option(ns);
@@ -674,7 +686,10 @@ impl Workspace {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:`: msgSend shape `i8_id_u64_id_id` not yet modelled
+    fn launch_app_with_bundle_identifier_options_additional_event_param_descriptor_launch_identifier(this, bundle_identifier: str, options: u64, descriptor: AppleEventDescriptor, identifier: *u8) -> bool {
+        return rt::msg_i8_id_u64_id_id(this._obj, rt::sel(#str_ptr("launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:\0")), bridge::nsstring(bundle_identifier), options, descriptor.raw(), identifier) != (0 as i8);
+    }
+
     // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSNumber *> * _Nullable * _Nullable` — generic collection
     fn open_temp_file(this, full_path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openTempFile:\0")), bridge::nsstring(full_path)) != (0 as i8);
@@ -688,7 +703,10 @@ impl Workspace {
         rt::msg_void(this._obj, rt::sel(#str_ptr("noteUserDefaultsChanged\0")));
     }
 
-    // SKIPPED `slideImage:from:to:`: msgSend shape `void_id_point_point` not yet modelled
+    fn slide_image_from_to(this, image: Image, from_point: rt::Point, to_point: rt::Point) {
+        rt::msg_void_id_point_point(this._obj, rt::sel(#str_ptr("slideImage:from:to:\0")), image.raw(), from_point, to_point);
+    }
+
     fn check_for_removable_media(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("checkForRemovableMedia\0")));
     }
@@ -727,8 +745,14 @@ impl Workspace {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `openFile:fromImage:at:inView:`: msgSend shape `i8_id_id_point_id` not yet modelled
-    // SKIPPED `performFileOperation:source:destination:files:tag:`: msgSend shape `i8_id_id_id_id_id` not yet modelled
+    fn open_file_from_image_at_in_view(this, full_path: str, image: Image, point: rt::Point, view: View) -> bool {
+        return rt::msg_i8_id_id_point_id(this._obj, rt::sel(#str_ptr("openFile:fromImage:at:inView:\0")), bridge::nsstring(full_path), image.raw(), point, view.raw()) != (0 as i8);
+    }
+
+    fn perform_file_operation_source_destination_files_tag(this, operation: str, source: str, destination: str, files: *u8, tag: *u8) -> bool {
+        return rt::msg_i8_id_id_id_id_id(this._obj, rt::sel(#str_ptr("performFileOperation:source:destination:files:tag:\0")), bridge::nsstring(operation), bridge::nsstring(source), bridge::nsstring(destination), files, tag) != (0 as i8);
+    }
+
     fn get_info_for_file_application_type(this, full_path: str, app_name: *u8, type_: *u8) -> bool {
         return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getInfoForFile:application:type:\0")), bridge::nsstring(full_path), app_name, type_) != (0 as i8);
     }

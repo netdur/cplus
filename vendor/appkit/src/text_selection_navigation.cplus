@@ -179,10 +179,27 @@ impl TextSelectionNavigation {
         rt::msg_void(this._obj, rt::sel(#str_ptr("flushLayoutCache\0")));
     }
 
-    // SKIPPED `destinationSelectionForTextSelection:direction:destination:extending:confined:`: msgSend shape `id_id_i64_i64_i8_i8` not yet modelled
+    fn destination_selection_for_text_selection_direction_destination_extending_confined(this, text_selection: TextSelection, direction: TextSelectionNavigationDirection, destination: TextSelectionNavigationDestination, extending: bool, confined: bool) -> option::Option[TextSelection] {
+        let obj: *u8 = rt::msg_id_id_i64_i64_i8_i8(this._obj, rt::sel(#str_ptr("destinationSelectionForTextSelection:direction:destination:extending:confined:\0")), text_selection.raw(), text_selection_navigation_direction_raw(direction), text_selection_navigation_destination_raw(destination), extending as i8, confined as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextSelection]::None;
+        }
+        return option::some(TextSelection::from_raw(obj));
+    }
+
     // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: NSArray<id> param with a collection return not modelled
-    // SKIPPED `textSelectionForSelectionGranularity:enclosingTextSelection:`: msgSend shape `id_i64_id` not yet modelled
-    // SKIPPED `textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:`: msgSend shape `id_i64_point_id` not yet modelled
+    fn text_selection_for_selection_granularity_enclosing_text_selection(this, selection_granularity: TextSelectionGranularity, text_selection: TextSelection) -> TextSelection {
+        return TextSelection::from_raw(rt::msg_id_i64_id(this._obj, rt::sel(#str_ptr("textSelectionForSelectionGranularity:enclosingTextSelection:\0")), text_selection_granularity_raw(selection_granularity), text_selection.raw()));
+    }
+
+    fn text_selection_for_selection_granularity_enclosing_point_in_container_at_location(this, selection_granularity: TextSelectionGranularity, point: rt::Point, location: TextLocation) -> option::Option[TextSelection] {
+        let obj: *u8 = rt::msg_id_i64_point_id(this._obj, rt::sel(#str_ptr("textSelectionForSelectionGranularity:enclosingPoint:inContainerAtLocation:\0")), text_selection_granularity_raw(selection_granularity), point, location.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[TextSelection]::None;
+        }
+        return option::some(TextSelection::from_raw(obj));
+    }
+
     fn resolved_insertion_location_for_text_selection_writing_direction(this, text_selection: TextSelection, writing_direction: TextSelectionNavigationWritingDirection) -> option::Option[TextLocation] {
         let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("resolvedInsertionLocationForTextSelection:writingDirection:\0")), text_selection.raw(), text_selection_navigation_writing_direction_raw(writing_direction));
         if obj == { 0 as *u8 } {

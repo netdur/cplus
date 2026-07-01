@@ -264,8 +264,14 @@ impl ViewController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("presentViewControllerAsModalWindow:\0")), view_controller.raw());
     }
 
-    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:`: msgSend shape `void_id_rect_id_i64_i64` not yet modelled
-    // SKIPPED `presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:`: msgSend shape `void_id_rect_id_i64_i64_i8` not yet modelled
+    fn present_view_controller_as_popover_relative_to_rect_of_view_preferred_edge_behavior(this, view_controller: ViewController, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior) {
+        rt::msg_void_id_rect_id_i64_i64(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:\0")), view_controller.raw(), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior));
+    }
+
+    fn present_view_controller_as_popover_relative_to_rect_of_view_preferred_edge_behavior_has_full_size_content(this, view_controller: ViewController, positioning_rect: rt::Rect, positioning_view: View, preferred_edge: RectEdge, behavior: PopoverBehavior, has_full_size_content: bool) {
+        rt::msg_void_id_rect_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:\0")), view_controller.raw(), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior), has_full_size_content as i8);
+    }
+
     // SKIPPED `transitionFromViewController:toViewController:options:completionHandler:`: block-method msgSend shape not modelled
     fn add_child_view_controller(this, child_view_controller: ViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addChildViewController:\0")), child_view_controller.raw());

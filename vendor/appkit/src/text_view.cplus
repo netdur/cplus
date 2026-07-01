@@ -356,7 +356,12 @@ impl TextView {
 
     fn from_raw(ptr: *u8) -> TextView { return TextView { _obj: ptr }; }
 
-    // SKIPPED `initWithFrame:textContainer:`: init arg shape not yet modelled
+    fn new(frame_rect: rt::Rect, container: TextContainer) -> TextView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextView { _obj: rt::msg_id_rect_id(alloced, rt::sel(#str_ptr("initWithFrame:textContainer:\0")), frame_rect, container.raw()) };
+    }
+
     fn new_with_coder(coder: *u8) -> TextView {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -501,12 +506,18 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldAddMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
     }
 
-    // SKIPPED `rulerView:willMoveMarker:toLocation:`: msgSend shape `f64_id_id_f64` not yet modelled
+    fn ruler_view_will_move_marker_to_location(this, ruler: RulerView, marker: RulerMarker, location: f64) -> f64 {
+        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willMoveMarker:toLocation:\0")), ruler.raw(), marker.raw(), location);
+    }
+
     fn ruler_view_should_remove_marker(this, ruler: RulerView, marker: RulerMarker) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("rulerView:shouldRemoveMarker:\0")), ruler.raw(), marker.raw()) != (0 as i8);
     }
 
-    // SKIPPED `rulerView:willAddMarker:atLocation:`: msgSend shape `f64_id_id_f64` not yet modelled
+    fn ruler_view_will_add_marker_at_location(this, ruler: RulerView, marker: RulerMarker, location: f64) -> f64 {
+        return rt::msg_f64_id_id_f64(this._obj, rt::sel(#str_ptr("rulerView:willAddMarker:atLocation:\0")), ruler.raw(), marker.raw(), location);
+    }
+
     fn ruler_view_handle_mouse_down(this, ruler: RulerView, event: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:handleMouseDown:\0")), ruler.raw(), event);
     }
@@ -515,7 +526,10 @@ impl TextView {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("setNeedsDisplayInRect:avoidAdditionalLayout:\0")), rect, flag as i8);
     }
 
-    // SKIPPED `drawInsertionPointInRect:color:turnedOn:`: msgSend shape `void_rect_id_i8` not yet modelled
+    fn draw_insertion_point_in_rect_color_turned_on(this, rect: rt::Rect, color: *u8, flag: bool) {
+        rt::msg_void_rect_id_i8(this._obj, rt::sel(#str_ptr("drawInsertionPointInRect:color:turnedOn:\0")), rect, color, flag as i8);
+    }
+
     fn draw_view_background_in_rect(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawViewBackgroundInRect:\0")), rect);
     }
@@ -532,7 +546,10 @@ impl TextView {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateDragTypeRegistration\0")));
     }
 
-    // SKIPPED `selectionRangeForProposedRange:granularity:`: msgSend shape `range_range_i64` not yet modelled
+    fn selection_range_for_proposed_range_granularity(this, proposed_char_range: rt::Range, granularity: SelectionGranularity) -> rt::Range {
+        return rt::msg_range_range_i64(this._obj, rt::sel(#str_ptr("selectionRangeForProposedRange:granularity:\0")), proposed_char_range, selection_granularity_raw(granularity));
+    }
+
     fn clicked_on_link_at_index(this, link: *u8, char_index: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("clickedOnLink:atIndex:\0")), link, char_index);
     }
@@ -557,7 +574,10 @@ impl TextView {
         return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForInsertionAtPoint:\0")), point);
     }
 
-    // SKIPPED `performValidatedReplacementInRange:withAttributedString:`: msgSend shape `i8_range_id` not yet modelled
+    fn perform_validated_replacement_in_range_with_attributed_string(this, range: rt::Range, attributed_string: *u8) -> bool {
+        return rt::msg_i8_range_id(this._obj, rt::sel(#str_ptr("performValidatedReplacementInRange:withAttributedString:\0")), range, attributed_string) != (0 as i8);
+    }
+
     fn text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainer\0")));
         if obj == { 0 as *u8 } {
@@ -626,8 +646,24 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("complete:\0")), sender);
     }
 
-    // SKIPPED `completionsForPartialWordRange:indexOfSelectedItem:`: NSArray<NSString> arg shape not modelled
-    // SKIPPED `insertCompletion:forPartialWordRange:movement:isFinal:`: msgSend shape `void_id_range_i64_i8` not yet modelled
+    fn completions_for_partial_word_range_index_of_selected_item(this, char_range: rt::Range, index: *u8) -> vec::Vec[text::Text] {
+        let arr: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("completionsForPartialWordRange:indexOfSelectedItem:\0")), char_range, index);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(bridge::to_text(value));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn insert_completion_for_partial_word_range_movement_is_final(this, word: str, char_range: rt::Range, movement: i64, flag: bool) {
+        rt::msg_void_id_range_i64_i8(this._obj, rt::sel(#str_ptr("insertCompletion:forPartialWordRange:movement:isFinal:\0")), bridge::nsstring(word), char_range, movement, flag as i8);
+    }
+
     fn range_for_user_completion(this) -> rt::Range {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("rangeForUserCompletion\0")));
     }
@@ -698,7 +734,10 @@ impl TextView {
         return out;
     }
 
-    // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: msgSend shape `i8_id_size_i8` not yet modelled
+    fn drag_selection_with_event_offset_slide_back(this, event: *u8, mouse_offset: rt::Size, slide_back: bool) -> bool {
+        return rt::msg_i8_id_size_i8(this._obj, rt::sel(#str_ptr("dragSelectionWithEvent:offset:slideBack:\0")), event, mouse_offset, slide_back as i8) != (0 as i8);
+    }
+
     fn drag_image_for_selection_with_event_origin(this, event: *u8, origin: *u8) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("dragImageForSelectionWithEvent:origin:\0")), event, origin);
         return bridge::obj_option(obj);
@@ -726,8 +765,25 @@ impl TextView {
         return out;
     }
 
-    // SKIPPED `setSelectedRanges:affinity:stillSelecting:`: msgSend shape `void_id_i64_i8` not yet modelled
-    // SKIPPED `setSelectedRange:affinity:stillSelecting:`: msgSend shape `void_range_i64_i8` not yet modelled
+    fn set_selected_ranges_affinity_still_selecting(this, ranges: vec::Vec[Value], affinity: SelectionAffinity, still_selecting_flag: bool) {
+        let arr_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_ranges: usize = ranges.count();
+        var i_ranges: usize = 0 as usize;
+        while i_ranges < n_ranges {
+            match ranges.at_ptr(i_ranges) {
+                option::Option[*Value]::Some(e_ranges) => { rt::msg_void_id(arr_ranges, add_sel_ranges, (*e_ranges).raw()); }
+                option::Option[*Value]::None => {}
+            }
+            i_ranges = i_ranges +% (1 as usize);
+        }
+        rt::msg_void_id_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRanges:affinity:stillSelecting:\0")), arr_ranges, selection_affinity_raw(affinity), still_selecting_flag as i8);
+    }
+
+    fn set_selected_range_affinity_still_selecting(this, char_range: rt::Range, affinity: SelectionAffinity, still_selecting_flag: bool) {
+        rt::msg_void_range_i64_i8(this._obj, rt::sel(#str_ptr("setSelectedRange:affinity:stillSelecting:\0")), char_range, selection_affinity_raw(affinity), still_selecting_flag as i8);
+    }
+
     fn update_insertion_point_state_and_restart_timer(this, restart_flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("updateInsertionPointStateAndRestartTimer:\0")), restart_flag as i8);
     }
@@ -759,7 +815,10 @@ impl TextView {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("shouldChangeTextInRanges:replacementStrings:\0")), arr_affected_ranges, bridge::nsarray_of_text(replacement_strings)) != (0 as i8);
     }
 
-    // SKIPPED `shouldChangeTextInRange:replacementString:`: msgSend shape `i8_range_id` not yet modelled
+    fn should_change_text_in_range_replacement_string(this, affected_char_range: rt::Range, replacement_string: str) -> bool {
+        return rt::msg_i8_range_id(this._obj, rt::sel(#str_ptr("shouldChangeTextInRange:replacementString:\0")), affected_char_range, bridge::nsstring(replacement_string)) != (0 as i8);
+    }
+
     fn did_change_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("didChangeText\0")));
     }
@@ -1046,9 +1105,20 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleSmartInsertDelete:\0")), sender);
     }
 
-    // SKIPPED `smartInsertForString:replacingRange:beforeString:afterString:`: msgSend shape `void_id_range_id_id` not yet modelled
-    // SKIPPED `smartInsertBeforeStringForString:replacingRange:`: msgSend shape `id_id_range` not yet modelled
-    // SKIPPED `smartInsertAfterStringForString:replacingRange:`: msgSend shape `id_id_range` not yet modelled
+    fn smart_insert_for_string_replacing_range_before_string_after_string(this, paste_string: str, char_range_to_replace: rt::Range, before_string: *u8, after_string: *u8) {
+        rt::msg_void_id_range_id_id(this._obj, rt::sel(#str_ptr("smartInsertForString:replacingRange:beforeString:afterString:\0")), bridge::nsstring(paste_string), char_range_to_replace, before_string, after_string);
+    }
+
+    fn smart_insert_before_string_for_string_replacing_range(this, paste_string: str, char_range_to_replace: rt::Range) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertBeforeStringForString:replacingRange:\0")), bridge::nsstring(paste_string), char_range_to_replace);
+        return bridge::to_text_option(ns);
+    }
+
+    fn smart_insert_after_string_for_string_replacing_range(this, paste_string: str, char_range_to_replace: rt::Range) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id_id_range(this._obj, rt::sel(#str_ptr("smartInsertAfterStringForString:replacingRange:\0")), bridge::nsstring(paste_string), char_range_to_replace);
+        return bridge::to_text_option(ns);
+    }
+
     fn toggle_automatic_quote_substitution(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleAutomaticQuoteSubstitution:\0")), sender);
     }

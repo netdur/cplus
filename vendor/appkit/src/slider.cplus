@@ -198,7 +198,10 @@ impl Slider {
         return Slider { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSSlider\0")), rt::sel(#str_ptr("sliderWithTarget:action:\0")), target, action) };
     }
 
-    // SKIPPED `sliderWithValue:minValue:maxValue:target:action:`: msgSend shape `id_f64_f64_f64_id_id` not yet modelled
+    fn slider_with_value_min_value_max_value_target_action(value: f64, min_value: f64, max_value: f64, target: *u8, action: *u8) -> Slider {
+        return Slider { _obj: rt::msg_id_f64_f64_f64_id_id(rt::get_class(#str_ptr("NSSlider\0")), rt::sel(#str_ptr("sliderWithValue:minValue:maxValue:target:action:\0")), value, min_value, max_value, target, action) };
+    }
+
     fn set_title_cell(this, cell: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleCell:\0")), cell);
     }

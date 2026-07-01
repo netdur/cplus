@@ -44,7 +44,12 @@ impl OpenGLView {
         return OpenGLPixelFormat::from_raw(rt::msg_id(rt::get_class(#str_ptr("NSOpenGLView\0")), rt::sel(#str_ptr("defaultPixelFormat\0"))));
     }
 
-    // SKIPPED `initWithFrame:pixelFormat:`: init arg shape not yet modelled
+    fn new(frame_rect: rt::Rect, format: OpenGLPixelFormat) -> OpenGLView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLView { _obj: rt::msg_id_rect_id(alloced, rt::sel(#str_ptr("initWithFrame:pixelFormat:\0")), frame_rect, format.raw()) };
+    }
+
     fn clear_g_l_context(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("clearGLContext\0")));
     }

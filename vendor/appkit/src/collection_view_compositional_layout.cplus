@@ -592,7 +592,10 @@ impl CollectionLayoutBoundarySupplementaryItem {
         return CollectionLayoutBoundarySupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0")), rt::sel(#str_ptr("boundarySupplementaryItemWithLayoutSize:elementKind:alignment:\0")), layout_size.raw(), bridge::nsstring(element_kind), rect_alignment_raw(alignment))) };
     }
 
-    // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:`: msgSend shape `id_id_id_i64_point` not yet modelled
+    fn boundary_supplementary_item_with_layout_size_element_kind_alignment_absolute_offset(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment, absolute_offset: rt::Point) -> CollectionLayoutBoundarySupplementaryItem {
+        return CollectionLayoutBoundarySupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_i64_point(rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0")), rt::sel(#str_ptr("boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:\0")), layout_size.raw(), bridge::nsstring(element_kind), rect_alignment_raw(alignment), absolute_offset)) };
+    }
+
     fn new() -> CollectionLayoutBoundarySupplementaryItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -874,8 +877,14 @@ impl CollectionLayoutAnchor {
         return CollectionLayoutAnchor { _obj: rt::retain(rt::msg_id_u64(rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0")), rt::sel(#str_ptr("layoutAnchorWithEdges:\0")), edges)) };
     }
 
-    // SKIPPED `layoutAnchorWithEdges:absoluteOffset:`: msgSend shape `id_u64_point` not yet modelled
-    // SKIPPED `layoutAnchorWithEdges:fractionalOffset:`: msgSend shape `id_u64_point` not yet modelled
+    fn layout_anchor_with_edges_absolute_offset(edges: u64, absolute_offset: rt::Point) -> CollectionLayoutAnchor {
+        return CollectionLayoutAnchor { _obj: rt::retain(rt::msg_id_u64_point(rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0")), rt::sel(#str_ptr("layoutAnchorWithEdges:absoluteOffset:\0")), edges, absolute_offset)) };
+    }
+
+    fn layout_anchor_with_edges_fractional_offset(edges: u64, fractional_offset: rt::Point) -> CollectionLayoutAnchor {
+        return CollectionLayoutAnchor { _obj: rt::retain(rt::msg_id_u64_point(rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0")), rt::sel(#str_ptr("layoutAnchorWithEdges:fractionalOffset:\0")), edges, fractional_offset)) };
+    }
+
     fn new() -> CollectionLayoutAnchor {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutAnchor\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -1019,7 +1028,10 @@ impl CollectionLayoutGroupCustomItem {
         return CollectionLayoutGroupCustomItem { _obj: rt::retain(rt::msg_id_rect(rt::get_class(#str_ptr("NSCollectionLayoutGroupCustomItem\0")), rt::sel(#str_ptr("customItemWithFrame:\0")), frame)) };
     }
 
-    // SKIPPED `customItemWithFrame:zIndex:`: msgSend shape `id_rect_i64` not yet modelled
+    fn custom_item_with_frame_z_index(frame: rt::Rect, z_index: i64) -> CollectionLayoutGroupCustomItem {
+        return CollectionLayoutGroupCustomItem { _obj: rt::retain(rt::msg_id_rect_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroupCustomItem\0")), rt::sel(#str_ptr("customItemWithFrame:zIndex:\0")), frame, z_index)) };
+    }
+
     fn new() -> CollectionLayoutGroupCustomItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutGroupCustomItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

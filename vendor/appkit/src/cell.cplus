@@ -5,6 +5,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
 // `NSEventMask` (NS_OPTIONS) — bitfield; combine with `|`.
 const event_mask_left_mouse_down: u64 = 2 as u64;
@@ -549,8 +550,15 @@ impl Cell {
     }
 
     // SKIPPED `_bulletStringForString:bulletCharacter:`: param `unichar` — unmapped type `unichar`
-    // SKIPPED `cellSizeForBounds:`: msgSend shape `size_rect` not yet modelled
-    // SKIPPED `highlightColorWithFrame:inView:`: msgSend shape `id_rect_id` not yet modelled
+    fn cell_size_for_bounds(this, rect: rt::Rect) -> rt::Size {
+        return rt::msg_size_rect(this._obj, rt::sel(#str_ptr("cellSizeForBounds:\0")), rect);
+    }
+
+    fn highlight_color_with_frame_in_view(this, cell_frame: rt::Rect, control_view: View) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("highlightColorWithFrame:inView:\0")), cell_frame, control_view.raw());
+        return bridge::obj_option(obj);
+    }
+
     fn calc_draw_info(this, rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("calcDrawInfo:\0")), rect);
     }
@@ -567,17 +575,38 @@ impl Cell {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawWithFrame:inView:\0")), cell_frame, control_view.raw());
     }
 
-    // SKIPPED `highlight:withFrame:inView:`: msgSend shape `void_i8_rect_id` not yet modelled
+    fn highlight_with_frame_in_view(this, flag: bool, cell_frame: rt::Rect, control_view: View) {
+        rt::msg_void_i8_rect_id(this._obj, rt::sel(#str_ptr("highlight:withFrame:inView:\0")), flag as i8, cell_frame, control_view.raw());
+    }
+
     fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
     }
 
-    // SKIPPED `startTrackingAt:inView:`: msgSend shape `i8_point_id` not yet modelled
-    // SKIPPED `continueTracking:at:inView:`: msgSend shape `i8_point_point_id` not yet modelled
-    // SKIPPED `stopTracking:at:inView:mouseIsUp:`: msgSend shape `void_point_point_id_i8` not yet modelled
-    // SKIPPED `trackMouse:inRect:ofView:untilMouseUp:`: msgSend shape `i8_id_rect_id_i8` not yet modelled
-    // SKIPPED `editWithFrame:inView:editor:delegate:event:`: msgSend shape `void_rect_id_id_id_id` not yet modelled
-    // SKIPPED `selectWithFrame:inView:editor:delegate:start:length:`: msgSend shape `void_rect_id_id_id_i64_i64` not yet modelled
+    fn start_tracking_at_in_view(this, start_point: rt::Point, control_view: View) -> bool {
+        return rt::msg_i8_point_id(this._obj, rt::sel(#str_ptr("startTrackingAt:inView:\0")), start_point, control_view.raw()) != (0 as i8);
+    }
+
+    fn continue_tracking_at_in_view(this, last_point: rt::Point, current_point: rt::Point, control_view: View) -> bool {
+        return rt::msg_i8_point_point_id(this._obj, rt::sel(#str_ptr("continueTracking:at:inView:\0")), last_point, current_point, control_view.raw()) != (0 as i8);
+    }
+
+    fn stop_tracking_at_in_view_mouse_is_up(this, last_point: rt::Point, stop_point: rt::Point, control_view: View, flag: bool) {
+        rt::msg_void_point_point_id_i8(this._obj, rt::sel(#str_ptr("stopTracking:at:inView:mouseIsUp:\0")), last_point, stop_point, control_view.raw(), flag as i8);
+    }
+
+    fn track_mouse_in_rect_of_view_until_mouse_up(this, event: Event, cell_frame: rt::Rect, control_view: View, flag: bool) -> bool {
+        return rt::msg_i8_id_rect_id_i8(this._obj, rt::sel(#str_ptr("trackMouse:inRect:ofView:untilMouseUp:\0")), event.raw(), cell_frame, control_view.raw(), flag as i8) != (0 as i8);
+    }
+
+    fn edit_with_frame_in_view_editor_delegate_event(this, rect: rt::Rect, control_view: View, text_obj: Text, delegate: *u8, event: Event) {
+        rt::msg_void_rect_id_id_id_id(this._obj, rt::sel(#str_ptr("editWithFrame:inView:editor:delegate:event:\0")), rect, control_view.raw(), text_obj.raw(), delegate, event.raw());
+    }
+
+    fn select_with_frame_in_view_editor_delegate_start_length(this, rect: rt::Rect, control_view: View, text_obj: Text, delegate: *u8, sel_start: i64, sel_length: i64) {
+        rt::msg_void_rect_id_id_id_i64_i64(this._obj, rt::sel(#str_ptr("selectWithFrame:inView:editor:delegate:start:length:\0")), rect, control_view.raw(), text_obj.raw(), delegate, sel_start, sel_length);
+    }
+
     fn end_editing(this, text_obj: Text) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditing:\0")), text_obj.raw());
     }
@@ -602,7 +631,19 @@ impl Cell {
         return option::some(TextView::from_raw(obj));
     }
 
-    // SKIPPED `draggingImageComponentsWithFrame:inView:`: NSArray arg shape not modelled
+    fn dragging_image_components_with_frame_in_view(this, frame: rt::Rect, view: View) -> vec::Vec[DraggingImageComponent] {
+        let arr: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("draggingImageComponentsWithFrame:inView:\0")), frame, view.raw());
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[DraggingImageComponent] = vec::Vec[DraggingImageComponent]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(DraggingImageComponent::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn prefers_tracking_until_mouse_up() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSCell\0")), rt::sel(#str_ptr("prefersTrackingUntilMouseUp\0"))) != (0 as i8);
     }
@@ -1037,7 +1078,10 @@ impl Cell {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("nextState\0")));
     }
 
-    // SKIPPED `hitTestForEvent:inRect:ofView:`: msgSend shape `u64_id_rect_id` not yet modelled
+    fn hit_test_for_event_in_rect_of_view(this, event: Event, cell_frame: rt::Rect, control_view: View) -> u64 {
+        return rt::msg_u64_id_rect_id(this._obj, rt::sel(#str_ptr("hitTestForEvent:inRect:ofView:\0")), event.raw(), cell_frame, control_view.raw());
+    }
+
     fn expansion_frame_with_frame_in_view(this, cell_frame: rt::Rect, view: View) -> rt::Rect {
         return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("expansionFrameWithFrame:inView:\0")), cell_frame, view.raw());
     }
@@ -1070,7 +1114,10 @@ impl Cell {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isEntryAcceptable:\0")), bridge::nsstring(string)) != (0 as i8);
     }
 
-    // SKIPPED `setFloatingPointFormat:left:right:`: msgSend shape `void_i8_u64_u64` not yet modelled
+    fn set_floating_point_format_left_right(this, auto_range: bool, left_digits: u64, right_digits: u64) {
+        rt::msg_void_i8_u64_u64(this._obj, rt::sel(#str_ptr("setFloatingPointFormat:left:right:\0")), auto_range as i8, left_digits, right_digits);
+    }
+
     fn set_mnemonic_location(this, location: u64) {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMnemonicLocation:\0")), location);
     }

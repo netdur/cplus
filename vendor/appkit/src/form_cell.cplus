@@ -78,7 +78,10 @@ impl FormCell {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("initImageCell:\0")), image);
     }
 
-    // SKIPPED `titleWidth:`: msgSend shape `f64_size` not yet modelled
+    fn title_width(this, size: rt::Size) -> f64 {
+        return rt::msg_f64_size(this._obj, rt::sel(#str_ptr("titleWidth:\0")), size);
+    }
+
     // SKIPPED `titleWidth`: method `title_width` already defined
     fn set_title_width(this, title_width: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setTitleWidth:\0")), title_width);

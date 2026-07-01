@@ -872,7 +872,10 @@ impl Window {
         return rt::msg_rect_rect_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("contentRectForFrameRect:styleMask:\0")), f_rect, style);
     }
 
-    // SKIPPED `minFrameWidthWithTitle:styleMask:`: msgSend shape `f64_id_u64` not yet modelled
+    fn min_frame_width_with_title_style_mask(title: str, style: u64) -> f64 {
+        return rt::msg_f64_id_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("minFrameWidthWithTitle:styleMask:\0")), bridge::nsstring(title), style);
+    }
+
     fn frame_rect_for_content_rect(this, content_rect: rt::Rect) -> rt::Rect {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("frameRectForContentRect:\0")), content_rect);
     }
@@ -1183,7 +1186,14 @@ impl Window {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("endSheet:returnCode:\0")), sheet_window.raw(), return_code);
     }
 
-    // SKIPPED `standardWindowButton:forStyleMask:`: msgSend shape `id_i64_u64` not yet modelled
+    fn standard_window_button_for_style_mask(b: WindowButton, style_mask: u64) -> option::Option[Button] {
+        let obj: *u8 = rt::msg_id_i64_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("standardWindowButton:forStyleMask:\0")), window_button_raw(b), style_mask);
+        if obj == { 0 as *u8 } {
+            return option::Option[Button]::None;
+        }
+        return option::some(Button::from_raw(obj));
+    }
+
     fn standard_window_button(this, b: WindowButton) -> option::Option[Button] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("standardWindowButton:\0")), window_button_raw(b));
         if obj == { 0 as *u8 } {
@@ -1205,7 +1215,10 @@ impl Window {
     }
 
     // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
-    // SKIPPED `windowNumberAtPoint:belowWindowWithWindowNumber:`: msgSend shape `i64_point_i64` not yet modelled
+    fn window_number_at_point_below_window_with_window_number(point: rt::Point, window_number: i64) -> i64 {
+        return rt::msg_i64_point_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowNumberAtPoint:belowWindowWithWindowNumber:\0")), point, window_number);
+    }
+
     fn window_with_content_view_controller(content_view_controller: ViewController) -> Window {
         return Window { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowWithContentViewController:\0")), content_view_controller.raw())) };
     }
@@ -1969,7 +1982,14 @@ impl Window {
         return option::some(Event::from_raw(obj));
     }
 
-    // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
+    fn next_event_matching_mask_until_date_in_mode_dequeue(this, mask: u64, expiration: Date, mode: str, deq_flag: bool) -> option::Option[Event] {
+        let obj: *u8 = rt::msg_id_u64_id_id_i8(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:untilDate:inMode:dequeue:\0")), mask, expiration.raw(), bridge::nsstring(mode), deq_flag as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event::from_raw(obj));
+    }
+
     fn discard_events_matching_mask_before_event(this, mask: u64, last_event: Event) {
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, last_event.raw());
     }
@@ -2035,7 +2055,10 @@ impl Window {
     }
 
     // SKIPPED `beginDraggingSessionWithItems:event:source:`: param `NSArray<NSDraggingItem *> * _Nonnull` — generic collection
-    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: msgSend shape `void_id_point_size_id_id_id_i8` not yet modelled
+    fn drag_image_at_offset_event_pasteboard_source_slide_back(this, image: Image, base_location: rt::Point, initial_offset: rt::Size, event: Event, pboard: *u8, source_obj: *u8, slide_flag: bool) {
+        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), base_location, initial_offset, event.raw(), pboard, source_obj, slide_flag as i8);
+    }
+
     fn register_for_dragged_types(this, new_types: vec::Vec[text::Text]) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("registerForDraggedTypes:\0")), bridge::nsarray_of_text(new_types));
     }

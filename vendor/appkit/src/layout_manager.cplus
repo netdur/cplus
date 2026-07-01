@@ -284,7 +284,10 @@ impl LayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("textContainerChangedTextView:\0")), container.raw());
     }
 
-    // SKIPPED `invalidateGlyphsForCharacterRange:changeInLength:actualCharacterRange:`: msgSend shape `void_range_i64_id` not yet modelled
+    fn invalidate_glyphs_for_character_range_change_in_length_actual_character_range(this, char_range: rt::Range, delta: i64, actual_char_range: *u8) {
+        rt::msg_void_range_i64_id(this._obj, rt::sel(#str_ptr("invalidateGlyphsForCharacterRange:changeInLength:actualCharacterRange:\0")), char_range, delta, actual_char_range);
+    }
+
     fn invalidate_layout_for_character_range_actual_character_range(this, char_range: rt::Range, actual_char_range: *u8) {
         rt::msg_void_range_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForCharacterRange:actualCharacterRange:\0")), char_range, actual_char_range);
     }
@@ -297,7 +300,10 @@ impl LayoutManager {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateDisplayForGlyphRange:\0")), glyph_range);
     }
 
-    // SKIPPED `processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:`: msgSend shape `void_id_u64_range_i64_range` not yet modelled
+    fn process_editing_for_text_storage_edited_range_change_in_length_invalidated_range(this, text_storage: *u8, edit_mask: u64, new_char_range: rt::Range, delta: i64, invalidated_char_range: rt::Range) {
+        rt::msg_void_id_u64_range_i64_range(this._obj, rt::sel(#str_ptr("processEditingForTextStorage:edited:range:changeInLength:invalidatedRange:\0")), text_storage, edit_mask, new_char_range, delta, invalidated_char_range);
+    }
+
     fn ensure_glyphs_for_character_range(this, char_range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("ensureGlyphsForCharacterRange:\0")), char_range);
     }
@@ -322,7 +328,10 @@ impl LayoutManager {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("ensureLayoutForBoundingRect:inTextContainer:\0")), bounds, container.raw());
     }
 
-    // SKIPPED `setGlyphs:properties:characterIndexes:font:forGlyphRange:`: msgSend shape `void_id_id_id_id_range` not yet modelled
+    fn set_glyphs_properties_character_indexes_font_for_glyph_range(this, glyphs: *u8, props: *u8, char_indexes: *u8, a_font: *u8, glyph_range: rt::Range) {
+        rt::msg_void_id_id_id_id_range(this._obj, rt::sel(#str_ptr("setGlyphs:properties:characterIndexes:font:forGlyphRange:\0")), glyphs, props, char_indexes, a_font, glyph_range);
+    }
+
     // SKIPPED `CGGlyphAtIndex:isValidIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
     // SKIPPED `CGGlyphAtIndex:`: return `CGGlyph` — unmapped type `CGGlyph`
     fn is_valid_glyph_index(this, glyph_index: u64) -> bool {
@@ -349,12 +358,30 @@ impl LayoutManager {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setTextContainer:forGlyphRange:\0")), container.raw(), glyph_range);
     }
 
-    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:`: msgSend shape `void_rect_range_rect` not yet modelled
-    // SKIPPED `setExtraLineFragmentRect:usedRect:textContainer:`: msgSend shape `void_rect_rect_id` not yet modelled
-    // SKIPPED `setLocation:forStartOfGlyphRange:`: msgSend shape `void_point_range` not yet modelled
-    // SKIPPED `setNotShownAttribute:forGlyphAtIndex:`: msgSend shape `void_i8_u64` not yet modelled
-    // SKIPPED `setDrawsOutsideLineFragment:forGlyphAtIndex:`: msgSend shape `void_i8_u64` not yet modelled
-    // SKIPPED `setAttachmentSize:forGlyphRange:`: msgSend shape `void_size_range` not yet modelled
+    fn set_line_fragment_rect_for_glyph_range_used_rect(this, fragment_rect: rt::Rect, glyph_range: rt::Range, used_rect: rt::Rect) {
+        rt::msg_void_rect_range_rect(this._obj, rt::sel(#str_ptr("setLineFragmentRect:forGlyphRange:usedRect:\0")), fragment_rect, glyph_range, used_rect);
+    }
+
+    fn set_extra_line_fragment_rect_used_rect_text_container(this, fragment_rect: rt::Rect, used_rect: rt::Rect, container: TextContainer) {
+        rt::msg_void_rect_rect_id(this._obj, rt::sel(#str_ptr("setExtraLineFragmentRect:usedRect:textContainer:\0")), fragment_rect, used_rect, container.raw());
+    }
+
+    fn set_location_for_start_of_glyph_range(this, location: rt::Point, glyph_range: rt::Range) {
+        rt::msg_void_point_range(this._obj, rt::sel(#str_ptr("setLocation:forStartOfGlyphRange:\0")), location, glyph_range);
+    }
+
+    fn set_not_shown_attribute_for_glyph_at_index(this, flag: bool, glyph_index: u64) {
+        rt::msg_void_i8_u64(this._obj, rt::sel(#str_ptr("setNotShownAttribute:forGlyphAtIndex:\0")), flag as i8, glyph_index);
+    }
+
+    fn set_draws_outside_line_fragment_for_glyph_at_index(this, flag: bool, glyph_index: u64) {
+        rt::msg_void_i8_u64(this._obj, rt::sel(#str_ptr("setDrawsOutsideLineFragment:forGlyphAtIndex:\0")), flag as i8, glyph_index);
+    }
+
+    fn set_attachment_size_for_glyph_range(this, attachment_size: rt::Size, glyph_range: rt::Range) {
+        rt::msg_void_size_range(this._obj, rt::sel(#str_ptr("setAttachmentSize:forGlyphRange:\0")), attachment_size, glyph_range);
+    }
+
     fn get_first_unlaid_character_index_glyph_index(this, char_index: *u8, glyph_index: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getFirstUnlaidCharacterIndex:glyphIndex:\0")), char_index, glyph_index);
     }
@@ -375,16 +402,38 @@ impl LayoutManager {
         return option::some(TextContainer::from_raw(obj));
     }
 
-    // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: msgSend shape `id_u64_id_i8` not yet modelled
+    fn text_container_for_glyph_at_index_effective_range_without_additional_layout(this, glyph_index: u64, effective_glyph_range: *u8, flag: bool) -> option::Option[TextContainer] {
+        let obj: *u8 = rt::msg_id_u64_id_i8(this._obj, rt::sel(#str_ptr("textContainerForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:\0")), glyph_index, effective_glyph_range, flag as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[TextContainer]::None;
+        }
+        return option::some(TextContainer::from_raw(obj));
+    }
+
     fn used_rect_for_text_container(this, container: TextContainer) -> rt::Rect {
         return rt::msg_rect_id(this._obj, rt::sel(#str_ptr("usedRectForTextContainer:\0")), container.raw());
     }
 
-    // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:`: msgSend shape `rect_u64_id` not yet modelled
-    // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: msgSend shape `rect_u64_id_i8` not yet modelled
-    // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:`: msgSend shape `rect_u64_id` not yet modelled
-    // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: msgSend shape `rect_u64_id_i8` not yet modelled
-    // SKIPPED `locationForGlyphAtIndex:`: msgSend shape `point_u64` not yet modelled
+    fn line_fragment_rect_for_glyph_at_index_effective_range(this, glyph_index: u64, effective_glyph_range: *u8) -> rt::Rect {
+        return rt::msg_rect_u64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForGlyphAtIndex:effectiveRange:\0")), glyph_index, effective_glyph_range);
+    }
+
+    fn line_fragment_rect_for_glyph_at_index_effective_range_without_additional_layout(this, glyph_index: u64, effective_glyph_range: *u8, flag: bool) -> rt::Rect {
+        return rt::msg_rect_u64_id_i8(this._obj, rt::sel(#str_ptr("lineFragmentRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:\0")), glyph_index, effective_glyph_range, flag as i8);
+    }
+
+    fn line_fragment_used_rect_for_glyph_at_index_effective_range(this, glyph_index: u64, effective_glyph_range: *u8) -> rt::Rect {
+        return rt::msg_rect_u64_id(this._obj, rt::sel(#str_ptr("lineFragmentUsedRectForGlyphAtIndex:effectiveRange:\0")), glyph_index, effective_glyph_range);
+    }
+
+    fn line_fragment_used_rect_for_glyph_at_index_effective_range_without_additional_layout(this, glyph_index: u64, effective_glyph_range: *u8, flag: bool) -> rt::Rect {
+        return rt::msg_rect_u64_id_i8(this._obj, rt::sel(#str_ptr("lineFragmentUsedRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:\0")), glyph_index, effective_glyph_range, flag as i8);
+    }
+
+    fn location_for_glyph_at_index(this, glyph_index: u64) -> rt::Point {
+        return rt::msg_point_u64(this._obj, rt::sel(#str_ptr("locationForGlyphAtIndex:\0")), glyph_index);
+    }
+
     fn not_shown_attribute_for_glyph_at_index(this, glyph_index: u64) -> bool {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("notShownAttributeForGlyphAtIndex:\0")), glyph_index) != (0 as i8);
     }
@@ -393,26 +442,62 @@ impl LayoutManager {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("drawsOutsideLineFragmentForGlyphAtIndex:\0")), glyph_index) != (0 as i8);
     }
 
-    // SKIPPED `attachmentSizeForGlyphAtIndex:`: msgSend shape `size_u64` not yet modelled
+    fn attachment_size_for_glyph_at_index(this, glyph_index: u64) -> rt::Size {
+        return rt::msg_size_u64(this._obj, rt::sel(#str_ptr("attachmentSizeForGlyphAtIndex:\0")), glyph_index);
+    }
+
     fn truncated_glyph_range_in_line_fragment_for_glyph_at_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("truncatedGlyphRangeInLineFragmentForGlyphAtIndex:\0")), glyph_index);
     }
 
-    // SKIPPED `glyphRangeForCharacterRange:actualCharacterRange:`: msgSend shape `range_range_id` not yet modelled
-    // SKIPPED `characterRangeForGlyphRange:actualGlyphRange:`: msgSend shape `range_range_id` not yet modelled
-    // SKIPPED `glyphRangeForTextContainer:`: msgSend shape `range_id` not yet modelled
+    fn glyph_range_for_character_range_actual_character_range(this, char_range: rt::Range, actual_char_range: *u8) -> rt::Range {
+        return rt::msg_range_range_id(this._obj, rt::sel(#str_ptr("glyphRangeForCharacterRange:actualCharacterRange:\0")), char_range, actual_char_range);
+    }
+
+    fn character_range_for_glyph_range_actual_glyph_range(this, glyph_range: rt::Range, actual_glyph_range: *u8) -> rt::Range {
+        return rt::msg_range_range_id(this._obj, rt::sel(#str_ptr("characterRangeForGlyphRange:actualGlyphRange:\0")), glyph_range, actual_glyph_range);
+    }
+
+    fn glyph_range_for_text_container(this, container: TextContainer) -> rt::Range {
+        return rt::msg_range_id(this._obj, rt::sel(#str_ptr("glyphRangeForTextContainer:\0")), container.raw());
+    }
+
     fn range_of_nominally_spaced_glyphs_containing_index(this, glyph_index: u64) -> rt::Range {
         return rt::msg_range_u64(this._obj, rt::sel(#str_ptr("rangeOfNominallySpacedGlyphsContainingIndex:\0")), glyph_index);
     }
 
-    // SKIPPED `boundingRectForGlyphRange:inTextContainer:`: msgSend shape `rect_range_id` not yet modelled
-    // SKIPPED `glyphRangeForBoundingRect:inTextContainer:`: msgSend shape `range_rect_id` not yet modelled
-    // SKIPPED `glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:`: msgSend shape `range_rect_id` not yet modelled
-    // SKIPPED `glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:`: msgSend shape `u64_point_id_id` not yet modelled
-    // SKIPPED `glyphIndexForPoint:inTextContainer:`: msgSend shape `u64_point_id` not yet modelled
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:inTextContainer:`: msgSend shape `f64_point_id` not yet modelled
-    // SKIPPED `characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:`: msgSend shape `u64_point_id_id` not yet modelled
-    // SKIPPED `getLineFragmentInsertionPointsForCharacterAtIndex:alternatePositions:inDisplayOrder:positions:characterIndexes:`: msgSend shape `u64_u64_i8_i8_id_id` not yet modelled
+    fn bounding_rect_for_glyph_range_in_text_container(this, glyph_range: rt::Range, container: TextContainer) -> rt::Rect {
+        return rt::msg_rect_range_id(this._obj, rt::sel(#str_ptr("boundingRectForGlyphRange:inTextContainer:\0")), glyph_range, container.raw());
+    }
+
+    fn glyph_range_for_bounding_rect_in_text_container(this, bounds: rt::Rect, container: TextContainer) -> rt::Range {
+        return rt::msg_range_rect_id(this._obj, rt::sel(#str_ptr("glyphRangeForBoundingRect:inTextContainer:\0")), bounds, container.raw());
+    }
+
+    fn glyph_range_for_bounding_rect_without_additional_layout_in_text_container(this, bounds: rt::Rect, container: TextContainer) -> rt::Range {
+        return rt::msg_range_rect_id(this._obj, rt::sel(#str_ptr("glyphRangeForBoundingRectWithoutAdditionalLayout:inTextContainer:\0")), bounds, container.raw());
+    }
+
+    fn glyph_index_for_point_in_text_container_fraction_of_distance_through_glyph(this, point: rt::Point, container: TextContainer, partial_fraction: *u8) -> u64 {
+        return rt::msg_u64_point_id_id(this._obj, rt::sel(#str_ptr("glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:\0")), point, container.raw(), partial_fraction);
+    }
+
+    fn glyph_index_for_point_in_text_container(this, point: rt::Point, container: TextContainer) -> u64 {
+        return rt::msg_u64_point_id(this._obj, rt::sel(#str_ptr("glyphIndexForPoint:inTextContainer:\0")), point, container.raw());
+    }
+
+    fn fraction_of_distance_through_glyph_for_point_in_text_container(this, point: rt::Point, container: TextContainer) -> f64 {
+        return rt::msg_f64_point_id(this._obj, rt::sel(#str_ptr("fractionOfDistanceThroughGlyphForPoint:inTextContainer:\0")), point, container.raw());
+    }
+
+    fn character_index_for_point_in_text_container_fraction_of_distance_between_insertion_points(this, point: rt::Point, container: TextContainer, partial_fraction: *u8) -> u64 {
+        return rt::msg_u64_point_id_id(this._obj, rt::sel(#str_ptr("characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:\0")), point, container.raw(), partial_fraction);
+    }
+
+    fn get_line_fragment_insertion_points_for_character_at_index_alternate_positions_in_display_order_positions_character_indexes(this, char_index: u64, a_flag: bool, d_flag: bool, positions: *u8, char_indexes: *u8) -> u64 {
+        return rt::msg_u64_u64_i8_i8_id_id(this._obj, rt::sel(#str_ptr("getLineFragmentInsertionPointsForCharacterAtIndex:alternatePositions:inDisplayOrder:positions:characterIndexes:\0")), char_index, a_flag as i8, d_flag as i8, positions, char_indexes);
+    }
+
     fn enumerate_line_fragments_for_glyph_range_using_block(this, glyph_range: rt::Range, cb: fn(*u8, i64, i64, *u8, rt::Range, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_block = LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_line_fragments_for_glyph_range_using_block_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -422,21 +507,63 @@ impl LayoutManager {
     }
 
     // SKIPPED `enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `drawBackgroundForGlyphRange:atPoint:`: msgSend shape `void_range_point` not yet modelled
-    // SKIPPED `drawGlyphsForGlyphRange:atPoint:`: msgSend shape `void_range_point` not yet modelled
+    fn draw_background_for_glyph_range_at_point(this, glyphs_to_show: rt::Range, origin: rt::Point) {
+        rt::msg_void_range_point(this._obj, rt::sel(#str_ptr("drawBackgroundForGlyphRange:atPoint:\0")), glyphs_to_show, origin);
+    }
+
+    fn draw_glyphs_for_glyph_range_at_point(this, glyphs_to_show: rt::Range, origin: rt::Point) {
+        rt::msg_void_range_point(this._obj, rt::sel(#str_ptr("drawGlyphsForGlyphRange:atPoint:\0")), glyphs_to_show, origin);
+    }
+
     // SKIPPED `showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:`: param `CGAffineTransform` — unmapped type `CGAffineTransform`
-    // SKIPPED `fillBackgroundRectArray:count:forCharacterRange:color:`: msgSend shape `void_id_u64_range_id` not yet modelled
-    // SKIPPED `drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_f64_rect_range_point` not yet modelled
-    // SKIPPED `underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_rect_range_point` not yet modelled
-    // SKIPPED `drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_f64_rect_range_point` not yet modelled
-    // SKIPPED `strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:`: msgSend shape `void_range_u64_rect_range_point` not yet modelled
-    // SKIPPED `showAttachmentCell:inRect:characterIndex:`: msgSend shape `void_id_rect_u64` not yet modelled
-    // SKIPPED `setLayoutRect:forTextBlock:glyphRange:`: msgSend shape `void_rect_id_range` not yet modelled
-    // SKIPPED `setBoundsRect:forTextBlock:glyphRange:`: msgSend shape `void_rect_id_range` not yet modelled
-    // SKIPPED `layoutRectForTextBlock:glyphRange:`: msgSend shape `rect_id_range` not yet modelled
-    // SKIPPED `boundsRectForTextBlock:glyphRange:`: msgSend shape `rect_id_range` not yet modelled
-    // SKIPPED `layoutRectForTextBlock:atIndex:effectiveRange:`: msgSend shape `rect_id_u64_id` not yet modelled
-    // SKIPPED `boundsRectForTextBlock:atIndex:effectiveRange:`: msgSend shape `rect_id_u64_id` not yet modelled
+    fn fill_background_rect_array_count_for_character_range_color(this, rect_array: *u8, rect_count: u64, char_range: rt::Range, color: Color) {
+        rt::msg_void_id_u64_range_id(this._obj, rt::sel(#str_ptr("fillBackgroundRectArray:count:forCharacterRange:color:\0")), rect_array, rect_count, char_range, color.raw());
+    }
+
+    fn draw_underline_for_glyph_range_underline_type_baseline_offset_line_fragment_rect_line_fragment_glyph_range_container_origin(this, glyph_range: rt::Range, underline_val: u64, baseline_offset: f64, line_rect: rt::Rect, line_glyph_range: rt::Range, container_origin: rt::Point) {
+        rt::msg_void_range_u64_f64_rect_range_point(this._obj, rt::sel(#str_ptr("drawUnderlineForGlyphRange:underlineType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:\0")), glyph_range, underline_val, baseline_offset, line_rect, line_glyph_range, container_origin);
+    }
+
+    fn underline_glyph_range_underline_type_line_fragment_rect_line_fragment_glyph_range_container_origin(this, glyph_range: rt::Range, underline_val: u64, line_rect: rt::Rect, line_glyph_range: rt::Range, container_origin: rt::Point) {
+        rt::msg_void_range_u64_rect_range_point(this._obj, rt::sel(#str_ptr("underlineGlyphRange:underlineType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:\0")), glyph_range, underline_val, line_rect, line_glyph_range, container_origin);
+    }
+
+    fn draw_strikethrough_for_glyph_range_strikethrough_type_baseline_offset_line_fragment_rect_line_fragment_glyph_range_container_origin(this, glyph_range: rt::Range, strikethrough_val: u64, baseline_offset: f64, line_rect: rt::Rect, line_glyph_range: rt::Range, container_origin: rt::Point) {
+        rt::msg_void_range_u64_f64_rect_range_point(this._obj, rt::sel(#str_ptr("drawStrikethroughForGlyphRange:strikethroughType:baselineOffset:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:\0")), glyph_range, strikethrough_val, baseline_offset, line_rect, line_glyph_range, container_origin);
+    }
+
+    fn strikethrough_glyph_range_strikethrough_type_line_fragment_rect_line_fragment_glyph_range_container_origin(this, glyph_range: rt::Range, strikethrough_val: u64, line_rect: rt::Rect, line_glyph_range: rt::Range, container_origin: rt::Point) {
+        rt::msg_void_range_u64_rect_range_point(this._obj, rt::sel(#str_ptr("strikethroughGlyphRange:strikethroughType:lineFragmentRect:lineFragmentGlyphRange:containerOrigin:\0")), glyph_range, strikethrough_val, line_rect, line_glyph_range, container_origin);
+    }
+
+    fn show_attachment_cell_in_rect_character_index(this, cell: *u8, rect: rt::Rect, attachment_index: u64) {
+        rt::msg_void_id_rect_u64(this._obj, rt::sel(#str_ptr("showAttachmentCell:inRect:characterIndex:\0")), cell, rect, attachment_index);
+    }
+
+    fn set_layout_rect_for_text_block_glyph_range(this, rect: rt::Rect, block: *u8, glyph_range: rt::Range) {
+        rt::msg_void_rect_id_range(this._obj, rt::sel(#str_ptr("setLayoutRect:forTextBlock:glyphRange:\0")), rect, block, glyph_range);
+    }
+
+    fn set_bounds_rect_for_text_block_glyph_range(this, rect: rt::Rect, block: *u8, glyph_range: rt::Range) {
+        rt::msg_void_rect_id_range(this._obj, rt::sel(#str_ptr("setBoundsRect:forTextBlock:glyphRange:\0")), rect, block, glyph_range);
+    }
+
+    fn layout_rect_for_text_block_glyph_range(this, block: *u8, glyph_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_id_range(this._obj, rt::sel(#str_ptr("layoutRectForTextBlock:glyphRange:\0")), block, glyph_range);
+    }
+
+    fn bounds_rect_for_text_block_glyph_range(this, block: *u8, glyph_range: rt::Range) -> rt::Rect {
+        return rt::msg_rect_id_range(this._obj, rt::sel(#str_ptr("boundsRectForTextBlock:glyphRange:\0")), block, glyph_range);
+    }
+
+    fn layout_rect_for_text_block_at_index_effective_range(this, block: *u8, glyph_index: u64, effective_glyph_range: *u8) -> rt::Rect {
+        return rt::msg_rect_id_u64_id(this._obj, rt::sel(#str_ptr("layoutRectForTextBlock:atIndex:effectiveRange:\0")), block, glyph_index, effective_glyph_range);
+    }
+
+    fn bounds_rect_for_text_block_at_index_effective_range(this, block: *u8, glyph_index: u64, effective_glyph_range: *u8) -> rt::Rect {
+        return rt::msg_rect_id_u64_id(this._obj, rt::sel(#str_ptr("boundsRectForTextBlock:atIndex:effectiveRange:\0")), block, glyph_index, effective_glyph_range);
+    }
+
     // SKIPPED `temporaryAttributesAtCharacterIndex:effectiveRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     // SKIPPED `setTemporaryAttributes:forCharacterRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     // SKIPPED `addTemporaryAttributes:forCharacterRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
@@ -449,7 +576,11 @@ impl LayoutManager {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `temporaryAttribute:atCharacterIndex:longestEffectiveRange:inRange:`: msgSend shape `id_id_u64_id_range` not yet modelled
+    fn temporary_attribute_at_character_index_longest_effective_range_in_range(this, attr_name: str, location: u64, range: *u8, range_limit: rt::Range) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_u64_id_range(this._obj, rt::sel(#str_ptr("temporaryAttribute:atCharacterIndex:longestEffectiveRange:inRange:\0")), bridge::nsstring(attr_name), location, range, range_limit);
+        return bridge::obj_option(obj);
+    }
+
     // SKIPPED `temporaryAttributesAtCharacterIndex:longestEffectiveRange:inRange:`: return `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — NSDictionary value `id` not modelled (NSString / NSNumber only)
     fn add_temporary_attribute_value_for_character_range(this, attr_name: str, value: *u8, char_range: rt::Range) {
         rt::msg_void_id_id_range(this._obj, rt::sel(#str_ptr("addTemporaryAttribute:value:forCharacterRange:\0")), bridge::nsstring(attr_name), value, char_range);
@@ -611,7 +742,11 @@ impl LayoutManager {
         return out;
     }
 
-    // SKIPPED `rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:`: msgSend shape `id_id_id_id_i8` not yet modelled
+    fn ruler_accessory_view_for_text_view_paragraph_style_ruler_enabled(this, view: TextView, style: *u8, ruler: RulerView, is_enabled: bool) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_id_i8(this._obj, rt::sel(#str_ptr("rulerAccessoryViewForTextView:paragraphStyle:ruler:enabled:\0")), view.raw(), style, ruler.raw(), is_enabled as i8);
+        return bridge::obj_option(obj);
+    }
+
     fn layout_manager_owns_first_responder_in_window(this, window: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("layoutManagerOwnsFirstResponderInWindow:\0")), window) != (0 as i8);
     }
@@ -632,10 +767,24 @@ impl LayoutManager {
         return option::some(TextView::from_raw(obj));
     }
 
-    // SKIPPED `glyphAtIndex:isValidIndex:`: msgSend shape `u32_u64_id` not yet modelled
-    // SKIPPED `glyphAtIndex:`: msgSend shape `u32_u64` not yet modelled
-    // SKIPPED `rectArrayForCharacterRange:withinSelectedCharacterRange:inTextContainer:rectCount:`: msgSend shape `id_range_range_id_id` not yet modelled
-    // SKIPPED `rectArrayForGlyphRange:withinSelectedGlyphRange:inTextContainer:rectCount:`: msgSend shape `id_range_range_id_id` not yet modelled
+    fn glyph_at_index_is_valid_index(this, glyph_index: u64, is_valid_index: *u8) -> u32 {
+        return rt::msg_u32_u64_id(this._obj, rt::sel(#str_ptr("glyphAtIndex:isValidIndex:\0")), glyph_index, is_valid_index);
+    }
+
+    fn glyph_at_index(this, glyph_index: u64) -> u32 {
+        return rt::msg_u32_u64(this._obj, rt::sel(#str_ptr("glyphAtIndex:\0")), glyph_index);
+    }
+
+    fn rect_array_for_character_range_within_selected_character_range_in_text_container_rect_count(this, char_range: rt::Range, sel_char_range: rt::Range, container: TextContainer, rect_count: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_range_range_id_id(this._obj, rt::sel(#str_ptr("rectArrayForCharacterRange:withinSelectedCharacterRange:inTextContainer:rectCount:\0")), char_range, sel_char_range, container.raw(), rect_count);
+        return bridge::obj_option(obj);
+    }
+
+    fn rect_array_for_glyph_range_within_selected_glyph_range_in_text_container_rect_count(this, glyph_range: rt::Range, sel_glyph_range: rt::Range, container: TextContainer, rect_count: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_range_range_id_id(this._obj, rt::sel(#str_ptr("rectArrayForGlyphRange:withinSelectedGlyphRange:inTextContainer:rectCount:\0")), glyph_range, sel_glyph_range, container.raw(), rect_count);
+        return bridge::obj_option(obj);
+    }
+
     fn substitute_font_for_font(this, original_font: *u8) -> *u8 {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("substituteFontForFont:\0")), original_font);
     }
@@ -644,8 +793,14 @@ impl LayoutManager {
         rt::msg_void_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("insertGlyphs:length:forStartingGlyphAtIndex:characterIndex:\0")), glyphs, length, glyph_index, char_index);
     }
 
-    // SKIPPED `insertGlyph:atGlyphIndex:characterIndex:`: msgSend shape `void_u32_u64_u64` not yet modelled
-    // SKIPPED `replaceGlyphAtIndex:withGlyph:`: msgSend shape `void_u64_u32` not yet modelled
+    fn insert_glyph_at_glyph_index_character_index(this, glyph: u32, glyph_index: u64, char_index: u64) {
+        rt::msg_void_u32_u64_u64(this._obj, rt::sel(#str_ptr("insertGlyph:atGlyphIndex:characterIndex:\0")), glyph, glyph_index, char_index);
+    }
+
+    fn replace_glyph_at_index_with_glyph(this, glyph_index: u64, new_glyph: u32) {
+        rt::msg_void_u64_u32(this._obj, rt::sel(#str_ptr("replaceGlyphAtIndex:withGlyph:\0")), glyph_index, new_glyph);
+    }
+
     fn delete_glyphs_in_range(this, glyph_range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("deleteGlyphsInRange:\0")), glyph_range);
     }
@@ -654,22 +809,46 @@ impl LayoutManager {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setCharacterIndex:forGlyphAtIndex:\0")), char_index, glyph_index);
     }
 
-    // SKIPPED `setIntAttribute:value:forGlyphAtIndex:`: msgSend shape `void_i64_i64_u64` not yet modelled
+    fn set_int_attribute_value_for_glyph_at_index(this, attribute_tag: i64, val: i64, glyph_index: u64) {
+        rt::msg_void_i64_i64_u64(this._obj, rt::sel(#str_ptr("setIntAttribute:value:forGlyphAtIndex:\0")), attribute_tag, val, glyph_index);
+    }
+
     fn invalidate_glyphs_on_layout_invalidation_for_glyph_range(this, glyph_range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("invalidateGlyphsOnLayoutInvalidationForGlyphRange:\0")), glyph_range);
     }
 
-    // SKIPPED `intAttribute:forGlyphAtIndex:`: msgSend shape `i64_i64_u64` not yet modelled
+    fn int_attribute_for_glyph_at_index(this, attribute_tag: i64, glyph_index: u64) -> i64 {
+        return rt::msg_i64_i64_u64(this._obj, rt::sel(#str_ptr("intAttribute:forGlyphAtIndex:\0")), attribute_tag, glyph_index);
+    }
+
     fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits(this, glyph_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8) -> u64 {
         return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:\0")), glyph_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer);
     }
 
-    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:bidiLevels:`: msgSend shape `u64_range_id_id_id_id_id` not yet modelled
-    // SKIPPED `getGlyphs:range:`: msgSend shape `u64_id_range` not yet modelled
-    // SKIPPED `invalidateLayoutForCharacterRange:isSoft:actualCharacterRange:`: msgSend shape `void_range_i8_id` not yet modelled
-    // SKIPPED `textStorage:edited:range:changeInLength:invalidatedRange:`: msgSend shape `void_id_u64_range_i64_range` not yet modelled
-    // SKIPPED `setLocations:startingGlyphIndexes:count:forGlyphRange:`: msgSend shape `void_id_id_u64_range` not yet modelled
-    // SKIPPED `showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:`: msgSend shape `void_id_u64_range_point_id_id_size` not yet modelled
+    fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits_bidi_levels(this, glyph_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8, bidi_level_buffer: *u8) -> u64 {
+        return rt::msg_u64_range_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:bidiLevels:\0")), glyph_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer, bidi_level_buffer);
+    }
+
+    fn get_glyphs_range(this, glyph_array: *u8, glyph_range: rt::Range) -> u64 {
+        return rt::msg_u64_id_range(this._obj, rt::sel(#str_ptr("getGlyphs:range:\0")), glyph_array, glyph_range);
+    }
+
+    fn invalidate_layout_for_character_range_is_soft_actual_character_range(this, char_range: rt::Range, flag: bool, actual_char_range: *u8) {
+        rt::msg_void_range_i8_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForCharacterRange:isSoft:actualCharacterRange:\0")), char_range, flag as i8, actual_char_range);
+    }
+
+    fn text_storage_edited_range_change_in_length_invalidated_range(this, str: *u8, edited_mask: u64, new_char_range: rt::Range, delta: i64, invalidated_char_range: rt::Range) {
+        rt::msg_void_id_u64_range_i64_range(this._obj, rt::sel(#str_ptr("textStorage:edited:range:changeInLength:invalidatedRange:\0")), str, edited_mask, new_char_range, delta, invalidated_char_range);
+    }
+
+    fn set_locations_starting_glyph_indexes_count_for_glyph_range(this, locations: *u8, glyph_indexes: *u8, count: u64, glyph_range: rt::Range) {
+        rt::msg_void_id_id_u64_range(this._obj, rt::sel(#str_ptr("setLocations:startingGlyphIndexes:count:forGlyphRange:\0")), locations, glyph_indexes, count, glyph_range);
+    }
+
+    fn show_packed_glyphs_length_glyph_range_at_point_font_color_printing_adjustment(this, glyphs: *u8, glyph_len: u64, glyph_range: rt::Range, point: rt::Point, font: *u8, color: Color, printing_adjustment: rt::Size) {
+        rt::msg_void_id_u64_range_point_id_id_size(this._obj, rt::sel(#str_ptr("showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:\0")), glyphs, glyph_len, glyph_range, point, font, color.raw(), printing_adjustment);
+    }
+
     // SKIPPED `showCGGlyphs:positions:count:font:matrix:attributes:inContext:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
     fn uses_screen_fonts(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesScreenFonts\0"))) != (0 as i8);

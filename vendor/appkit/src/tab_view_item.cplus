@@ -107,8 +107,14 @@ impl TabViewItem {
         return TabViewItem { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithIdentifier:\0")), identifier) };
     }
 
-    // SKIPPED `drawLabel:inRect:`: msgSend shape `void_i8_rect` not yet modelled
-    // SKIPPED `sizeOfLabel:`: msgSend shape `size_i8` not yet modelled
+    fn draw_label_in_rect(this, should_truncate_label: bool, label_rect: rt::Rect) {
+        rt::msg_void_i8_rect(this._obj, rt::sel(#str_ptr("drawLabel:inRect:\0")), should_truncate_label as i8, label_rect);
+    }
+
+    fn size_of_label(this, compute_min: bool) -> rt::Size {
+        return rt::msg_size_i8(this._obj, rt::sel(#str_ptr("sizeOfLabel:\0")), compute_min as i8);
+    }
+
     fn identifier(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("identifier\0")));
         return bridge::obj_option(obj);

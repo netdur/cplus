@@ -61,8 +61,22 @@ impl GlyphInfo {
         return option::some(GlyphInfo { _obj: obj });
     }
 
-    // SKIPPED `glyphInfoWithGlyph:forFont:baseString:`: msgSend shape `id_u32_id_id` not yet modelled
-    // SKIPPED `glyphInfoWithCharacterIdentifier:collection:baseString:`: msgSend shape `id_u64_i64_id` not yet modelled
+    fn glyph_info_with_glyph_for_font_base_string(glyph: u32, font: *u8, string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_u32_id_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithGlyph:forFont:baseString:\0")), glyph, font, bridge::nsstring(string));
+        if obj == { 0 as *u8 } {
+            return option::Option[GlyphInfo]::None;
+        }
+        return option::some(GlyphInfo { _obj: obj });
+    }
+
+    fn glyph_info_with_character_identifier_collection_base_string(cid: u64, character_collection: CharacterCollection, string: str) -> option::Option[GlyphInfo] {
+        let obj: *u8 = rt::msg_id_u64_i64_id(rt::get_class(#str_ptr("NSGlyphInfo\0")), rt::sel(#str_ptr("glyphInfoWithCharacterIdentifier:collection:baseString:\0")), cid, character_collection_raw(character_collection), bridge::nsstring(string));
+        if obj == { 0 as *u8 } {
+            return option::Option[GlyphInfo]::None;
+        }
+        return option::some(GlyphInfo { _obj: obj });
+    }
+
     fn glyph_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("glyphName\0")));
         return bridge::to_text_option(ns);

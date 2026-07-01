@@ -136,7 +136,11 @@ impl OutlineView {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("numberOfChildrenOfItem:\0")), item);
     }
 
-    // SKIPPED `child:ofItem:`: msgSend shape `id_i64_id` not yet modelled
+    fn child_of_item(this, index: i64, item: *u8) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_i64_id(this._obj, rt::sel(#str_ptr("child:ofItem:\0")), index, item);
+        return bridge::obj_option(obj);
+    }
+
     fn expand_item_expand_children(this, item: *u8, expand_children: bool) {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("expandItem:expandChildren:\0")), item, expand_children as i8);
     }
@@ -199,7 +203,10 @@ impl OutlineView {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setDropItem:dropChildIndex:\0")), item, index);
     }
 
-    // SKIPPED `shouldCollapseAutoExpandedItemsForDeposited:`: msgSend shape `i8_i8` not yet modelled
+    fn should_collapse_auto_expanded_items_for_deposited(this, deposited: bool) -> bool {
+        return rt::msg_i8_i8(this._obj, rt::sel(#str_ptr("shouldCollapseAutoExpandedItemsForDeposited:\0")), deposited as i8) != (0 as i8);
+    }
+
     fn insert_items_at_indexes_in_parent_with_animation(this, indexes: *u8, parent: *u8, animation_options: u64) {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
     }
@@ -208,7 +215,10 @@ impl OutlineView {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("removeItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
     }
 
-    // SKIPPED `moveItemAtIndex:inParent:toIndex:inParent:`: msgSend shape `void_i64_id_i64_id` not yet modelled
+    fn move_item_at_index_in_parent_to_index_in_parent(this, from_index: i64, old_parent: *u8, to_index: i64, new_parent: *u8) {
+        rt::msg_void_i64_id_i64_id(this._obj, rt::sel(#str_ptr("moveItemAtIndex:inParent:toIndex:inParent:\0")), from_index, old_parent, to_index, new_parent);
+    }
+
     fn insert_rows_at_indexes_with_animation(this, indexes: *u8, animation_options: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes, animation_options);
     }

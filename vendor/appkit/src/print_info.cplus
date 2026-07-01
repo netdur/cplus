@@ -273,7 +273,10 @@ impl PrintInfo {
         rt::msg_void_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("setDefaultPrinter:\0")), printer.raw());
     }
 
-    // SKIPPED `sizeForPaperName:`: msgSend shape `size_id` not yet modelled
+    fn size_for_paper_name(name: str) -> rt::Size {
+        return rt::msg_size_id(rt::get_class(#str_ptr("NSPrintInfo\0")), rt::sel(#str_ptr("sizeForPaperName:\0")), bridge::nsstring(name));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }

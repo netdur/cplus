@@ -399,7 +399,10 @@ impl GridView {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumnAtIndex:\0")), index);
     }
 
-    // SKIPPED `mergeCellsInHorizontalRange:verticalRange:`: msgSend shape `void_range_range` not yet modelled
+    fn merge_cells_in_horizontal_range_vertical_range(this, h_range: rt::Range, v_range: rt::Range) {
+        rt::msg_void_range_range(this._obj, rt::sel(#str_ptr("mergeCellsInHorizontalRange:verticalRange:\0")), h_range, v_range);
+    }
+
     fn number_of_rows(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfRows\0")));
     }

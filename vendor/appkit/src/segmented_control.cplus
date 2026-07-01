@@ -374,7 +374,24 @@ impl SegmentedControl {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setBorderShape:\0")), control_border_shape_raw(border_shape));
     }
 
-    // SKIPPED `segmentedControlWithLabels:trackingMode:target:action:`: msgSend shape `id_id_i64_id_id` not yet modelled
-    // SKIPPED `segmentedControlWithImages:trackingMode:target:action:`: msgSend shape `id_id_i64_id_id` not yet modelled
+    fn segmented_control_with_labels_tracking_mode_target_action(labels: vec::Vec[text::Text], tracking_mode: SegmentSwitchTracking, target: *u8, action: *u8) -> SegmentedControl {
+        return SegmentedControl { _obj: rt::msg_id_id_i64_id_id(rt::get_class(#str_ptr("NSSegmentedControl\0")), rt::sel(#str_ptr("segmentedControlWithLabels:trackingMode:target:action:\0")), bridge::nsarray_of_text(labels), segment_switch_tracking_raw(tracking_mode), target, action) };
+    }
+
+    fn segmented_control_with_images_tracking_mode_target_action(images: vec::Vec[Image], tracking_mode: SegmentSwitchTracking, target: *u8, action: *u8) -> *u8 {
+        let arr_images: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_images: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_images: usize = images.count();
+        var i_images: usize = 0 as usize;
+        while i_images < n_images {
+            match images.at_ptr(i_images) {
+                option::Option[*Image]::Some(e_images) => { rt::msg_void_id(arr_images, add_sel_images, (*e_images).raw()); }
+                option::Option[*Image]::None => {}
+            }
+            i_images = i_images +% (1 as usize);
+        }
+        return rt::msg_id_id_i64_id_id(rt::get_class(#str_ptr("NSSegmentedControl\0")), rt::sel(#str_ptr("segmentedControlWithImages:trackingMode:target:action:\0")), arr_images, segment_switch_tracking_raw(tracking_mode), target, action);
+    }
+
 }
 

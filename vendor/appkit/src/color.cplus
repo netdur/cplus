@@ -183,7 +183,10 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha)) };
     }
 
-    // SKIPPED `colorWithColorSpace:hue:saturation:brightness:alpha:`: msgSend shape `id_id_f64_f64_f64_f64` not yet modelled
+    fn color_with_color_space_hue_saturation_brightness_alpha(space: ColorSpace, hue: f64, saturation: f64, brightness: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:hue:saturation:brightness:alpha:\0")), space.raw(), hue, saturation, brightness, alpha)) };
+    }
+
     fn color_with_catalog_name_color_name(list_name: str, color_name: str) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCatalogName:colorName:\0")), bridge::nsstring(list_name), bridge::nsstring(color_name));
         if obj == { 0 as *u8 } {
@@ -311,7 +314,14 @@ impl Color {
         rt::msg_void(this._obj, rt::sel(#str_ptr("setStroke\0")));
     }
 
-    // SKIPPED `blendedColorWithFraction:ofColor:`: msgSend shape `id_f64_id` not yet modelled
+    fn blended_color_with_fraction_of_color(this, fraction: f64, color: Color) -> option::Option[Color] {
+        let obj: *u8 = rt::msg_id_f64_id(this._obj, rt::sel(#str_ptr("blendedColorWithFraction:ofColor:\0")), fraction, color.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Color]::None;
+        }
+        return option::some(Color::from_raw(obj));
+    }
+
     fn color_with_alpha_component(this, alpha: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha));
     }

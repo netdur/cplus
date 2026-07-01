@@ -24,8 +24,14 @@ impl OpenGLLayer {
         return rt::msg_id_id(this._obj, rt::sel(#str_ptr("openGLContextForPixelFormat:\0")), pixel_format);
     }
 
-    // SKIPPED `canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: msgSend shape `i8_id_id_f64_id` not yet modelled
-    // SKIPPED `drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:`: msgSend shape `void_id_id_f64_id` not yet modelled
+    fn can_draw_in_open_g_l_context_pixel_format_for_layer_time_display_time(this, context: *u8, pixel_format: *u8, t: f64, ts: *u8) -> bool {
+        return rt::msg_i8_id_id_f64_id(this._obj, rt::sel(#str_ptr("canDrawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, t, ts) != (0 as i8);
+    }
+
+    fn draw_in_open_g_l_context_pixel_format_for_layer_time_display_time(this, context: *u8, pixel_format: *u8, t: f64, ts: *u8) {
+        rt::msg_void_id_id_f64_id(this._obj, rt::sel(#str_ptr("drawInOpenGLContext:pixelFormat:forLayerTime:displayTime:\0")), context, pixel_format, t, ts);
+    }
+
     fn view(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
         return bridge::obj_option(obj);

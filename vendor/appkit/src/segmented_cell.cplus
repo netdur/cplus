@@ -233,7 +233,10 @@ impl SegmentedCell {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("tagForSegment:\0")), segment);
     }
 
-    // SKIPPED `drawSegment:inFrame:withView:`: msgSend shape `void_i64_rect_id` not yet modelled
+    fn draw_segment_in_frame_with_view(this, segment: i64, frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_i64_rect_id(this._obj, rt::sel(#str_ptr("drawSegment:inFrame:withView:\0")), segment, frame, control_view);
+    }
+
     fn segment_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
     }

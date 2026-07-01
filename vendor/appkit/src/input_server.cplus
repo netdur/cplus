@@ -109,8 +109,17 @@ impl InputServerMouseTracker {
 
     fn from_raw(ptr: *u8) -> InputServerMouseTracker { return InputServerMouseTracker { _obj: ptr }; }
 
-    // SKIPPED `mouseDownOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `i8_u64_point_u64_id` not yet modelled
-    // SKIPPED `mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `i8_u64_point_u64_id` not yet modelled
-    // SKIPPED `mouseUpOnCharacterIndex:atCoordinate:withModifier:client:`: msgSend shape `void_u64_point_u64_id` not yet modelled
+    fn mouse_down_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) -> bool {
+        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDownOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender) != (0 as i8);
+    }
+
+    fn mouse_dragged_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) -> bool {
+        return rt::msg_i8_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseDraggedOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender) != (0 as i8);
+    }
+
+    fn mouse_up_on_character_index_at_coordinate_with_modifier_client(this, index: u64, point: rt::Point, flags: u64, sender: *u8) {
+        rt::msg_void_u64_point_u64_id(this._obj, rt::sel(#str_ptr("mouseUpOnCharacterIndex:atCoordinate:withModifier:client:\0")), index, point, flags, sender);
+    }
+
 }
 

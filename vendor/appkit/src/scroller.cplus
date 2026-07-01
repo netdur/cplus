@@ -202,7 +202,10 @@ impl Scroller {
 
     fn from_raw(ptr: *u8) -> Scroller { return Scroller { _obj: ptr }; }
 
-    // SKIPPED `scrollerWidthForControlSize:scrollerStyle:`: msgSend shape `f64_i64_i64` not yet modelled
+    fn scroller_width_for_control_size_scroller_style(control_size: ControlSize, scroller_style: ScrollerStyle) -> f64 {
+        return rt::msg_f64_i64_i64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidthForControlSize:scrollerStyle:\0")), control_size_raw(control_size), scroller_style_raw(scroller_style));
+    }
+
     fn rect_for_part(this, part_code: ScrollerPart) -> rt::Rect {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectForPart:\0")), scroller_part_raw(part_code));
     }
@@ -283,7 +286,10 @@ impl Scroller {
         return rt::msg_f64(rt::get_class(#str_ptr("NSScroller\0")), rt::sel(#str_ptr("scrollerWidth\0")));
     }
 
-    // SKIPPED `setFloatValue:knobProportion:`: msgSend shape `void_f32_f64` not yet modelled
+    fn set_float_value_knob_proportion(this, value: f32, proportion: f64) {
+        rt::msg_void_f32_f64(this._obj, rt::sel(#str_ptr("setFloatValue:knobProportion:\0")), value, proportion);
+    }
+
     fn highlight(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("highlight:\0")), flag as i8);
     }

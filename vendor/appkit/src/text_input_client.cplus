@@ -88,7 +88,10 @@ impl TextInputClient {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("doCommandBySelector:\0")), selector);
     }
 
-    // SKIPPED `setMarkedText:selectedRange:replacementRange:`: msgSend shape `void_id_range_range` not yet modelled
+    fn set_marked_text_selected_range_replacement_range(this, string: *u8, selected_range: rt::Range, replacement_range: rt::Range) {
+        rt::msg_void_id_range_range(this._obj, rt::sel(#str_ptr("setMarkedText:selectedRange:replacementRange:\0")), string, selected_range, replacement_range);
+    }
+
     fn unmark_text(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unmarkText\0")));
     }
@@ -105,7 +108,14 @@ impl TextInputClient {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("hasMarkedText\0"))) != (0 as i8);
     }
 
-    // SKIPPED `attributedSubstringForProposedRange:actualRange:`: msgSend shape `id_range_id` not yet modelled
+    fn attributed_substring_for_proposed_range_actual_range(this, range: rt::Range, actual_range: *u8) -> option::Option[AttributedString] {
+        let obj: *u8 = rt::msg_id_range_id(this._obj, rt::sel(#str_ptr("attributedSubstringForProposedRange:actualRange:\0")), range, actual_range);
+        if obj == { 0 as *u8 } {
+            return option::Option[AttributedString]::None;
+        }
+        return option::some(AttributedString::from_raw(obj));
+    }
+
     fn valid_attributes_for_marked_text(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("validAttributesForMarkedText\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -120,7 +130,10 @@ impl TextInputClient {
         return out;
     }
 
-    // SKIPPED `firstRectForCharacterRange:actualRange:`: msgSend shape `rect_range_id` not yet modelled
+    fn first_rect_for_character_range_actual_range(this, range: rt::Range, actual_range: *u8) -> rt::Rect {
+        return rt::msg_rect_range_id(this._obj, rt::sel(#str_ptr("firstRectForCharacterRange:actualRange:\0")), range, actual_range);
+    }
+
     fn character_index_for_point(this, point: rt::Point) -> u64 {
         return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
     }
@@ -129,8 +142,14 @@ impl TextInputClient {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }
 
-    // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: msgSend shape `f64_point` not yet modelled
-    // SKIPPED `baselineDeltaForCharacterAtIndex:`: msgSend shape `f64_u64` not yet modelled
+    fn fraction_of_distance_through_glyph_for_point(this, point: rt::Point) -> f64 {
+        return rt::msg_f64_point(this._obj, rt::sel(#str_ptr("fractionOfDistanceThroughGlyphForPoint:\0")), point);
+    }
+
+    fn baseline_delta_for_character_at_index(this, an_index: u64) -> f64 {
+        return rt::msg_f64_u64(this._obj, rt::sel(#str_ptr("baselineDeltaForCharacterAtIndex:\0")), an_index);
+    }
+
     fn window_level(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("windowLevel\0")));
     }

@@ -182,14 +182,29 @@ impl CollectionViewDelegateFlowLayout {
 
     fn from_raw(ptr: *u8) -> CollectionViewDelegateFlowLayout { return CollectionViewDelegateFlowLayout { _obj: ptr }; }
 
-    // SKIPPED `collectionView:layout:sizeForItemAtIndexPath:`: msgSend shape `size_id_id_id` not yet modelled
+    fn collection_view_layout_size_for_item_at_index_path(this, collection_view: *u8, collection_view_layout: *u8, index_path: *u8) -> rt::Size {
+        return rt::msg_size_id_id_id(this._obj, rt::sel(#str_ptr("collectionView:layout:sizeForItemAtIndexPath:\0")), collection_view, collection_view_layout, index_path);
+    }
+
     fn collection_view_layout_inset_for_section_at_index(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> EdgeInsets {
         return objc_msg_collection_view_flow_layout_EdgeInsets_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:insetForSectionAtIndex:\0")), collection_view, collection_view_layout, section);
     }
 
-    // SKIPPED `collectionView:layout:minimumLineSpacingForSectionAtIndex:`: msgSend shape `f64_id_id_i64` not yet modelled
-    // SKIPPED `collectionView:layout:minimumInteritemSpacingForSectionAtIndex:`: msgSend shape `f64_id_id_i64` not yet modelled
-    // SKIPPED `collectionView:layout:referenceSizeForHeaderInSection:`: msgSend shape `size_id_id_i64` not yet modelled
-    // SKIPPED `collectionView:layout:referenceSizeForFooterInSection:`: msgSend shape `size_id_id_i64` not yet modelled
+    fn collection_view_layout_minimum_line_spacing_for_section_at_index(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> f64 {
+        return rt::msg_f64_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:minimumLineSpacingForSectionAtIndex:\0")), collection_view, collection_view_layout, section);
+    }
+
+    fn collection_view_layout_minimum_interitem_spacing_for_section_at_index(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> f64 {
+        return rt::msg_f64_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:minimumInteritemSpacingForSectionAtIndex:\0")), collection_view, collection_view_layout, section);
+    }
+
+    fn collection_view_layout_reference_size_for_header_in_section(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> rt::Size {
+        return rt::msg_size_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:referenceSizeForHeaderInSection:\0")), collection_view, collection_view_layout, section);
+    }
+
+    fn collection_view_layout_reference_size_for_footer_in_section(this, collection_view: *u8, collection_view_layout: *u8, section: i64) -> rt::Size {
+        return rt::msg_size_id_id_i64(this._obj, rt::sel(#str_ptr("collectionView:layout:referenceSizeForFooterInSection:\0")), collection_view, collection_view_layout, section);
+    }
+
 }
 

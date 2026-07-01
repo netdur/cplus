@@ -207,7 +207,10 @@ impl Font {
         return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedDigitSystemFontOfSize:weight:\0")), font_size, weight) };
     }
 
-    // SKIPPED `systemFontOfSize:weight:width:`: msgSend shape `id_f64_f64_f64` not yet modelled
+    fn system_font_of_size_weight_width(font_size: f64, weight: f64, width: f64) -> Font {
+        return Font { _obj: rt::msg_id_f64_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("systemFontOfSize:weight:width:\0")), font_size, weight, width) };
+    }
+
     fn monospaced_system_font_of_size_weight(font_size: f64, weight: f64) -> Font {
         return Font { _obj: rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSFont\0")), rt::sel(#str_ptr("monospacedSystemFontOfSize:weight:\0")), font_size, weight) };
     }
@@ -345,9 +348,18 @@ impl Font {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isVertical\0"))) != (0 as i8);
     }
 
-    // SKIPPED `glyphWithName:`: msgSend shape `u32_id` not yet modelled
-    // SKIPPED `boundingRectForGlyph:`: msgSend shape `rect_u32` not yet modelled
-    // SKIPPED `advancementForGlyph:`: msgSend shape `size_u32` not yet modelled
+    fn glyph_with_name(this, name: str) -> u32 {
+        return rt::msg_u32_id(this._obj, rt::sel(#str_ptr("glyphWithName:\0")), bridge::nsstring(name));
+    }
+
+    fn bounding_rect_for_glyph(this, glyph: u32) -> rt::Rect {
+        return rt::msg_rect_u32(this._obj, rt::sel(#str_ptr("boundingRectForGlyph:\0")), glyph);
+    }
+
+    fn advancement_for_glyph(this, glyph: u32) -> rt::Size {
+        return rt::msg_size_u32(this._obj, rt::sel(#str_ptr("advancementForGlyph:\0")), glyph);
+    }
+
     fn get_bounding_rects_for_glyphs_count(this, bounds: *u8, glyphs: *u8, glyph_count: u64) {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("getBoundingRects:forGlyphs:count:\0")), bounds, glyphs, glyph_count);
     }

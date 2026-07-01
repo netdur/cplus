@@ -544,10 +544,22 @@ impl View {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("rotateByAngle:\0")), angle);
     }
 
-    // SKIPPED `convertPoint:fromView:`: msgSend shape `point_point_id` not yet modelled
-    // SKIPPED `convertPoint:toView:`: msgSend shape `point_point_id` not yet modelled
-    // SKIPPED `convertSize:fromView:`: msgSend shape `size_size_id` not yet modelled
-    // SKIPPED `convertSize:toView:`: msgSend shape `size_size_id` not yet modelled
+    fn convert_point_from_view(this, point: rt::Point, view: View) -> rt::Point {
+        return rt::msg_point_point_id(this._obj, rt::sel(#str_ptr("convertPoint:fromView:\0")), point, view.raw());
+    }
+
+    fn convert_point_to_view(this, point: rt::Point, view: View) -> rt::Point {
+        return rt::msg_point_point_id(this._obj, rt::sel(#str_ptr("convertPoint:toView:\0")), point, view.raw());
+    }
+
+    fn convert_size_from_view(this, size: rt::Size, view: View) -> rt::Size {
+        return rt::msg_size_size_id(this._obj, rt::sel(#str_ptr("convertSize:fromView:\0")), size, view.raw());
+    }
+
+    fn convert_size_to_view(this, size: rt::Size, view: View) -> rt::Size {
+        return rt::msg_size_size_id(this._obj, rt::sel(#str_ptr("convertSize:toView:\0")), size, view.raw());
+    }
+
     fn convert_rect_from_view(this, rect: rt::Rect, view: View) -> rt::Rect {
         return rt::msg_rect_rect_id(this._obj, rt::sel(#str_ptr("convertRect:fromView:\0")), rect, view.raw());
     }
@@ -700,8 +712,14 @@ impl View {
         return rt::msg_rect_rect(this._obj, rt::sel(#str_ptr("adjustScroll:\0")), new_visible);
     }
 
-    // SKIPPED `scrollRect:by:`: msgSend shape `void_rect_size` not yet modelled
-    // SKIPPED `translateRectsNeedingDisplayInRect:by:`: msgSend shape `void_rect_size` not yet modelled
+    fn scroll_rect_by(this, rect: rt::Rect, delta: rt::Size) {
+        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("scrollRect:by:\0")), rect, delta);
+    }
+
+    fn translate_rects_needing_display_in_rect_by(this, clip_rect: rt::Rect, delta: rt::Size) {
+        rt::msg_void_rect_size(this._obj, rt::sel(#str_ptr("translateRectsNeedingDisplayInRect:by:\0")), clip_rect, delta);
+    }
+
     fn hit_test(this, point: rt::Point) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("hitTest:\0")), point);
         if obj == { 0 as *u8 } {
@@ -710,7 +728,10 @@ impl View {
         return option::some(View::from_raw(obj));
     }
 
-    // SKIPPED `mouse:inRect:`: msgSend shape `i8_point_rect` not yet modelled
+    fn mouse_in_rect(this, point: rt::Point, rect: rt::Rect) -> bool {
+        return rt::msg_i8_point_rect(this._obj, rt::sel(#str_ptr("mouse:inRect:\0")), point, rect) != (0 as i8);
+    }
+
     fn view_with_tag(this, tag: i64) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("viewWithTag:\0")), tag);
         if obj == { 0 as *u8 } {
@@ -760,7 +781,10 @@ impl View {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("didCloseMenu:withEvent:\0")), menu, event);
     }
 
-    // SKIPPED `addToolTipRect:owner:userData:`: msgSend shape `i64_rect_id_id` not yet modelled
+    fn add_tool_tip_rect_owner_user_data(this, rect: rt::Rect, owner: *u8, data: *u8) -> i64 {
+        return rt::msg_i64_rect_id_id(this._obj, rt::sel(#str_ptr("addToolTipRect:owner:userData:\0")), rect, owner, data);
+    }
+
     fn remove_tool_tip(this, tag: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeToolTip:\0")), tag);
     }
@@ -781,7 +805,10 @@ impl View {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getRectsExposedDuringLiveResize:count:\0")), exposed_rects, count);
     }
 
-    // SKIPPED `rectForSmartMagnificationAtPoint:inRect:`: msgSend shape `rect_point_rect` not yet modelled
+    fn rect_for_smart_magnification_at_point_in_rect(this, location: rt::Point, visible_rect: rt::Rect) -> rt::Rect {
+        return rt::msg_rect_point_rect(this._obj, rt::sel(#str_ptr("rectForSmartMagnificationAtPoint:inRect:\0")), location, visible_rect);
+    }
+
     fn prepare_for_reuse(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("prepareForReuse\0")));
     }
@@ -1234,13 +1261,22 @@ impl View {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("knowsPageRange:\0")), range) != (0 as i8);
     }
 
-    // SKIPPED `adjustPageWidthNew:left:right:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
-    // SKIPPED `adjustPageHeightNew:top:bottom:limit:`: msgSend shape `void_id_f64_f64_f64` not yet modelled
+    fn adjust_page_width_new_left_right_limit(this, new_right: *u8, old_left: f64, old_right: f64, right_limit: f64) {
+        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageWidthNew:left:right:limit:\0")), new_right, old_left, old_right, right_limit);
+    }
+
+    fn adjust_page_height_new_top_bottom_limit(this, new_bottom: *u8, old_top: f64, old_bottom: f64, bottom_limit: f64) {
+        rt::msg_void_id_f64_f64_f64(this._obj, rt::sel(#str_ptr("adjustPageHeightNew:top:bottom:limit:\0")), new_bottom, old_top, old_bottom, bottom_limit);
+    }
+
     fn rect_for_page(this, page: i64) -> rt::Rect {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectForPage:\0")), page);
     }
 
-    // SKIPPED `locationOfPrintRect:`: msgSend shape `point_rect` not yet modelled
+    fn location_of_print_rect(this, rect: rt::Rect) -> rt::Point {
+        return rt::msg_point_rect(this._obj, rt::sel(#str_ptr("locationOfPrintRect:\0")), rect);
+    }
+
     fn draw_page_border_with_size(this, border_size: rt::Size) {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("drawPageBorderWithSize:\0")), border_size);
     }
@@ -1257,7 +1293,10 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("endDocument\0")));
     }
 
-    // SKIPPED `beginPageInRect:atPlacement:`: msgSend shape `void_rect_point` not yet modelled
+    fn begin_page_in_rect_at_placement(this, rect: rt::Rect, location: rt::Point) {
+        rt::msg_void_rect_point(this._obj, rt::sel(#str_ptr("beginPageInRect:atPlacement:\0")), rect, location);
+    }
+
     fn end_page(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("endPage\0")));
     }
@@ -1399,7 +1438,10 @@ impl View {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetCursorRects\0")));
     }
 
-    // SKIPPED `addTrackingRect:owner:userData:assumeInside:`: msgSend shape `i64_rect_id_id_i8` not yet modelled
+    fn add_tracking_rect_owner_user_data_assume_inside(this, rect: rt::Rect, owner: *u8, data: *u8, flag: bool) -> i64 {
+        return rt::msg_i64_rect_id_id_i8(this._obj, rt::sel(#str_ptr("addTrackingRect:owner:userData:assumeInside:\0")), rect, owner, data, flag as i8);
+    }
+
     fn remove_tracking_rect(this, tag: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeTrackingRect:\0")), tag);
     }
@@ -1409,9 +1451,18 @@ impl View {
         return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
     }
 
-    // SKIPPED `dragImage:at:offset:event:pasteboard:source:slideBack:`: msgSend shape `void_id_point_size_id_id_id_i8` not yet modelled
-    // SKIPPED `dragFile:fromRect:slideBack:event:`: msgSend shape `i8_id_rect_i8_id` not yet modelled
-    // SKIPPED `dragPromisedFilesOfTypes:fromRect:source:slideBack:event:`: msgSend shape `i8_id_rect_id_i8_id` not yet modelled
+    fn drag_image_at_offset_event_pasteboard_source_slide_back(this, image: Image, view_location: rt::Point, initial_offset: rt::Size, event: *u8, pboard: *u8, source_obj: *u8, slide_flag: bool) {
+        rt::msg_void_id_point_size_id_id_id_i8(this._obj, rt::sel(#str_ptr("dragImage:at:offset:event:pasteboard:source:slideBack:\0")), image.raw(), view_location, initial_offset, event, pboard, source_obj, slide_flag as i8);
+    }
+
+    fn drag_file_from_rect_slide_back_event(this, filename: str, rect: rt::Rect, flag: bool, event: *u8) -> bool {
+        return rt::msg_i8_id_rect_i8_id(this._obj, rt::sel(#str_ptr("dragFile:fromRect:slideBack:event:\0")), bridge::nsstring(filename), rect, flag as i8, event) != (0 as i8);
+    }
+
+    fn drag_promised_files_of_types_from_rect_source_slide_back_event(this, type_array: vec::Vec[text::Text], rect: rt::Rect, source_object: *u8, flag: bool, event: *u8) -> bool {
+        return rt::msg_i8_id_rect_id_i8_id(this._obj, rt::sel(#str_ptr("dragPromisedFilesOfTypes:fromRect:source:slideBack:event:\0")), bridge::nsarray_of_text(type_array), rect, source_object, flag as i8, event) != (0 as i8);
+    }
+
     fn convert_point_to_base(this, point: rt::Point) -> rt::Point {
         return rt::msg_point_point(this._obj, rt::sel(#str_ptr("convertPointToBase:\0")), point);
     }
@@ -1503,7 +1554,11 @@ impl ViewToolTipOwner {
 
     fn from_raw(ptr: *u8) -> ViewToolTipOwner { return ViewToolTipOwner { _obj: ptr }; }
 
-    // SKIPPED `view:stringForToolTip:point:userData:`: msgSend shape `id_id_i64_point_id` not yet modelled
+    fn view_string_for_tool_tip_point_user_data(this, view: View, tag: i64, point: rt::Point, data: *u8) -> text::Text {
+        let ns: *u8 = rt::msg_id_id_i64_point_id(this._obj, rt::sel(#str_ptr("view:stringForToolTip:point:userData:\0")), view.raw(), tag, point, data);
+        return bridge::to_text(ns);
+    }
+
 }
 
 // `NSViewContentSelectionInfo` (ObjC protocol). Non-owning handle; `opaque`, no drop.

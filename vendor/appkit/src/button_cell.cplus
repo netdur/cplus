@@ -347,7 +347,10 @@ impl ButtonCell {
         rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("drawImage:withFrame:inView:\0")), image.raw(), frame, control_view);
     }
 
-    // SKIPPED `drawTitle:withFrame:inView:`: msgSend shape `rect_id_rect_id` not yet modelled
+    fn draw_title_with_frame_in_view(this, title: AttributedString, frame: rt::Rect, control_view: *u8) -> rt::Rect {
+        return rt::msg_rect_id_rect_id(this._obj, rt::sel(#str_ptr("drawTitle:withFrame:inView:\0")), title.raw(), frame, control_view);
+    }
+
     fn bezel_style(this) -> BezelStyle {
         return bezel_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bezelStyle\0"))));
     }

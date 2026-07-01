@@ -164,8 +164,14 @@ impl RuleEditor {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addRow:\0")), sender);
     }
 
-    // SKIPPED `insertRowAtIndex:withType:asSubrowOfRow:animate:`: msgSend shape `void_i64_i64_i64_i8` not yet modelled
-    // SKIPPED `setCriteria:andDisplayValues:forRowAtIndex:`: msgSend shape `void_id_id_i64` not yet modelled
+    fn insert_row_at_index_with_type_as_subrow_of_row_animate(this, row_index: i64, row_type: RuleEditorRowType, parent_row: i64, should_animate: bool) {
+        rt::msg_void_i64_i64_i64_i8(this._obj, rt::sel(#str_ptr("insertRowAtIndex:withType:asSubrowOfRow:animate:\0")), row_index, rule_editor_row_type_raw(row_type), parent_row, should_animate as i8);
+    }
+
+    fn set_criteria_and_display_values_for_row_at_index(this, criteria: *u8, values: *u8, row_index: i64) {
+        rt::msg_void_id_id_i64(this._obj, rt::sel(#str_ptr("setCriteria:andDisplayValues:forRowAtIndex:\0")), criteria, values, row_index);
+    }
+
     fn remove_row_at_index(this, row_index: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRowAtIndex:\0")), row_index);
     }

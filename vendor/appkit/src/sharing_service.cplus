@@ -302,7 +302,10 @@ impl SharingServicePicker {
     }
 
     // SKIPPED `init`: `new` already defined (extra constructor)
-    // SKIPPED `showRelativeToRect:ofView:preferredEdge:`: msgSend shape `void_rect_id_i64` not yet modelled
+    fn show_relative_to_rect_of_view_preferred_edge(this, rect: rt::Rect, view: View, preferred_edge: RectEdge) {
+        rt::msg_void_rect_id_i64(this._obj, rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")), rect, view.raw(), rect_edge_raw(preferred_edge));
+    }
+
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }

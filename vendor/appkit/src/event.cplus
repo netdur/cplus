@@ -407,14 +407,31 @@ impl Event {
     // SKIPPED `touchesForView:`: return `NSSet<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `coalescedTouchesForTouch:`: return `NSArray<NSTouch *> * _Nonnull` — generic collection
     // SKIPPED `trackSwipeEventWithOptions:dampenAmountThresholdMin:max:usingHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `startPeriodicEventsAfterDelay:withPeriod:`: msgSend shape `void_f64_f64` not yet modelled
+    fn start_periodic_events_after_delay_with_period(delay: f64, period: f64) {
+        rt::msg_void_f64_f64(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("startPeriodicEventsAfterDelay:withPeriod:\0")), delay, period);
+    }
+
     fn stop_periodic_events() {
         rt::msg_void(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("stopPeriodicEvents\0")));
     }
 
-    // SKIPPED `mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:`: msgSend shape `id_i64_point_u64_f64_i64_id_i64_i64_f32` not yet modelled
+    fn mouse_event_with_type_location_modifier_flags_timestamp_window_number_context_event_number_click_count_pressure(type_: EventType, location: rt::Point, flags: u64, time: f64, w_num: i64, unused_pass_nil: GraphicsContext, e_num: i64, c_num: i64, pressure: f32) -> option::Option[Event] {
+        let obj: *u8 = rt::msg_id_i64_point_u64_f64_i64_id_i64_i64_f32(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")), event_type_raw(type_), location, flags, time, w_num, unused_pass_nil.raw(), e_num, c_num, pressure);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event { _obj: obj });
+    }
+
     // SKIPPED `keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:`: param `unsigned short` — unmapped type `unsigned short`
-    // SKIPPED `enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:`: msgSend shape `id_i64_point_u64_f64_i64_id_i64_i64_id` not yet modelled
+    fn enter_exit_event_with_type_location_modifier_flags_timestamp_window_number_context_event_number_tracking_number_user_data(type_: EventType, location: rt::Point, flags: u64, time: f64, w_num: i64, unused_pass_nil: GraphicsContext, e_num: i64, t_num: i64, data: *u8) -> option::Option[Event] {
+        let obj: *u8 = rt::msg_id_i64_point_u64_f64_i64_id_i64_i64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:\0")), event_type_raw(type_), location, flags, time, w_num, unused_pass_nil.raw(), e_num, t_num, data);
+        if obj == { 0 as *u8 } {
+            return option::Option[Event]::None;
+        }
+        return option::some(Event { _obj: obj });
+    }
+
     // SKIPPED `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`: param `short` — unmapped type `short`
     fn add_global_monitor_for_events_matching_mask_handler(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
