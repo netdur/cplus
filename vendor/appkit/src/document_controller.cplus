@@ -26,6 +26,25 @@ fn DocumentController_begin_open_panel_with_completion_handler_invoke(block: *u8
     return;
 }
 
+#[repr(C)]
+struct DocumentController_begin_open_panel_for_types_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn DocumentController_begin_open_panel_for_types_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *DocumentController_begin_open_panel_for_types_completion_handler_block = { block as *DocumentController_begin_open_panel_for_types_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSDocument` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Document {
     opaque _obj: *u8,
@@ -155,7 +174,14 @@ impl DocumentController {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("newDocument:\0")), sender);
     }
 
-    // SKIPPED `openUntitledDocumentAndDisplay:error:`: msgSend shape `id_i8_id` not yet modelled
+    fn open_untitled_document_and_display_error(this, display_document: bool, out_error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("openUntitledDocumentAndDisplay:error:\0")), display_document as i8, out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
+    }
+
     fn make_untitled_document_of_type_error(this, type_name: str, out_error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeUntitledDocumentOfType:error:\0")), bridge::nsstring(type_name), out_error);
         if obj == { 0 as *u8 } {
@@ -193,7 +219,14 @@ impl DocumentController {
         return;
     }
 
-    // SKIPPED `beginOpenPanel:forTypes:completionHandler:`: block-method msgSend shape not modelled
+    fn begin_open_panel_for_types_completion_handler(this, open_panel: OpenPanel, in_types: vec::Vec[text::Text], cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: DocumentController_begin_open_panel_for_types_completion_handler_block = DocumentController_begin_open_panel_for_types_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_begin_open_panel_for_types_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginOpenPanel:forTypes:completionHandler:\0")), open_panel.raw(), bridge::nsarray_of_text(in_types), bp);
+        return;
+    }
+
     // SKIPPED `openDocumentWithContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
     fn make_document_with_contents_of_u_r_l_of_type_error(this, url: URL, type_name: str, out_error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), out_error);
@@ -204,19 +237,32 @@ impl DocumentController {
     }
 
     // SKIPPED `reopenDocumentForURL:withContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `makeDocumentForURL:withContentsOfURL:ofType:error:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn make_document_for_u_r_l_with_contents_of_u_r_l_of_type_error(this, url_or_nil: URL, contents_u_r_l: URL, type_name: str, out_error: *u8) -> option::Option[Document] {
+        let obj: *u8 = rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), contents_u_r_l.raw(), bridge::nsstring(type_name), out_error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Document]::None;
+        }
+        return option::some(Document::from_raw(obj));
+    }
+
     fn save_all_documents(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveAllDocuments:\0")), sender);
     }
 
     // SKIPPED `reviewUnsavedDocumentsWithAlertTitle:cancellable:delegate:didReviewAllSelector:contextInfo:`: msgSend shape `void_id_i8_id_id_id` not yet modelled
-    // SKIPPED `closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
+    fn close_all_documents_with_delegate_did_close_all_selector_context_info(this, delegate: *u8, did_close_all_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("closeAllDocumentsWithDelegate:didCloseAllSelector:contextInfo:\0")), delegate, did_close_all_selector, context_info);
+    }
+
     // SKIPPED `duplicateDocumentWithContentsOfURL:copying:displayName:error:`: msgSend shape `id_id_i8_id_id` not yet modelled
     fn standard_share_menu_item(this) -> MenuItem {
         return MenuItem::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("standardShareMenuItem\0"))));
     }
 
-    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
+    fn present_error_modal_for_window_delegate_did_present_selector_context_info(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("presentError:modalForWindow:delegate:didPresentSelector:contextInfo:\0")), error.raw(), window.raw(), delegate, did_present_selector, context_info);
+    }
+
     fn present_error(this, error: Error) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
     }

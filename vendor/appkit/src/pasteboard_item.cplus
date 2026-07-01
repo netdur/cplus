@@ -94,7 +94,10 @@ impl PasteboardItemDataProvider {
 
     fn from_raw(ptr: *u8) -> PasteboardItemDataProvider { return PasteboardItemDataProvider { _obj: ptr }; }
 
-    // SKIPPED `pasteboard:item:provideDataForType:`: msgSend shape `void_id_id_id` not yet modelled
+    fn pasteboard_item_provide_data_for_type(this, pasteboard: Pasteboard, item: PasteboardItem, type_: str) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("pasteboard:item:provideDataForType:\0")), pasteboard.raw(), item.raw(), bridge::nsstring(type_));
+    }
+
     fn pasteboard_finished_with_data_provider(this, pasteboard: Pasteboard) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("pasteboardFinishedWithDataProvider:\0")), pasteboard.raw());
     }

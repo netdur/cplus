@@ -204,7 +204,10 @@ impl TextInput {
     }
 
     // SKIPPED `firstRectForCharacterRange:`: msgSend shape `rect_range` not yet modelled
-    // SKIPPED `characterIndexForPoint:`: msgSend shape `u64_point` not yet modelled
+    fn character_index_for_point(this, point: rt::Point) -> u64 {
+        return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
+    }
+
     fn valid_attributes_for_marked_text(this) -> option::Option[Array] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("validAttributesForMarkedText\0")));
         if obj == { 0 as *u8 } {

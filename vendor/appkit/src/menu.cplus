@@ -125,8 +125,14 @@ impl Menu {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `popUpContextMenu:withEvent:forView:`: msgSend shape `void_id_id_id` not yet modelled
-    // SKIPPED `popUpContextMenu:withEvent:forView:withFont:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn pop_up_context_menu_with_event_for_view(menu: Menu, event: Event, view: View) {
+        rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:\0")), menu.raw(), event.raw(), view.raw());
+    }
+
+    fn pop_up_context_menu_with_event_for_view_with_font(menu: Menu, event: Event, view: View, font: Font) {
+        rt::msg_void_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("popUpContextMenu:withEvent:forView:withFont:\0")), menu.raw(), event.raw(), view.raw(), font.raw());
+    }
+
     // SKIPPED `popUpMenuPositioningItem:atLocation:inView:`: msgSend shape `i8_id_point_id` not yet modelled
     fn set_menu_bar_visible(visible: bool) {
         rt::msg_void_i8(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("setMenuBarVisible:\0")), visible as i8);
@@ -412,7 +418,10 @@ impl Menu {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
 
-    // SKIPPED `locationForSubmenu:`: msgSend shape `point_id` not yet modelled
+    fn location_for_submenu(this, submenu: Menu) -> rt::Point {
+        return rt::msg_point_id(this._obj, rt::sel(#str_ptr("locationForSubmenu:\0")), submenu.raw());
+    }
+
     fn help_requested(this, event_ptr: Event) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("helpRequested:\0")), event_ptr.raw());
     }

@@ -246,7 +246,10 @@ impl Control {
         rt::msg_void(this._obj, rt::sel(#str_ptr("sizeToFit\0")));
     }
 
-    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
+    fn send_action_on(this, mask: u64) -> i64 {
+        return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("sendActionOn:\0")), mask);
+    }
+
     fn send_action_to(this, action: *u8, target: *u8) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("sendAction:to:\0")), action, target) != (0 as i8);
     }

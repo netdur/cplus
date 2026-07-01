@@ -144,8 +144,14 @@ impl BezierPath {
         rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("clipRect:\0")), rect);
     }
 
-    // SKIPPED `strokeLineFromPoint:toPoint:`: msgSend shape `void_point_point` not yet modelled
-    // SKIPPED `drawPackedGlyphs:atPoint:`: msgSend shape `void_id_point` not yet modelled
+    fn stroke_line_from_point_to_point(point1: rt::Point, point2: rt::Point) {
+        rt::msg_void_point_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("strokeLineFromPoint:toPoint:\0")), point1, point2);
+    }
+
+    fn draw_packed_glyphs_at_point(packed_glyphs: *u8, point: rt::Point) {
+        rt::msg_void_id_point(rt::get_class(#str_ptr("NSBezierPath\0")), rt::sel(#str_ptr("drawPackedGlyphs:atPoint:\0")), packed_glyphs, point);
+    }
+
     fn move_to_point(this, point: rt::Point) {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("moveToPoint:\0")), point);
     }
@@ -155,7 +161,10 @@ impl BezierPath {
     }
 
     // SKIPPED `curveToPoint:controlPoint1:controlPoint2:`: msgSend shape `void_point_point_point` not yet modelled
-    // SKIPPED `curveToPoint:controlPoint:`: msgSend shape `void_point_point` not yet modelled
+    fn curve_to_point_control_point(this, end_point: rt::Point, control_point: rt::Point) {
+        rt::msg_void_point_point(this._obj, rt::sel(#str_ptr("curveToPoint:controlPoint:\0")), end_point, control_point);
+    }
+
     fn close_path(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("closePath\0")));
     }
@@ -173,8 +182,14 @@ impl BezierPath {
     }
 
     // SKIPPED `relativeCurveToPoint:controlPoint1:controlPoint2:`: msgSend shape `void_point_point_point` not yet modelled
-    // SKIPPED `relativeCurveToPoint:controlPoint:`: msgSend shape `void_point_point` not yet modelled
-    // SKIPPED `getLineDash:count:phase:`: msgSend shape `void_id_id_id` not yet modelled
+    fn relative_curve_to_point_control_point(this, end_point: rt::Point, control_point: rt::Point) {
+        rt::msg_void_point_point(this._obj, rt::sel(#str_ptr("relativeCurveToPoint:controlPoint:\0")), end_point, control_point);
+    }
+
+    fn get_line_dash_count_phase(this, pattern: *u8, count: *u8, phase: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("getLineDash:count:phase:\0")), pattern, count, phase);
+    }
+
     // SKIPPED `setLineDash:count:phase:`: msgSend shape `void_id_i64_f64` not yet modelled
     fn stroke(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("stroke\0")));
@@ -219,9 +234,15 @@ impl BezierPath {
     // SKIPPED `appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:`: msgSend shape `void_point_f64_f64_f64` not yet modelled
     // SKIPPED `appendBezierPathWithArcFromPoint:toPoint:radius:`: msgSend shape `void_point_point_f64` not yet modelled
     // SKIPPED `appendBezierPathWithCGGlyph:inFont:`: param `CGGlyph` — unmapped type `CGGlyph`
-    // SKIPPED `appendBezierPathWithCGGlyphs:count:inFont:`: msgSend shape `void_id_i64_id` not yet modelled
+    fn append_bezier_path_with_c_g_glyphs_count_in_font(this, glyphs: *u8, count: i64, font: *u8) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithCGGlyphs:count:inFont:\0")), glyphs, count, font);
+    }
+
     // SKIPPED `appendBezierPathWithRoundedRect:xRadius:yRadius:`: msgSend shape `void_rect_f64_f64` not yet modelled
-    // SKIPPED `containsPoint:`: msgSend shape `i8_point` not yet modelled
+    fn contains_point(this, point: rt::Point) -> bool {
+        return rt::msg_i8_point(this._obj, rt::sel(#str_ptr("containsPoint:\0")), point) != (0 as i8);
+    }
+
     // SKIPPED `CGPath`: return `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
     // SKIPPED `setCGPath:`: param `API_AVAILABLE CGPathRef` — unmapped type `API_AVAILABLE CGPathRef`
     fn default_miter_limit() -> f64 {
@@ -357,7 +378,10 @@ impl BezierPath {
     }
 
     // SKIPPED `appendBezierPathWithGlyph:inFont:`: param `NSGlyph` — unmapped type `NSGlyph`
-    // SKIPPED `appendBezierPathWithGlyphs:count:inFont:`: msgSend shape `void_id_i64_id` not yet modelled
+    fn append_bezier_path_with_glyphs_count_in_font(this, glyphs: *u8, count: i64, font: *u8) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithGlyphs:count:inFont:\0")), glyphs, count, font);
+    }
+
     fn append_bezier_path_with_packed_glyphs(this, packed_glyphs: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("appendBezierPathWithPackedGlyphs:\0")), packed_glyphs);
     }

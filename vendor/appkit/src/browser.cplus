@@ -235,11 +235,23 @@ impl Browser {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("frameOfInsideOfColumn:\0")), column);
     }
 
-    // SKIPPED `frameOfRow:inColumn:`: msgSend shape `rect_i64_i64` not yet modelled
+    fn frame_of_row_in_column(this, row: i64, column: i64) -> rt::Rect {
+        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfRow:inColumn:\0")), row, column);
+    }
+
     // SKIPPED `getRow:column:forPoint:`: msgSend shape `i8_id_id_point` not yet modelled
-    // SKIPPED `columnWidthForColumnContentWidth:`: msgSend shape `f64_f64` not yet modelled
-    // SKIPPED `columnContentWidthForColumnWidth:`: msgSend shape `f64_f64` not yet modelled
-    // SKIPPED `setWidth:ofColumn:`: msgSend shape `void_f64_i64` not yet modelled
+    fn column_width_for_column_content_width(this, column_content_width: f64) -> f64 {
+        return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("columnWidthForColumnContentWidth:\0")), column_content_width);
+    }
+
+    fn column_content_width_for_column_width(this, column_width: f64) -> f64 {
+        return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("columnContentWidthForColumnWidth:\0")), column_width);
+    }
+
+    fn set_width_of_column(this, column_width: f64, column_index: i64) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:ofColumn:\0")), column_width, column_index);
+    }
+
     fn width_of_column(this, column: i64) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("widthOfColumn:\0")), column);
     }
@@ -262,7 +274,10 @@ impl Browser {
 
     // SKIPPED `canDragRowsWithIndexes:inColumn:withEvent:`: msgSend shape `i8_id_i64_id` not yet modelled
     // SKIPPED `draggingImageForRowsWithIndexes:inColumn:withEvent:offset:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
-    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
+    fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
+    }
+
     fn edit_item_at_index_path_with_event_select(this, index_path: *u8, event: *u8, select: bool) {
         rt::msg_void_id_id_i8(this._obj, rt::sel(#str_ptr("editItemAtIndexPath:withEvent:select:\0")), index_path, event, select as i8);
     }

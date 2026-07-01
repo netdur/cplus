@@ -130,7 +130,10 @@ impl Text {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `writeRTFDToFile:atomically:`: msgSend shape `i8_id_i8` not yet modelled
+    fn write_r_t_f_d_to_file_atomically(this, path: str, flag: bool) -> bool {
+        return rt::msg_i8_id_i8(this._obj, rt::sel(#str_ptr("writeRTFDToFile:atomically:\0")), bridge::nsstring(path), flag as i8) != (0 as i8);
+    }
+
     fn read_r_t_f_d_from_file(this, path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("readRTFDFromFile:\0")), bridge::nsstring(path)) != (0 as i8);
     }

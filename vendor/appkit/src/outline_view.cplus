@@ -200,8 +200,14 @@ impl OutlineView {
     }
 
     // SKIPPED `shouldCollapseAutoExpandedItemsForDeposited:`: msgSend shape `i8_i8` not yet modelled
-    // SKIPPED `insertItemsAtIndexes:inParent:withAnimation:`: msgSend shape `void_id_id_u64` not yet modelled
-    // SKIPPED `removeItemsAtIndexes:inParent:withAnimation:`: msgSend shape `void_id_id_u64` not yet modelled
+    fn insert_items_at_indexes_in_parent_with_animation(this, indexes: *u8, parent: *u8, animation_options: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
+    }
+
+    fn remove_items_at_indexes_in_parent_with_animation(this, indexes: *u8, parent: *u8, animation_options: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("removeItemsAtIndexes:inParent:withAnimation:\0")), indexes, parent, animation_options);
+    }
+
     // SKIPPED `moveItemAtIndex:inParent:toIndex:inParent:`: msgSend shape `void_i64_id_i64_id` not yet modelled
     fn insert_rows_at_indexes_with_animation(this, indexes: *u8, animation_options: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("insertRowsAtIndexes:withAnimation:\0")), indexes, animation_options);

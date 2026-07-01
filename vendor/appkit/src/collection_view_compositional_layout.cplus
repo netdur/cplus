@@ -238,9 +238,15 @@ impl CollectionLayoutGroup {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutGroup { return CollectionLayoutGroup { _obj: ptr }; }
 
-    // SKIPPED `horizontalGroupWithLayoutSize:subitem:count:`: msgSend shape `id_id_id_i64` not yet modelled
+    fn horizontal_group_with_layout_size_subitem_count(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
+        return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("horizontalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
+    }
+
     // SKIPPED `horizontalGroupWithLayoutSize:subitems:`: param `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
-    // SKIPPED `verticalGroupWithLayoutSize:subitem:count:`: msgSend shape `id_id_id_i64` not yet modelled
+    fn vertical_group_with_layout_size_subitem_count(layout_size: CollectionLayoutSize, subitem: CollectionLayoutItem, count: i64) -> CollectionLayoutGroup {
+        return CollectionLayoutGroup { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutGroup\0")), rt::sel(#str_ptr("verticalGroupWithLayoutSize:subitem:count:\0")), layout_size.raw(), subitem.raw(), count)) };
+    }
+
     // SKIPPED `verticalGroupWithLayoutSize:subitems:`: param `NSArray<NSCollectionLayoutItem *> * _Nonnull` — generic collection
     // SKIPPED `customGroupWithLayoutSize:itemProvider:`: param `NSCollectionLayoutGroupCustomItemProvider _Nonnull` — unmapped type `NSCollectionLayoutGroupCustomItemProvider`
     fn new() -> CollectionLayoutGroup {
@@ -377,7 +383,10 @@ impl CollectionLayoutSupplementaryItem {
         return CollectionLayoutSupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSupplementaryItem\0")), rt::sel(#str_ptr("supplementaryItemWithLayoutSize:elementKind:containerAnchor:\0")), layout_size.raw(), bridge::nsstring(element_kind), container_anchor.raw())) };
     }
 
-    // SKIPPED `supplementaryItemWithLayoutSize:elementKind:containerAnchor:itemAnchor:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn supplementary_item_with_layout_size_element_kind_container_anchor_item_anchor(layout_size: CollectionLayoutSize, element_kind: str, container_anchor: CollectionLayoutAnchor, item_anchor: CollectionLayoutAnchor) -> CollectionLayoutSupplementaryItem {
+        return CollectionLayoutSupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutSupplementaryItem\0")), rt::sel(#str_ptr("supplementaryItemWithLayoutSize:elementKind:containerAnchor:itemAnchor:\0")), layout_size.raw(), bridge::nsstring(element_kind), container_anchor.raw(), item_anchor.raw())) };
+    }
+
     fn new() -> CollectionLayoutSupplementaryItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutSupplementaryItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -425,7 +434,10 @@ impl CollectionLayoutBoundarySupplementaryItem {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutBoundarySupplementaryItem { return CollectionLayoutBoundarySupplementaryItem { _obj: ptr }; }
 
-    // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:`: msgSend shape `id_id_id_i64` not yet modelled
+    fn boundary_supplementary_item_with_layout_size_element_kind_alignment(layout_size: CollectionLayoutSize, element_kind: str, alignment: RectAlignment) -> CollectionLayoutBoundarySupplementaryItem {
+        return CollectionLayoutBoundarySupplementaryItem { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0")), rt::sel(#str_ptr("boundarySupplementaryItemWithLayoutSize:elementKind:alignment:\0")), layout_size.raw(), bridge::nsstring(element_kind), rect_alignment_raw(alignment))) };
+    }
+
     // SKIPPED `boundarySupplementaryItemWithLayoutSize:elementKind:alignment:absoluteOffset:`: msgSend shape `id_id_id_i64_point` not yet modelled
     fn new() -> CollectionLayoutBoundarySupplementaryItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutBoundarySupplementaryItem\0"));
@@ -646,7 +658,10 @@ impl CollectionLayoutEdgeSpacing {
 
     fn from_raw(ptr: *u8) -> CollectionLayoutEdgeSpacing { return CollectionLayoutEdgeSpacing { _obj: ptr }; }
 
-    // SKIPPED `spacingForLeading:top:trailing:bottom:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn spacing_for_leading_top_trailing_bottom(leading: CollectionLayoutSpacing, top: CollectionLayoutSpacing, trailing: CollectionLayoutSpacing, bottom: CollectionLayoutSpacing) -> CollectionLayoutEdgeSpacing {
+        return CollectionLayoutEdgeSpacing { _obj: rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSCollectionLayoutEdgeSpacing\0")), rt::sel(#str_ptr("spacingForLeading:top:trailing:bottom:\0")), leading.raw(), top.raw(), trailing.raw(), bottom.raw())) };
+    }
+
     fn new() -> CollectionLayoutEdgeSpacing {
         let cls: *u8 = rt::get_class(#str_ptr("NSCollectionLayoutEdgeSpacing\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

@@ -291,7 +291,10 @@ impl Button {
 
     fn from_raw(ptr: *u8) -> Button { return Button { _obj: ptr }; }
 
-    // SKIPPED `buttonWithTitle:image:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn button_with_title_image_target_action(title: str, image: *u8, target: *u8, action: *u8) -> Button {
+        return Button { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("buttonWithTitle:image:target:action:\0")), bridge::nsstring(title), image, target, action) };
+    }
+
     fn button_with_title_target_action(title: str, target: *u8, action: *u8) -> Button {
         return Button { _obj: rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSButton\0")), rt::sel(#str_ptr("buttonWithTitle:target:action:\0")), bridge::nsstring(title), target, action) };
     }
@@ -312,7 +315,10 @@ impl Button {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setButtonType:\0")), button_type_raw(type_));
     }
 
-    // SKIPPED `setPeriodicDelay:interval:`: msgSend shape `void_f32_f32` not yet modelled
+    fn set_periodic_delay_interval(this, delay: f32, interval: f32) {
+        rt::msg_void_f32_f32(this._obj, rt::sel(#str_ptr("setPeriodicDelay:interval:\0")), delay, interval);
+    }
+
     fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
     }

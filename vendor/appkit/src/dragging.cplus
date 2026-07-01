@@ -342,8 +342,14 @@ impl DraggingSource {
     fn from_raw(ptr: *u8) -> DraggingSource { return DraggingSource { _obj: ptr }; }
 
     // SKIPPED `draggingSession:sourceOperationMaskForDraggingContext:`: msgSend shape `u64_id_i64` not yet modelled
-    // SKIPPED `draggingSession:willBeginAtPoint:`: msgSend shape `void_id_point` not yet modelled
-    // SKIPPED `draggingSession:movedToPoint:`: msgSend shape `void_id_point` not yet modelled
+    fn dragging_session_will_begin_at_point(this, session: DraggingSession, screen_point: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("draggingSession:willBeginAtPoint:\0")), session.raw(), screen_point);
+    }
+
+    fn dragging_session_moved_to_point(this, session: DraggingSession, screen_point: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("draggingSession:movedToPoint:\0")), session.raw(), screen_point);
+    }
+
     // SKIPPED `draggingSession:endedAtPoint:operation:`: msgSend shape `void_id_point_u64` not yet modelled
     fn ignore_modifier_keys_for_dragging_session(this, session: DraggingSession) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("ignoreModifierKeysForDraggingSession:\0")), session.raw()) != (0 as i8);

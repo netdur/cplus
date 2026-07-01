@@ -162,8 +162,14 @@ impl Slider {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectOfTickMarkAtIndex:\0")), index);
     }
 
-    // SKIPPED `indexOfTickMarkAtPoint:`: msgSend shape `i64_point` not yet modelled
-    // SKIPPED `closestTickMarkValueToValue:`: msgSend shape `f64_f64` not yet modelled
+    fn index_of_tick_mark_at_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("indexOfTickMarkAtPoint:\0")), point);
+    }
+
+    fn closest_tick_mark_value_to_value(this, value: f64) -> f64 {
+        return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("closestTickMarkValueToValue:\0")), value);
+    }
+
     fn number_of_tick_marks(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("numberOfTickMarks\0")));
     }

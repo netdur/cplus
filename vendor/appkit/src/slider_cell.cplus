@@ -58,8 +58,14 @@ impl SliderCell {
 
     fn from_raw(ptr: *u8) -> SliderCell { return SliderCell { _obj: ptr }; }
 
-    // SKIPPED `knobRectFlipped:`: msgSend shape `rect_i8` not yet modelled
-    // SKIPPED `barRectFlipped:`: msgSend shape `rect_i8` not yet modelled
+    fn knob_rect_flipped(this, flipped: bool) -> rt::Rect {
+        return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("knobRectFlipped:\0")), flipped as i8);
+    }
+
+    fn bar_rect_flipped(this, flipped: bool) -> rt::Rect {
+        return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("barRectFlipped:\0")), flipped as i8);
+    }
+
     fn draw_knob(this, knob_rect: rt::Rect) {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawKnob:\0")), knob_rect);
     }
@@ -129,8 +135,14 @@ impl SliderCell {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("rectOfTickMarkAtIndex:\0")), index);
     }
 
-    // SKIPPED `indexOfTickMarkAtPoint:`: msgSend shape `i64_point` not yet modelled
-    // SKIPPED `closestTickMarkValueToValue:`: msgSend shape `f64_f64` not yet modelled
+    fn index_of_tick_mark_at_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("indexOfTickMarkAtPoint:\0")), point);
+    }
+
+    fn closest_tick_mark_value_to_value(this, value: f64) -> f64 {
+        return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("closestTickMarkValueToValue:\0")), value);
+    }
+
     fn draw_tick_marks(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawTickMarks\0")));
     }

@@ -59,7 +59,10 @@ impl RulerMarker {
         rt::msg_void_rect(this._obj, rt::sel(#str_ptr("drawRect:\0")), rect);
     }
 
-    // SKIPPED `trackMouse:adding:`: msgSend shape `i8_id_i8` not yet modelled
+    fn track_mouse_adding(this, mouse_down_event: Event, is_adding: bool) -> bool {
+        return rt::msg_i8_id_i8(this._obj, rt::sel(#str_ptr("trackMouse:adding:\0")), mouse_down_event.raw(), is_adding as i8) != (0 as i8);
+    }
+
     fn ruler(this) -> option::Option[RulerView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("ruler\0")));
         if obj == { 0 as *u8 } {

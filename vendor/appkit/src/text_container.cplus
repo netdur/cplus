@@ -214,7 +214,10 @@ impl TextContainer {
 
     // SKIPPED `initWithContainerSize:`: extra init variant (one `new` per type)
     // SKIPPED `lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:`: param `NSRectPointer _Nullable` — unmapped type `NSRectPointer`
-    // SKIPPED `containsPoint:`: msgSend shape `i8_point` not yet modelled
+    fn contains_point(this, point: rt::Point) -> bool {
+        return rt::msg_i8_point(this._obj, rt::sel(#str_ptr("containsPoint:\0")), point) != (0 as i8);
+    }
+
     fn container_size(this) -> rt::Size {
         return rt::msg_size(this._obj, rt::sel(#str_ptr("containerSize\0")));
     }

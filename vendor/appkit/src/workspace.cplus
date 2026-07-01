@@ -47,6 +47,120 @@ const workspace_launch_options_n_s_workspace_launch_default: u64 = 65536 as u64;
 const workspace_launch_options_n_s_workspace_launch_allowing_classic_startup: u64 = 131072 as u64;
 const workspace_launch_options_n_s_workspace_launch_preferring_classic: u64 = 262144 as u64;
 
+#[repr(C)]
+struct Workspace_open_u_r_l_configuration_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_open_u_r_l_configuration_completion_handler_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_open_u_r_l_configuration_completion_handler_block = { block as *Workspace_open_u_r_l_configuration_completion_handler_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_open_application_at_u_r_l_configuration_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_open_application_at_u_r_l_configuration_completion_handler_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_open_application_at_u_r_l_configuration_completion_handler_block = { block as *Workspace_open_application_at_u_r_l_configuration_completion_handler_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block = { block as *Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSColor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct Color {
     opaque _obj: *u8,
@@ -319,9 +433,23 @@ impl Workspace {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openURL:\0")), url.raw()) != (0 as i8);
     }
 
-    // SKIPPED `openURL:configuration:completionHandler:`: block-method msgSend shape not modelled
+    fn open_u_r_l_configuration_completion_handler(this, url: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_open_u_r_l_configuration_completion_handler_block = Workspace_open_u_r_l_configuration_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_l_configuration_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openURL:configuration:completionHandler:\0")), url.raw(), configuration.raw(), bp);
+        return;
+    }
+
     // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: block method with an NSArray<id> param not modelled
-    // SKIPPED `openApplicationAtURL:configuration:completionHandler:`: block-method msgSend shape not modelled
+    fn open_application_at_u_r_l_configuration_completion_handler(this, application_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_open_application_at_u_r_l_configuration_completion_handler_block = Workspace_open_application_at_u_r_l_configuration_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_configuration_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("openApplicationAtURL:configuration:completionHandler:\0")), application_u_r_l.raw(), configuration.raw(), bp);
+        return;
+    }
+
     fn select_file_in_file_viewer_rooted_at_path(this, full_path: str, root_full_path: str) -> bool {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("selectFile:inFileViewerRootedAtPath:\0")), bridge::nsstring(full_path), bridge::nsstring(root_full_path)) != (0 as i8);
     }
@@ -431,9 +559,30 @@ impl Workspace {
         return out;
     }
 
-    // SKIPPED `setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:`: block-method msgSend shape not modelled
+    fn set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_of_file_at_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentTypeOfFileAtURL:completionHandler:\0")), application_u_r_l.raw(), url.raw(), bp);
+        return;
+    }
+
+    fn set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler(this, application_u_r_l: URL, url_scheme: str, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_u_r_ls_with_scheme_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:\0")), application_u_r_l.raw(), bridge::nsstring(url_scheme), bp);
+        return;
+    }
+
+    fn set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler(this, application_u_r_l: URL, url: URL, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_file_at_u_r_l_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenFileAtURL:completionHandler:\0")), application_u_r_l.raw(), url.raw(), bp);
+        return;
+    }
+
     fn u_r_l_for_application_to_open_content_type(this, content_type: UTType) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("URLForApplicationToOpenContentType:\0")), content_type.raw());
         if obj == { 0 as *u8 } {
@@ -455,7 +604,14 @@ impl Workspace {
         return out;
     }
 
-    // SKIPPED `setDefaultApplicationAtURL:toOpenContentType:completionHandler:`: block-method msgSend shape not modelled
+    fn set_default_application_at_u_r_l_to_open_content_type_completion_handler(this, application_u_r_l: URL, content_type: UTType, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block = Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_set_default_application_at_u_r_l_to_open_content_type_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setDefaultApplicationAtURL:toOpenContentType:completionHandler:\0")), application_u_r_l.raw(), content_type.raw(), bp);
+        return;
+    }
+
     fn shared_workspace() -> Workspace {
         return Workspace { _obj: rt::msg_id(rt::get_class(#str_ptr("NSWorkspace\0")), rt::sel(#str_ptr("sharedWorkspace\0"))) };
     }

@@ -591,7 +591,10 @@ impl Document {
     }
 
     // SKIPPED `initWithContentsOfURL:ofType:error:`: extra init variant (one `new` per type)
-    // SKIPPED `initForURL:withContentsOfURL:ofType:error:`: msgSend shape `id_id_id_id_id` not yet modelled
+    fn init_for_u_r_l_with_contents_of_u_r_l_of_type_error(this, url_or_nil: URL, contents_u_r_l: URL, type_name: str, out_error: *u8) -> *u8 {
+        return rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("initForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), contents_u_r_l.raw(), bridge::nsstring(type_name), out_error);
+    }
+
     // SKIPPED `performActivityWithSynchronousWaiting:usingBlock:`: block-method msgSend shape not modelled
     fn continue_activity_using_block(this, cb: fn(*u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
@@ -684,7 +687,10 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveDocumentTo:\0")), sender);
     }
 
-    // SKIPPED `saveDocumentWithDelegate:didSaveSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
+    fn save_document_with_delegate_did_save_selector_context_info(this, delegate: *u8, did_save_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("saveDocumentWithDelegate:didSaveSelector:contextInfo:\0")), delegate, did_save_selector, context_info);
+    }
+
     // SKIPPED `runModalSavePanelForSaveOperation:delegate:didSaveSelector:contextInfo:`: msgSend shape `void_i64_id_id_id` not yet modelled
     fn prepare_save_panel(this, save_panel: SavePanel) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("prepareSavePanel:\0")), save_panel.raw()) != (0 as i8);
@@ -692,7 +698,10 @@ impl Document {
 
     // SKIPPED `saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:`: msgSend shape `void_id_id_i64_id_id_id` not yet modelled
     // SKIPPED `saveToURL:ofType:forSaveOperation:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `canAsynchronouslyWriteToURL:ofType:forSaveOperation:`: msgSend shape `i8_id_id_i64` not yet modelled
+    fn can_asynchronously_write_to_u_r_l_of_type_for_save_operation(this, url: URL, type_name: str, save_operation: SaveOperationType) -> bool {
+        return rt::msg_i8_id_id_i64(this._obj, rt::sel(#str_ptr("canAsynchronouslyWriteToURL:ofType:forSaveOperation:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation)) != (0 as i8);
+    }
+
     fn check_autosaving_safety_and_return_error(this, out_error: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("checkAutosavingSafetyAndReturnError:\0")), out_error) != (0 as i8);
     }
@@ -701,7 +710,10 @@ impl Document {
         rt::msg_void(this._obj, rt::sel(#str_ptr("scheduleAutosaving\0")));
     }
 
-    // SKIPPED `autosaveDocumentWithDelegate:didAutosaveSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
+    fn autosave_document_with_delegate_did_autosave_selector_context_info(this, delegate: *u8, did_autosave_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("autosaveDocumentWithDelegate:didAutosaveSelector:contextInfo:\0")), delegate, did_autosave_selector, context_info);
+    }
+
     // SKIPPED `autosaveWithImplicitCancellability:completionHandler:`: block-method msgSend shape not modelled
     fn browse_document_versions(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("browseDocumentVersions:\0")), sender);
@@ -715,7 +727,10 @@ impl Document {
         return;
     }
 
-    // SKIPPED `canCloseDocumentWithDelegate:shouldCloseSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
+    fn can_close_document_with_delegate_should_close_selector_context_info(this, delegate: *u8, should_close_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("canCloseDocumentWithDelegate:shouldCloseSelector:contextInfo:\0")), delegate, should_close_selector, context_info);
+    }
+
     fn close(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("close\0")));
     }
@@ -724,7 +739,10 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("duplicateDocument:\0")), sender);
     }
 
-    // SKIPPED `duplicateDocumentWithDelegate:didDuplicateSelector:contextInfo:`: msgSend shape `void_id_id_id` not yet modelled
+    fn duplicate_document_with_delegate_did_duplicate_selector_context_info(this, delegate: *u8, did_duplicate_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("duplicateDocumentWithDelegate:didDuplicateSelector:contextInfo:\0")), delegate, did_duplicate_selector, context_info);
+    }
+
     fn duplicate_and_return_error(this, out_error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("duplicateAndReturnError:\0")), out_error);
         if obj == { 0 as *u8 } {
@@ -805,7 +823,10 @@ impl Document {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("runPageLayout:\0")), sender);
     }
 
-    // SKIPPED `runModalPageLayoutWithPrintInfo:delegate:didRunSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn run_modal_page_layout_with_print_info_delegate_did_run_selector_context_info(this, print_info: PrintInfo, delegate: *u8, did_run_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("runModalPageLayoutWithPrintInfo:delegate:didRunSelector:contextInfo:\0")), print_info.raw(), delegate, did_run_selector, context_info);
+    }
+
     fn prepare_page_layout(this, page_layout: PageLayout) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("preparePageLayout:\0")), page_layout.raw()) != (0 as i8);
     }
@@ -820,7 +841,10 @@ impl Document {
 
     // SKIPPED `printDocumentWithSettings:showPrintPanel:delegate:didPrintSelector:contextInfo:`: param `NSDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — generic collection
     // SKIPPED `printOperationWithSettings:error:`: param `NSDictionary<NSPrintInfoAttributeKey,id> * _Nonnull` — generic collection
-    // SKIPPED `runModalPrintOperation:delegate:didRunSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn run_modal_print_operation_delegate_did_run_selector_context_info(this, print_operation: PrintOperation, delegate: *u8, did_run_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("runModalPrintOperation:delegate:didRunSelector:contextInfo:\0")), print_operation.raw(), delegate, did_run_selector, context_info);
+    }
+
     fn save_document_to_p_d_f(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveDocumentToPDF:\0")), sender);
     }
@@ -849,7 +873,10 @@ impl Document {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("updateChangeCountWithToken:forSaveOperation:\0")), change_count_token, save_operation_type_raw(save_operation));
     }
 
-    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
+    fn present_error_modal_for_window_delegate_did_present_selector_context_info(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("presentError:modalForWindow:delegate:didPresentSelector:contextInfo:\0")), error.raw(), window.raw(), delegate, did_present_selector, context_info);
+    }
+
     fn present_error(this, error: Error) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
     }
@@ -890,7 +917,10 @@ impl Document {
         rt::msg_void(this._obj, rt::sel(#str_ptr("showWindows\0")));
     }
 
-    // SKIPPED `shouldCloseWindowController:delegate:shouldCloseSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn should_close_window_controller_delegate_should_close_selector_context_info(this, window_controller: WindowController, delegate: *u8, should_close_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("shouldCloseWindowController:delegate:shouldCloseSelector:contextInfo:\0")), window_controller.raw(), delegate, should_close_selector, context_info);
+    }
+
     fn set_display_name(this, display_name_or_nil: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDisplayName:\0")), bridge::nsstring(display_name_or_nil));
     }
@@ -1202,7 +1232,11 @@ impl Document {
         return option::some(Data::from_raw(obj));
     }
 
-    // SKIPPED `fileAttributesToWriteToFile:ofType:saveOperation:`: msgSend shape `id_id_id_i64` not yet modelled
+    fn file_attributes_to_write_to_file_of_type_save_operation(this, full_document_path: str, document_type_name: str, save_operation_type: SaveOperationType) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_id_id_i64(this._obj, rt::sel(#str_ptr("fileAttributesToWriteToFile:ofType:saveOperation:\0")), bridge::nsstring(full_document_path), bridge::nsstring(document_type_name), save_operation_type_raw(save_operation_type));
+        return bridge::obj_option(obj);
+    }
+
     fn file_name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fileName\0")));
         return bridge::to_text_option(ns);
@@ -1264,7 +1298,10 @@ impl Document {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("writeToURL:ofType:\0")), url.raw(), bridge::nsstring(type_)) != (0 as i8);
     }
 
-    // SKIPPED `writeWithBackupToFile:ofType:saveOperation:`: msgSend shape `i8_id_id_i64` not yet modelled
+    fn write_with_backup_to_file_of_type_save_operation(this, full_document_path: str, document_type_name: str, save_operation_type: SaveOperationType) -> bool {
+        return rt::msg_i8_id_id_i64(this._obj, rt::sel(#str_ptr("writeWithBackupToFile:ofType:saveOperation:\0")), bridge::nsstring(full_document_path), bridge::nsstring(document_type_name), save_operation_type_raw(save_operation_type)) != (0 as i8);
+    }
+
     fn should_run_save_panel_with_accessory_view(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("shouldRunSavePanelWithAccessoryView\0"))) != (0 as i8);
     }

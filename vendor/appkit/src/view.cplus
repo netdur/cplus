@@ -442,7 +442,10 @@ impl View {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getRectsBeingDrawn:count:\0")), rects, count);
     }
 
-    // SKIPPED `needsToDrawRect:`: msgSend shape `i8_rect` not yet modelled
+    fn needs_to_draw_rect(this, rect: rt::Rect) -> bool {
+        return rt::msg_i8_rect(this._obj, rt::sel(#str_ptr("needsToDrawRect:\0")), rect) != (0 as i8);
+    }
+
     fn view_did_hide(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("viewDidHide\0")));
     }
@@ -455,7 +458,10 @@ impl View {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addSubview:\0")), view.raw());
     }
 
-    // SKIPPED `addSubview:positioned:relativeTo:`: msgSend shape `void_id_i64_id` not yet modelled
+    fn add_subview_positioned_relative_to(this, view: View, place: WindowOrderingMode, other_view: View) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("addSubview:positioned:relativeTo:\0")), view.raw(), window_ordering_mode_raw(place), other_view.raw());
+    }
+
     // SKIPPED `sortSubviewsUsingFunction:context:`: param `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)` — unmapped type `NSComparisonResult (* _Nonnull)(__kindof NSView * _Nonnull, __kindof NSView * _Nonnull, void * _Nullable)`
     fn view_will_move_to_window(this, new_window: Window) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("viewWillMoveToWindow:\0")), new_window.raw());
@@ -677,7 +683,10 @@ impl View {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("scrollPoint:\0")), point);
     }
 
-    // SKIPPED `scrollRectToVisible:`: msgSend shape `i8_rect` not yet modelled
+    fn scroll_rect_to_visible(this, rect: rt::Rect) -> bool {
+        return rt::msg_i8_rect(this._obj, rt::sel(#str_ptr("scrollRectToVisible:\0")), rect) != (0 as i8);
+    }
+
     fn autoscroll(this, event: *u8) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("autoscroll:\0")), event) != (0 as i8);
     }
@@ -688,7 +697,14 @@ impl View {
 
     // SKIPPED `scrollRect:by:`: msgSend shape `void_rect_size` not yet modelled
     // SKIPPED `translateRectsNeedingDisplayInRect:by:`: msgSend shape `void_rect_size` not yet modelled
-    // SKIPPED `hitTest:`: msgSend shape `id_point` not yet modelled
+    fn hit_test(this, point: rt::Point) -> option::Option[View] {
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("hitTest:\0")), point);
+        if obj == { 0 as *u8 } {
+            return option::Option[View]::None;
+        }
+        return option::some(View::from_raw(obj));
+    }
+
     // SKIPPED `mouse:inRect:`: msgSend shape `i8_point_rect` not yet modelled
     fn view_with_tag(this, tag: i64) -> option::Option[View] {
         let obj: *u8 = rt::msg_id_i64(this._obj, rt::sel(#str_ptr("viewWithTag:\0")), tag);
@@ -1285,7 +1301,10 @@ impl View {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isInFullScreenMode\0"))) != (0 as i8);
     }
 
-    // SKIPPED `showDefinitionForAttributedString:atPoint:`: msgSend shape `void_id_point` not yet modelled
+    fn show_definition_for_attributed_string_at_point(this, attr_string: AttributedString, text_baseline_origin: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("showDefinitionForAttributedString:atPoint:\0")), attr_string.raw(), text_baseline_origin);
+    }
+
     // SKIPPED `showDefinitionForAttributedString:range:options:baselineOriginProvider:`: leading param `NSDictionary<NSDefinitionOptionKey,id> * _Nullable` — generic collection
     fn is_drawing_find_indicator(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingFindIndicator\0"))) != (0 as i8);

@@ -6,6 +6,25 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 
+#[repr(C)]
+struct PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn PageLayout_begin_sheet_using_print_info_on_window_completion_handler_invoke(block: *u8, a0: i64) {
+    let bl: *PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block = { block as *PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `NSPrintInfo` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct PrintInfo {
     opaque _obj: *u8,
@@ -88,8 +107,18 @@ impl PageLayout {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeAccessoryController:\0")), accessory_controller.raw());
     }
 
-    // SKIPPED `beginSheetUsingPrintInfo:onWindow:completionHandler:`: block-method msgSend shape not modelled
-    // SKIPPED `beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
+    fn begin_sheet_using_print_info_on_window_completion_handler(this, print_info: PrintInfo, parent_window: Window, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block = PageLayout_begin_sheet_using_print_info_on_window_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PageLayout_begin_sheet_using_print_info_on_window_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetUsingPrintInfo:onWindow:completionHandler:\0")), print_info.raw(), parent_window.raw(), bp);
+        return;
+    }
+
+    fn begin_sheet_with_print_info_modal_for_window_delegate_did_end_selector_context_info(this, print_info: PrintInfo, doc_window: Window, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetWithPrintInfo:modalForWindow:delegate:didEndSelector:contextInfo:\0")), print_info.raw(), doc_window.raw(), delegate, did_end_selector, context_info);
+    }
+
     fn run_modal_with_print_info(this, print_info: PrintInfo) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("runModalWithPrintInfo:\0")), print_info.raw());
     }

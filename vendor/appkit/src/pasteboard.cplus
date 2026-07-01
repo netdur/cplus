@@ -101,7 +101,10 @@ impl Pasteboard {
         rt::msg_void(this._obj, rt::sel(#str_ptr("releaseGlobally\0")));
     }
 
-    // SKIPPED `prepareForNewContentsWithOptions:`: msgSend shape `i64_u64` not yet modelled
+    fn prepare_for_new_contents_with_options(this, options: u64) -> i64 {
+        return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("prepareForNewContentsWithOptions:\0")), options);
+    }
+
     fn clear_contents(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("clearContents\0")));
     }
@@ -294,7 +297,10 @@ impl PasteboardWriting {
         return out;
     }
 
-    // SKIPPED `writingOptionsForType:pasteboard:`: msgSend shape `u64_id_id` not yet modelled
+    fn writing_options_for_type_pasteboard(this, type_: str, pasteboard: Pasteboard) -> u64 {
+        return rt::msg_u64_id_id(this._obj, rt::sel(#str_ptr("writingOptionsForType:pasteboard:\0")), bridge::nsstring(type_), pasteboard.raw());
+    }
+
     fn pasteboard_property_list_for_type(this, type_: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("pasteboardPropertyListForType:\0")), bridge::nsstring(type_));
         return bridge::obj_option(obj);
@@ -346,7 +352,10 @@ impl PasteboardReading {
         return out;
     }
 
-    // SKIPPED `readingOptionsForType:pasteboard:`: msgSend shape `u64_id_id` not yet modelled
+    fn reading_options_for_type_pasteboard(type_: str, pasteboard: Pasteboard) -> u64 {
+        return rt::msg_u64_id_id(rt::get_class(#str_ptr("NSPasteboardReading\0")), rt::sel(#str_ptr("readingOptionsForType:pasteboard:\0")), bridge::nsstring(type_), pasteboard.raw());
+    }
+
     fn init_with_pasteboard_property_list_of_type(this, property_list: *u8, type_: str) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("initWithPasteboardPropertyList:ofType:\0")), property_list, bridge::nsstring(type_));
         return bridge::obj_option(obj);

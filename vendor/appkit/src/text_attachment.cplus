@@ -76,12 +76,14 @@ impl TextAttachmentViewProvider {
 
     fn from_raw(ptr: *u8) -> TextAttachmentViewProvider { return TextAttachmentViewProvider { _obj: ptr }; }
 
-    // SKIPPED `initWithTextAttachment:parentView:textLayoutManager:location:`: init arg shape not yet modelled
-    // SKIPPED `init`: extra init variant (one `new` per type)
-    fn new() -> TextAttachmentViewProvider {
-        return TextAttachmentViewProvider { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSTextAttachmentViewProvider\0")), rt::sel(#str_ptr("new\0")))) };
+    fn new(text_attachment: TextAttachment, parent_view: View, text_layout_manager: TextLayoutManager, location: TextLocation) -> TextAttachmentViewProvider {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextAttachmentViewProvider\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextAttachmentViewProvider { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithTextAttachment:parentView:textLayoutManager:location:\0")), text_attachment.raw(), parent_view.raw(), text_layout_manager.raw(), location.raw()) };
     }
 
+    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `new`: method `new` already defined
     fn load_view(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadView\0")));
     }

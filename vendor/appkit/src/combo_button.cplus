@@ -67,9 +67,18 @@ impl ComboButton {
 
     fn from_raw(ptr: *u8) -> ComboButton { return ComboButton { _obj: ptr }; }
 
-    // SKIPPED `comboButtonWithTitle:menu:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
-    // SKIPPED `comboButtonWithImage:menu:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
-    // SKIPPED `comboButtonWithTitle:image:menu:target:action:`: msgSend shape `id_id_id_id_id_id` not yet modelled
+    fn combo_button_with_title_menu_target_action(title: str, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+        return ComboButton { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithTitle:menu:target:action:\0")), bridge::nsstring(title), menu, target, action) };
+    }
+
+    fn combo_button_with_image_menu_target_action(image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+        return ComboButton { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithImage:menu:target:action:\0")), image, menu, target, action) };
+    }
+
+    fn combo_button_with_title_image_menu_target_action(title: str, image: *u8, menu: *u8, target: *u8, action: *u8) -> ComboButton {
+        return ComboButton { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSComboButton\0")), rt::sel(#str_ptr("comboButtonWithTitle:image:menu:target:action:\0")), bridge::nsstring(title), image, menu, target, action) };
+    }
+
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);

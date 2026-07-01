@@ -559,6 +559,25 @@ fn Window_request_sharing_of_window_completion_handler_invoke(block: *u8, a0: *u
     return;
 }
 
+#[repr(C)]
+struct Window_request_sharing_of_window_using_preview_title_completion_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Window_request_sharing_of_window_using_preview_title_completion_handler_invoke(block: *u8, a0: *u8) {
+    let bl: *Window_request_sharing_of_window_using_preview_title_completion_handler_block = { block as *Window_request_sharing_of_window_using_preview_title_completion_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
 // `CADisplayLink` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct CADisplayLink {
     opaque _obj: *u8,
@@ -886,7 +905,14 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTitleWithRepresentedFilename:\0")), bridge::nsstring(filename));
     }
 
-    // SKIPPED `fieldEditor:forObject:`: msgSend shape `id_i8_id` not yet modelled
+    fn field_editor_for_object(this, create_flag: bool, object: *u8) -> option::Option[Text] {
+        let obj: *u8 = rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("fieldEditor:forObject:\0")), create_flag as i8, object);
+        if obj == { 0 as *u8 } {
+            return option::Option[Text]::None;
+        }
+        return option::some(Text::from_raw(obj));
+    }
+
     fn end_editing_for(this, object: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("endEditingFor:\0")), object);
     }
@@ -964,7 +990,10 @@ impl Window {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `setContentBorderThickness:forEdge:`: msgSend shape `void_f64_i64` not yet modelled
+    fn set_content_border_thickness_for_edge(this, thickness: f64, edge: RectEdge) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setContentBorderThickness:forEdge:\0")), thickness, rect_edge_raw(edge));
+    }
+
     fn content_border_thickness_for_edge(this, edge: RectEdge) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("contentBorderThicknessForEdge:\0")), rect_edge_raw(edge));
     }
@@ -1109,7 +1138,10 @@ impl Window {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("saveFrameUsingName:\0")), bridge::nsstring(name));
     }
 
-    // SKIPPED `setFrameUsingName:force:`: msgSend shape `i8_id_i8` not yet modelled
+    fn set_frame_using_name_force(this, name: str, force: bool) -> bool {
+        return rt::msg_i8_id_i8(this._obj, rt::sel(#str_ptr("setFrameUsingName:force:\0")), bridge::nsstring(name), force as i8) != (0 as i8);
+    }
+
     fn set_frame_using_name(this, name: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setFrameUsingName:\0")), bridge::nsstring(name)) != (0 as i8);
     }
@@ -1254,7 +1286,14 @@ impl Window {
         return;
     }
 
-    // SKIPPED `requestSharingOfWindowUsingPreview:title:completionHandler:`: block-method msgSend shape not modelled
+    fn request_sharing_of_window_using_preview_title_completion_handler(this, image: Image, title: str, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_request_sharing_of_window_using_preview_title_completion_handler_block = Window_request_sharing_of_window_using_preview_title_completion_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_request_sharing_of_window_using_preview_title_completion_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("requestSharingOfWindowUsingPreview:title:completionHandler:\0")), image.raw(), bridge::nsstring(title), bp);
+        return;
+    }
+
     fn default_depth_limit() -> WindowDepth {
         return window_depth_from_raw(rt::msg_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("defaultDepthLimit\0"))));
     }
@@ -1917,7 +1956,10 @@ impl Window {
     }
 
     // SKIPPED `nextEventMatchingMask:untilDate:inMode:dequeue:`: msgSend shape `id_u64_id_id_i8` not yet modelled
-    // SKIPPED `discardEventsMatchingMask:beforeEvent:`: msgSend shape `void_u64_id` not yet modelled
+    fn discard_events_matching_mask_before_event(this, mask: u64, last_event: Event) {
+        rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("discardEventsMatchingMask:beforeEvent:\0")), mask, last_event.raw());
+    }
+
     fn post_event_at_start(this, event: Event, flag: bool) {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("postEvent:atStart:\0")), event.raw(), flag as i8);
     }

@@ -68,7 +68,10 @@ impl TableHeaderView {
         return rt::msg_rect_i64(this._obj, rt::sel(#str_ptr("headerRectOfColumn:\0")), column);
     }
 
-    // SKIPPED `columnAtPoint:`: msgSend shape `i64_point` not yet modelled
+    fn column_at_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("columnAtPoint:\0")), point);
+    }
+
     fn table_view(this) -> option::Option[TableView] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tableView\0")));
         if obj == { 0 as *u8 } {

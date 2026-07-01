@@ -22,7 +22,10 @@ impl TextLineFragment {
     // SKIPPED `init`: extra init variant (one `new` per type)
     // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
     // SKIPPED `locationForCharacterAtIndex:`: msgSend shape `point_i64` not yet modelled
-    // SKIPPED `characterIndexForPoint:`: msgSend shape `i64_point` not yet modelled
+    fn character_index_for_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
+    }
+
     // SKIPPED `fractionOfDistanceThroughGlyphForPoint:`: msgSend shape `f64_point` not yet modelled
     fn attributed_string(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0")));

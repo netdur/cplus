@@ -320,7 +320,14 @@ impl CollectionViewLayout {
         return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `layoutAttributesForDropTargetAtPoint:`: msgSend shape `id_point` not yet modelled
+    fn layout_attributes_for_drop_target_at_point(this, point_in_collection_view: rt::Point) -> option::Option[CollectionViewLayoutAttributes] {
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("layoutAttributesForDropTargetAtPoint:\0")), point_in_collection_view);
+        if obj == { 0 as *u8 } {
+            return option::Option[CollectionViewLayoutAttributes]::None;
+        }
+        return option::some(CollectionViewLayoutAttributes::from_raw(obj));
+    }
+
     fn layout_attributes_for_inter_item_gap_before_index_path(this, index_path: IndexPath) -> option::Option[CollectionViewLayoutAttributes] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("layoutAttributesForInterItemGapBeforeIndexPath:\0")), index_path.raw());
         if obj == { 0 as *u8 } {
@@ -329,7 +336,10 @@ impl CollectionViewLayout {
         return option::some(CollectionViewLayoutAttributes::from_raw(obj));
     }
 
-    // SKIPPED `shouldInvalidateLayoutForBoundsChange:`: msgSend shape `i8_rect` not yet modelled
+    fn should_invalidate_layout_for_bounds_change(this, new_bounds: rt::Rect) -> bool {
+        return rt::msg_i8_rect(this._obj, rt::sel(#str_ptr("shouldInvalidateLayoutForBoundsChange:\0")), new_bounds) != (0 as i8);
+    }
+
     fn invalidation_context_for_bounds_change(this, new_bounds: rt::Rect) -> CollectionViewLayoutInvalidationContext {
         return CollectionViewLayoutInvalidationContext::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("invalidationContextForBoundsChange:\0")), new_bounds));
     }

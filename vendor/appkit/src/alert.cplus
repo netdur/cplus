@@ -248,8 +248,14 @@ impl Alert {
         return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }
 
-    // SKIPPED `alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:`: msgSend shape `id_id_id_id_id_id` not yet modelled
-    // SKIPPED `beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn alert_with_message_text_default_button_alternate_button_other_button_informative_text_with_format(message: str, default_button: str, alternate_button: str, other_button: str, format: str) -> Alert {
+        return Alert { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSAlert\0")), rt::sel(#str_ptr("alertWithMessageText:defaultButton:alternateButton:otherButton:informativeTextWithFormat:\0")), bridge::nsstring(message), bridge::nsstring(default_button), bridge::nsstring(alternate_button), bridge::nsstring(other_button), bridge::nsstring(format)) };
+    }
+
+    fn begin_sheet_modal_for_window_modal_delegate_did_end_selector_context_info(this, window: Window, delegate: *u8, did_end_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:\0")), window.raw(), delegate, did_end_selector, context_info);
+    }
+
 }
 
 // `NSAlertDelegate` delegate protocol -> runtime class-synthesis helper.

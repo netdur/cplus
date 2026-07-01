@@ -42,9 +42,18 @@ impl AttributedString {
     }
 
     // SKIPPED `nextWordFromIndex:forward:`: msgSend shape `u64_u64_i8` not yet modelled
-    // SKIPPED `rangeOfTextBlock:atIndex:`: msgSend shape `range_id_u64` not yet modelled
-    // SKIPPED `rangeOfTextTable:atIndex:`: msgSend shape `range_id_u64` not yet modelled
-    // SKIPPED `rangeOfTextList:atIndex:`: msgSend shape `range_id_u64` not yet modelled
+    fn range_of_text_block_at_index(this, block: TextBlock, location: u64) -> rt::Range {
+        return rt::msg_range_id_u64(this._obj, rt::sel(#str_ptr("rangeOfTextBlock:atIndex:\0")), block.raw(), location);
+    }
+
+    fn range_of_text_table_at_index(this, table: TextTable, location: u64) -> rt::Range {
+        return rt::msg_range_id_u64(this._obj, rt::sel(#str_ptr("rangeOfTextTable:atIndex:\0")), table.raw(), location);
+    }
+
+    fn range_of_text_list_at_index(this, list: TextList, location: u64) -> rt::Range {
+        return rt::msg_range_id_u64(this._obj, rt::sel(#str_ptr("rangeOfTextList:atIndex:\0")), list.raw(), location);
+    }
+
     // SKIPPED `itemNumberInTextList:atIndex:`: msgSend shape `i64_id_u64` not yet modelled
     // SKIPPED `textTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection
     // SKIPPED `textUnfilteredTypes`: return `API_AVAILABLE NSArray<NSString *> *` — generic collection

@@ -16,9 +16,15 @@ impl PanGestureRecognizer {
 
     fn from_raw(ptr: *u8) -> PanGestureRecognizer { return PanGestureRecognizer { _obj: ptr }; }
 
-    // SKIPPED `translationInView:`: msgSend shape `point_id` not yet modelled
+    fn translation_in_view(this, view: *u8) -> rt::Point {
+        return rt::msg_point_id(this._obj, rt::sel(#str_ptr("translationInView:\0")), view);
+    }
+
     // SKIPPED `setTranslation:inView:`: msgSend shape `void_point_id` not yet modelled
-    // SKIPPED `velocityInView:`: msgSend shape `point_id` not yet modelled
+    fn velocity_in_view(this, view: *u8) -> rt::Point {
+        return rt::msg_point_id(this._obj, rt::sel(#str_ptr("velocityInView:\0")), view);
+    }
+
     fn button_mask(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("buttonMask\0")));
     }

@@ -98,7 +98,10 @@ impl RunningApplication {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("unhide\0"))) != (0 as i8);
     }
 
-    // SKIPPED `activateFromApplication:options:`: msgSend shape `i8_id_u64` not yet modelled
+    fn activate_from_application_options(this, application: RunningApplication, options: u64) -> bool {
+        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("activateFromApplication:options:\0")), application.raw(), options) != (0 as i8);
+    }
+
     fn activate_with_options(this, options: u64) -> bool {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("activateWithOptions:\0")), options) != (0 as i8);
     }

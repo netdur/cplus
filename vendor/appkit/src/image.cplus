@@ -484,7 +484,10 @@ impl Image {
     // SKIPPED `CGImageForProposedRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `bestRepresentationForRect:context:hints:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
     // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: param `NSDictionary<NSImageHintKey,id> * _Nullable` — generic collection
-    // SKIPPED `recommendedLayerContentsScale:`: msgSend shape `f64_f64` not yet modelled
+    fn recommended_layer_contents_scale(this, preferred_contents_scale: f64) -> f64 {
+        return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("recommendedLayerContentsScale:\0")), preferred_contents_scale);
+    }
+
     fn layer_contents_for_contents_scale(this, layer_contents_scale: f64) -> *u8 {
         return rt::msg_id_f64(this._obj, rt::sel(#str_ptr("layerContentsForContentsScale:\0")), layer_contents_scale);
     }

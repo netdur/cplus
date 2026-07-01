@@ -82,9 +82,18 @@ impl ATSTypesetter {
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("layoutParagraphAtPoint:\0")), line_fragment_origin);
     }
 
-    // SKIPPED `lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
-    // SKIPPED `paragraphSpacingBeforeGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
-    // SKIPPED `paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:`: msgSend shape `f64_u64_rect` not yet modelled
+    fn line_spacing_after_glyph_at_index_with_proposed_line_fragment_rect(this, glyph_index: u64, rect: rt::Rect) -> f64 {
+        return rt::msg_f64_u64_rect(this._obj, rt::sel(#str_ptr("lineSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:\0")), glyph_index, rect);
+    }
+
+    fn paragraph_spacing_before_glyph_at_index_with_proposed_line_fragment_rect(this, glyph_index: u64, rect: rt::Rect) -> f64 {
+        return rt::msg_f64_u64_rect(this._obj, rt::sel(#str_ptr("paragraphSpacingBeforeGlyphAtIndex:withProposedLineFragmentRect:\0")), glyph_index, rect);
+    }
+
+    fn paragraph_spacing_after_glyph_at_index_with_proposed_line_fragment_rect(this, glyph_index: u64, rect: rt::Rect) -> f64 {
+        return rt::msg_f64_u64_rect(this._obj, rt::sel(#str_ptr("paragraphSpacingAfterGlyphAtIndex:withProposedLineFragmentRect:\0")), glyph_index, rect);
+    }
+
     // SKIPPED `setHardInvalidation:forGlyphRange:`: msgSend shape `void_i8_range` not yet modelled
     // SKIPPED `getLineFragmentRect:usedRect:forParagraphSeparatorGlyphRange:atProposedOrigin:`: msgSend shape `void_id_id_range_point` not yet modelled
     fn uses_font_leading(this) -> bool {
@@ -166,6 +175,9 @@ impl ATSTypesetter {
     // SKIPPED `hyphenationFactorForGlyphAtIndex:`: msgSend shape `f32_u64` not yet modelled
     // SKIPPED `hyphenCharacterForGlyphAtIndex:`: return `UTF32Char` — unmapped type `UTF32Char`
     // SKIPPED `boundingBoxForControlGlyphAtIndex:forTextContainer:proposedLineFragment:glyphPosition:characterIndex:`: msgSend shape `rect_u64_id_rect_point_u64` not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:`: msgSend shape `u64_range_id_id_id_id` not yet modelled
+    fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits(this, glyphs_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8) -> u64 {
+        return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:\0")), glyphs_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer);
+    }
+
 }
 

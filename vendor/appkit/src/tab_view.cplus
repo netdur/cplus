@@ -217,7 +217,14 @@ impl TabView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeTabViewItem:\0")), tab_view_item.raw());
     }
 
-    // SKIPPED `tabViewItemAtPoint:`: msgSend shape `id_point` not yet modelled
+    fn tab_view_item_at_point(this, point: rt::Point) -> option::Option[TabViewItem] {
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("tabViewItemAtPoint:\0")), point);
+        if obj == { 0 as *u8 } {
+            return option::Option[TabViewItem]::None;
+        }
+        return option::some(TabViewItem::from_raw(obj));
+    }
+
     fn index_of_tab_view_item(this, tab_view_item: TabViewItem) -> i64 {
         return rt::msg_i64_id(this._obj, rt::sel(#str_ptr("indexOfTabViewItem:\0")), tab_view_item.raw());
     }

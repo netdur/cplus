@@ -201,7 +201,10 @@ impl SegmentedControl {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("selectSegmentWithTag:\0")), tag) != (0 as i8);
     }
 
-    // SKIPPED `setWidth:forSegment:`: msgSend shape `void_f64_i64` not yet modelled
+    fn set_width_for_segment(this, width: f64, segment: i64) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setWidth:forSegment:\0")), width, segment);
+    }
+
     fn width_for_segment(this, segment: i64) -> f64 {
         return rt::msg_f64_i64(this._obj, rt::sel(#str_ptr("widthForSegment:\0")), segment);
     }

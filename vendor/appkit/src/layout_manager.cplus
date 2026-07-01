@@ -321,10 +321,22 @@ impl LayoutManager {
         return rt::msg_i8_u64(this._obj, rt::sel(#str_ptr("isValidGlyphIndex:\0")), glyph_index) != (0 as i8);
     }
 
-    // SKIPPED `propertyForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
-    // SKIPPED `characterIndexForGlyphAtIndex:`: msgSend shape `u64_u64` not yet modelled
-    // SKIPPED `glyphIndexForCharacterAtIndex:`: msgSend shape `u64_u64` not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:`: msgSend shape `u64_range_id_id_id_id` not yet modelled
+    fn property_for_glyph_at_index(this, glyph_index: u64) -> u64 {
+        return rt::msg_u64_u64(this._obj, rt::sel(#str_ptr("propertyForGlyphAtIndex:\0")), glyph_index);
+    }
+
+    fn character_index_for_glyph_at_index(this, glyph_index: u64) -> u64 {
+        return rt::msg_u64_u64(this._obj, rt::sel(#str_ptr("characterIndexForGlyphAtIndex:\0")), glyph_index);
+    }
+
+    fn glyph_index_for_character_at_index(this, char_index: u64) -> u64 {
+        return rt::msg_u64_u64(this._obj, rt::sel(#str_ptr("glyphIndexForCharacterAtIndex:\0")), char_index);
+    }
+
+    fn get_glyphs_in_range_glyphs_properties_character_indexes_bidi_levels(this, glyph_range: rt::Range, glyph_buffer: *u8, props: *u8, char_index_buffer: *u8, bidi_level_buffer: *u8) -> u64 {
+        return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:\0")), glyph_range, glyph_buffer, props, char_index_buffer, bidi_level_buffer);
+    }
+
     fn set_text_container_for_glyph_range(this, container: TextContainer, glyph_range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("setTextContainer:forGlyphRange:\0")), container.raw(), glyph_range);
     }
@@ -349,7 +361,10 @@ impl LayoutManager {
 
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `textContainerForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `usedRectForTextContainer:`: msgSend shape `rect_id` not yet modelled
+    fn used_rect_for_text_container(this, container: TextContainer) -> rt::Rect {
+        return rt::msg_rect_id(this._obj, rt::sel(#str_ptr("usedRectForTextContainer:\0")), container.raw());
+    }
+
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentRectForGlyphAtIndex:effectiveRange:withoutAdditionalLayout:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
     // SKIPPED `lineFragmentUsedRectForGlyphAtIndex:effectiveRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
@@ -421,8 +436,14 @@ impl LayoutManager {
         rt::msg_void_id_id_range(this._obj, rt::sel(#str_ptr("addTemporaryAttribute:value:forCharacterRange:\0")), bridge::nsstring(attr_name), value, char_range);
     }
 
-    // SKIPPED `defaultLineHeightForFont:`: msgSend shape `f64_id` not yet modelled
-    // SKIPPED `defaultBaselineOffsetForFont:`: msgSend shape `f64_id` not yet modelled
+    fn default_line_height_for_font(this, the_font: *u8) -> f64 {
+        return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("defaultLineHeightForFont:\0")), the_font);
+    }
+
+    fn default_baseline_offset_for_font(this, the_font: *u8) -> f64 {
+        return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("defaultBaselineOffsetForFont:\0")), the_font);
+    }
+
     fn text_storage(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textStorage\0")));
         return bridge::obj_option(obj);
@@ -620,7 +641,10 @@ impl LayoutManager {
     }
 
     // SKIPPED `intAttribute:forGlyphAtIndex:`: msgSend shape `i64_i64_u64` not yet modelled
-    // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:`: msgSend shape `u64_range_id_id_id_id` not yet modelled
+    fn get_glyphs_in_range_glyphs_character_indexes_glyph_inscriptions_elastic_bits(this, glyph_range: rt::Range, glyph_buffer: *u8, char_index_buffer: *u8, inscribe_buffer: *u8, elastic_buffer: *u8) -> u64 {
+        return rt::msg_u64_range_id_id_id_id(this._obj, rt::sel(#str_ptr("getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:\0")), glyph_range, glyph_buffer, char_index_buffer, inscribe_buffer, elastic_buffer);
+    }
+
     // SKIPPED `getGlyphsInRange:glyphs:characterIndexes:glyphInscriptions:elasticBits:bidiLevels:`: msgSend shape `u64_range_id_id_id_id_id` not yet modelled
     // SKIPPED `getGlyphs:range:`: msgSend shape `u64_id_range` not yet modelled
     // SKIPPED `invalidateLayoutForCharacterRange:isSoft:actualCharacterRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`

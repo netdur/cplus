@@ -403,7 +403,10 @@ impl TableView {
 
     // SKIPPED `canDragRowsWithIndexes:atPoint:`: msgSend shape `i8_id_point` not yet modelled
     // SKIPPED `dragImageForRowsWithIndexes:tableColumns:event:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
-    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
+    fn set_dragging_source_operation_mask_for_local(this, mask: u64, is_local: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), mask, is_local as i8);
+    }
+
     fn set_drop_row_drop_operation(this, row: i64, drop_operation: TableViewDropOperation) {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("setDropRow:dropOperation:\0")), row, table_view_drop_operation_raw(drop_operation));
     }
@@ -453,9 +456,18 @@ impl TableView {
     }
 
     // SKIPPED `rowsInRect:`: msgSend shape `range_rect` not yet modelled
-    // SKIPPED `columnAtPoint:`: msgSend shape `i64_point` not yet modelled
-    // SKIPPED `rowAtPoint:`: msgSend shape `i64_point` not yet modelled
-    // SKIPPED `frameOfCellAtColumn:row:`: msgSend shape `rect_i64_i64` not yet modelled
+    fn column_at_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("columnAtPoint:\0")), point);
+    }
+
+    fn row_at_point(this, point: rt::Point) -> i64 {
+        return rt::msg_i64_point(this._obj, rt::sel(#str_ptr("rowAtPoint:\0")), point);
+    }
+
+    fn frame_of_cell_at_column_row(this, column: i64, row: i64) -> rt::Rect {
+        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("frameOfCellAtColumn:row:\0")), column, row);
+    }
+
     // SKIPPED `editColumn:row:withEvent:select:`: msgSend shape `void_i64_i64_id_i8` not yet modelled
     // SKIPPED `drawRow:clipRect:`: msgSend shape `void_i64_rect` not yet modelled
     fn highlight_selection_in_clip_rect(this, clip_rect: rt::Rect) {
@@ -903,8 +915,14 @@ impl TableView {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("drawsGrid\0"))) != (0 as i8);
     }
 
-    // SKIPPED `selectColumn:byExtendingSelection:`: msgSend shape `void_i64_i8` not yet modelled
-    // SKIPPED `selectRow:byExtendingSelection:`: msgSend shape `void_i64_i8` not yet modelled
+    fn select_column_by_extending_selection(this, column: i64, extend: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectColumn:byExtendingSelection:\0")), column, extend as i8);
+    }
+
+    fn select_row_by_extending_selection(this, row: i64, extend: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("selectRow:byExtendingSelection:\0")), row, extend as i8);
+    }
+
     fn selected_column_enumerator(this) -> *u8 {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("selectedColumnEnumerator\0")));
     }

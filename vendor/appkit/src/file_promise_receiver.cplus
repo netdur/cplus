@@ -7,6 +7,25 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 
+#[repr(C)]
+struct FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_block = { block as *FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
 // `NSOperationQueue` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct OperationQueue {
     opaque _obj: *u8,
@@ -29,7 +48,14 @@ impl FilePromiseReceiver {
 
     fn from_raw(ptr: *u8) -> FilePromiseReceiver { return FilePromiseReceiver { _obj: ptr }; }
 
-    // SKIPPED `receivePromisedFilesAtDestination:options:operationQueue:reader:`: block-method msgSend shape not modelled
+    fn receive_promised_files_at_destination_options_operation_queue_reader(this, destination_dir: *u8, options: *u8, operation_queue: OperationQueue, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_block = FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: FilePromiseReceiver_receive_promised_files_at_destination_options_operation_queue_reader_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("receivePromisedFilesAtDestination:options:operationQueue:reader:\0")), destination_dir, options, operation_queue.raw(), bp);
+        return;
+    }
+
     fn readable_dragged_types() -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSFilePromiseReceiver\0")), rt::sel(#str_ptr("readableDraggedTypes\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

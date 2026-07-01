@@ -40,9 +40,18 @@ impl ButtonTouchBarItem {
 
     fn from_raw(ptr: *u8) -> ButtonTouchBarItem { return ButtonTouchBarItem { _obj: ptr }; }
 
-    // SKIPPED `buttonTouchBarItemWithIdentifier:title:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
-    // SKIPPED `buttonTouchBarItemWithIdentifier:image:target:action:`: msgSend shape `id_id_id_id_id` not yet modelled
-    // SKIPPED `buttonTouchBarItemWithIdentifier:title:image:target:action:`: msgSend shape `id_id_id_id_id_id` not yet modelled
+    fn button_touch_bar_item_with_identifier_title_target_action(identifier: str, title: str, target: *u8, action: *u8) -> ButtonTouchBarItem {
+        return ButtonTouchBarItem { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSButtonTouchBarItem\0")), rt::sel(#str_ptr("buttonTouchBarItemWithIdentifier:title:target:action:\0")), bridge::nsstring(identifier), bridge::nsstring(title), target, action) };
+    }
+
+    fn button_touch_bar_item_with_identifier_image_target_action(identifier: str, image: Image, target: *u8, action: *u8) -> ButtonTouchBarItem {
+        return ButtonTouchBarItem { _obj: rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSButtonTouchBarItem\0")), rt::sel(#str_ptr("buttonTouchBarItemWithIdentifier:image:target:action:\0")), bridge::nsstring(identifier), image.raw(), target, action) };
+    }
+
+    fn button_touch_bar_item_with_identifier_title_image_target_action(identifier: str, title: str, image: Image, target: *u8, action: *u8) -> ButtonTouchBarItem {
+        return ButtonTouchBarItem { _obj: rt::msg_id_id_id_id_id_id(rt::get_class(#str_ptr("NSButtonTouchBarItem\0")), rt::sel(#str_ptr("buttonTouchBarItemWithIdentifier:title:image:target:action:\0")), bridge::nsstring(identifier), bridge::nsstring(title), image.raw(), target, action) };
+    }
+
     fn title(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("title\0")));
         return bridge::to_text(ns);

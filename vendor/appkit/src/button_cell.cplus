@@ -319,7 +319,10 @@ impl ButtonCell {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setButtonType:\0")), button_type_raw(type_));
     }
 
-    // SKIPPED `setPeriodicDelay:interval:`: msgSend shape `void_f32_f32` not yet modelled
+    fn set_periodic_delay_interval(this, delay: f32, interval: f32) {
+        rt::msg_void_f32_f32(this._obj, rt::sel(#str_ptr("setPeriodicDelay:interval:\0")), delay, interval);
+    }
+
     fn get_periodic_delay_interval(this, delay: *u8, interval: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getPeriodicDelay:interval:\0")), delay, interval);
     }
@@ -340,7 +343,10 @@ impl ButtonCell {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawBezelWithFrame:inView:\0")), frame, control_view);
     }
 
-    // SKIPPED `drawImage:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
+    fn draw_image_with_frame_in_view(this, image: Image, frame: rt::Rect, control_view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("drawImage:withFrame:inView:\0")), image.raw(), frame, control_view);
+    }
+
     // SKIPPED `drawTitle:withFrame:inView:`: msgSend shape `rect_id_rect_id` not yet modelled
     fn bezel_style(this) -> BezelStyle {
         return bezel_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bezelStyle\0"))));
@@ -515,7 +521,10 @@ impl ButtonCell {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `setKeyEquivalentFont:size:`: msgSend shape `void_id_f64` not yet modelled
+    fn set_key_equivalent_font_size(this, font_name: str, font_size: f64) {
+        rt::msg_void_id_f64(this._obj, rt::sel(#str_ptr("setKeyEquivalentFont:size:\0")), bridge::nsstring(font_name), font_size);
+    }
+
     fn gradient_type(this) -> GradientType {
         return gradient_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("gradientType\0"))));
     }

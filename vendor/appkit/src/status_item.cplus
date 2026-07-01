@@ -198,7 +198,10 @@ impl StatusItem {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAutosaveName:\0")), bridge::nsstring(autosave_name));
     }
 
-    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
+    fn send_action_on(this, mask: u64) -> i64 {
+        return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("sendActionOn:\0")), mask);
+    }
+
     fn draw_status_bar_background_in_rect_with_highlight(this, rect: rt::Rect, highlight: bool) {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawStatusBarBackgroundInRect:withHighlight:\0")), rect, highlight as i8);
     }

@@ -120,7 +120,10 @@ impl GestureRecognizer {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `locationInView:`: msgSend shape `point_id` not yet modelled
+    fn location_in_view(this, view: View) -> rt::Point {
+        return rt::msg_point_id(this._obj, rt::sel(#str_ptr("locationInView:\0")), view.raw());
+    }
+
     fn target(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("target\0")));
         return bridge::obj_option(obj);

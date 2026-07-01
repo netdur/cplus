@@ -219,7 +219,10 @@ impl Scroller {
         rt::msg_void_rect_i8(this._obj, rt::sel(#str_ptr("drawKnobSlotInRect:highlight:\0")), slot_rect, flag as i8);
     }
 
-    // SKIPPED `testPart:`: msgSend shape `i64_point` not yet modelled
+    fn test_part(this, point: rt::Point) -> ScrollerPart {
+        return scroller_part_from_raw(rt::msg_i64_point(this._obj, rt::sel(#str_ptr("testPart:\0")), point));
+    }
+
     fn track_knob(this, event: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("trackKnob:\0")), event);
     }
@@ -293,7 +296,10 @@ impl Scroller {
         rt::msg_void(this._obj, rt::sel(#str_ptr("drawParts\0")));
     }
 
-    // SKIPPED `drawArrow:highlight:`: msgSend shape `void_i64_i8` not yet modelled
+    fn draw_arrow_highlight(this, which_arrow: ScrollerArrow, flag: bool) {
+        rt::msg_void_i64_i8(this._obj, rt::sel(#str_ptr("drawArrow:highlight:\0")), scroller_arrow_raw(which_arrow), flag as i8);
+    }
+
     fn arrows_position(this) -> ScrollArrowPosition {
         return scroll_arrow_position_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("arrowsPosition\0"))));
     }

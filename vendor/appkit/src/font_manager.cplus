@@ -134,8 +134,22 @@ impl FontManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setFontMenu:\0")), new_menu.raw());
     }
 
-    // SKIPPED `fontMenu:`: msgSend shape `id_i8` not yet modelled
-    // SKIPPED `fontPanel:`: msgSend shape `id_i8` not yet modelled
+    fn font_menu(this, create: bool) -> option::Option[Menu] {
+        let obj: *u8 = rt::msg_id_i8(this._obj, rt::sel(#str_ptr("fontMenu:\0")), create as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
+    }
+
+    fn font_panel(this, create: bool) -> option::Option[FontPanel] {
+        let obj: *u8 = rt::msg_id_i8(this._obj, rt::sel(#str_ptr("fontPanel:\0")), create as i8);
+        if obj == { 0 as *u8 } {
+            return option::Option[FontPanel]::None;
+        }
+        return option::some(FontPanel::from_raw(obj));
+    }
+
     // SKIPPED `fontWithFamily:traits:weight:size:`: msgSend shape `id_id_u64_i64_f64` not yet modelled
     fn traits_of_font(this, font_obj: Font) -> u64 {
         return rt::msg_u64_id(this._obj, rt::sel(#str_ptr("traitsOfFont:\0")), font_obj.raw());
@@ -174,7 +188,10 @@ impl FontManager {
         return Font::from_raw(rt::msg_id_id_u64(this._obj, rt::sel(#str_ptr("convertFont:toNotHaveTrait:\0")), font_obj.raw(), trait_));
     }
 
-    // SKIPPED `convertWeight:ofFont:`: msgSend shape `id_i8_id` not yet modelled
+    fn convert_weight_of_font(this, up_flag: bool, font_obj: Font) -> Font {
+        return Font::from_raw(rt::msg_id_i8_id(this._obj, rt::sel(#str_ptr("convertWeight:ofFont:\0")), up_flag as i8, font_obj.raw()));
+    }
+
     fn send_action(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("sendAction\0"))) != (0 as i8);
     }
@@ -196,7 +213,10 @@ impl FontManager {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `addCollection:options:`: msgSend shape `i8_id_u64` not yet modelled
+    fn add_collection_options(this, collection_name: str, collection_options: u64) -> bool {
+        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("addCollection:options:\0")), bridge::nsstring(collection_name), collection_options) != (0 as i8);
+    }
+
     fn remove_collection(this, collection_name: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("removeCollection:\0")), bridge::nsstring(collection_name)) != (0 as i8);
     }
@@ -209,7 +229,10 @@ impl FontManager {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeFontDescriptor:fromCollection:\0")), descriptor.raw(), bridge::nsstring(collection));
     }
 
-    // SKIPPED `convertFontTraits:`: msgSend shape `u64_u64` not yet modelled
+    fn convert_font_traits(this, traits: u64) -> u64 {
+        return rt::msg_u64_u64(this._obj, rt::sel(#str_ptr("convertFontTraits:\0")), traits);
+    }
+
     fn shared_font_manager() -> FontManager {
         return FontManager { _obj: rt::msg_id(rt::get_class(#str_ptr("NSFontManager\0")), rt::sel(#str_ptr("sharedFontManager\0"))) };
     }
@@ -282,7 +305,10 @@ impl FontManager {
 
     // SKIPPED `target`: return `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
     // SKIPPED `setTarget:`: param `API_AVAILABLE id` — unmapped type `API_AVAILABLE id`
-    // SKIPPED `fontNamed:hasTraits:`: msgSend shape `i8_id_u64` not yet modelled
+    fn font_named_has_traits(this, f_name: str, some_traits: u64) -> bool {
+        return rt::msg_i8_id_u64(this._obj, rt::sel(#str_ptr("fontNamed:hasTraits:\0")), bridge::nsstring(f_name), some_traits) != (0 as i8);
+    }
+
     fn available_font_names_with_traits(this, some_traits: u64) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("availableFontNamesWithTraits:\0")), some_traits);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));

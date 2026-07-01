@@ -350,7 +350,10 @@ impl Responder {
         return rt::msg_i8_id_id(this._obj, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")), responder.raw(), event.raw()) != (0 as i8);
     }
 
-    // SKIPPED `presentError:modalForWindow:delegate:didPresentSelector:contextInfo:`: msgSend shape `void_id_id_id_id_id` not yet modelled
+    fn present_error_modal_for_window_delegate_did_present_selector_context_info(this, error: Error, window: Window, delegate: *u8, did_present_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("presentError:modalForWindow:delegate:didPresentSelector:contextInfo:\0")), error.raw(), window.raw(), delegate, did_present_selector, context_info);
+    }
+
     fn present_error(this, error: Error) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("presentError:\0")), error.raw()) != (0 as i8);
     }

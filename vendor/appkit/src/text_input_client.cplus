@@ -121,7 +121,10 @@ impl TextInputClient {
     }
 
     // SKIPPED `firstRectForCharacterRange:actualRange:`: param `NSRangePointer _Nullable` — unmapped type `NSRangePointer`
-    // SKIPPED `characterIndexForPoint:`: msgSend shape `u64_point` not yet modelled
+    fn character_index_for_point(this, point: rt::Point) -> u64 {
+        return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForPoint:\0")), point);
+    }
+
     fn attributed_string(this) -> AttributedString {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedString\0"))));
     }

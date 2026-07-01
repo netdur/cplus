@@ -147,7 +147,10 @@ impl TextLayoutFragment {
     }
 
     // SKIPPED `drawAtPoint:inContext:`: param `CGContextRef _Nonnull` — unmapped type `CGContextRef`
-    // SKIPPED `frameForTextAttachmentAtLocation:`: msgSend shape `rect_id` not yet modelled
+    fn frame_for_text_attachment_at_location(this, location: TextLocation) -> rt::Rect {
+        return rt::msg_rect_id(this._obj, rt::sel(#str_ptr("frameForTextAttachmentAtLocation:\0")), location.raw());
+    }
+
     fn text_layout_manager(this) -> option::Option[TextLayoutManager] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textLayoutManager\0")));
         if obj == { 0 as *u8 } {

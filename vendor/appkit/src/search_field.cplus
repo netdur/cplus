@@ -91,9 +91,18 @@ impl SearchField {
 
     // SKIPPED `delegate`: return `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
     // SKIPPED `setDelegate:`: param `API_AVAILABLE id<NSSearchFieldDelegate>` — generic collection
-    // SKIPPED `rectForSearchTextWhenCentered:`: msgSend shape `rect_i8` not yet modelled
-    // SKIPPED `rectForSearchButtonWhenCentered:`: msgSend shape `rect_i8` not yet modelled
-    // SKIPPED `rectForCancelButtonWhenCentered:`: msgSend shape `rect_i8` not yet modelled
+    fn rect_for_search_text_when_centered(this, is_centered: bool) -> rt::Rect {
+        return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("rectForSearchTextWhenCentered:\0")), is_centered as i8);
+    }
+
+    fn rect_for_search_button_when_centered(this, is_centered: bool) -> rt::Rect {
+        return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("rectForSearchButtonWhenCentered:\0")), is_centered as i8);
+    }
+
+    fn rect_for_cancel_button_when_centered(this, is_centered: bool) -> rt::Rect {
+        return rt::msg_rect_i8(this._obj, rt::sel(#str_ptr("rectForCancelButtonWhenCentered:\0")), is_centered as i8);
+    }
+
     fn centers_placeholder(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("centersPlaceholder\0"))) != (0 as i8);
     }

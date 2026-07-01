@@ -110,8 +110,14 @@ impl CollectionView {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("registerNib:forItemWithIdentifier:\0")), nib.raw(), bridge::nsstring(identifier));
     }
 
-    // SKIPPED `registerClass:forSupplementaryViewOfKind:withIdentifier:`: msgSend shape `void_id_id_id` not yet modelled
-    // SKIPPED `registerNib:forSupplementaryViewOfKind:withIdentifier:`: msgSend shape `void_id_id_id` not yet modelled
+    fn register_class_for_supplementary_view_of_kind_with_identifier(this, view_class: *u8, kind: str, identifier: str) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("registerClass:forSupplementaryViewOfKind:withIdentifier:\0")), view_class, bridge::nsstring(kind), bridge::nsstring(identifier));
+    }
+
+    fn register_nib_for_supplementary_view_of_kind_with_identifier(this, nib: Nib, kind: str, identifier: str) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("registerNib:forSupplementaryViewOfKind:withIdentifier:\0")), nib.raw(), bridge::nsstring(kind), bridge::nsstring(identifier));
+    }
+
     fn make_item_with_identifier_for_index_path(this, identifier: str, index_path: *u8) -> CollectionViewItem {
         return CollectionViewItem::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("makeItemWithIdentifier:forIndexPath:\0")), bridge::nsstring(identifier), index_path));
     }
@@ -155,7 +161,11 @@ impl CollectionView {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `indexPathForItemAtPoint:`: msgSend shape `id_point` not yet modelled
+    fn index_path_for_item_at_point(this, point: rt::Point) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("indexPathForItemAtPoint:\0")), point);
+        return bridge::obj_option(obj);
+    }
+
     // SKIPPED `supplementaryViewForElementKind:atIndexPath:`: return `NSView<NSCollectionViewElement> * _Nullable` — generic collection
     // SKIPPED `visibleSupplementaryViewsOfKind:`: return `NSArray<NSView<NSCollectionViewElement> *> * _Nonnull` — generic collection
     // SKIPPED `indexPathsForVisibleSupplementaryElementsOfKind:`: return `NSSet<NSIndexPath *> * _Nonnull` — generic collection
@@ -188,7 +198,10 @@ impl CollectionView {
     }
 
     // SKIPPED `scrollToItemsAtIndexPaths:scrollPosition:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
-    // SKIPPED `setDraggingSourceOperationMask:forLocal:`: msgSend shape `void_u64_i8` not yet modelled
+    fn set_dragging_source_operation_mask_for_local(this, drag_operation_mask: u64, local_destination: bool) {
+        rt::msg_void_u64_i8(this._obj, rt::sel(#str_ptr("setDraggingSourceOperationMask:forLocal:\0")), drag_operation_mask, local_destination as i8);
+    }
+
     // SKIPPED `draggingImageForItemsAtIndexPaths:withEvent:offset:`: param `NSSet<NSIndexPath *> * _Nonnull` — generic collection
     // SKIPPED `draggingImageForItemsAtIndexes:withEvent:offset:`: param `NSPointPointer _Nonnull` — unmapped type `NSPointPointer`
     // SKIPPED `dataSource`: return `API_AVAILABLE id<NSCollectionViewDataSource>` — generic collection

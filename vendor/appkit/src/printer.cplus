@@ -136,7 +136,10 @@ impl Printer {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `imageRectForPaper:`: msgSend shape `rect_id` not yet modelled
+    fn image_rect_for_paper(this, paper_name: str) -> rt::Rect {
+        return rt::msg_rect_id(this._obj, rt::sel(#str_ptr("imageRectForPaper:\0")), bridge::nsstring(paper_name));
+    }
+
     fn accepts_binary(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("acceptsBinary\0"))) != (0 as i8);
     }

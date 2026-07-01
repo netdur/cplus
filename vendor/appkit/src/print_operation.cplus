@@ -146,17 +146,38 @@ impl PrintOperation {
         return PrintOperation { _obj: rt::msg_id_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:printInfo:\0")), view.raw(), print_info.raw()) };
     }
 
-    // SKIPPED `PDFOperationWithView:insideRect:toData:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
-    // SKIPPED `PDFOperationWithView:insideRect:toPath:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toData:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toPath:printInfo:`: msgSend shape `id_id_rect_id_id` not yet modelled
+    fn p_d_f_operation_with_view_inside_rect_to_data_print_info(view: View, rect: rt::Rect, data: MutableData, print_info: PrintInfo) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("PDFOperationWithView:insideRect:toData:printInfo:\0")), view.raw(), rect, data.raw(), print_info.raw()) };
+    }
+
+    fn p_d_f_operation_with_view_inside_rect_to_path_print_info(view: View, rect: rt::Rect, path: str, print_info: PrintInfo) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("PDFOperationWithView:insideRect:toPath:printInfo:\0")), view.raw(), rect, bridge::nsstring(path), print_info.raw()) };
+    }
+
+    fn e_p_s_operation_with_view_inside_rect_to_data_print_info(view: View, rect: rt::Rect, data: MutableData, print_info: PrintInfo) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("EPSOperationWithView:insideRect:toData:printInfo:\0")), view.raw(), rect, data.raw(), print_info.raw()) };
+    }
+
+    fn e_p_s_operation_with_view_inside_rect_to_path_print_info(view: View, rect: rt::Rect, path: str, print_info: PrintInfo) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("EPSOperationWithView:insideRect:toPath:printInfo:\0")), view.raw(), rect, bridge::nsstring(path), print_info.raw()) };
+    }
+
     fn print_operation_with_view(view: View) -> PrintOperation {
         return PrintOperation { _obj: rt::msg_id_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("printOperationWithView:\0")), view.raw()) };
     }
 
-    // SKIPPED `PDFOperationWithView:insideRect:toData:`: msgSend shape `id_id_rect_id` not yet modelled
-    // SKIPPED `EPSOperationWithView:insideRect:toData:`: msgSend shape `id_id_rect_id` not yet modelled
-    // SKIPPED `runOperationModalForWindow:delegate:didRunSelector:contextInfo:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn p_d_f_operation_with_view_inside_rect_to_data(view: View, rect: rt::Rect, data: MutableData) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("PDFOperationWithView:insideRect:toData:\0")), view.raw(), rect, data.raw()) };
+    }
+
+    fn e_p_s_operation_with_view_inside_rect_to_data(view: View, rect: rt::Rect, data: MutableData) -> PrintOperation {
+        return PrintOperation { _obj: rt::msg_id_id_rect_id(rt::get_class(#str_ptr("NSPrintOperation\0")), rt::sel(#str_ptr("EPSOperationWithView:insideRect:toData:\0")), view.raw(), rect, data.raw()) };
+    }
+
+    fn run_operation_modal_for_window_delegate_did_run_selector_context_info(this, doc_window: Window, delegate: *u8, did_run_selector: *u8, context_info: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("runOperationModalForWindow:delegate:didRunSelector:contextInfo:\0")), doc_window.raw(), delegate, did_run_selector, context_info);
+    }
+
     fn run_operation(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("runOperation\0"))) != (0 as i8);
     }

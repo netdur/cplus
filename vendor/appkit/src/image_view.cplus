@@ -288,6 +288,9 @@ impl ImageView {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:\0")), symbol_image, transition);
     }
 
-    // SKIPPED `setSymbolImage:withContentTransition:options:`: msgSend shape `void_id_id_id` not yet modelled
+    fn set_symbol_image_with_content_transition_options(this, symbol_image: *u8, transition: *u8, options: *u8) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("setSymbolImage:withContentTransition:options:\0")), symbol_image, transition, options);
+    }
+
 }
 

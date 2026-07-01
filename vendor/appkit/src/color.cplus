@@ -131,17 +131,26 @@ impl Color {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `colorWithColorSpace:components:count:`: msgSend shape `id_id_id_i64` not yet modelled
+    fn color_with_color_space_components_count(space: ColorSpace, components: *u8, number_of_components: i64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_id_id_i64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithColorSpace:components:count:\0")), space.raw(), components, number_of_components)) };
+    }
+
     fn color_with_s_r_g_b_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithSRGBRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    // SKIPPED `colorWithGenericGamma22White:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    fn color_with_generic_gamma22_white_alpha(white: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithGenericGamma22White:alpha:\0")), white, alpha)) };
+    }
+
     fn color_with_display_p3_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDisplayP3Red:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
 
-    // SKIPPED `colorWithWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    fn color_with_white_alpha(white: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithWhite:alpha:\0")), white, alpha)) };
+    }
+
     fn color_with_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
@@ -176,7 +185,10 @@ impl Color {
     }
 
     // SKIPPED `colorWithName:dynamicProvider:`: block method with non-void return
-    // SKIPPED `colorWithDeviceWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    fn color_with_device_white_alpha(white: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceWhite:alpha:\0")), white, alpha)) };
+    }
+
     fn color_with_device_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
@@ -185,8 +197,14 @@ impl Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha)) };
     }
 
-    // SKIPPED `colorWithDeviceCyan:magenta:yellow:black:alpha:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
-    // SKIPPED `colorWithCalibratedWhite:alpha:`: msgSend shape `id_f64_f64` not yet modelled
+    fn color_with_device_cyan_magenta_yellow_black_alpha(cyan: f64, magenta: f64, yellow: f64, black: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithDeviceCyan:magenta:yellow:black:alpha:\0")), cyan, magenta, yellow, black, alpha)) };
+    }
+
+    fn color_with_calibrated_white_alpha(white: f64, alpha: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCalibratedWhite:alpha:\0")), white, alpha)) };
+    }
+
     fn color_with_calibrated_red_green_blue_alpha(red: f64, green: f64, blue: f64, alpha: f64) -> Color {
         return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), red, green, blue, alpha)) };
     }
@@ -215,8 +233,14 @@ impl Color {
         return option::some(Color::from_raw(obj));
     }
 
-    // SKIPPED `colorWithRed:green:blue:alpha:exposure:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
-    // SKIPPED `colorWithRed:green:blue:alpha:linearExposure:`: msgSend shape `id_f64_f64_f64_f64_f64` not yet modelled
+    fn color_with_red_green_blue_alpha_exposure(red: f64, green: f64, blue: f64, alpha: f64, exposure: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:exposure:\0")), red, green, blue, alpha, exposure)) };
+    }
+
+    fn color_with_red_green_blue_alpha_linear_exposure(red: f64, green: f64, blue: f64, alpha: f64, linear_exposure: f64) -> Color {
+        return Color { _obj: rt::retain(rt::msg_id_f64_f64_f64_f64_f64(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithRed:green:blue:alpha:linearExposure:\0")), red, green, blue, alpha, linear_exposure)) };
+    }
+
     fn color_by_applying_content_headroom(this, content_headroom: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorByApplyingContentHeadroom:\0")), content_headroom));
     }
@@ -262,13 +286,22 @@ impl Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("colorWithAlphaComponent:\0")), alpha));
     }
 
-    // SKIPPED `getRed:green:blue:alpha:`: msgSend shape `void_id_id_id_id` not yet modelled
-    // SKIPPED `getHue:saturation:brightness:alpha:`: msgSend shape `void_id_id_id_id` not yet modelled
+    fn get_red_green_blue_alpha(this, red: *u8, green: *u8, blue: *u8, alpha: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("getRed:green:blue:alpha:\0")), red, green, blue, alpha);
+    }
+
+    fn get_hue_saturation_brightness_alpha(this, hue: *u8, saturation: *u8, brightness: *u8, alpha: *u8) {
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("getHue:saturation:brightness:alpha:\0")), hue, saturation, brightness, alpha);
+    }
+
     fn get_white_alpha(this, white: *u8, alpha: *u8) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("getWhite:alpha:\0")), white, alpha);
     }
 
-    // SKIPPED `getCyan:magenta:yellow:black:alpha:`: msgSend shape `void_id_id_id_id_id` not yet modelled
+    fn get_cyan_magenta_yellow_black_alpha(this, cyan: *u8, magenta: *u8, yellow: *u8, black: *u8, alpha: *u8) {
+        rt::msg_void_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getCyan:magenta:yellow:black:alpha:\0")), cyan, magenta, yellow, black, alpha);
+    }
+
     fn get_components(this, components: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("getComponents:\0")), components);
     }

@@ -108,7 +108,10 @@ impl Matrix {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `cellFrameAtRow:column:`: msgSend shape `rect_i64_i64` not yet modelled
+    fn cell_frame_at_row_column(this, row: i64, col: i64) -> rt::Rect {
+        return rt::msg_rect_i64_i64(this._obj, rt::sel(#str_ptr("cellFrameAtRow:column:\0")), row, col);
+    }
+
     fn get_row_column_of_cell(this, row: *u8, col: *u8, cell: *u8) -> bool {
         return rt::msg_i8_id_id_id(this._obj, rt::sel(#str_ptr("getRow:column:ofCell:\0")), row, col, cell) != (0 as i8);
     }
@@ -118,7 +121,10 @@ impl Matrix {
         rt::msg_void_i64_i64(this._obj, rt::sel(#str_ptr("renewRows:columns:\0")), new_rows, new_cols);
     }
 
-    // SKIPPED `putCell:atRow:column:`: msgSend shape `void_id_i64_i64` not yet modelled
+    fn put_cell_at_row_column(this, new_cell: *u8, row: i64, col: i64) {
+        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("putCell:atRow:column:\0")), new_cell, row, col);
+    }
+
     fn add_row(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("addRow\0")));
     }

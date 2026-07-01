@@ -205,7 +205,10 @@ impl BitmapImageRep {
     }
 
     // SKIPPED `incrementalLoadFromData:complete:`: msgSend shape `i64_id_i8` not yet modelled
-    // SKIPPED `setColor:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
+    fn set_color_at_x_y(this, color: Color, x: i64, y: i64) {
+        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("setColor:atX:y:\0")), color.raw(), x, y);
+    }
+
     fn color_at_x_y(this, x: i64, y: i64) -> option::Option[Color] {
         let obj: *u8 = rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("colorAtX:y:\0")), x, y);
         if obj == { 0 as *u8 } {
@@ -214,8 +217,14 @@ impl BitmapImageRep {
         return option::some(Color::from_raw(obj));
     }
 
-    // SKIPPED `getPixel:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
-    // SKIPPED `setPixel:atX:y:`: msgSend shape `void_id_i64_i64` not yet modelled
+    fn get_pixel_at_x_y(this, p: *u8, x: i64, y: i64) {
+        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("getPixel:atX:y:\0")), p, x, y);
+    }
+
+    fn set_pixel_at_x_y(this, p: *u8, x: i64, y: i64) {
+        rt::msg_void_id_i64_i64(this._obj, rt::sel(#str_ptr("setPixel:atX:y:\0")), p, x, y);
+    }
+
     fn bitmap_image_rep_by_converting_to_color_space_rendering_intent(this, target_space: ColorSpace, rendering_intent: ColorRenderingIntent) -> option::Option[BitmapImageRep] {
         let obj: *u8 = rt::msg_id_id_i64(this._obj, rt::sel(#str_ptr("bitmapImageRepByConvertingToColorSpace:renderingIntent:\0")), target_space.raw(), color_rendering_intent_raw(rendering_intent));
         if obj == { 0 as *u8 } {

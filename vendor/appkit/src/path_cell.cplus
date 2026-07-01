@@ -141,8 +141,14 @@ impl PathCell {
 
     // SKIPPED `rectOfPathComponentCell:withFrame:inView:`: msgSend shape `rect_id_rect_id` not yet modelled
     // SKIPPED `pathComponentCellAtPoint:withFrame:inView:`: msgSend shape `id_point_rect_id` not yet modelled
-    // SKIPPED `mouseEntered:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
-    // SKIPPED `mouseExited:withFrame:inView:`: msgSend shape `void_id_rect_id` not yet modelled
+    fn mouse_entered_with_frame_in_view(this, event: *u8, frame: rt::Rect, view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseEntered:withFrame:inView:\0")), event, frame, view);
+    }
+
+    fn mouse_exited_with_frame_in_view(this, event: *u8, frame: rt::Rect, view: *u8) {
+        rt::msg_void_id_rect_id(this._obj, rt::sel(#str_ptr("mouseExited:withFrame:inView:\0")), event, frame, view);
+    }
+
     fn path_style(this) -> PathStyle {
         return path_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("pathStyle\0"))));
     }

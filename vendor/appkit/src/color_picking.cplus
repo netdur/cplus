@@ -185,7 +185,10 @@ impl ColorPickingCustom {
         return color_panel_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("currentMode\0"))));
     }
 
-    // SKIPPED `provideNewView:`: msgSend shape `id_i8` not yet modelled
+    fn provide_new_view(this, initial_request: bool) -> View {
+        return View::from_raw(rt::msg_id_i8(this._obj, rt::sel(#str_ptr("provideNewView:\0")), initial_request as i8));
+    }
+
     fn set_color(this, new_color: Color) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setColor:\0")), new_color.raw());
     }

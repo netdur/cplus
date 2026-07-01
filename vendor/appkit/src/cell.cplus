@@ -491,7 +491,10 @@ impl Cell {
     }
 
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
-    // SKIPPED `sendActionOn:`: msgSend shape `i64_u64` not yet modelled
+    fn send_action_on(this, mask: u64) -> i64 {
+        return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("sendActionOn:\0")), mask);
+    }
+
     fn compare(this, other_cell: *u8) -> ComparisonResult {
         return comparison_result_from_raw(rt::msg_i64_id(this._obj, rt::sel(#str_ptr("compare:\0")), other_cell));
     }
@@ -578,7 +581,14 @@ impl Cell {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("resetCursorRect:inView:\0")), cell_frame, control_view.raw());
     }
 
-    // SKIPPED `menuForEvent:inRect:ofView:`: msgSend shape `id_id_rect_id` not yet modelled
+    fn menu_for_event_in_rect_of_view(this, event: Event, cell_frame: rt::Rect, view: View) -> option::Option[Menu] {
+        let obj: *u8 = rt::msg_id_id_rect_id(this._obj, rt::sel(#str_ptr("menuForEvent:inRect:ofView:\0")), event.raw(), cell_frame, view.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
+    }
+
     fn field_editor_for_view(this, control_view: View) -> option::Option[TextView] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("fieldEditorForView:\0")), control_view.raw());
         if obj == { 0 as *u8 } {

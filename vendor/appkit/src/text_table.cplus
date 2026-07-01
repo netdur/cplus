@@ -249,7 +249,10 @@ impl TextBlock {
         return text_block_value_type_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("valueTypeForDimension:\0")), text_block_dimension_raw(dimension)));
     }
 
-    // SKIPPED `setContentWidth:type:`: msgSend shape `void_f64_i64` not yet modelled
+    fn set_content_width_type(this, val: f64, type_: TextBlockValueType) {
+        rt::msg_void_f64_i64(this._obj, rt::sel(#str_ptr("setContentWidth:type:\0")), val, text_block_value_type_raw(type_));
+    }
+
     // SKIPPED `setWidth:type:forLayer:edge:`: msgSend shape `void_f64_i64_i64_i64` not yet modelled
     // SKIPPED `setWidth:type:forLayer:`: msgSend shape `void_f64_i64_i64` not yet modelled
     // SKIPPED `widthForLayer:edge:`: msgSend shape `f64_i64_i64` not yet modelled

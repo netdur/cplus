@@ -172,7 +172,11 @@ impl TextLayoutManager {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("invalidateLayoutForRange:\0")), range.raw());
     }
 
-    // SKIPPED `textLayoutFragmentForPosition:`: msgSend shape `id_point` not yet modelled
+    fn text_layout_fragment_for_position(this, position: rt::Point) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("textLayoutFragmentForPosition:\0")), position);
+        return bridge::obj_option(obj);
+    }
+
     fn text_layout_fragment_for_location(this, location: TextLocation) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("textLayoutFragmentForLocation:\0")), location.raw());
         return bridge::obj_option(obj);
@@ -181,7 +185,10 @@ impl TextLayoutManager {
     // SKIPPED `enumerateTextLayoutFragmentsFromLocation:options:usingBlock:`: block method with non-void return
     // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
     // SKIPPED `setRenderingAttributes:forTextRange:`: param `NSDictionary<NSAttributedStringKey,id> * _Nonnull` — generic collection
-    // SKIPPED `addRenderingAttribute:value:forTextRange:`: msgSend shape `void_id_id_id` not yet modelled
+    fn add_rendering_attribute_value_for_text_range(this, rendering_attribute: str, value: *u8, text_range: TextRange) {
+        rt::msg_void_id_id_id(this._obj, rt::sel(#str_ptr("addRenderingAttribute:value:forTextRange:\0")), bridge::nsstring(rendering_attribute), value, text_range.raw());
+    }
+
     fn remove_rendering_attribute_for_text_range(this, rendering_attribute: str, text_range: TextRange) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("removeRenderingAttribute:forTextRange:\0")), bridge::nsstring(rendering_attribute), text_range.raw());
     }

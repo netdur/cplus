@@ -207,7 +207,10 @@ impl StackView {
     }
 
     // SKIPPED `setCustomSpacing:afterView:`: msgSend shape `void_f64_id` not yet modelled
-    // SKIPPED `customSpacingAfterView:`: msgSend shape `f64_id` not yet modelled
+    fn custom_spacing_after_view(this, view: View) -> f64 {
+        return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("customSpacingAfterView:\0")), view.raw());
+    }
+
     fn add_arranged_subview(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view.raw());
     }

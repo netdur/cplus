@@ -359,8 +359,14 @@ impl TextView {
     // SKIPPED `initWithFrame:textContainer:`: init arg shape not yet modelled
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `initWithFrame:`: extra init variant (one `new` per type)
-    // SKIPPED `initUsingTextLayoutManager:`: msgSend shape `id_i8` not yet modelled
-    // SKIPPED `textViewUsingTextLayoutManager:`: msgSend shape `id_i8` not yet modelled
+    fn init_using_text_layout_manager(this, using_text_layout_manager: bool) -> *u8 {
+        return rt::msg_id_i8(this._obj, rt::sel(#str_ptr("initUsingTextLayoutManager:\0")), using_text_layout_manager as i8);
+    }
+
+    fn text_view_using_text_layout_manager(using_text_layout_manager: bool) -> TextView {
+        return TextView { _obj: rt::retain(rt::msg_id_i8(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("textViewUsingTextLayoutManager:\0")), using_text_layout_manager as i8)) };
+    }
+
     fn replace_text_container(this, new_container: TextContainer) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("replaceTextContainer:\0")), new_container.raw());
     }
@@ -377,8 +383,14 @@ impl TextView {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setConstrainedFrameSize:\0")), desired_size);
     }
 
-    // SKIPPED `setAlignment:range:`: msgSend shape `void_i64_range` not yet modelled
-    // SKIPPED `setBaseWritingDirection:range:`: msgSend shape `void_i64_range` not yet modelled
+    fn set_alignment_range(this, alignment: TextAlignment, range: rt::Range) {
+        rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setAlignment:range:\0")), text_alignment_raw(alignment), range);
+    }
+
+    fn set_base_writing_direction_range(this, writing_direction: WritingDirection, range: rt::Range) {
+        rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setBaseWritingDirection:range:\0")), writing_direction_raw(writing_direction), range);
+    }
+
     fn turn_off_kerning(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("turnOffKerning:\0")), sender);
     }
@@ -531,7 +543,10 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("changeLayoutOrientation:\0")), sender);
     }
 
-    // SKIPPED `characterIndexForInsertionAtPoint:`: msgSend shape `u64_point` not yet modelled
+    fn character_index_for_insertion_at_point(this, point: rt::Point) -> u64 {
+        return rt::msg_u64_point(this._obj, rt::sel(#str_ptr("characterIndexForInsertionAtPoint:\0")), point);
+    }
+
     // SKIPPED `performValidatedReplacementInRange:withAttributedString:`: msgSend shape `i8_range_id` not yet modelled
     fn text_container(this) -> option::Option[TextContainer] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textContainer\0")));
@@ -675,7 +690,10 @@ impl TextView {
 
     // SKIPPED `dragSelectionWithEvent:offset:slideBack:`: msgSend shape `i8_id_size_i8` not yet modelled
     // SKIPPED `dragImageForSelectionWithEvent:origin:`: param `NSPointPointer _Nullable` — unmapped type `NSPointPointer`
-    // SKIPPED `dragOperationForDraggingInfo:type:`: msgSend shape `u64_id_id` not yet modelled
+    fn drag_operation_for_dragging_info_type(this, drag_info: *u8, type_: str) -> u64 {
+        return rt::msg_u64_id_id(this._obj, rt::sel(#str_ptr("dragOperationForDraggingInfo:type:\0")), drag_info, bridge::nsstring(type_));
+    }
+
     fn clean_up_after_drag_operation(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("cleanUpAfterDragOperation\0")));
     }
@@ -708,7 +726,10 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleGrammarChecking:\0")), sender);
     }
 
-    // SKIPPED `setSpellingState:range:`: msgSend shape `void_i64_range` not yet modelled
+    fn set_spelling_state_range(this, value: i64, char_range: rt::Range) {
+        rt::msg_void_i64_range(this._obj, rt::sel(#str_ptr("setSpellingState:range:\0")), value, char_range);
+    }
+
     fn should_change_text_in_ranges_replacement_strings(this, affected_ranges: vec::Vec[Value], replacement_strings: vec::Vec[text::Text]) -> bool {
         let arr_affected_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_affected_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -1215,7 +1236,10 @@ impl TextView {
         return rt::msg_id(rt::get_class(#str_ptr("NSTextView\0")), rt::sel(#str_ptr("scrollablePlainDocumentContentTextView\0")));
     }
 
-    // SKIPPED `drawTextHighlightBackgroundForTextRange:origin:`: msgSend shape `void_id_point` not yet modelled
+    fn draw_text_highlight_background_for_text_range_origin(this, text_range: TextRange, origin: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("drawTextHighlightBackgroundForTextRange:origin:\0")), text_range.raw(), origin);
+    }
+
     fn highlight(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("highlight:\0")), sender);
     }

@@ -23,7 +23,10 @@ impl CollectionViewTransitionLayout {
     }
 
     // SKIPPED `updateValue:forAnimatedKey:`: msgSend shape `void_f64_id` not yet modelled
-    // SKIPPED `valueForAnimatedKey:`: msgSend shape `f64_id` not yet modelled
+    fn value_for_animated_key(this, key: str) -> f64 {
+        return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("valueForAnimatedKey:\0")), bridge::nsstring(key));
+    }
+
     fn transition_progress(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("transitionProgress\0")));
     }

@@ -68,10 +68,16 @@ impl Gradient {
     // SKIPPED `initWithCoder:`: extra init variant (one `new` per type)
     // SKIPPED `drawFromPoint:toPoint:options:`: msgSend shape `void_point_point_u64` not yet modelled
     // SKIPPED `drawInRect:angle:`: msgSend shape `void_rect_f64` not yet modelled
-    // SKIPPED `drawInBezierPath:angle:`: msgSend shape `void_id_f64` not yet modelled
+    fn draw_in_bezier_path_angle(this, path: BezierPath, angle: f64) {
+        rt::msg_void_id_f64(this._obj, rt::sel(#str_ptr("drawInBezierPath:angle:\0")), path.raw(), angle);
+    }
+
     // SKIPPED `drawFromCenter:radius:toCenter:radius:options:`: msgSend shape `void_point_f64_point_f64_u64` not yet modelled
     // SKIPPED `drawInRect:relativeCenterPosition:`: msgSend shape `void_rect_point` not yet modelled
-    // SKIPPED `drawInBezierPath:relativeCenterPosition:`: msgSend shape `void_id_point` not yet modelled
+    fn draw_in_bezier_path_relative_center_position(this, path: BezierPath, relative_center_position: rt::Point) {
+        rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("drawInBezierPath:relativeCenterPosition:\0")), path.raw(), relative_center_position);
+    }
+
     // SKIPPED `getColor:location:atIndex:`: msgSend shape `void_id_id_i64` not yet modelled
     fn interpolated_color_at_location(this, location: f64) -> Color {
         return Color::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("interpolatedColorAtLocation:\0")), location));

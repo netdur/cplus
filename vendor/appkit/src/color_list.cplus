@@ -60,7 +60,10 @@ impl ColorList {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("setColor:forKey:\0")), color.raw(), bridge::nsstring(key));
     }
 
-    // SKIPPED `insertColor:key:atIndex:`: msgSend shape `void_id_id_u64` not yet modelled
+    fn insert_color_key_at_index(this, color: Color, key: str, loc: u64) {
+        rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("insertColor:key:atIndex:\0")), color.raw(), bridge::nsstring(key), loc);
+    }
+
     fn remove_color_with_key(this, key: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("removeColorWithKey:\0")), bridge::nsstring(key));
     }

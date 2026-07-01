@@ -65,7 +65,10 @@ impl TextViewportLayoutController {
         rt::msg_void(this._obj, rt::sel(#str_ptr("layoutViewport\0")));
     }
 
-    // SKIPPED `relocateViewportToTextLocation:`: msgSend shape `f64_id` not yet modelled
+    fn relocate_viewport_to_text_location(this, text_location: TextLocation) -> f64 {
+        return rt::msg_f64_id(this._obj, rt::sel(#str_ptr("relocateViewportToTextLocation:\0")), text_location.raw());
+    }
+
     fn adjust_viewport_by_vertical_offset(this, vertical_offset: f64) {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("adjustViewportByVerticalOffset:\0")), vertical_offset);
     }

@@ -40,13 +40,15 @@ impl PreviewRepresentingActivityItem {
 
     fn from_raw(ptr: *u8) -> PreviewRepresentingActivityItem { return PreviewRepresentingActivityItem { _obj: ptr }; }
 
-    // SKIPPED `initWithItem:title:image:icon:`: init arg shape not yet modelled
-    // SKIPPED `initWithItem:title:imageProvider:iconProvider:`: extra init variant (one `new` per type)
-    // SKIPPED `init`: extra init variant (one `new` per type)
-    fn new() -> PreviewRepresentingActivityItem {
-        return PreviewRepresentingActivityItem { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSPreviewRepresentingActivityItem\0")), rt::sel(#str_ptr("new\0")))) };
+    fn new(item: *u8, title: str, image: Image, icon: Image) -> PreviewRepresentingActivityItem {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPreviewRepresentingActivityItem\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PreviewRepresentingActivityItem { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithItem:title:image:icon:\0")), item, bridge::nsstring(title), image.raw(), icon.raw()) };
     }
 
+    // SKIPPED `initWithItem:title:imageProvider:iconProvider:`: extra init variant (one `new` per type)
+    // SKIPPED `init`: extra init variant (one `new` per type)
+    // SKIPPED `new`: method `new` already defined
     fn drop(ref this) {
         rt::release(this._obj);
     }
