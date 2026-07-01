@@ -1423,9 +1423,9 @@ impl ObjcEmitter {
                      \x20       let n_{pname}: usize = {pname}.count();\n\
                      \x20       var i_{pname}: usize = 0 as usize;\n\
                      \x20       while i_{pname} < n_{pname} {{\n\
-                     \x20           match {pname}.at(i_{pname}) {{\n\
-                     \x20               option::Option[{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, e_{pname}.raw()); }}\n\
-                     \x20               option::Option[{elem}]::None => {{}}\n\
+                     \x20           match {pname}.at_ptr(i_{pname}) {{\n\
+                     \x20               option::Option[*{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, (*e_{pname}).raw()); }}\n\
+                     \x20               option::Option[*{elem}]::None => {{}}\n\
                      \x20           }}\n\
                      \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
                      \x20       }}\n"
@@ -1905,12 +1905,15 @@ impl ObjcEmitter {
             self.needs_vec = true;
             return Arg::Id(format!("bridge::nsarray_of_text({pname})"));
         }
-        // Object array with a non-owning element wrapper -> build an NSMutableArray
-        // from a Vec[W] (mirrors the return path; `addObject:` retains, so passing
-        // the +0 `.raw()` handles is balanced).
+        // Object array param -> build an NSMutableArray from a Vec[W]. Sound for both
+        // non-owning AND owning element wrappers: the prologue borrow-reads each
+        // element's handle through `at_ptr` (never moving/dropping it — cpc's borrowck
+        // proves it), `addObject:` takes its own +1 retain, and the caller's Vec keeps
+        // ownership. (The *return* direction is the one that needs retain-on-wrap; a
+        // param only reads what the caller already owns.)
         if let Some(elem) = array_element(base_ty) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.non_owning_types.contains(&w) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                     self.needs_vec = true;
                     return Arg::IdArray { elem: w, pname: pname.to_string() };
                 }
@@ -2010,10 +2013,10 @@ impl ObjcEmitter {
         if self.is_string_array(b) {
             return "vec::Vec[text::Text]".to_string();
         }
-        // Object array with a non-owning element -> Vec[W] (same gate as map_arg).
+        // Object array param -> Vec[W], non-owning or owning element (same gate as map_arg).
         if let Some(elem) = array_element(b) {
             if let Some(w) = self.wrapper_name_of(&elem) {
-                if self.non_owning_types.contains(&w) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
                     return format!("vec::Vec[{w}]");
                 }
             }
@@ -2984,8 +2987,8 @@ mod tests {
         let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
         assert!(out.contains("fn use_buffers(this, buffers: vec::Vec[Buffer])"), "typed Vec param:\n{out}");
         assert!(out.contains("let arr_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\"))"), "builds NSArray:\n{out}");
-        assert!(out.contains("buffers.at(i_buffers)"), "iterates the Vec:\n{out}");
-        assert!(out.contains("e_buffers.raw()"), "adds each element's handle:\n{out}");
+        assert!(out.contains("buffers.at_ptr(i_buffers)"), "iterates the Vec by borrow:\n{out}");
+        assert!(out.contains("(*e_buffers).raw()"), "adds each element's handle (borrow-read):\n{out}");
         assert!(out.contains("\"useBuffers:\\0\")), arr_buffers)"), "passes the built array:\n{out}");
     }
 
@@ -3109,8 +3112,12 @@ mod tests {
         // Owning class: Vec[Window] return, each element retained on wrap.
         assert!(out.contains("fn windows(this) -> vec::Vec[Window]"), "owning-class array return binds:\n{out}");
         assert!(out.contains("out.append(Window::from_raw(rt::retain(rt::msg_id_u64("), "owning wrap retains:\n{out}");
-        // Owning array PARAM still skips.
-        assert!(out.contains("// SKIPPED `setOrderedWindows:`"), "owning array param skips:\n{out}");
+        // Owning array PARAM now binds too: the prologue borrow-reads each element's
+        // handle via `at_ptr` (no move/drop — cpc's borrowck proves it), so the caller's
+        // Vec keeps ownership while `addObject:` takes its own retain. (The *return*
+        // direction is the one needing retain-on-wrap; a param only reads owned elements.)
+        assert!(out.contains("fn set_ordered_windows(this, ordered: vec::Vec[Window])"), "owning array param binds:\n{out}");
+        assert!(out.contains("match ordered.at_ptr(i_ordered)"), "borrow-reads each element:\n{out}");
     }
 
     #[test]
