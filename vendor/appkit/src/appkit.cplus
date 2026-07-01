@@ -6206,11 +6206,147 @@ extern fn objc_msg_EdgeInsets_id(recv: *u8, sel: *u8, a0: *u8) -> EdgeInsets;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_EdgeInsets_id_id_i64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i64) -> EdgeInsets;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_f64_id_point(recv: *u8, sel: *u8, a0: *u8, a1: rt::Point) -> f64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id_range_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: rt::Range, a3: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_rect_rect_i64_f64_i8_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: i64, a3: f64, a4: i8, a5: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_rect_rect_id_id_i8(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: *u8, a3: *u8, a4: i8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f64_i64(recv: *u8, sel: *u8, a0: f64, a1: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_f64(recv: *u8, sel: *u8, a0: i64, a1: f64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_f64_id(recv: *u8, sel: *u8, a0: i64, a1: f64, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64_i64_i64(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: i64, a3: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64_id(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_id_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8, a3: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_id_id_id_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8, a3: *u8, a4: *u8, a5: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_f64_id_point(recv: *u8, sel: *u8, a0: *u8, a1: f64, a2: *u8, a3: rt::Point) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_f32(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: f32) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_i64(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_i64_i64_i64(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: i64, a3: i64, a4: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_i64_i64_i64_i8_i8_id_i64_i64(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: i64, a3: i64, a4: i64, a5: i8, a6: i8, a7: *u8, a8: i64, a9: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_i64_i64_i64_i8_i8_id_u64_i64_i64(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: i64, a3: i64, a4: i64, a5: i8, a6: i8, a7: *u8, a8: u64, a9: i64, a10: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_i64_i8(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: i64, a3: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_id_point(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: rt::Point) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_id_point_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: rt::Point, a4: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_range(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: rt::Range) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_u64_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_point(recv: *u8, sel: *u8, a0: *u8, a1: rt::Point) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_rect(recv: *u8, sel: *u8, a0: *u8, a1: rt::Rect) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_size(recv: *u8, sel: *u8, a0: *u8, a1: rt::Size) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u64_i64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u64_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: *u8, a3: *u8, a4: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_i64_id_i64_i64(recv: *u8, sel: *u8, a0: rt::Rect, a1: i64, a2: *u8, a3: i64, a4: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_i8(recv: *u8, sel: *u8, a0: rt::Rect, a1: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_id_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: *u8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_id_id_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: *u8, a2: *u8, a3: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_u64_i64_i8_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: u64, a2: i64, a3: i8, a4: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_size(recv: *u8, sel: *u8, a0: rt::Size) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_size_i64(recv: *u8, sel: *u8, a0: rt::Size, a1: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_size_i64_i8_i8(recv: *u8, sel: *u8, a0: rt::Size, a1: i64, a2: i8, a3: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_size_i8_id(recv: *u8, sel: *u8, a0: rt::Size, a1: i8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u32_u32_i32_i32_i32(recv: *u8, sel: *u8, a0: u32, a1: u32, a2: i32, a3: i32, a4: i32) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64_id_id(recv: *u8, sel: *u8, a0: u64, a1: *u8, a2: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64_id_range(recv: *u8, sel: *u8, a0: u64, a1: *u8, a2: rt::Range) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_point_id_f64(recv: *u8, sel: *u8, a0: *u8, a1: f64) -> rt::Point;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range_i64(recv: *u8, sel: *u8, a0: i64) -> rt::Range;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range_point(recv: *u8, sel: *u8, a0: rt::Point) -> rt::Range;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_range_range_id_u64(recv: *u8, sel: *u8, a0: rt::Range, a1: *u8, a2: u64) -> rt::Range;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_id_id_id_rect_point(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: rt::Rect, a4: rt::Point) -> rt::Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect_size_u64_id_id(recv: *u8, sel: *u8, a0: rt::Size, a1: u64, a2: *u8, a3: *u8) -> rt::Rect;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_size_id_range_id_u64(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: *u8, a3: u64) -> rt::Size;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_AffineTransformStruct(recv: *u8, sel: *u8, a0: AffineTransformStruct);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_DirectionalEdgeInsets(recv: *u8, sel: *u8, a0: DirectionalEdgeInsets);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_EdgeInsets(recv: *u8, sel: *u8, a0: EdgeInsets);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_id(recv: *u8, sel: *u8, a0: i64, a1: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_id_id_rect_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8, a3: rt::Rect, a4: *u8, a5: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: u64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i8_id(recv: *u8, sel: *u8, a0: *u8, a1: i8, a2: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_i8_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i8, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_u64_rect_f64_f64_f64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: u64, a4: rt::Rect, a5: f64, a6: f64, a7: f64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_u64_id_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8, a5: *u8, a6: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_range_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: u64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_u64_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_point_id_range(recv: *u8, sel: *u8, a0: rt::Point, a1: *u8, a2: rt::Range);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_range_range_id_id(recv: *u8, sel: *u8, a0: rt::Range, a1: rt::Range, a2: *u8, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_range_u64_id(recv: *u8, sel: *u8, a0: rt::Range, a1: u64, a2: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_range_rect_f64(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Range, a2: rt::Rect, a3: f64);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_rect_i64_f64_i8_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: i64, a3: f64, a4: i8, a5: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect_u64_id_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: u64, a2: *u8, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_f64_f64_id(recv: *u8, sel: *u8, a0: u64, a1: f64, a2: f64, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_f64_id_id(recv: *u8, sel: *u8, a0: u64, a1: f64, a2: *u8, a3: *u8);
 
 #[repr(C)]
 struct ItemProvider_register_data_representation_for_type_identifier_block {
@@ -6225,6 +6361,25 @@ struct ItemProvider_register_data_representation_for_type_identifier_block {
 
 fn ItemProvider_register_data_representation_for_type_identifier_invoke(block: *u8, a0: i64) {
     let bl: *ItemProvider_register_data_representation_for_type_identifier_block = { block as *ItemProvider_register_data_representation_for_type_identifier_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct ItemProvider_register_file_representation_for_type_identifier_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn ItemProvider_register_file_representation_for_type_identifier_invoke(block: *u8, a0: i64) {
+    let bl: *ItemProvider_register_file_representation_for_type_identifier_block = { block as *ItemProvider_register_file_representation_for_type_identifier_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -6380,6 +6535,44 @@ fn ItemProvider_register_cloud_kit_share_with_preparation_handler_invoke(block: 
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct AttributedString_enumerate_attributes_in_range_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, rt::Range, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, rt::Range, *u8),
+    opaque ctx: *u8,
+}
+
+fn AttributedString_enumerate_attributes_in_range_invoke(block: *u8, a0: *u8, a1: rt::Range, a2: *u8) {
+    let bl: *AttributedString_enumerate_attributes_in_range_block = { block as *AttributedString_enumerate_attributes_in_range_block };
+    let f: fn(*u8, *u8, rt::Range, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct AttributedString_enumerate_attribute_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, rt::Range, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, rt::Range, *u8),
+    opaque ctx: *u8,
+}
+
+fn AttributedString_enumerate_attribute_invoke(block: *u8, a0: i64, a1: rt::Range, a2: *u8) {
+    let bl: *AttributedString_enumerate_attribute_block = { block as *AttributedString_enumerate_attribute_block };
+    let f: fn(*u8, i64, rt::Range, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
     return;
 }
 
@@ -6574,6 +6767,25 @@ fn Window_request_sharing_of_window_using_preview_invoke(block: *u8, a0: *u8) {
 }
 
 #[repr(C)]
+struct Window_track_events_matching_mask_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Window_track_events_matching_mask_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Window_track_events_matching_mask_block = { block as *Window_track_events_matching_mask_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
 struct AccessibilityCustomAction_init_with_name_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -6608,6 +6820,25 @@ fn AccessibilityCustomAction_set_handler_invoke(block: *u8) {
     let f: fn(*u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx);
+    return;
+}
+
+#[repr(C)]
+struct Image_image_with_size_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn Image_image_with_size_invoke(block: *u8, a0: i64) {
+    let bl: *Image_image_with_size_block = { block as *Image_image_with_size_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
     return;
 }
 
@@ -6722,6 +6953,44 @@ fn Workspace_set_default_application_at_u_r_l_to_open_content_type_invoke(block:
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_request_authorization_of_type_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_request_authorization_of_type_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_request_authorization_of_type_block = { block as *Workspace_request_authorization_of_type_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Event_track_swipe_event_with_options_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, i64, i8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, i64, i8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Event_track_swipe_event_with_options_invoke(block: *u8, a0: i64, a1: i64, a2: i8, a3: *u8) {
+    let bl: *Event_track_swipe_event_with_options_block = { block as *Event_track_swipe_event_with_options_block };
+    let f: fn(*u8, i64, i64, i8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2, a3);
     return;
 }
 
@@ -6967,6 +7236,25 @@ struct Document_perform_asynchronous_file_access_using_block_block {
 fn Document_perform_asynchronous_file_access_using_block_invoke(block: *u8, a0: i64) {
     let bl: *Document_perform_asynchronous_file_access_using_block_block = { block as *Document_perform_asynchronous_file_access_using_block_block };
     let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Document_save_to_u_r_l_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Document_save_to_u_r_l_invoke(block: *u8, a0: *u8) {
+    let bl: *Document_save_to_u_r_l_block = { block as *Document_save_to_u_r_l_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
     return;
@@ -7334,6 +7622,25 @@ fn AnimationContext_set_completion_handler_invoke(block: *u8) {
 }
 
 #[repr(C)]
+struct ViewController_transition_from_view_controller_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8),
+    opaque ctx: *u8,
+}
+
+fn ViewController_transition_from_view_controller_invoke(block: *u8) {
+    let bl: *ViewController_transition_from_view_controller_block = { block as *ViewController_transition_from_view_controller_block };
+    let f: fn(*u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx);
+    return;
+}
+
+#[repr(C)]
 struct CandidateListTouchBarItem_set_attributed_string_for_candidate_block {
     opaque isa: *u8,
     flags: i32,
@@ -7562,6 +7869,25 @@ fn TableView_enumerate_available_row_views_using_block_invoke(block: *u8, a0: *u
 }
 
 #[repr(C)]
+struct CustomImageRep_init_with_size_flipped_drawing_handler_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64),
+    opaque ctx: *u8,
+}
+
+fn CustomImageRep_init_with_size_flipped_drawing_handler_invoke(block: *u8, a0: i64) {
+    let bl: *CustomImageRep_init_with_size_flipped_drawing_handler_block = { block as *CustomImageRep_init_with_size_flipped_drawing_handler_block };
+    let f: fn(*u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct DocumentController_begin_open_panel_with_completion_handler_block {
     opaque isa: *u8,
     flags: i32,
@@ -7596,6 +7922,44 @@ fn DocumentController_begin_open_panel_invoke(block: *u8, a0: i64) {
     let f: fn(*u8, i64) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct DocumentController_open_document_with_contents_of_u_r_l_display_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i8, *u8),
+    opaque ctx: *u8,
+}
+
+fn DocumentController_open_document_with_contents_of_u_r_l_display_invoke(block: *u8, a0: *u8, a1: i8, a2: *u8) {
+    let bl: *DocumentController_open_document_with_contents_of_u_r_l_display_block = { block as *DocumentController_open_document_with_contents_of_u_r_l_display_block };
+    let f: fn(*u8, *u8, i8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i8, *u8),
+    opaque ctx: *u8,
+}
+
+fn DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_invoke(block: *u8, a0: *u8, a1: i8, a2: *u8) {
+    let bl: *DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block = { block as *DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block };
+    let f: fn(*u8, *u8, i8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
     return;
 }
 
@@ -7650,6 +8014,25 @@ struct SliderAccessoryBehavior_behavior_with_handler_block {
 
 fn SliderAccessoryBehavior_behavior_with_handler_invoke(block: *u8, a0: *u8) {
     let bl: *SliderAccessoryBehavior_behavior_with_handler_block = { block as *SliderAccessoryBehavior_behavior_with_handler_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct SpellChecker_show_correction_indicator_of_type_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn SpellChecker_show_correction_indicator_of_type_invoke(block: *u8, a0: *u8) {
+    let bl: *SpellChecker_show_correction_indicator_of_type_block = { block as *SpellChecker_show_correction_indicator_of_type_block };
     let f: fn(*u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0);
@@ -7733,6 +8116,44 @@ fn TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke(block:
 }
 
 #[repr(C)]
+struct TextLayoutManager_enumerate_rendering_attributes_from_location_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn TextLayoutManager_enumerate_rendering_attributes_from_location_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) {
+    let bl: *TextLayoutManager_enumerate_rendering_attributes_from_location_block = { block as *TextLayoutManager_enumerate_rendering_attributes_from_location_block };
+    let f: fn(*u8, *u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
+    return;
+}
+
+#[repr(C)]
+struct TextLayoutManager_enumerate_text_segments_in_range_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn TextLayoutManager_enumerate_text_segments_in_range_invoke(block: *u8, a0: *u8, a1: i64, a2: i64, a3: *u8) {
+    let bl: *TextLayoutManager_enumerate_text_segments_in_range_block = { block as *TextLayoutManager_enumerate_text_segments_in_range_block };
+    let f: fn(*u8, *u8, i64, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2, a3);
+    return;
+}
+
+#[repr(C)]
 struct TextLayoutManager_set_rendering_attributes_validator_block {
     opaque isa: *u8,
     flags: i32,
@@ -7767,6 +8188,44 @@ fn LayoutManager_enumerate_line_fragments_for_glyph_range_invoke(block: *u8, a0:
     let f: fn(*u8, i64, i64, *u8, rt::Range, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1, a2, a3, a4);
+    return;
+}
+
+#[repr(C)]
+struct LayoutManager_enumerate_enclosing_rects_for_glyph_range_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *LayoutManager_enumerate_enclosing_rects_for_glyph_range_block = { block as *LayoutManager_enumerate_enclosing_rects_for_glyph_range_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct TableViewRowAction_row_action_with_style_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64),
+    opaque ctx: *u8,
+}
+
+fn TableViewRowAction_row_action_with_style_invoke(block: *u8, a0: *u8, a1: i64) {
+    let bl: *TableViewRowAction_row_action_with_style_block = { block as *TableViewRowAction_row_action_with_style_block };
+    let f: fn(*u8, *u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
     return;
 }
 
@@ -8060,7 +8519,14 @@ impl ItemProvider {
         return;
     }
 
-    // SKIPPED `registerFileRepresentationForTypeIdentifier:fileOptions:visibility:loadHandler:`: block-method msgSend shape not modelled
+    fn register_file_representation_for_type_identifier(this, type_identifier: str, file_options: u64, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, i64), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: ItemProvider_register_file_representation_for_type_identifier_block = ItemProvider_register_file_representation_for_type_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ItemProvider_register_file_representation_for_type_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_u64_i64_id(this._obj, rt::sel(#str_ptr("registerFileRepresentationForTypeIdentifier:fileOptions:visibility:loadHandler:\0")), bridge::nsstring(type_identifier), file_options, item_provider_representation_visibility_raw(visibility), bp);
+        return;
+    }
+
     fn registered_type_identifiers_with_file_options(this, file_options: u64) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("registeredTypeIdentifiersWithFileOptions:\0")), file_options);
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -8267,7 +8733,23 @@ impl AttributedString {
         return AttributedString::from_raw(rt::msg_id_range(this._obj, rt::sel(#str_ptr("attributedSubstringFromRange:\0")), range));
     }
 
-    // SKIPPED `attributesAtIndex:longestEffectiveRange:inRange:`: NSDictionary arg shape not modelled
+    fn attributes_at_index_longest_effective_range(this, location: u64, range: *u8, in_range: rt::Range) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = objc_msg_id_u64_id_range(this._obj, rt::sel(#str_ptr("attributesAtIndex:longestEffectiveRange:inRange:\0")), location, range, in_range);
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn attribute_at_index(this, attr_name: str, location: u64, longest_effective_range: *u8, in_range: rt::Range) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id_id_u64_id_range(this._obj, rt::sel(#str_ptr("attribute:atIndex:longestEffectiveRange:inRange:\0")), bridge::nsstring(attr_name), location, longest_effective_range, in_range);
         return bridge::obj_option(obj);
@@ -8314,8 +8796,22 @@ impl AttributedString {
         return AttributedString { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithAttributedString:\0")), attr_str.raw()) };
     }
 
-    // SKIPPED `enumerateAttributesInRange:options:usingBlock:`: block-method msgSend shape not modelled
-    // SKIPPED `enumerateAttribute:inRange:options:usingBlock:`: block-method msgSend shape not modelled
+    fn enumerate_attributes_in_range(this, enumeration_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: AttributedString_enumerate_attributes_in_range_block = AttributedString_enumerate_attributes_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attributes_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttributesInRange:options:usingBlock:\0")), enumeration_range, options, bp);
+        return;
+    }
+
+    fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, i64, rt::Range, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: AttributedString_enumerate_attribute_block = AttributedString_enumerate_attribute_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: AttributedString_enumerate_attribute_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_range_u64_id(this._obj, rt::sel(#str_ptr("enumerateAttribute:inRange:options:usingBlock:\0")), bridge::nsstring(attr_name), in_range, options, bp);
+        return;
+    }
+
     fn length(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("length\0")));
     }
@@ -8383,7 +8879,31 @@ impl AttributedString {
         return AttributedString { _obj: rt::msg_id_id_u64_id_id(alloced, rt::sel(#str_ptr("initWithFormat:options:locale:context:\0")), format.raw(), options, locale.raw(), dict_context) };
     }
 
-    // SKIPPED `initWithFormat:options:locale:context:arguments:`: init arg shape not yet modelled
+    fn new_with_format_options_locale_context_arguments(format: AttributedString, options: u64, locale: Locale, context: string_map::StringMap[AnyObject], arguments: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_context: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_context: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_context: usize = context.slot_capacity();
+        var dsi_context: usize = 0 as usize;
+        while dsi_context < dcap_context {
+            match context.value_ptr_at_slot(dsi_context) {
+                option::Option[*AnyObject]::Some(dvp_context) => {
+                    match context.key_ptr_at_slot(dsi_context) {
+                        option::Option[*text::Text]::Some(dkp_context) => {
+                    let dval_context: *u8 = (*dvp_context).raw();
+                            rt::msg_void_id_id(dict_context, dset_context, dval_context, bridge::nsstring((*dkp_context).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_context = dsi_context +% (1 as usize);
+        }
+        return AttributedString { _obj: objc_msg_id_id_u64_id_id_id(alloced, rt::sel(#str_ptr("initWithFormat:options:locale:context:arguments:\0")), format.raw(), options, locale.raw(), dict_context, arguments) };
+    }
+
     fn localized_attributed_string_with_format_context(format: AttributedString, context: string_map::StringMap[AnyObject]) -> *u8 {
         let dict_context: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_context: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -9000,7 +9520,12 @@ impl AttributedStringMarkdownSourcePosition {
 
     fn from_raw(ptr: *u8) -> AttributedStringMarkdownSourcePosition { return AttributedStringMarkdownSourcePosition { _obj: ptr }; }
 
-    // SKIPPED `initWithStartLine:startColumn:endLine:endColumn:`: init arg shape not yet modelled
+    fn new(start_line: i64, start_column: i64, end_line: i64, end_column: i64) -> AttributedStringMarkdownSourcePosition {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedStringMarkdownSourcePosition\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedStringMarkdownSourcePosition { _obj: objc_msg_id_i64_i64_i64_i64(alloced, rt::sel(#str_ptr("initWithStartLine:startColumn:endLine:endColumn:\0")), start_line, start_column, end_line, end_column) };
+    }
+
     fn range_in_string(this, string: str) -> rt::Range {
         return rt::msg_range_id(this._obj, rt::sel(#str_ptr("rangeInString:\0")), bridge::nsstring(string));
     }
@@ -9108,8 +9633,14 @@ impl PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("paragraphIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
 
-    // SKIPPED `headerIntentWithIdentity:level:nestedInsideIntent:`: msgSend shape `id_i64_i64_id` not yet modelled
-    // SKIPPED `codeBlockIntentWithIdentity:languageHint:nestedInsideIntent:`: msgSend shape `id_i64_id_id` not yet modelled
+    fn header_intent_with_identity(identity: i64, level: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        return PresentationIntent { _obj: rt::retain(objc_msg_id_i64_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("headerIntentWithIdentity:level:nestedInsideIntent:\0")), identity, level, nested_inside_intent.raw())) };
+    }
+
+    fn code_block_intent_with_identity(identity: i64, language_hint: str, nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        return PresentationIntent { _obj: rt::retain(objc_msg_id_i64_id_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("codeBlockIntentWithIdentity:languageHint:nestedInsideIntent:\0")), identity, bridge::nsstring(language_hint), nested_inside_intent.raw())) };
+    }
+
     fn thematic_break_intent_with_identity(identity: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("thematicBreakIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
@@ -9122,7 +9653,10 @@ impl PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("unorderedListIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
 
-    // SKIPPED `listItemIntentWithIdentity:ordinal:nestedInsideIntent:`: msgSend shape `id_i64_i64_id` not yet modelled
+    fn list_item_intent_with_identity(identity: i64, ordinal: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        return PresentationIntent { _obj: rt::retain(objc_msg_id_i64_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("listItemIntentWithIdentity:ordinal:nestedInsideIntent:\0")), identity, ordinal, nested_inside_intent.raw())) };
+    }
+
     fn block_quote_intent_with_identity(identity: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("blockQuoteIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
@@ -9132,8 +9666,14 @@ impl PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("tableHeaderRowIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
 
-    // SKIPPED `tableRowIntentWithIdentity:row:nestedInsideIntent:`: msgSend shape `id_i64_i64_id` not yet modelled
-    // SKIPPED `tableCellIntentWithIdentity:column:nestedInsideIntent:`: msgSend shape `id_i64_i64_id` not yet modelled
+    fn table_row_intent_with_identity(identity: i64, row: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        return PresentationIntent { _obj: rt::retain(objc_msg_id_i64_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("tableRowIntentWithIdentity:row:nestedInsideIntent:\0")), identity, row, nested_inside_intent.raw())) };
+    }
+
+    fn table_cell_intent_with_identity(identity: i64, column: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        return PresentationIntent { _obj: rt::retain(objc_msg_id_i64_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("tableCellIntentWithIdentity:column:nestedInsideIntent:\0")), identity, column, nested_inside_intent.raw())) };
+    }
+
     fn is_equivalent_to_presentation_intent(this, other: PresentationIntent) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("isEquivalentToPresentationIntent:\0")), other.raw()) != (0 as i8);
     }
@@ -9304,8 +9844,52 @@ impl String {
         rt::msg_void_rect_id(this._obj, rt::sel(#str_ptr("drawInRect:withAttributes:\0")), rect, dict_with_attributes);
     }
 
-    // SKIPPED `drawWithRect:options:attributes:context:`: msgSend shape `void_rect_u64_id_id` not yet modelled
-    // SKIPPED `boundingRectWithSize:options:attributes:context:`: msgSend shape `rect_size_u64_id_id` not yet modelled
+    fn draw_with_rect_options(this, rect: rt::Rect, options: u64, attributes: string_map::StringMap[AnyObject], context: StringDrawingContext) {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        objc_msg_void_rect_u64_id_id(this._obj, rt::sel(#str_ptr("drawWithRect:options:attributes:context:\0")), rect, options, dict_attributes, context.raw());
+    }
+
+    fn bounding_rect_with_size_options(this, size: rt::Size, options: u64, attributes: string_map::StringMap[AnyObject], context: StringDrawingContext) -> rt::Rect {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return objc_msg_rect_size_u64_id_id(this._obj, rt::sel(#str_ptr("boundingRectWithSize:options:attributes:context:\0")), size, options, dict_attributes, context.raw());
+    }
+
     fn draw_with_rect(this, rect: rt::Rect, options: u64, attributes: string_map::StringMap[AnyObject]) {
         let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -12358,8 +12942,14 @@ impl View {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("rulerView:willSetClientView:\0")), ruler.raw(), new_client.raw());
     }
 
-    // SKIPPED `rulerView:locationForPoint:`: msgSend shape `f64_id_point` not yet modelled
-    // SKIPPED `rulerView:pointForLocation:`: msgSend shape `point_id_f64` not yet modelled
+    fn ruler_view_location_for_point(this, ruler: RulerView, point: rt::Point) -> f64 {
+        return objc_msg_f64_id_point(this._obj, rt::sel(#str_ptr("rulerView:locationForPoint:\0")), ruler.raw(), point);
+    }
+
+    fn ruler_view_point_for_location(this, ruler: RulerView, point: f64) -> rt::Point {
+        return objc_msg_point_id_f64(this._obj, rt::sel(#str_ptr("rulerView:pointForLocation:\0")), ruler.raw(), point);
+    }
+
     fn wants_best_resolution_open_g_l_surface(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("wantsBestResolutionOpenGLSurface\0"))) != (0 as i8);
     }
@@ -12425,7 +13015,12 @@ impl Window {
         return Window { _obj: rt::msg_id_rect_u64_i64_i8(alloced, rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")), content_rect, style, backing_store_type_raw(backing_store_type), flag as i8) };
     }
 
-    // SKIPPED `initWithContentRect:styleMask:backing:defer:screen:`: init arg shape not yet modelled
+    fn new_with_content_rect_style_mask_backing_defer_screen(content_rect: rt::Rect, style: u64, backing_store_type: BackingStoreType, flag: bool, screen: Screen) -> Window {
+        let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Window { _obj: objc_msg_id_rect_u64_i64_i8_id(alloced, rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:screen:\0")), content_rect, style, backing_store_type_raw(backing_store_type), flag as i8, screen.raw()) };
+    }
+
     fn new_with_coder(coder: *u8) -> Window {
         let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -13600,7 +14195,14 @@ impl Window {
         return user_interface_layout_direction_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("windowTitlebarLayoutDirection\0"))));
     }
 
-    // SKIPPED `trackEventsMatchingMask:timeout:mode:handler:`: block-method msgSend shape not modelled
+    fn track_events_matching_mask(this, mask: u64, timeout: f64, mode: str, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Window_track_events_matching_mask_block = Window_track_events_matching_mask_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Window_track_events_matching_mask_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_u64_f64_id_id(this._obj, rt::sel(#str_ptr("trackEventsMatchingMask:timeout:mode:handler:\0")), mask, timeout, bridge::nsstring(mode), bp);
+        return;
+    }
+
     fn next_event_matching_mask(this, mask: u64) -> option::Option[Event] {
         let obj: *u8 = rt::msg_id_u64(this._obj, rt::sel(#str_ptr("nextEventMatchingMask:\0")), mask);
         if obj == { 0 as *u8 } {
@@ -13972,8 +14574,18 @@ impl BitmapImageRep {
         return BitmapImageRep { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFocusedViewRect:\0")), rect) };
     }
 
-    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
-    // SKIPPED `initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:`: init arg shape not yet modelled
+    fn new_with_bitmap_data_planes_pixels_wide_pixels_high_bits_per_sample_samples_per_pixel_has_alpha_is_planar_color_space_name_bytes_per_row_bits_per_pixel(planes: *u8, width: i64, height: i64, bps: i64, spp: i64, alpha: bool, is_planar: bool, color_space_name: str, r_bytes: i64, p_bits: i64) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: objc_msg_id_id_i64_i64_i64_i64_i8_i8_id_i64_i64(alloced, rt::sel(#str_ptr("initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bytesPerRow:bitsPerPixel:\0")), planes, width, height, bps, spp, alpha as i8, is_planar as i8, bridge::nsstring(color_space_name), r_bytes, p_bits) };
+    }
+
+    fn new_with_bitmap_data_planes_pixels_wide_pixels_high_bits_per_sample_samples_per_pixel_has_alpha_is_planar_color_space_name_bitmap_format_bytes_per_row_bits_per_pixel(planes: *u8, width: i64, height: i64, bps: i64, spp: i64, alpha: bool, is_planar: bool, color_space_name: str, bitmap_format: u64, r_bytes: i64, p_bits: i64) -> BitmapImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return BitmapImageRep { _obj: objc_msg_id_id_i64_i64_i64_i64_i8_i8_id_u64_i64_i64(alloced, rt::sel(#str_ptr("initWithBitmapDataPlanes:pixelsWide:pixelsHigh:bitsPerSample:samplesPerPixel:hasAlpha:isPlanar:colorSpaceName:bitmapFormat:bytesPerRow:bitsPerPixel:\0")), planes, width, height, bps, spp, alpha as i8, is_planar as i8, bridge::nsstring(color_space_name), bitmap_format, r_bytes, p_bits) };
+    }
+
     fn new_with_c_g_image(cg_image: *u8) -> BitmapImageRep {
         let cls: *u8 = rt::get_class(#str_ptr("NSBitmapImageRep\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -14052,7 +14664,25 @@ impl BitmapImageRep {
         return option::some(Data::from_raw(obj));
     }
 
-    // SKIPPED `TIFFRepresentationOfImageRepsInArray:usingCompression:factor:`: msgSend shape `id_id_i64_f32` not yet modelled
+    fn t_i_f_f_representation_of_image_reps_in_array_using_compression(array: vec::Vec[ImageRep], comp: TIFFCompression, factor: f32) -> option::Option[Data] {
+        let arr_array: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_array: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_array: usize = array.count();
+        var i_array: usize = 0 as usize;
+        while i_array < n_array {
+            match array.at_ptr(i_array) {
+                option::Option[*ImageRep]::Some(e_array) => { rt::msg_void_id(arr_array, add_sel_array, (*e_array).raw()); }
+                option::Option[*ImageRep]::None => {}
+            }
+            i_array = i_array +% (1 as usize);
+        }
+        let obj: *u8 = objc_msg_id_id_i64_f32(rt::get_class(#str_ptr("NSBitmapImageRep\0")), rt::sel(#str_ptr("TIFFRepresentationOfImageRepsInArray:usingCompression:factor:\0")), arr_array, t_i_f_f_compression_raw(comp), factor);
+        if obj == { 0 as *u8 } {
+            return option::Option[Data]::None;
+        }
+        return option::some(Data::from_raw(obj));
+    }
+
     fn get_t_i_f_f_compression_types(list: *u8, count: *u8) {
         rt::msg_void_id_id(rt::get_class(#str_ptr("NSBitmapImageRep\0")), rt::sel(#str_ptr("getTIFFCompressionTypes:count:\0")), list, count);
     }
@@ -14731,7 +15361,12 @@ impl Image {
         return option::some(Image { _obj: rt::retain(obj) });
     }
 
-    // SKIPPED `initWithSize:`: init arg shape not yet modelled
+    fn new(size: rt::Size) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: objc_msg_id_size(alloced, rt::sel(#str_ptr("initWithSize:\0")), size) };
+    }
+
     fn new_with_coder(coder: *u8) -> Image {
         let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -14776,7 +15411,13 @@ impl Image {
         return Image { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDataIgnoringOrientation:\0")), data.raw()) };
     }
 
-    // SKIPPED `imageWithSize:flipped:drawingHandler:`: block-method msgSend shape not modelled
+    fn image_with_size(size: rt::Size, flipped: bool, cb: fn(*u8, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Image_image_with_size_block = Image_image_with_size_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Image_image_with_size_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return objc_msg_id_size_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("imageWithSize:flipped:drawingHandler:\0")), size, flipped as i8, bp);
+    }
+
     fn set_name(this, string: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("setName:\0")), bridge::nsstring(string)) != (0 as i8);
     }
@@ -14794,7 +15435,29 @@ impl Image {
         rt::msg_void_rect_rect_i64_f64(this._obj, rt::sel(#str_ptr("drawInRect:fromRect:operation:fraction:\0")), rect, from_rect, compositing_operation_raw(operation), fraction);
     }
 
-    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: msgSend shape `void_rect_rect_i64_f64_i8_id` not yet modelled
+    fn draw_in_rect_from_rect_operation(this, dst_space_portion_rect: rt::Rect, src_space_portion_rect: rt::Rect, op: CompositingOperation, fraction: f64, respect_flipped: bool, hints: string_map::StringMap[AnyObject]) {
+        let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_hints: usize = hints.slot_capacity();
+        var dsi_hints: usize = 0 as usize;
+        while dsi_hints < dcap_hints {
+            match hints.value_ptr_at_slot(dsi_hints) {
+                option::Option[*AnyObject]::Some(dvp_hints) => {
+                    match hints.key_ptr_at_slot(dsi_hints) {
+                        option::Option[*text::Text]::Some(dkp_hints) => {
+                    let dval_hints: *u8 = (*dvp_hints).raw();
+                            rt::msg_void_id_id(dict_hints, dset_hints, dval_hints, bridge::nsstring((*dkp_hints).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_hints = dsi_hints +% (1 as usize);
+        }
+        objc_msg_void_rect_rect_i64_f64_i8_id(this._obj, rt::sel(#str_ptr("drawInRect:fromRect:operation:fraction:respectFlipped:hints:\0")), dst_space_portion_rect, src_space_portion_rect, compositing_operation_raw(op), fraction, respect_flipped as i8, dict_hints);
+    }
+
     fn draw_representation(this, image_rep: ImageRep, in_rect: rt::Rect) -> bool {
         return rt::msg_i8_id_rect(this._obj, rt::sel(#str_ptr("drawRepresentation:inRect:\0")), image_rep.raw(), in_rect) != (0 as i8);
     }
@@ -14842,7 +15505,12 @@ impl Image {
         return rt::msg_i8_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("canInitWithPasteboard:\0")), pasteboard.raw()) != (0 as i8);
     }
 
-    // SKIPPED `initWithCGImage:size:`: init arg shape not yet modelled
+    fn new_with_c_g_image_size(cg_image: *u8, size: rt::Size) -> Image {
+        let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Image { _obj: objc_msg_id_id_size(alloced, rt::sel(#str_ptr("initWithCGImage:size:\0")), cg_image, size) };
+    }
+
     fn c_g_image_for_proposed_rect(this, proposed_dest_rect: *u8, context: GraphicsContext, hints: string_map::StringMap[AnyObject]) -> option::Option[*u8] {
         let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -14867,8 +15535,56 @@ impl Image {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `bestRepresentationForRect:context:hints:`: msgSend shape `id_rect_id_id` not yet modelled
-    // SKIPPED `hitTestRect:withImageDestinationRect:context:hints:flipped:`: msgSend shape `i8_rect_rect_id_id_i8` not yet modelled
+    fn best_representation_for_rect(this, rect: rt::Rect, context: GraphicsContext, hints: string_map::StringMap[AnyObject]) -> option::Option[ImageRep] {
+        let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_hints: usize = hints.slot_capacity();
+        var dsi_hints: usize = 0 as usize;
+        while dsi_hints < dcap_hints {
+            match hints.value_ptr_at_slot(dsi_hints) {
+                option::Option[*AnyObject]::Some(dvp_hints) => {
+                    match hints.key_ptr_at_slot(dsi_hints) {
+                        option::Option[*text::Text]::Some(dkp_hints) => {
+                    let dval_hints: *u8 = (*dvp_hints).raw();
+                            rt::msg_void_id_id(dict_hints, dset_hints, dval_hints, bridge::nsstring((*dkp_hints).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_hints = dsi_hints +% (1 as usize);
+        }
+        let obj: *u8 = objc_msg_id_rect_id_id(this._obj, rt::sel(#str_ptr("bestRepresentationForRect:context:hints:\0")), rect, context.raw(), dict_hints);
+        if obj == { 0 as *u8 } {
+            return option::Option[ImageRep]::None;
+        }
+        return option::some(ImageRep::from_raw(obj));
+    }
+
+    fn hit_test_rect(this, test_rect_dest_space: rt::Rect, with_image_destination_rect: rt::Rect, context: GraphicsContext, hints: string_map::StringMap[AnyObject], flipped: bool) -> bool {
+        let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_hints: usize = hints.slot_capacity();
+        var dsi_hints: usize = 0 as usize;
+        while dsi_hints < dcap_hints {
+            match hints.value_ptr_at_slot(dsi_hints) {
+                option::Option[*AnyObject]::Some(dvp_hints) => {
+                    match hints.key_ptr_at_slot(dsi_hints) {
+                        option::Option[*text::Text]::Some(dkp_hints) => {
+                    let dval_hints: *u8 = (*dvp_hints).raw();
+                            rt::msg_void_id_id(dict_hints, dset_hints, dval_hints, bridge::nsstring((*dkp_hints).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_hints = dsi_hints +% (1 as usize);
+        }
+        return objc_msg_i8_rect_rect_id_id_i8(this._obj, rt::sel(#str_ptr("hitTestRect:withImageDestinationRect:context:hints:flipped:\0")), test_rect_dest_space, with_image_destination_rect, context.raw(), dict_hints, flipped as i8) != (0 as i8);
+    }
+
     fn recommended_layer_contents_scale(this, preferred_contents_scale: f64) -> f64 {
         return rt::msg_f64_f64(this._obj, rt::sel(#str_ptr("recommendedLayerContentsScale:\0")), preferred_contents_scale);
     }
@@ -15961,7 +16677,29 @@ impl Workspace {
         return RunningApplication::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("menuBarOwningApplication\0"))));
     }
 
-    // SKIPPED `setDesktopImageURL:forScreen:options:error:`: msgSend shape `i8_id_id_id_id` not yet modelled
+    fn set_desktop_image_u_r_l(this, url: URL, for_screen: Screen, options: string_map::StringMap[AnyObject], error: *u8) -> bool {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return objc_msg_i8_id_id_id_id(this._obj, rt::sel(#str_ptr("setDesktopImageURL:forScreen:options:error:\0")), url.raw(), for_screen.raw(), dict_options, error) != (0 as i8);
+    }
+
     fn desktop_image_u_r_l_for_screen(this, screen: Screen) -> option::Option[URL] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("desktopImageURLForScreen:\0")), screen.raw());
         if obj == { 0 as *u8 } {
@@ -15987,7 +16725,14 @@ impl Workspace {
         return out;
     }
 
-    // SKIPPED `requestAuthorizationOfType:completionHandler:`: block-method msgSend shape not modelled
+    fn request_authorization_of_type(this, type_: WorkspaceAuthorizationType, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_request_authorization_of_type_block = Workspace_request_authorization_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_request_authorization_of_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("requestAuthorizationOfType:completionHandler:\0")), workspace_authorization_type_raw(type_), bp);
+        return;
+    }
+
     fn open_file(this, full_path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openFile:\0")), bridge::nsstring(full_path)) != (0 as i8);
     }
@@ -16058,7 +16803,44 @@ impl Workspace {
         return option::some(RunningApplication::from_raw(obj));
     }
 
-    // SKIPPED `openURLs:withApplicationAtURL:options:configuration:error:`: msgSend shape `id_id_id_u64_id_id` not yet modelled
+    fn open_u_r_ls_with_application_at_u_r_l(this, urls: vec::Vec[URL], application_u_r_l: URL, options: u64, configuration: string_map::StringMap[AnyObject], error: *u8) -> option::Option[RunningApplication] {
+        let arr_urls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_urls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_urls: usize = urls.count();
+        var i_urls: usize = 0 as usize;
+        while i_urls < n_urls {
+            match urls.at_ptr(i_urls) {
+                option::Option[*URL]::Some(e_urls) => { rt::msg_void_id(arr_urls, add_sel_urls, (*e_urls).raw()); }
+                option::Option[*URL]::None => {}
+            }
+            i_urls = i_urls +% (1 as usize);
+        }
+        let dict_configuration: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_configuration: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_configuration: usize = configuration.slot_capacity();
+        var dsi_configuration: usize = 0 as usize;
+        while dsi_configuration < dcap_configuration {
+            match configuration.value_ptr_at_slot(dsi_configuration) {
+                option::Option[*AnyObject]::Some(dvp_configuration) => {
+                    match configuration.key_ptr_at_slot(dsi_configuration) {
+                        option::Option[*text::Text]::Some(dkp_configuration) => {
+                    let dval_configuration: *u8 = (*dvp_configuration).raw();
+                            rt::msg_void_id_id(dict_configuration, dset_configuration, dval_configuration, bridge::nsstring((*dkp_configuration).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_configuration = dsi_configuration +% (1 as usize);
+        }
+        let obj: *u8 = objc_msg_id_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("openURLs:withApplicationAtURL:options:configuration:error:\0")), arr_urls, application_u_r_l.raw(), options, dict_configuration, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[RunningApplication]::None;
+        }
+        return option::some(RunningApplication::from_raw(obj));
+    }
+
     fn launch_application_show_icon(this, app_name: str, show_icon: bool, autolaunch: bool) -> bool {
         return rt::msg_i8_id_i8_i8(this._obj, rt::sel(#str_ptr("launchApplication:showIcon:autolaunch:\0")), bridge::nsstring(app_name), show_icon as i8, autolaunch as i8) != (0 as i8);
     }
@@ -16367,7 +17149,14 @@ impl Event {
         return out;
     }
 
-    // SKIPPED `trackSwipeEventWithOptions:dampenAmountThresholdMin:max:usingHandler:`: block-method msgSend shape not modelled
+    fn track_swipe_event_with_options(this, options: u64, dampen_amount_threshold_min: f64, max: f64, cb: fn(*u8, i64, i64, i8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Event_track_swipe_event_with_options_block = Event_track_swipe_event_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Event_track_swipe_event_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_u64_f64_f64_id(this._obj, rt::sel(#str_ptr("trackSwipeEventWithOptions:dampenAmountThresholdMin:max:usingHandler:\0")), options, dampen_amount_threshold_min, max, bp);
+        return;
+    }
+
     fn start_periodic_events_after_delay(delay: f64, with_period: f64) {
         rt::msg_void_f64_f64(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("startPeriodicEventsAfterDelay:withPeriod:\0")), delay, with_period);
     }
@@ -17814,7 +18603,12 @@ impl Animation {
 
     fn from_raw(ptr: *u8) -> Animation { return Animation { _obj: ptr }; }
 
-    // SKIPPED `initWithDuration:animationCurve:`: init arg shape not yet modelled
+    fn new(duration: f64, animation_curve: AnimationCurve) -> Animation {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAnimation\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Animation { _obj: objc_msg_id_f64_i64(alloced, rt::sel(#str_ptr("initWithDuration:animationCurve:\0")), duration, animation_curve_raw(animation_curve)) };
+    }
+
     fn new_with_coder(coder: *u8) -> Animation {
         let cls: *u8 = rt::get_class(#str_ptr("NSAnimation\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -18346,7 +19140,12 @@ impl Cursor {
 
     fn from_raw(ptr: *u8) -> Cursor { return Cursor { _obj: ptr }; }
 
-    // SKIPPED `initWithImage:hotSpot:`: init arg shape not yet modelled
+    fn new(new_image: Image, point: rt::Point) -> Cursor {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCursor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Cursor { _obj: objc_msg_id_id_point(alloced, rt::sel(#str_ptr("initWithImage:hotSpot:\0")), new_image.raw(), point) };
+    }
+
     fn new_with_coder(coder: *u8) -> Cursor {
         let cls: *u8 = rt::get_class(#str_ptr("NSCursor\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -18493,7 +19292,12 @@ impl Cursor {
         return Cursor { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("NSCursor\0")), rt::sel(#str_ptr("resizeUpDownCursor\0")))) };
     }
 
-    // SKIPPED `initWithImage:foregroundColorHint:backgroundColorHint:hotSpot:`: init arg shape not yet modelled
+    fn new_with_image_foreground_color_hint_background_color_hint_hot_spot(new_image: Image, fg: Color, bg: Color, hot_spot: rt::Point) -> Cursor {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCursor\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Cursor { _obj: objc_msg_id_id_id_id_point(alloced, rt::sel(#str_ptr("initWithImage:foregroundColorHint:backgroundColorHint:hotSpot:\0")), new_image.raw(), fg.raw(), bg.raw(), hot_spot) };
+    }
+
     fn set_on_mouse_exited(this, flag: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setOnMouseExited:\0")), flag as i8);
     }
@@ -20131,7 +20935,12 @@ impl TextList {
 
     fn from_raw(ptr: *u8) -> TextList { return TextList { _obj: ptr }; }
 
-    // SKIPPED `initWithMarkerFormat:options:startingItemNumber:`: init arg shape not yet modelled
+    fn new(marker_format: str, options: u64, starting_item_number: i64) -> TextList {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextList\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextList { _obj: objc_msg_id_id_u64_i64(alloced, rt::sel(#str_ptr("initWithMarkerFormat:options:startingItemNumber:\0")), bridge::nsstring(marker_format), options, starting_item_number) };
+    }
+
     fn new_with_marker_format_options(marker_format: str, options: u64) -> TextList {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextList\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -20214,12 +21023,41 @@ impl TextTab {
         return out;
     }
 
-    // SKIPPED `initWithTextAlignment:location:options:`: init arg shape not yet modelled
+    fn new(alignment: TextAlignment, loc: f64, options: string_map::StringMap[AnyObject]) -> TextTab {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextTab\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return TextTab { _obj: objc_msg_id_i64_f64_id(alloced, rt::sel(#str_ptr("initWithTextAlignment:location:options:\0")), text_alignment_raw(alignment), loc, dict_options) };
+    }
+
     fn alignment(this) -> TextAlignment {
         return text_alignment_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("alignment\0"))));
     }
 
-    // SKIPPED `initWithType:location:`: init arg shape not yet modelled
+    fn new_with_type_location(type_: TextTabType, loc: f64) -> TextTab {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextTab\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextTab { _obj: objc_msg_id_i64_f64(alloced, rt::sel(#str_ptr("initWithType:location:\0")), text_tab_type_raw(type_), loc) };
+    }
+
     fn tab_stop_type(this) -> TextTabType {
         return text_tab_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tabStopType\0"))));
     }
@@ -21770,7 +22608,29 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleAutomaticSpellingCorrection:\0")), sender);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: msgSend shape `void_range_u64_id` not yet modelled
+    fn check_text_in_range(this, range: rt::Range, types: u64, options: string_map::StringMap[AnyObject]) {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("checkTextInRange:types:options:\0")), range, types, dict_options);
+    }
+
     // SKIPPED `handleTextCheckingResults:forRange:types:options:orthography:wordCount:`: param `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     fn order_front_substitutions_panel(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("orderFrontSubstitutionsPanel:\0")), sender);
@@ -24872,7 +25732,14 @@ impl Document {
         rt::msg_void_id_id_i64_id_id_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:delegate:didSaveSelector:contextInfo:\0")), url.raw(), bridge::nsstring(type_name), save_operation_type_raw(save_operation), delegate, did_save_selector, context_info);
     }
 
-    // SKIPPED `saveToURL:ofType:forSaveOperation:completionHandler:`: block-method msgSend shape not modelled
+    fn save_to_u_r_l(this, url: URL, of_type: str, for_save_operation: SaveOperationType, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Document_save_to_u_r_l_block = Document_save_to_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Document_save_to_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_id_i64_id(this._obj, rt::sel(#str_ptr("saveToURL:ofType:forSaveOperation:completionHandler:\0")), url.raw(), bridge::nsstring(of_type), save_operation_type_raw(for_save_operation), bp);
+        return;
+    }
+
     fn can_asynchronously_write_to_u_r_l(this, url: URL, of_type: str, for_save_operation: SaveOperationType) -> bool {
         return rt::msg_i8_id_id_i64(this._obj, rt::sel(#str_ptr("canAsynchronouslyWriteToURL:ofType:forSaveOperation:\0")), url.raw(), bridge::nsstring(of_type), save_operation_type_raw(for_save_operation)) != (0 as i8);
     }
@@ -26331,7 +27198,10 @@ impl Application {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("unregisterUserInterfaceItemSearchHandler:\0")), handler.raw());
     }
 
-    // SKIPPED `searchString:inUserInterfaceItemString:searchRange:foundRange:`: msgSend shape `i8_id_id_range_id` not yet modelled
+    fn search_string(this, search_string: str, in_user_interface_item_string: str, search_range: rt::Range, found_range: *u8) -> bool {
+        return objc_msg_i8_id_id_range_id(this._obj, rt::sel(#str_ptr("searchString:inUserInterfaceItemString:searchRange:foundRange:\0")), bridge::nsstring(search_string), bridge::nsstring(in_user_interface_item_string), search_range, found_range) != (0 as i8);
+    }
+
     fn restore_window_with_identifier(this, identifier: str, state: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> bool {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Application_restore_window_with_identifier_block = Application_restore_window_with_identifier_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Application_restore_window_with_identifier_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -28980,7 +29850,14 @@ impl ViewController {
         rt::msg_void_id_rect_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("presentViewController:asPopoverRelativeToRect:ofView:preferredEdge:behavior:hasFullSizeContent:\0")), view_controller.raw(), positioning_rect, positioning_view.raw(), rect_edge_raw(preferred_edge), popover_behavior_raw(behavior), has_full_size_content as i8);
     }
 
-    // SKIPPED `transitionFromViewController:toViewController:options:completionHandler:`: block-method msgSend shape not modelled
+    fn transition_from_view_controller(this, from_view_controller: ViewController, to_view_controller: ViewController, options: u64, cb: fn(*u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: ViewController_transition_from_view_controller_block = ViewController_transition_from_view_controller_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: ViewController_transition_from_view_controller_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_id_u64_id(this._obj, rt::sel(#str_ptr("transitionFromViewController:toViewController:options:completionHandler:\0")), from_view_controller.raw(), to_view_controller.raw(), options, bp);
+        return;
+    }
+
     fn add_child_view_controller(this, child_view_controller: ViewController) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addChildViewController:\0")), child_view_controller.raw());
     }
@@ -34105,8 +34982,18 @@ impl Matrix {
         return Matrix { _obj: rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame_rect) };
     }
 
-    // SKIPPED `initWithFrame:mode:prototype:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
-    // SKIPPED `initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:`: init arg shape not yet modelled
+    fn new_with_frame_mode_prototype_number_of_rows_number_of_columns(frame_rect: rt::Rect, mode: MatrixMode, cell: Cell, rows_high: i64, cols_wide: i64) -> Matrix {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMatrix\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Matrix { _obj: objc_msg_id_rect_i64_id_i64_i64(alloced, rt::sel(#str_ptr("initWithFrame:mode:prototype:numberOfRows:numberOfColumns:\0")), frame_rect, matrix_mode_raw(mode), cell.raw(), rows_high, cols_wide) };
+    }
+
+    fn new_with_frame_mode_cell_class_number_of_rows_number_of_columns(frame_rect: rt::Rect, mode: MatrixMode, factory_id: *u8, rows_high: i64, cols_wide: i64) -> Matrix {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMatrix\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Matrix { _obj: objc_msg_id_rect_i64_id_i64_i64(alloced, rt::sel(#str_ptr("initWithFrame:mode:cellClass:numberOfRows:numberOfColumns:\0")), frame_rect, matrix_mode_raw(mode), factory_id, rows_high, cols_wide) };
+    }
+
     fn make_cell_at_row(this, row: i64, column: i64) -> Cell {
         return Cell::from_raw(rt::msg_id_i64_i64(this._obj, rt::sel(#str_ptr("makeCellAtRow:column:\0")), row, column));
     }
@@ -34207,7 +35094,21 @@ impl Matrix {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("insertRow:\0")), row);
     }
 
-    // SKIPPED `insertRow:withCells:`: msgSend shape `void_i64_id` not yet modelled
+    fn insert_row_with_cells(this, row: i64, new_cells: vec::Vec[Cell]) {
+        let arr_new_cells: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_new_cells: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_new_cells: usize = new_cells.count();
+        var i_new_cells: usize = 0 as usize;
+        while i_new_cells < n_new_cells {
+            match new_cells.at_ptr(i_new_cells) {
+                option::Option[*Cell]::Some(e_new_cells) => { rt::msg_void_id(arr_new_cells, add_sel_new_cells, (*e_new_cells).raw()); }
+                option::Option[*Cell]::None => {}
+            }
+            i_new_cells = i_new_cells +% (1 as usize);
+        }
+        objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("insertRow:withCells:\0")), row, arr_new_cells);
+    }
+
     fn remove_row(this, row: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeRow:\0")), row);
     }
@@ -34235,7 +35136,21 @@ impl Matrix {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("insertColumn:\0")), column);
     }
 
-    // SKIPPED `insertColumn:withCells:`: msgSend shape `void_i64_id` not yet modelled
+    fn insert_column_with_cells(this, column: i64, new_cells: vec::Vec[Cell]) {
+        let arr_new_cells: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_new_cells: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_new_cells: usize = new_cells.count();
+        var i_new_cells: usize = 0 as usize;
+        while i_new_cells < n_new_cells {
+            match new_cells.at_ptr(i_new_cells) {
+                option::Option[*Cell]::Some(e_new_cells) => { rt::msg_void_id(arr_new_cells, add_sel_new_cells, (*e_new_cells).raw()); }
+                option::Option[*Cell]::None => {}
+            }
+            i_new_cells = i_new_cells +% (1 as usize);
+        }
+        objc_msg_void_i64_id(this._obj, rt::sel(#str_ptr("insertColumn:withCells:\0")), column, arr_new_cells);
+    }
+
     fn remove_column(this, col: i64) {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("removeColumn:\0")), col);
     }
@@ -34884,7 +35799,29 @@ impl ImageRep {
         return rt::msg_i8_rect(this._obj, rt::sel(#str_ptr("drawInRect:\0")), rect) != (0 as i8);
     }
 
-    // SKIPPED `drawInRect:fromRect:operation:fraction:respectFlipped:hints:`: msgSend shape `i8_rect_rect_i64_f64_i8_id` not yet modelled
+    fn draw_in_rect_from_rect(this, dst_space_portion_rect: rt::Rect, src_space_portion_rect: rt::Rect, operation: CompositingOperation, fraction: f64, respect_flipped: bool, hints: string_map::StringMap[AnyObject]) -> bool {
+        let dict_hints: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_hints: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_hints: usize = hints.slot_capacity();
+        var dsi_hints: usize = 0 as usize;
+        while dsi_hints < dcap_hints {
+            match hints.value_ptr_at_slot(dsi_hints) {
+                option::Option[*AnyObject]::Some(dvp_hints) => {
+                    match hints.key_ptr_at_slot(dsi_hints) {
+                        option::Option[*text::Text]::Some(dkp_hints) => {
+                    let dval_hints: *u8 = (*dvp_hints).raw();
+                            rt::msg_void_id_id(dict_hints, dset_hints, dval_hints, bridge::nsstring((*dkp_hints).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_hints = dsi_hints +% (1 as usize);
+        }
+        return objc_msg_i8_rect_rect_i64_f64_i8_id(this._obj, rt::sel(#str_ptr("drawInRect:fromRect:operation:fraction:respectFlipped:hints:\0")), dst_space_portion_rect, src_space_portion_rect, compositing_operation_raw(operation), fraction, respect_flipped as i8, dict_hints) != (0 as i8);
+    }
+
     fn register_image_rep_class(image_rep_class: *u8) {
         rt::msg_void_id(rt::get_class(#str_ptr("NSImageRep\0")), rt::sel(#str_ptr("registerImageRepClass:\0")), image_rep_class);
     }
@@ -35976,8 +36913,18 @@ impl CachedImageRep {
 
     fn from_raw(ptr: *u8) -> CachedImageRep { return CachedImageRep { _obj: ptr }; }
 
-    // SKIPPED `initWithWindow:rect:`: init arg shape not yet modelled
-    // SKIPPED `initWithSize:depth:separate:alpha:`: init arg shape not yet modelled
+    fn new(win: Window, rect: rt::Rect) -> CachedImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCachedImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return CachedImageRep { _obj: objc_msg_id_id_rect(alloced, rt::sel(#str_ptr("initWithWindow:rect:\0")), win.raw(), rect) };
+    }
+
+    fn new_with_size_depth_separate_alpha(size: rt::Size, depth: WindowDepth, flag: bool, alpha: bool) -> CachedImageRep {
+        let cls: *u8 = rt::get_class(#str_ptr("NSCachedImageRep\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return CachedImageRep { _obj: objc_msg_id_size_i64_i8_i8(alloced, rt::sel(#str_ptr("initWithSize:depth:separate:alpha:\0")), size, window_depth_raw(depth), flag as i8, alpha as i8) };
+    }
+
     fn window(this) -> Window {
         return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("window\0"))));
     }
@@ -36406,7 +37353,13 @@ impl CustomImageRep {
 
     fn from_raw(ptr: *u8) -> CustomImageRep { return CustomImageRep { _obj: ptr }; }
 
-    // SKIPPED `initWithSize:flipped:drawingHandler:`: block-method msgSend shape not modelled
+    fn init_with_size_flipped_drawing_handler(this, size: rt::Size, drawing_handler_should_be_called_with_flipped_context: bool, cb: fn(*u8, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: CustomImageRep_init_with_size_flipped_drawing_handler_block = CustomImageRep_init_with_size_flipped_drawing_handler_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: CustomImageRep_init_with_size_flipped_drawing_handler_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return objc_msg_id_size_i8_id(this._obj, rt::sel(#str_ptr("initWithSize:flipped:drawingHandler:\0")), size, drawing_handler_should_be_called_with_flipped_context as i8, bp);
+    }
+
     fn new_with_draw_selector_delegate(selector: *u8, delegate: *u8) -> CustomImageRep {
         let cls: *u8 = rt::get_class(#str_ptr("NSCustomImageRep\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -36685,7 +37638,14 @@ impl DocumentController {
         return;
     }
 
-    // SKIPPED `openDocumentWithContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
+    fn open_document_with_contents_of_u_r_l_display(this, url: URL, display_document: bool, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: DocumentController_open_document_with_contents_of_u_r_l_display_block = DocumentController_open_document_with_contents_of_u_r_l_display_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_open_document_with_contents_of_u_r_l_display_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("openDocumentWithContentsOfURL:display:completionHandler:\0")), url.raw(), display_document as i8, bp);
+        return;
+    }
+
     fn make_document_with_contents_of_u_r_l_of_type(this, url: URL, type_name: str, error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentWithContentsOfURL:ofType:error:\0")), url.raw(), bridge::nsstring(type_name), error);
         if obj == { 0 as *u8 } {
@@ -36694,7 +37654,14 @@ impl DocumentController {
         return option::some(Document::from_raw(obj));
     }
 
-    // SKIPPED `reopenDocumentForURL:withContentsOfURL:display:completionHandler:`: block-method msgSend shape not modelled
+    fn reopen_document_for_u_r_l_with_contents_of_u_r_l(this, url_or_nil: URL, contents_u_r_l: URL, display: bool, cb: fn(*u8, *u8, i8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block = DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DocumentController_reopen_document_for_u_r_l_with_contents_of_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_id_i8_id(this._obj, rt::sel(#str_ptr("reopenDocumentForURL:withContentsOfURL:display:completionHandler:\0")), url_or_nil.raw(), contents_u_r_l.raw(), display as i8, bp);
+        return;
+    }
+
     fn make_document_for_u_r_l(this, url_or_nil: URL, with_contents_of_u_r_l: URL, of_type: str, error: *u8) -> option::Option[Document] {
         let obj: *u8 = rt::msg_id_id_id_id_id(this._obj, rt::sel(#str_ptr("makeDocumentForURL:withContentsOfURL:ofType:error:\0")), url_or_nil.raw(), with_contents_of_u_r_l.raw(), bridge::nsstring(of_type), error);
         if obj == { 0 as *u8 } {
@@ -38736,9 +39703,24 @@ impl SharingCollaborationModeRestriction {
         return SharingCollaborationModeRestriction { _obj: rt::msg_id_i64(alloced, rt::sel(#str_ptr("initWithDisabledMode:\0")), sharing_collaboration_mode_raw(disabled_mode)) };
     }
 
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:`: init arg shape not yet modelled
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:`: init arg shape not yet modelled
-    // SKIPPED `initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:alertRecoverySuggestionButtonTitle:alertRecoverySuggestionButtonLaunchURL:`: init arg shape not yet modelled
+    fn new_with_disabled_mode_alert_title_alert_message(disabled_mode: SharingCollaborationMode, alert_title: str, alert_message: str) -> SharingCollaborationModeRestriction {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingCollaborationModeRestriction { _obj: objc_msg_id_i64_id_id(alloced, rt::sel(#str_ptr("initWithDisabledMode:alertTitle:alertMessage:\0")), sharing_collaboration_mode_raw(disabled_mode), bridge::nsstring(alert_title), bridge::nsstring(alert_message)) };
+    }
+
+    fn new_with_disabled_mode_alert_title_alert_message_alert_dismiss_button_title(disabled_mode: SharingCollaborationMode, alert_title: str, alert_message: str, alert_dismiss_button_title: str) -> SharingCollaborationModeRestriction {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingCollaborationModeRestriction { _obj: objc_msg_id_i64_id_id_id(alloced, rt::sel(#str_ptr("initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:\0")), sharing_collaboration_mode_raw(disabled_mode), bridge::nsstring(alert_title), bridge::nsstring(alert_message), bridge::nsstring(alert_dismiss_button_title)) };
+    }
+
+    fn new_with_disabled_mode_alert_title_alert_message_alert_dismiss_button_title_alert_recovery_suggestion_button_title_alert_recovery_suggestion_button_launch_u_r_l(disabled_mode: SharingCollaborationMode, alert_title: str, alert_message: str, alert_dismiss_button_title: str, alert_recovery_suggestion_button_title: str, alert_recovery_suggestion_button_launch_u_r_l: URL) -> SharingCollaborationModeRestriction {
+        let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return SharingCollaborationModeRestriction { _obj: objc_msg_id_i64_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithDisabledMode:alertTitle:alertMessage:alertDismissButtonTitle:alertRecoverySuggestionButtonTitle:alertRecoverySuggestionButtonLaunchURL:\0")), sharing_collaboration_mode_raw(disabled_mode), bridge::nsstring(alert_title), bridge::nsstring(alert_message), bridge::nsstring(alert_dismiss_button_title), bridge::nsstring(alert_recovery_suggestion_button_title), alert_recovery_suggestion_button_launch_u_r_l.raw()) };
+    }
+
     fn new() -> SharingCollaborationModeRestriction {
         let cls: *u8 = rt::get_class(#str_ptr("NSSharingCollaborationModeRestriction\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -39509,7 +40491,33 @@ impl SpellChecker {
     // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: return `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
     // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `menuForResult:string:options:atLocation:inView:`: msgSend shape `id_id_id_id_point_id` not yet modelled
+    fn menu_for_result(this, result: *u8, string: str, options: string_map::StringMap[AnyObject], at_location: rt::Point, in_view: View) -> option::Option[Menu] {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        let obj: *u8 = objc_msg_id_id_id_id_point_id(this._obj, rt::sel(#str_ptr("menuForResult:string:options:atLocation:inView:\0")), result, bridge::nsstring(string), dict_options, at_location, in_view.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Menu]::None;
+        }
+        return option::some(Menu::from_raw(obj));
+    }
+
     fn user_quotes_array_for_language(this, language: str) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("userQuotesArrayForLanguage:\0")), bridge::nsstring(language));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -39623,7 +40631,14 @@ impl SpellChecker {
         rt::msg_void_i64_id_id_id_i64(this._obj, rt::sel(#str_ptr("recordResponse:toCorrection:forWord:language:inSpellDocumentWithTag:\0")), correction_response_raw(response), bridge::nsstring(to_correction), bridge::nsstring(for_word), bridge::nsstring(language), in_spell_document_with_tag);
     }
 
-    // SKIPPED `showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:`: block-method msgSend shape not modelled
+    fn show_correction_indicator_of_type(this, type_: CorrectionIndicatorType, primary_string: str, alternative_strings: vec::Vec[text::Text], for_string_in_rect: rt::Rect, view: View, cb: fn(*u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SpellChecker_show_correction_indicator_of_type_block = SpellChecker_show_correction_indicator_of_type_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_show_correction_indicator_of_type_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_i64_id_id_rect_id_id(this._obj, rt::sel(#str_ptr("showCorrectionIndicatorOfType:primaryString:alternativeStrings:forStringInRect:view:completionHandler:\0")), correction_indicator_type_raw(type_), bridge::nsstring(primary_string), bridge::nsarray_of_text(alternative_strings), for_string_in_rect, view.raw(), bp);
+        return;
+    }
+
     fn dismiss_correction_indicator_for_view(this, view: View) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("dismissCorrectionIndicatorForView:\0")), view.raw());
     }
@@ -40949,7 +41964,12 @@ impl PopUpButton {
         return PopUpButton { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSPopUpButton\0")), rt::sel(#str_ptr("pullDownButtonWithTitle:image:menu:\0")), bridge::nsstring(title), image.raw(), menu.raw())) };
     }
 
-    // SKIPPED `initWithFrame:pullsDown:`: init arg shape not yet modelled
+    fn new(button_frame: rt::Rect, flag: bool) -> PopUpButton {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPopUpButton\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return PopUpButton { _obj: objc_msg_id_rect_i8(alloced, rt::sel(#str_ptr("initWithFrame:pullsDown:\0")), button_frame, flag as i8) };
+    }
+
     fn add_item_with_title(this, title: str) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("addItemWithTitle:\0")), bridge::nsstring(title));
     }
@@ -42984,7 +44004,29 @@ impl TextCheckingController {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("considerTextCheckingForRange:\0")), range);
     }
 
-    // SKIPPED `checkTextInRange:types:options:`: msgSend shape `void_range_u64_id` not yet modelled
+    fn check_text_in_range(this, range: rt::Range, types: u64, options: string_map::StringMap[AnyObject]) {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        objc_msg_void_range_u64_id(this._obj, rt::sel(#str_ptr("checkTextInRange:types:options:\0")), range, types, dict_options);
+    }
+
     fn check_text_in_selection(this, sender: *u8) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("checkTextInSelection:\0")), sender);
     }
@@ -43282,7 +44324,14 @@ impl TextLayoutManager {
         return option::some(TextLocation::from_raw(obj));
     }
 
-    // SKIPPED `enumerateRenderingAttributesFromLocation:reverse:usingBlock:`: block-method msgSend shape not modelled
+    fn enumerate_rendering_attributes_from_location(this, location: TextLocation, reverse: bool, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TextLayoutManager_enumerate_rendering_attributes_from_location_block = TextLayoutManager_enumerate_rendering_attributes_from_location_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_rendering_attributes_from_location_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_i8_id(this._obj, rt::sel(#str_ptr("enumerateRenderingAttributesFromLocation:reverse:usingBlock:\0")), location.raw(), reverse as i8, bp);
+        return;
+    }
+
     fn set_rendering_attributes(this, rendering_attributes: string_map::StringMap[AnyObject], for_text_range: TextRange) {
         let dict_rendering_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_rendering_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -43335,7 +44384,14 @@ impl TextLayoutManager {
         return out;
     }
 
-    // SKIPPED `enumerateTextSegmentsInRange:type:options:usingBlock:`: block-method msgSend shape not modelled
+    fn enumerate_text_segments_in_range(this, text_range: TextRange, type_: TextLayoutManagerSegmentType, options: u64, cb: fn(*u8, *u8, i64, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TextLayoutManager_enumerate_text_segments_in_range_block = TextLayoutManager_enumerate_text_segments_in_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TextLayoutManager_enumerate_text_segments_in_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_id_i64_u64_id(this._obj, rt::sel(#str_ptr("enumerateTextSegmentsInRange:type:options:usingBlock:\0")), text_range.raw(), text_layout_manager_segment_type_raw(type_), options, bp);
+        return;
+    }
+
     fn replace_contents_in_range(this, range: TextRange, with_text_elements: vec::Vec[TextElement]) {
         let arr_with_text_elements: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let add_sel_with_text_elements: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -43513,7 +44569,12 @@ impl TextContainer {
 
     fn from_raw(ptr: *u8) -> TextContainer { return TextContainer { _obj: ptr }; }
 
-    // SKIPPED `initWithSize:`: init arg shape not yet modelled
+    fn new(size: rt::Size) -> TextContainer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextContainer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextContainer { _obj: objc_msg_id_size(alloced, rt::sel(#str_ptr("initWithSize:\0")), size) };
+    }
+
     fn new_with_coder(coder: *u8) -> TextContainer {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextContainer\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -43632,7 +44693,12 @@ impl TextContainer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextView:\0")), text_view.raw());
     }
 
-    // SKIPPED `initWithContainerSize:`: init arg shape not yet modelled
+    fn new_with_container_size(a_container_size: rt::Size) -> TextContainer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextContainer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextContainer { _obj: objc_msg_id_size(alloced, rt::sel(#str_ptr("initWithContainerSize:\0")), a_container_size) };
+    }
+
     fn line_fragment_rect_for_proposed_rect_sweep_direction(this, proposed_rect: rt::Rect, sweep_direction: LineSweepDirection, movement_direction: LineMovementDirection, remaining_rect: *u8) -> rt::Rect {
         return rt::msg_rect_rect_i64_i64_id(this._obj, rt::sel(#str_ptr("lineFragmentRectForProposedRect:sweepDirection:movementDirection:remainingRect:\0")), proposed_rect, line_sweep_direction_raw(sweep_direction), line_movement_direction_raw(movement_direction), remaining_rect);
     }
@@ -43978,7 +45044,14 @@ impl LayoutManager {
         return;
     }
 
-    // SKIPPED `enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:`: block-method msgSend shape not modelled
+    fn enumerate_enclosing_rects_for_glyph_range(this, glyph_range: rt::Range, within_selected_glyph_range: rt::Range, in_text_container: TextContainer, cb: fn(*u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: LayoutManager_enumerate_enclosing_rects_for_glyph_range_block = LayoutManager_enumerate_enclosing_rects_for_glyph_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        objc_msg_void_range_range_id_id(this._obj, rt::sel(#str_ptr("enumerateEnclosingRectsForGlyphRange:withinSelectedGlyphRange:inTextContainer:usingBlock:\0")), glyph_range, within_selected_glyph_range, in_text_container.raw(), bp);
+        return;
+    }
+
     fn draw_background_for_glyph_range(this, glyphs_to_show: rt::Range, at_point: rt::Point) {
         rt::msg_void_range_point(this._obj, rt::sel(#str_ptr("drawBackgroundForGlyphRange:atPoint:\0")), glyphs_to_show, at_point);
     }
@@ -44113,7 +45186,23 @@ impl LayoutManager {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `temporaryAttributesAtCharacterIndex:longestEffectiveRange:inRange:`: NSDictionary arg shape not modelled
+    fn temporary_attributes_at_character_index_longest_effective_range(this, location: u64, range: *u8, in_range: rt::Range) -> string_map::StringMap[AnyObject] {
+        let dict: *u8 = objc_msg_id_u64_id_range(this._obj, rt::sel(#str_ptr("temporaryAttributesAtCharacterIndex:longestEffectiveRange:inRange:\0")), location, range, in_range);
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn add_temporary_attribute(this, attr_name: str, value: *u8, for_character_range: rt::Range) {
         rt::msg_void_id_id_range(this._obj, rt::sel(#str_ptr("addTemporaryAttribute:value:forCharacterRange:\0")), bridge::nsstring(attr_name), value, for_character_range);
     }
@@ -44387,7 +45476,29 @@ impl LayoutManager {
         rt::msg_void_id_u64_range_point_id_id_size(this._obj, rt::sel(#str_ptr("showPackedGlyphs:length:glyphRange:atPoint:font:color:printingAdjustment:\0")), glyphs, length, glyph_range, at_point, font.raw(), color.raw(), printing_adjustment);
     }
 
-    // SKIPPED `showCGGlyphs:positions:count:font:matrix:attributes:inContext:`: msgSend shape `void_id_id_u64_id_id_id_id` not yet modelled
+    fn show_c_g_glyphs_positions(this, glyphs: *u8, positions: *u8, count: u64, font: Font, matrix: AffineTransform, attributes: string_map::StringMap[AnyObject], in_context: GraphicsContext) {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        objc_msg_void_id_id_u64_id_id_id_id(this._obj, rt::sel(#str_ptr("showCGGlyphs:positions:count:font:matrix:attributes:inContext:\0")), glyphs, positions, count, font.raw(), matrix.raw(), dict_attributes, in_context.raw());
+    }
+
     fn uses_screen_fonts(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("usesScreenFonts\0"))) != (0 as i8);
     }
@@ -44721,9 +45832,18 @@ impl Typesetter {
         rt::msg_void_i8_range(this._obj, rt::sel(#str_ptr("setHardInvalidation:forGlyphRange:\0")), flag as i8, for_glyph_range);
     }
 
-    // SKIPPED `layoutGlyphsInLayoutManager:startingAtGlyphIndex:maxNumberOfLineFragments:nextGlyphIndex:`: msgSend shape `void_id_u64_u64_id` not yet modelled
-    // SKIPPED `layoutCharactersInRange:forLayoutManager:maximumNumberOfLineFragments:`: msgSend shape `range_range_id_u64` not yet modelled
-    // SKIPPED `printingAdjustmentInLayoutManager:forNominallySpacedGlyphRange:packedGlyphs:count:`: msgSend shape `size_id_range_id_u64` not yet modelled
+    fn layout_glyphs_in_layout_manager(this, layout_manager: LayoutManager, starting_at_glyph_index: u64, max_number_of_line_fragments: u64, next_glyph_index: *u8) {
+        objc_msg_void_id_u64_u64_id(this._obj, rt::sel(#str_ptr("layoutGlyphsInLayoutManager:startingAtGlyphIndex:maxNumberOfLineFragments:nextGlyphIndex:\0")), layout_manager.raw(), starting_at_glyph_index, max_number_of_line_fragments, next_glyph_index);
+    }
+
+    fn layout_characters_in_range(this, character_range: rt::Range, for_layout_manager: LayoutManager, maximum_number_of_line_fragments: u64) -> rt::Range {
+        return objc_msg_range_range_id_u64(this._obj, rt::sel(#str_ptr("layoutCharactersInRange:forLayoutManager:maximumNumberOfLineFragments:\0")), character_range, for_layout_manager.raw(), maximum_number_of_line_fragments);
+    }
+
+    fn printing_adjustment_in_layout_manager(layout_mgr: LayoutManager, for_nominally_spaced_glyph_range: rt::Range, packed_glyphs: *u8, count: u64) -> rt::Size {
+        return objc_msg_size_id_range_id_u64(rt::get_class(#str_ptr("NSTypesetter\0")), rt::sel(#str_ptr("printingAdjustmentInLayoutManager:forNominallySpacedGlyphRange:packedGlyphs:count:\0")), layout_mgr.raw(), for_nominally_spaced_glyph_range, packed_glyphs, count);
+    }
+
     fn baseline_offset_in_layout_manager(this, layout_mgr: LayoutManager, glyph_index: u64) -> f64 {
         return rt::msg_f64_id_u64(this._obj, rt::sel(#str_ptr("baselineOffsetInLayoutManager:glyphIndex:\0")), layout_mgr.raw(), glyph_index);
     }
@@ -44894,8 +46014,14 @@ impl Typesetter {
         return rt::msg_range_range_id(this._obj, rt::sel(#str_ptr("glyphRangeForCharacterRange:actualCharacterRange:\0")), char_range, actual_character_range);
     }
 
-    // SKIPPED `getLineFragmentRect:usedRect:remainingRect:forStartingGlyphAtIndex:proposedRect:lineSpacing:paragraphSpacingBefore:paragraphSpacingAfter:`: msgSend shape `void_id_id_id_u64_rect_f64_f64_f64` not yet modelled
-    // SKIPPED `setLineFragmentRect:forGlyphRange:usedRect:baselineOffset:`: msgSend shape `void_rect_range_rect_f64` not yet modelled
+    fn get_line_fragment_rect_used_rect(this, line_fragment_rect: *u8, line_fragment_used_rect: *u8, remaining_rect: *u8, for_starting_glyph_at_index: u64, proposed_rect: rt::Rect, line_spacing: f64, paragraph_spacing_before: f64, paragraph_spacing_after: f64) {
+        objc_msg_void_id_id_id_u64_rect_f64_f64_f64(this._obj, rt::sel(#str_ptr("getLineFragmentRect:usedRect:remainingRect:forStartingGlyphAtIndex:proposedRect:lineSpacing:paragraphSpacingBefore:paragraphSpacingAfter:\0")), line_fragment_rect, line_fragment_used_rect, remaining_rect, for_starting_glyph_at_index, proposed_rect, line_spacing, paragraph_spacing_before, paragraph_spacing_after);
+    }
+
+    fn set_line_fragment_rect(this, fragment_rect: rt::Rect, for_glyph_range: rt::Range, used_rect: rt::Rect, baseline_offset: f64) {
+        objc_msg_void_rect_range_rect_f64(this._obj, rt::sel(#str_ptr("setLineFragmentRect:forGlyphRange:usedRect:baselineOffset:\0")), fragment_rect, for_glyph_range, used_rect, baseline_offset);
+    }
+
     fn set_not_shown_attribute(this, flag: bool, for_glyph_range: rt::Range) {
         rt::msg_void_i8_range(this._obj, rt::sel(#str_ptr("setNotShownAttribute:forGlyphRange:\0")), flag as i8, for_glyph_range);
     }
@@ -44904,7 +46030,10 @@ impl Typesetter {
         rt::msg_void_i8_range(this._obj, rt::sel(#str_ptr("setDrawsOutsideLineFragment:forGlyphRange:\0")), flag as i8, for_glyph_range);
     }
 
-    // SKIPPED `setLocation:withAdvancements:forStartOfGlyphRange:`: msgSend shape `void_point_id_range` not yet modelled
+    fn set_location(this, location: rt::Point, with_advancements: *u8, for_start_of_glyph_range: rt::Range) {
+        objc_msg_void_point_id_range(this._obj, rt::sel(#str_ptr("setLocation:withAdvancements:forStartOfGlyphRange:\0")), location, with_advancements, for_start_of_glyph_range);
+    }
+
     fn set_attachment_size(this, attachment_size: rt::Size, for_glyph_range: rt::Range) {
         rt::msg_void_size_range(this._obj, rt::sel(#str_ptr("setAttachmentSize:forGlyphRange:\0")), attachment_size, for_glyph_range);
     }
@@ -44945,7 +46074,12 @@ impl RulerMarker {
 
     fn from_raw(ptr: *u8) -> RulerMarker { return RulerMarker { _obj: ptr }; }
 
-    // SKIPPED `initWithRulerView:markerLocation:image:imageOrigin:`: init arg shape not yet modelled
+    fn new_with_ruler_view_marker_location_image_image_origin(ruler: RulerView, location: f64, image: Image, image_origin: rt::Point) -> RulerMarker {
+        let cls: *u8 = rt::get_class(#str_ptr("NSRulerMarker\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return RulerMarker { _obj: objc_msg_id_id_f64_id_point(alloced, rt::sel(#str_ptr("initWithRulerView:markerLocation:image:imageOrigin:\0")), ruler.raw(), location, image.raw(), image_origin) };
+    }
+
     fn new_with_coder(coder: *u8) -> RulerMarker {
         let cls: *u8 = rt::get_class(#str_ptr("NSRulerMarker\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -45761,7 +46895,29 @@ impl TextAttachmentViewProvider {
         rt::msg_void(this._obj, rt::sel(#str_ptr("loadView\0")));
     }
 
-    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: msgSend shape `rect_id_id_id_rect_point` not yet modelled
+    fn attachment_bounds_for_attributes(this, attributes: string_map::StringMap[AnyObject], location: TextLocation, text_container: TextContainer, proposed_line_fragment: rt::Rect, position: rt::Point) -> rt::Rect {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return objc_msg_rect_id_id_id_rect_point(this._obj, rt::sel(#str_ptr("attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:\0")), dict_attributes, location.raw(), text_container.raw(), proposed_line_fragment, position);
+    }
+
     fn text_attachment(this) -> option::Option[TextAttachment] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textAttachment\0")));
         if obj == { 0 as *u8 } {
@@ -46435,7 +47591,13 @@ impl TableViewRowAction {
 
     fn from_raw(ptr: *u8) -> TableViewRowAction { return TableViewRowAction { _obj: ptr }; }
 
-    // SKIPPED `rowActionWithStyle:title:handler:`: block-method msgSend shape not modelled
+    fn row_action_with_style(style: TableViewRowActionStyle, title: str, cb: fn(*u8, *u8, i64), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: TableViewRowAction_row_action_with_style_block = TableViewRowAction_row_action_with_style_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: TableViewRowAction_row_action_with_style_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        return objc_msg_id_i64_id_id(rt::get_class(#str_ptr("NSTableViewRowAction\0")), rt::sel(#str_ptr("rowActionWithStyle:title:handler:\0")), table_view_row_action_style_raw(style), bridge::nsstring(title), bp);
+    }
+
     fn style(this) -> TableViewRowActionStyle {
         return table_view_row_action_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("style\0"))));
     }
@@ -47791,7 +48953,12 @@ impl Drawer {
 
     fn from_raw(ptr: *u8) -> Drawer { return Drawer { _obj: ptr }; }
 
-    // SKIPPED `initWithContentSize:preferredEdge:`: init arg shape not yet modelled
+    fn new(content_size: rt::Size, edge: RectEdge) -> Drawer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSDrawer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return Drawer { _obj: objc_msg_id_size_i64(alloced, rt::sel(#str_ptr("initWithContentSize:preferredEdge:\0")), content_size, rect_edge_raw(edge)) };
+    }
+
     fn open(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("open\0")));
     }
@@ -47968,7 +49135,12 @@ impl OpenGLPixelBuffer {
 
     fn from_raw(ptr: *u8) -> OpenGLPixelBuffer { return OpenGLPixelBuffer { _obj: ptr }; }
 
-    // SKIPPED `initWithTextureTarget:textureInternalFormat:textureMaxMipMapLevel:pixelsWide:pixelsHigh:`: init arg shape not yet modelled
+    fn new(target: u32, format: u32, max_level: i32, pixels_wide: i32, pixels_high: i32) -> OpenGLPixelBuffer {
+        let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLPixelBuffer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLPixelBuffer { _obj: objc_msg_id_u32_u32_i32_i32_i32(alloced, rt::sel(#str_ptr("initWithTextureTarget:textureInternalFormat:textureMaxMipMapLevel:pixelsWide:pixelsHigh:\0")), target, format, max_level, pixels_wide, pixels_high) };
+    }
+
     fn new_with_c_g_l_p_buffer_obj(pbuffer: *u8) -> OpenGLPixelBuffer {
         let cls: *u8 = rt::get_class(#str_ptr("NSOpenGLPixelBuffer\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -50215,7 +51387,12 @@ impl TextTableBlock {
 
     fn from_raw(ptr: *u8) -> TextTableBlock { return TextTableBlock { _obj: ptr }; }
 
-    // SKIPPED `initWithTable:startingRow:rowSpan:startingColumn:columnSpan:`: init arg shape not yet modelled
+    fn new(table: TextTable, row: i64, row_span: i64, col: i64, col_span: i64) -> TextTableBlock {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextTableBlock\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextTableBlock { _obj: objc_msg_id_id_i64_i64_i64_i64(alloced, rt::sel(#str_ptr("initWithTable:startingRow:rowSpan:startingColumn:columnSpan:\0")), table.raw(), row, row_span, col, col_span) };
+    }
+
     fn table(this) -> TextTable {
         return TextTable::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("table\0"))));
     }
@@ -52452,14 +53629,35 @@ impl TextSelection {
 
     fn from_raw(ptr: *u8) -> TextSelection { return TextSelection { _obj: ptr }; }
 
-    // SKIPPED `initWithRanges:affinity:granularity:`: init arg shape not yet modelled
+    fn new_with_ranges_affinity_granularity(text_ranges: vec::Vec[TextRange], affinity: TextSelectionAffinity, granularity: TextSelectionGranularity) -> TextSelection {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextSelection\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_text_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_text_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_text_ranges: usize = text_ranges.count();
+        var i_text_ranges: usize = 0 as usize;
+        while i_text_ranges < n_text_ranges {
+            match text_ranges.at_ptr(i_text_ranges) {
+                option::Option[*TextRange]::Some(e_text_ranges) => { rt::msg_void_id(arr_text_ranges, add_sel_text_ranges, (*e_text_ranges).raw()); }
+                option::Option[*TextRange]::None => {}
+            }
+            i_text_ranges = i_text_ranges +% (1 as usize);
+        }
+        return TextSelection { _obj: objc_msg_id_id_i64_i64(alloced, rt::sel(#str_ptr("initWithRanges:affinity:granularity:\0")), arr_text_ranges, text_selection_affinity_raw(affinity), text_selection_granularity_raw(granularity)) };
+    }
+
     fn new_with_coder(coder: *u8) -> TextSelection {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextSelection\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return TextSelection { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), coder) };
     }
 
-    // SKIPPED `initWithRange:affinity:granularity:`: init arg shape not yet modelled
+    fn new_with_range_affinity_granularity(range: TextRange, affinity: TextSelectionAffinity, granularity: TextSelectionGranularity) -> TextSelection {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextSelection\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextSelection { _obj: objc_msg_id_id_i64_i64(alloced, rt::sel(#str_ptr("initWithRange:affinity:granularity:\0")), range.raw(), text_selection_affinity_raw(affinity), text_selection_granularity_raw(granularity)) };
+    }
+
     fn new_with_location_affinity(location: TextLocation, affinity: TextSelectionAffinity) -> TextSelection {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextSelection\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -52607,7 +53805,31 @@ impl TextLineFragment {
         return TextLineFragment { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCoder:\0")), a_decoder) };
     }
 
-    // SKIPPED `initWithString:attributes:range:`: init arg shape not yet modelled
+    fn new_with_string_attributes_range(string: str, attributes: string_map::StringMap[AnyObject], range: rt::Range) -> TextLineFragment {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return TextLineFragment { _obj: objc_msg_id_id_id_range(alloced, rt::sel(#str_ptr("initWithString:attributes:range:\0")), bridge::nsstring(string), dict_attributes, range) };
+    }
+
     fn new() -> TextLineFragment {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextLineFragment\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -52705,7 +53927,19 @@ impl TextSelectionNavigation {
         return option::some(TextLocation::from_raw(obj));
     }
 
-    // SKIPPED `deletionRangesForTextSelection:direction:destination:allowsDecomposition:`: NSArray arg shape not modelled
+    fn deletion_ranges_for_text_selection(this, text_selection: TextSelection, direction: TextSelectionNavigationDirection, destination: TextSelectionNavigationDestination, allows_decomposition: bool) -> vec::Vec[TextRange] {
+        let arr: *u8 = objc_msg_id_id_i64_i64_i8(this._obj, rt::sel(#str_ptr("deletionRangesForTextSelection:direction:destination:allowsDecomposition:\0")), text_selection.raw(), text_selection_navigation_direction_raw(direction), text_selection_navigation_destination_raw(destination), allows_decomposition as i8);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextRange] = vec::Vec[TextRange]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextRange::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn text_selection_data_source(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textSelectionDataSource\0")));
         return bridge::obj_option(obj);
@@ -53464,7 +54698,12 @@ impl TextPreview {
         return TextPreview { _obj: rt::msg_id_id_rect_id(alloced, rt::sel(#str_ptr("initWithSnapshotImage:presentationFrame:candidateRects:\0")), snapshot_image, presentation_frame, arr_candidate_rects) };
     }
 
-    // SKIPPED `initWithSnapshotImage:presentationFrame:`: init arg shape not yet modelled
+    fn new_with_snapshot_image_presentation_frame(snapshot_image: *u8, presentation_frame: rt::Rect) -> TextPreview {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextPreview\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextPreview { _obj: objc_msg_id_id_rect(alloced, rt::sel(#str_ptr("initWithSnapshotImage:presentationFrame:\0")), snapshot_image, presentation_frame) };
+    }
+
     fn new() -> TextPreview {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextPreview\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -54009,7 +55248,10 @@ impl AccessibilityNavigableStaticText {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("accessibilityLineForIndex:\0")), index);
     }
 
-    // SKIPPED `accessibilityRangeForLine:`: msgSend shape `range_i64` not yet modelled
+    fn accessibility_range_for_line(this, line_number: i64) -> rt::Range {
+        return objc_msg_range_i64(this._obj, rt::sel(#str_ptr("accessibilityRangeForLine:\0")), line_number);
+    }
+
     fn accessibility_frame_for_range(this, range: rt::Range) -> rt::Rect {
         return rt::msg_rect_range(this._obj, rt::sel(#str_ptr("accessibilityFrameForRange:\0")), range);
     }
@@ -54416,14 +55658,23 @@ impl Accessibility {
         return option::some(AttributedString::from_raw(obj));
     }
 
-    // SKIPPED `accessibilityRangeForLine:`: msgSend shape `range_i64` not yet modelled
+    fn accessibility_range_for_line(this, line: i64) -> rt::Range {
+        return objc_msg_range_i64(this._obj, rt::sel(#str_ptr("accessibilityRangeForLine:\0")), line);
+    }
+
     fn accessibility_string_for_range(this, range: rt::Range) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id_range(this._obj, rt::sel(#str_ptr("accessibilityStringForRange:\0")), range);
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `accessibilityRangeForPosition:`: msgSend shape `range_point` not yet modelled
-    // SKIPPED `accessibilityRangeForIndex:`: msgSend shape `range_i64` not yet modelled
+    fn accessibility_range_for_position(this, point: rt::Point) -> rt::Range {
+        return objc_msg_range_point(this._obj, rt::sel(#str_ptr("accessibilityRangeForPosition:\0")), point);
+    }
+
+    fn accessibility_range_for_index(this, index: i64) -> rt::Range {
+        return objc_msg_range_i64(this._obj, rt::sel(#str_ptr("accessibilityRangeForIndex:\0")), index);
+    }
+
     fn accessibility_frame_for_range(this, range: rt::Range) -> rt::Rect {
         return rt::msg_rect_range(this._obj, rt::sel(#str_ptr("accessibilityFrameForRange:\0")), range);
     }
@@ -54436,7 +55687,10 @@ impl Accessibility {
         return option::some(Data::from_raw(obj));
     }
 
-    // SKIPPED `accessibilityStyleRangeForIndex:`: msgSend shape `range_i64` not yet modelled
+    fn accessibility_style_range_for_index(this, index: i64) -> rt::Range {
+        return objc_msg_range_i64(this._obj, rt::sel(#str_ptr("accessibilityStyleRangeForIndex:\0")), index);
+    }
+
     fn accessibility_line_for_index(this, index: i64) -> i64 {
         return rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("accessibilityLineForIndex:\0")), index);
     }
@@ -61843,7 +63097,11 @@ impl TextFinderClient {
 
     fn from_raw(ptr: *u8) -> TextFinderClient { return TextFinderClient { _obj: ptr }; }
 
-    // SKIPPED `stringAtIndex:effectiveRange:endsWithSearchBoundary:`: msgSend shape `id_u64_id_id` not yet modelled
+    fn string_at_index(this, character_index: u64, effective_range: *u8, ends_with_search_boundary: *u8) -> text::Text {
+        let ns: *u8 = objc_msg_id_u64_id_id(this._obj, rt::sel(#str_ptr("stringAtIndex:effectiveRange:endsWithSearchBoundary:\0")), character_index, effective_range, ends_with_search_boundary);
+        return bridge::to_text(ns);
+    }
+
     fn string_length(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("stringLength\0")));
     }
@@ -63570,8 +64828,56 @@ impl TextAttachmentLayout {
 
     fn from_raw(ptr: *u8) -> TextAttachmentLayout { return TextAttachmentLayout { _obj: ptr }; }
 
-    // SKIPPED `imageForBounds:attributes:location:textContainer:`: msgSend shape `id_rect_id_id_id` not yet modelled
-    // SKIPPED `attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:`: msgSend shape `rect_id_id_id_rect_point` not yet modelled
+    fn image_for_bounds(this, bounds: rt::Rect, attributes: string_map::StringMap[AnyObject], location: TextLocation, text_container: TextContainer) -> option::Option[Image] {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        let obj: *u8 = objc_msg_id_rect_id_id_id(this._obj, rt::sel(#str_ptr("imageForBounds:attributes:location:textContainer:\0")), bounds, dict_attributes, location.raw(), text_container.raw());
+        if obj == { 0 as *u8 } {
+            return option::Option[Image]::None;
+        }
+        return option::some(Image::from_raw(obj));
+    }
+
+    fn attachment_bounds_for_attributes(this, attributes: string_map::StringMap[AnyObject], location: TextLocation, text_container: TextContainer, proposed_line_fragment: rt::Rect, position: rt::Point) -> rt::Rect {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        return objc_msg_rect_id_id_id_rect_point(this._obj, rt::sel(#str_ptr("attachmentBoundsForAttributes:location:textContainer:proposedLineFragment:position:\0")), dict_attributes, location.raw(), text_container.raw(), proposed_line_fragment, position);
+    }
+
     fn view_provider_for_parent_view(this, parent_view: View, location: TextLocation, text_container: TextContainer) -> option::Option[TextAttachmentViewProvider] {
         let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("viewProviderForParentView:location:textContainer:\0")), parent_view.raw(), location.raw(), text_container.raw());
         if obj == { 0 as *u8 } {
