@@ -1428,7 +1428,7 @@ impl ObjcEmitter {
         if b == "SEL" {
             return Some(DArg::scalar("*u8", ":", "id"));
         }
-        if b == "Class" {
+        if b == "Class" || b.starts_with("Class<") {
             return Some(DArg::scalar("*u8", "#", "id"));
         }
         if let Some((cty, enc, tag, _)) = delegate_struct(b) {
@@ -2429,6 +2429,11 @@ impl ObjcEmitter {
             let typed = self.typed_object(base_ty);
             return if nullable { Ret::ObjectOption(typed) } else { Ret::Object(typed) };
         }
+        // A protocol-qualified class object (`Class<NSWindowRestoration>`) is a bare
+        // Class handle at the ABI level -> untyped object pointer, like `Class`.
+        if base_ty.starts_with("Class<") {
+            return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) };
+        }
         // An erased generic type parameter is an object handle (id).
         if self.is_type_param(base_ty) {
             return if nullable { Ret::ObjectOption(None) } else { Ret::Object(None) };
@@ -2601,6 +2606,11 @@ impl ObjcEmitter {
                 }
             }
         }
+        // A protocol-qualified class object (`Class<NSItemProviderReading>`) is a bare
+        // Class handle -> untyped object pointer.
+        if base_ty.starts_with("Class<") {
+            return Arg::Id(pname.to_string());
+        }
         // An erased generic type parameter is an object handle (id).
         if self.is_type_param(base_ty) {
             return Arg::Id(pname.to_string());
@@ -2719,6 +2729,9 @@ impl ObjcEmitter {
         }
         // Erased generic type parameter -> object handle; generic-class instance ->
         // the base-class wrapper (mirrors map_arg so the signature matches the wire).
+        if b.starts_with("Class<") {
+            return "*u8".to_string();
+        }
         if self.is_type_param(b) {
             return "*u8".to_string();
         }
@@ -3048,7 +3061,7 @@ fn array_element(ty: &str) -> Option<String> {
     // `NSArray<__kindof NSView *>` — the element carries the subclass qualifier;
     // strip it so the element resolves to its wrapper (`NSView *` -> View).
     let elem = elem.trim().strip_prefix("__kindof ").unwrap_or(elem.trim());
-    Some(elem.trim().to_string())
+    Some(strip_elem_protocol(elem))
 }
 
 /// The element spelling of an `NSSet<...>` (mirrors `array_element`): strips the
@@ -3059,7 +3072,30 @@ fn nsset_element(ty: &str) -> Option<String> {
     let rest = t.strip_prefix("NSSet<")?;
     let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"))?;
     let elem = elem.trim().strip_prefix("__kindof ").unwrap_or(elem.trim());
-    Some(elem.trim().to_string())
+    Some(strip_elem_protocol(elem))
+}
+
+/// Strip a protocol qualifier from a class-pointer collection element so it resolves
+/// to its base wrapper: `NSView<NSCollectionViewElement> *` -> `NSView *`. A plain
+/// `Foo *` is unchanged. A COLLECTION element (`NSDictionary<K,V> *`, `NSArray<..> *`)
+/// is left intact — collapsing it to the opaque `NSDictionary`/`NSArray` wrapper would
+/// be a lossy nested-collection binding, deferred to a deliberate slice; it stays
+/// skipped for now.
+fn strip_elem_protocol(elem: &str) -> String {
+    let e = elem.trim();
+    if e.ends_with('*') {
+        if let Some(lt) = e.find('<') {
+            let name = e[..lt].trim();
+            let is_collection = matches!(
+                name,
+                "NSArray" | "NSSet" | "NSDictionary" | "NSMutableArray" | "NSMutableSet" | "NSMutableDictionary"
+            );
+            if !name.is_empty() && !is_collection {
+                return format!("{name} *");
+            }
+        }
+    }
+    e.to_string()
 }
 
 /// The msgSend ABI shape `<ret>[_<arg>...]` for a (return, args) pair — the key
@@ -4974,6 +5010,30 @@ mod tests {
         // Generic class instance -> the erased base-class wrapper.
         assert!(out.contains("fn snapshot(this) -> DiffableDataSourceSnapshot"), "generic-class erasure:\n{out}");
         assert!(!out.contains("unmapped type `ItemIdentifierType`") && !out.contains("// SKIPPED `snapshot`"), "no placeholder skips:\n{out}");
+    }
+
+    #[test]
+    fn protocol_qualified_class_and_collection_elements_resolve() {
+        // `Class<Protocol>` is a bare Class handle (*u8); a protocol-qualified array
+        // element `NSView<NSCollectionViewElement> *` strips to its base wrapper (View).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSPasteboard", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "readableClass", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "Class<NSItemProviderReading> _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "registerClass:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "cls", "type": { "qualType": "Class<NSItemProviderReading> _Nonnull" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "visibleItems", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSArray<NSView<NSCollectionViewElement> *> * _Nonnull" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn readable_class(this) -> *u8"), "Class<P> return -> *u8:\n{out}");
+        assert!(out.contains("fn register_class(this, cls: *u8)"), "Class<P> param -> *u8:\n{out}");
+        assert!(out.contains("fn visible_items(this) -> vec::Vec[View]"), "protocol-qualified element -> Vec[View]:\n{out}");
+        assert!(!out.contains("// SKIPPED `readableClass`") && !out.contains("// SKIPPED `visibleItems`"), "no skips:\n{out}");
     }
 
     #[test]
