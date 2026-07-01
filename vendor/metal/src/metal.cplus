@@ -3176,7 +3176,12 @@ impl TensorExtents {
 
     fn from_raw(ptr: *u8) -> TensorExtents { return TensorExtents { _obj: ptr }; }
 
-    // SKIPPED `initWithRank:values:`: init arg shape not yet modelled
+    fn new(rank: u64, values: *u8) -> TensorExtents {
+        let cls: *u8 = rt::get_class(#str_ptr("MTLTensorExtents\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TensorExtents { _obj: rt::msg_id_u64_id(alloced, rt::sel(#str_ptr("initWithRank:values:\0")), rank, values) };
+    }
+
     fn extent_at_dimension_index(this, dimension_index: u64) -> i64 {
         return rt::msg_i64_u64(this._obj, rt::sel(#str_ptr("extentAtDimensionIndex:\0")), dimension_index);
     }
@@ -3280,9 +3285,18 @@ impl TextureDescriptor {
 
     fn from_raw(ptr: *u8) -> TextureDescriptor { return TextureDescriptor { _obj: ptr }; }
 
-    // SKIPPED `texture2DDescriptorWithPixelFormat:width:height:mipmapped:`: msgSend shape `id_i64_u64_u64_i8` not yet modelled
-    // SKIPPED `textureCubeDescriptorWithPixelFormat:size:mipmapped:`: msgSend shape `id_i64_u64_i8` not yet modelled
-    // SKIPPED `textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:`: msgSend shape `id_i64_u64_u64_u64` not yet modelled
+    fn texture2_d_descriptor_with_pixel_format_width_height_mipmapped(pixel_format: PixelFormat, width: u64, height: u64, mipmapped: bool) -> TextureDescriptor {
+        return TextureDescriptor { _obj: rt::msg_id_i64_u64_u64_i8(rt::get_class(#str_ptr("MTLTextureDescriptor\0")), rt::sel(#str_ptr("texture2DDescriptorWithPixelFormat:width:height:mipmapped:\0")), pixel_format_raw(pixel_format), width, height, mipmapped as i8) };
+    }
+
+    fn texture_cube_descriptor_with_pixel_format_size_mipmapped(pixel_format: PixelFormat, size: u64, mipmapped: bool) -> TextureDescriptor {
+        return TextureDescriptor { _obj: rt::msg_id_i64_u64_i8(rt::get_class(#str_ptr("MTLTextureDescriptor\0")), rt::sel(#str_ptr("textureCubeDescriptorWithPixelFormat:size:mipmapped:\0")), pixel_format_raw(pixel_format), size, mipmapped as i8) };
+    }
+
+    fn texture_buffer_descriptor_with_pixel_format_width_resource_options_usage(pixel_format: PixelFormat, width: u64, resource_options: u64, usage: u64) -> TextureDescriptor {
+        return TextureDescriptor { _obj: rt::msg_id_i64_u64_u64_u64(rt::get_class(#str_ptr("MTLTextureDescriptor\0")), rt::sel(#str_ptr("textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:\0")), pixel_format_raw(pixel_format), width, resource_options, usage) };
+    }
+
     fn texture_type(this) -> TextureType {
         return texture_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureType\0"))));
     }
@@ -9554,7 +9568,14 @@ impl Device {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `newTextureWithDescriptor:iosurface:plane:`: msgSend shape `id_id_id_u64` not yet modelled
+    fn new_texture_with_descriptor_iosurface_plane(this, descriptor: TextureDescriptor, iosurface: *u8, plane: u64) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id_id_id_u64(this._obj, rt::sel(#str_ptr("newTextureWithDescriptor:iosurface:plane:\0")), descriptor.raw(), iosurface, plane);
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
+    }
+
     fn new_shared_texture_with_descriptor(this, descriptor: TextureDescriptor) -> option::Option[Texture] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("newSharedTextureWithDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {
@@ -9811,7 +9832,14 @@ impl Device {
         return option::some(IOCommandQueue::from_raw(obj));
     }
 
-    // SKIPPED `newIOHandleWithURL:compressionMethod:error:`: msgSend shape `id_id_i64_id` not yet modelled
+    fn new_i_o_handle_with_u_r_l_compression_method_error(this, url: *u8, compression_method: IOCompressionMethod, error: *u8) -> option::Option[IOFileHandle] {
+        let obj: *u8 = rt::msg_id_id_i64_id(this._obj, rt::sel(#str_ptr("newIOHandleWithURL:compressionMethod:error:\0")), url, i_o_compression_method_raw(compression_method), error);
+        if obj == { 0 as *u8 } {
+            return option::Option[IOFileHandle]::None;
+        }
+        return option::some(IOFileHandle::from_raw(obj));
+    }
+
     fn new_i_o_file_handle_with_u_r_l_error(this, url: *u8, error: *u8) -> option::Option[IOFileHandle] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newIOFileHandleWithURL:error:\0")), url, error);
         if obj == { 0 as *u8 } {
@@ -9820,7 +9848,14 @@ impl Device {
         return option::some(IOFileHandle::from_raw(obj));
     }
 
-    // SKIPPED `newIOFileHandleWithURL:compressionMethod:error:`: msgSend shape `id_id_i64_id` not yet modelled
+    fn new_i_o_file_handle_with_u_r_l_compression_method_error(this, url: *u8, compression_method: IOCompressionMethod, error: *u8) -> option::Option[IOFileHandle] {
+        let obj: *u8 = rt::msg_id_id_i64_id(this._obj, rt::sel(#str_ptr("newIOFileHandleWithURL:compressionMethod:error:\0")), url, i_o_compression_method_raw(compression_method), error);
+        if obj == { 0 as *u8 } {
+            return option::Option[IOFileHandle]::None;
+        }
+        return option::some(IOFileHandle::from_raw(obj));
+    }
+
     fn sparse_tile_size_with_texture_type_pixel_format_sample_count(this, texture_type: TextureType, pixel_format: PixelFormat, sample_count: u64) -> Size {
         return objc_msg_Size_i64_i64_u64(this._obj, rt::sel(#str_ptr("sparseTileSizeWithTextureType:pixelFormat:sampleCount:\0")), texture_type_raw(texture_type), pixel_format_raw(pixel_format), sample_count);
     }
@@ -10021,7 +10056,14 @@ impl Device {
         return MTL4PipelineDataSetSerializer::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newPipelineDataSetSerializerWithDescriptor:\0")), descriptor.raw()));
     }
 
-    // SKIPPED `newBufferWithLength:options:placementSparsePageSize:`: msgSend shape `id_u64_u64_i64` not yet modelled
+    fn new_buffer_with_length_options_placement_sparse_page_size(this, length: u64, options: u64, placement_sparse_page_size: SparsePageSize) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id_u64_u64_i64(this._obj, rt::sel(#str_ptr("newBufferWithLength:options:placementSparsePageSize:\0")), length, options, sparse_page_size_raw(placement_sparse_page_size));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
     fn new_counter_heap_with_descriptor_error(this, descriptor: MTL4CounterHeapDescriptor, error: *u8) -> option::Option[MTL4CounterHeap] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("newCounterHeapWithDescriptor:error:\0")), descriptor.raw(), error);
         if obj == { 0 as *u8 } {
@@ -10268,7 +10310,14 @@ impl Heap {
         return purgeable_state_from_raw(rt::msg_i64_i64(this._obj, rt::sel(#str_ptr("setPurgeableState:\0")), purgeable_state_raw(state)));
     }
 
-    // SKIPPED `newBufferWithLength:options:offset:`: msgSend shape `id_u64_u64_u64` not yet modelled
+    fn new_buffer_with_length_options_offset(this, length: u64, options: u64, offset: u64) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("newBufferWithLength:options:offset:\0")), length, options, offset);
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
     fn new_texture_with_descriptor_offset(this, descriptor: TextureDescriptor, offset: u64) -> option::Option[Texture] {
         let obj: *u8 = rt::msg_id_id_u64(this._obj, rt::sel(#str_ptr("newTextureWithDescriptor:offset:\0")), descriptor.raw(), offset);
         if obj == { 0 as *u8 } {
@@ -10378,7 +10427,10 @@ impl Resource {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isAliasable\0"))) != (0 as i8);
     }
 
-    // SKIPPED `setOwnerWithIdentity:`: msgSend shape `i32_u32` not yet modelled
+    fn set_owner_with_identity(this, task_id_token: u32) -> i32 {
+        return rt::msg_i32_u32(this._obj, rt::sel(#str_ptr("setOwnerWithIdentity:\0")), task_id_token);
+    }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -10452,7 +10504,14 @@ impl Buffer {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `newTensorWithDescriptor:offset:error:`: msgSend shape `id_id_u64_id` not yet modelled
+    fn new_tensor_with_descriptor_offset_error(this, descriptor: TensorDescriptor, offset: u64, error: *u8) -> option::Option[Tensor] {
+        let obj: *u8 = rt::msg_id_id_u64_id(this._obj, rt::sel(#str_ptr("newTensorWithDescriptor:offset:error:\0")), descriptor.raw(), offset, error);
+        if obj == { 0 as *u8 } {
+            return option::Option[Tensor]::None;
+        }
+        return option::some(Tensor::from_raw(obj));
+    }
+
     fn add_debug_marker_range(this, marker: str, range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("addDebugMarker:range:\0")), bridge::nsstring(marker), range);
     }
@@ -10574,7 +10633,14 @@ impl Texture {
         return option::some(Texture::from_raw(obj));
     }
 
-    // SKIPPED `newTextureViewWithPixelFormat:textureType:levels:slices:`: msgSend shape `id_i64_i64_range_range` not yet modelled
+    fn new_texture_view_with_pixel_format_texture_type_levels_slices(this, pixel_format: PixelFormat, texture_type: TextureType, level_range: rt::Range, slice_range: rt::Range) -> option::Option[Texture] {
+        let obj: *u8 = rt::msg_id_i64_i64_range_range(this._obj, rt::sel(#str_ptr("newTextureViewWithPixelFormat:textureType:levels:slices:\0")), pixel_format_raw(pixel_format), texture_type_raw(texture_type), level_range, slice_range);
+        if obj == { 0 as *u8 } {
+            return option::Option[Texture]::None;
+        }
+        return option::some(Texture::from_raw(obj));
+    }
+
     fn new_shared_texture_handle(this) -> option::Option[SharedTextureHandle] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("newSharedTextureHandle\0")));
         if obj == { 0 as *u8 } {
@@ -10792,7 +10858,10 @@ impl Function {
         return ArgumentEncoder::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("newArgumentEncoderWithBufferIndex:\0")), buffer_index));
     }
 
-    // SKIPPED `newArgumentEncoderWithBufferIndex:reflection:`: msgSend shape `id_u64_id` not yet modelled
+    fn new_argument_encoder_with_buffer_index_reflection(this, buffer_index: u64, reflection: *u8) -> ArgumentEncoder {
+        return ArgumentEncoder::from_raw(rt::msg_id_u64_id(this._obj, rt::sel(#str_ptr("newArgumentEncoderWithBufferIndex:reflection:\0")), buffer_index, reflection));
+    }
+
     fn label(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
         return bridge::to_text_option(ns);
@@ -12104,7 +12173,10 @@ impl SharedEvent {
         return SharedEventHandle::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("newSharedEventHandle\0"))));
     }
 
-    // SKIPPED `waitUntilSignaledValue:timeoutMS:`: msgSend shape `i8_u64_u64` not yet modelled
+    fn wait_until_signaled_value_timeout_m_s(this, value: u64, milliseconds: u64) -> bool {
+        return rt::msg_i8_u64_u64(this._obj, rt::sel(#str_ptr("waitUntilSignaledValue:timeoutMS:\0")), value, milliseconds) != (0 as i8);
+    }
+
     fn signaled_value(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("signaledValue\0")));
     }
@@ -12210,12 +12282,18 @@ impl IntersectionFunctionTable {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setOpaqueTriangleIntersectionFunctionWithSignature:atIndex:\0")), signature, index);
     }
 
-    // SKIPPED `setOpaqueTriangleIntersectionFunctionWithSignature:withRange:`: msgSend shape `void_u64_range` not yet modelled
+    fn set_opaque_triangle_intersection_function_with_signature_with_range(this, signature: u64, range: rt::Range) {
+        rt::msg_void_u64_range(this._obj, rt::sel(#str_ptr("setOpaqueTriangleIntersectionFunctionWithSignature:withRange:\0")), signature, range);
+    }
+
     fn set_opaque_curve_intersection_function_with_signature_at_index(this, signature: u64, index: u64) {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setOpaqueCurveIntersectionFunctionWithSignature:atIndex:\0")), signature, index);
     }
 
-    // SKIPPED `setOpaqueCurveIntersectionFunctionWithSignature:withRange:`: msgSend shape `void_u64_range` not yet modelled
+    fn set_opaque_curve_intersection_function_with_signature_with_range(this, signature: u64, range: rt::Range) {
+        rt::msg_void_u64_range(this._obj, rt::sel(#str_ptr("setOpaqueCurveIntersectionFunctionWithSignature:withRange:\0")), signature, range);
+    }
+
     fn set_visible_function_table_at_buffer_index(this, function_table: VisibleFunctionTable, buffer_index: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setVisibleFunctionTable:atBufferIndex:\0")), function_table.raw(), buffer_index);
     }
@@ -12342,7 +12420,10 @@ impl MTL4CommandQueue {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("commit:count:\0")), command_buffers, count);
     }
 
-    // SKIPPED `commit:count:options:`: msgSend shape `void_id_u64_id` not yet modelled
+    fn commit_count_options(this, command_buffers: *u8, count: u64, options: MTL4CommitOptions) {
+        rt::msg_void_id_u64_id(this._obj, rt::sel(#str_ptr("commit:count:options:\0")), command_buffers, count, options.raw());
+    }
+
     fn signal_event_value(this, event: Event, value: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("signalEvent:value:\0")), event.raw(), value);
     }
@@ -12579,8 +12660,14 @@ impl TextureViewPool {
         return rt::msg_u64_id_u64(this._obj, rt::sel(#str_ptr("setTextureView:atIndex:\0")), texture.raw(), index);
     }
 
-    // SKIPPED `setTextureView:descriptor:atIndex:`: msgSend shape `u64_id_id_u64` not yet modelled
-    // SKIPPED `setTextureViewFromBuffer:descriptor:offset:bytesPerRow:atIndex:`: msgSend shape `u64_id_id_u64_u64_u64` not yet modelled
+    fn set_texture_view_descriptor_at_index(this, texture: Texture, descriptor: TextureViewDescriptor, index: u64) -> u64 {
+        return rt::msg_u64_id_id_u64(this._obj, rt::sel(#str_ptr("setTextureView:descriptor:atIndex:\0")), texture.raw(), descriptor.raw(), index);
+    }
+
+    fn set_texture_view_from_buffer_descriptor_offset_bytes_per_row_at_index(this, buffer: Buffer, descriptor: TextureDescriptor, offset: u64, bytes_per_row: u64, index: u64) -> u64 {
+        return rt::msg_u64_id_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("setTextureViewFromBuffer:descriptor:offset:bytesPerRow:atIndex:\0")), buffer.raw(), descriptor.raw(), offset, bytes_per_row, index);
+    }
+
 }
 
 // `MTLIOFileHandle` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -12707,12 +12794,18 @@ impl BlitCommandEncoder {
     }
 
     // SKIPPED `fillBuffer:range:value:`: param `uint8_t` — unmapped type `uint8_t`
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:`: msgSend shape `void_id_u64_u64_id_u64_u64_u64_u64` not yet modelled
+    fn copy_from_texture_source_slice_source_level_to_texture_destination_slice_destination_level_slice_count_level_count(this, source_texture: Texture, source_slice: u64, source_level: u64, destination_texture: Texture, destination_slice: u64, destination_level: u64, slice_count: u64, level_count: u64) {
+        rt::msg_void_id_u64_u64_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:\0")), source_texture.raw(), source_slice, source_level, destination_texture.raw(), destination_slice, destination_level, slice_count, level_count);
+    }
+
     fn copy_from_texture_to_texture(this, source_texture: Texture, destination_texture: Texture) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyFromTexture:toTexture:\0")), source_texture.raw(), destination_texture.raw());
     }
 
-    // SKIPPED `copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:`: msgSend shape `void_id_u64_id_u64_u64` not yet modelled
+    fn copy_from_buffer_source_offset_to_buffer_destination_offset_size(this, source_buffer: Buffer, source_offset: u64, destination_buffer: Buffer, destination_offset: u64, size: u64) {
+        rt::msg_void_id_u64_id_u64_u64(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:\0")), source_buffer.raw(), source_offset, destination_buffer.raw(), destination_offset, size);
+    }
+
     fn update_fence(this, fence: Fence) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("updateFence:\0")), fence.raw());
     }
@@ -12956,7 +13049,10 @@ impl RenderCommandEncoder {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setFragmentAccelerationStructure:atBufferIndex:\0")), acceleration_structure.raw(), buffer_index);
     }
 
-    // SKIPPED `setBlendColorRed:green:blue:alpha:`: msgSend shape `void_f32_f32_f32_f32` not yet modelled
+    fn set_blend_color_red_green_blue_alpha(this, red: f32, green: f32, blue: f32, alpha: f32) {
+        rt::msg_void_f32_f32_f32_f32(this._obj, rt::sel(#str_ptr("setBlendColorRed:green:blue:alpha:\0")), red, green, blue, alpha);
+    }
+
     fn set_depth_stencil_state(this, depth_stencil_state: DepthStencilState) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthStencilState:\0")), depth_stencil_state.raw());
     }
@@ -12965,7 +13061,10 @@ impl RenderCommandEncoder {
         rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setStencilReferenceValue:\0")), reference_value);
     }
 
-    // SKIPPED `setStencilFrontReferenceValue:backReferenceValue:`: msgSend shape `void_u32_u32` not yet modelled
+    fn set_stencil_front_reference_value_back_reference_value(this, front_reference_value: u32, back_reference_value: u32) {
+        rt::msg_void_u32_u32(this._obj, rt::sel(#str_ptr("setStencilFrontReferenceValue:backReferenceValue:\0")), front_reference_value, back_reference_value);
+    }
+
     fn set_visibility_result_mode_offset(this, mode: VisibilityResultMode, offset: u64) {
         rt::msg_void_i64_u64(this._obj, rt::sel(#str_ptr("setVisibilityResultMode:offset:\0")), visibility_result_mode_raw(mode), offset);
     }
@@ -13084,17 +13183,38 @@ impl RenderCommandEncoder {
         objc_msg_void_id_u64_Size_Size(this._obj, rt::sel(#str_ptr("drawMeshThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerObjectThreadgroup:threadsPerMeshThreadgroup:\0")), indirect_buffer.raw(), indirect_buffer_offset, threads_per_object_threadgroup, threads_per_mesh_threadgroup);
     }
 
-    // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:`: msgSend shape `void_i64_u64_u64_u64` not yet modelled
-    // SKIPPED `drawPrimitives:vertexStart:vertexCount:`: msgSend shape `void_i64_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:`: msgSend shape `void_i64_u64_i64_id_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:`: msgSend shape `void_i64_u64_i64_id_u64` not yet modelled
+    fn draw_primitives_vertex_start_vertex_count_instance_count(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64, instance_count: u64) {
+        rt::msg_void_i64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:instanceCount:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count, instance_count);
+    }
+
+    fn draw_primitives_vertex_start_vertex_count(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64) {
+        rt::msg_void_i64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count);
+    }
+
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_offset_instance_count(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: Buffer, index_buffer_offset: u64, instance_count: u64) {
+        rt::msg_void_i64_u64_i64_id_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer.raw(), index_buffer_offset, instance_count);
+    }
+
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_offset(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: Buffer, index_buffer_offset: u64) {
+        rt::msg_void_i64_u64_i64_id_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer.raw(), index_buffer_offset);
+    }
+
     fn draw_primitives_vertex_start_vertex_count_instance_count_base_instance(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64, instance_count: u64, base_instance: u64) {
         rt::msg_void_i64_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count, instance_count, base_instance);
     }
 
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: msgSend shape `void_i64_u64_i64_id_u64_u64_i64_u64` not yet modelled
-    // SKIPPED `drawPrimitives:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_i64_id_u64` not yet modelled
-    // SKIPPED `drawIndexedPrimitives:indexType:indexBuffer:indexBufferOffset:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_i64_i64_id_u64_id_u64` not yet modelled
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_offset_instance_count_base_vertex_base_instance(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: Buffer, index_buffer_offset: u64, instance_count: u64, base_vertex: i64, base_instance: u64) {
+        rt::msg_void_i64_u64_i64_id_u64_u64_i64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer.raw(), index_buffer_offset, instance_count, base_vertex, base_instance);
+    }
+
+    fn draw_primitives_indirect_buffer_indirect_buffer_offset(this, primitive_type: PrimitiveType, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
+        rt::msg_void_i64_id_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:indirectBuffer:indirectBufferOffset:\0")), primitive_type_raw(primitive_type), indirect_buffer.raw(), indirect_buffer_offset);
+    }
+
+    fn draw_indexed_primitives_index_type_index_buffer_index_buffer_offset_indirect_buffer_indirect_buffer_offset(this, primitive_type: PrimitiveType, index_type: IndexType, index_buffer: Buffer, index_buffer_offset: u64, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
+        rt::msg_void_i64_i64_id_u64_id_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexType:indexBuffer:indexBufferOffset:indirectBuffer:indirectBufferOffset:\0")), primitive_type_raw(primitive_type), index_type_raw(index_type), index_buffer.raw(), index_buffer_offset, indirect_buffer.raw(), indirect_buffer_offset);
+    }
+
     fn texture_barrier(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("textureBarrier\0")));
     }
@@ -13115,10 +13235,22 @@ impl RenderCommandEncoder {
         rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setTessellationFactorScale:\0")), scale);
     }
 
-    // SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:`: msgSend shape `void_u64_u64_u64_id_u64_u64_u64` not yet modelled
-    // SKIPPED `drawPatches:patchIndexBuffer:patchIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_u64_id_u64_id_u64` not yet modelled
-    // SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:`: msgSend shape `void_u64_u64_u64_id_u64_id_u64_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPatches:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:indirectBuffer:indirectBufferOffset:`: msgSend shape `void_u64_id_u64_id_u64_id_u64` not yet modelled
+    fn draw_patches_patch_start_patch_count_patch_index_buffer_patch_index_buffer_offset_instance_count_base_instance(this, number_of_patch_control_points: u64, patch_start: u64, patch_count: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, instance_count: u64, base_instance: u64) {
+        rt::msg_void_u64_u64_u64_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:\0")), number_of_patch_control_points, patch_start, patch_count, patch_index_buffer.raw(), patch_index_buffer_offset, instance_count, base_instance);
+    }
+
+    fn draw_patches_patch_index_buffer_patch_index_buffer_offset_indirect_buffer_indirect_buffer_offset(this, number_of_patch_control_points: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
+        rt::msg_void_u64_id_u64_id_u64(this._obj, rt::sel(#str_ptr("drawPatches:patchIndexBuffer:patchIndexBufferOffset:indirectBuffer:indirectBufferOffset:\0")), number_of_patch_control_points, patch_index_buffer.raw(), patch_index_buffer_offset, indirect_buffer.raw(), indirect_buffer_offset);
+    }
+
+    fn draw_indexed_patches_patch_start_patch_count_patch_index_buffer_patch_index_buffer_offset_control_point_index_buffer_control_point_index_buffer_offset_instance_count_base_instance(this, number_of_patch_control_points: u64, patch_start: u64, patch_count: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, control_point_index_buffer: Buffer, control_point_index_buffer_offset: u64, instance_count: u64, base_instance: u64) {
+        rt::msg_void_u64_u64_u64_id_u64_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:\0")), number_of_patch_control_points, patch_start, patch_count, patch_index_buffer.raw(), patch_index_buffer_offset, control_point_index_buffer.raw(), control_point_index_buffer_offset, instance_count, base_instance);
+    }
+
+    fn draw_indexed_patches_patch_index_buffer_patch_index_buffer_offset_control_point_index_buffer_control_point_index_buffer_offset_indirect_buffer_indirect_buffer_offset(this, number_of_patch_control_points: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, control_point_index_buffer: Buffer, control_point_index_buffer_offset: u64, indirect_buffer: Buffer, indirect_buffer_offset: u64) {
+        rt::msg_void_u64_id_u64_id_u64_id_u64(this._obj, rt::sel(#str_ptr("drawIndexedPatches:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:indirectBuffer:indirectBufferOffset:\0")), number_of_patch_control_points, patch_index_buffer.raw(), patch_index_buffer_offset, control_point_index_buffer.raw(), control_point_index_buffer_offset, indirect_buffer.raw(), indirect_buffer_offset);
+    }
+
     fn set_tile_bytes_length_at_index(this, bytes: *u8, length: u64, index: u64) {
         rt::msg_void_id_u64_u64(this._obj, rt::sel(#str_ptr("setTileBytes:length:atIndex:\0")), bytes, length, index);
     }
@@ -13719,8 +13851,14 @@ impl AccelerationStructureCommandEncoder {
         rt::msg_void_id_id_id_u64(this._obj, rt::sel(#str_ptr("buildAccelerationStructure:descriptor:scratchBuffer:scratchBufferOffset:\0")), acceleration_structure.raw(), descriptor.raw(), scratch_buffer.raw(), scratch_buffer_offset);
     }
 
-    // SKIPPED `refitAccelerationStructure:descriptor:destination:scratchBuffer:scratchBufferOffset:`: msgSend shape `void_id_id_id_id_u64` not yet modelled
-    // SKIPPED `refitAccelerationStructure:descriptor:destination:scratchBuffer:scratchBufferOffset:options:`: msgSend shape `void_id_id_id_id_u64_u64` not yet modelled
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer_scratch_buffer_offset(this, source_acceleration_structure: AccelerationStructure, descriptor: AccelerationStructureDescriptor, destination_acceleration_structure: AccelerationStructure, scratch_buffer: Buffer, scratch_buffer_offset: u64) {
+        rt::msg_void_id_id_id_id_u64(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:scratchBufferOffset:\0")), source_acceleration_structure.raw(), descriptor.raw(), destination_acceleration_structure.raw(), scratch_buffer.raw(), scratch_buffer_offset);
+    }
+
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer_scratch_buffer_offset_options(this, source_acceleration_structure: AccelerationStructure, descriptor: AccelerationStructureDescriptor, destination_acceleration_structure: AccelerationStructure, scratch_buffer: Buffer, scratch_buffer_offset: u64, options: u64) {
+        rt::msg_void_id_id_id_id_u64_u64(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:scratchBufferOffset:options:\0")), source_acceleration_structure.raw(), descriptor.raw(), destination_acceleration_structure.raw(), scratch_buffer.raw(), scratch_buffer_offset, options);
+    }
+
     fn copy_acceleration_structure_to_acceleration_structure(this, source_acceleration_structure: AccelerationStructure, destination_acceleration_structure: AccelerationStructure) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyAccelerationStructure:toAccelerationStructure:\0")), source_acceleration_structure.raw(), destination_acceleration_structure.raw());
     }
@@ -13729,7 +13867,10 @@ impl AccelerationStructureCommandEncoder {
         rt::msg_void_id_id_u64(this._obj, rt::sel(#str_ptr("writeCompactedAccelerationStructureSize:toBuffer:offset:\0")), acceleration_structure.raw(), buffer.raw(), offset);
     }
 
-    // SKIPPED `writeCompactedAccelerationStructureSize:toBuffer:offset:sizeDataType:`: msgSend shape `void_id_id_u64_i64` not yet modelled
+    fn write_compacted_acceleration_structure_size_to_buffer_offset_size_data_type(this, acceleration_structure: AccelerationStructure, buffer: Buffer, offset: u64, size_data_type: DataType) {
+        rt::msg_void_id_id_u64_i64(this._obj, rt::sel(#str_ptr("writeCompactedAccelerationStructureSize:toBuffer:offset:sizeDataType:\0")), acceleration_structure.raw(), buffer.raw(), offset, data_type_raw(size_data_type));
+    }
+
     fn copy_and_compact_acceleration_structure_to_acceleration_structure(this, source_acceleration_structure: AccelerationStructure, destination_acceleration_structure: AccelerationStructure) {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyAndCompactAccelerationStructure:toAccelerationStructure:\0")), source_acceleration_structure.raw(), destination_acceleration_structure.raw());
     }
@@ -13922,7 +14063,10 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTriangleFillMode:\0")), triangle_fill_mode_raw(fill_mode));
     }
 
-    // SKIPPED `setBlendColorRed:green:blue:alpha:`: msgSend shape `void_f32_f32_f32_f32` not yet modelled
+    fn set_blend_color_red_green_blue_alpha(this, red: f32, green: f32, blue: f32, alpha: f32) {
+        rt::msg_void_f32_f32_f32_f32(this._obj, rt::sel(#str_ptr("setBlendColorRed:green:blue:alpha:\0")), red, green, blue, alpha);
+    }
+
     fn set_depth_stencil_state(this, depth_stencil_state: DepthStencilState) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDepthStencilState:\0")), depth_stencil_state.raw());
     }
@@ -13931,7 +14075,10 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setStencilReferenceValue:\0")), reference_value);
     }
 
-    // SKIPPED `setStencilFrontReferenceValue:backReferenceValue:`: msgSend shape `void_u32_u32` not yet modelled
+    fn set_stencil_front_reference_value_back_reference_value(this, front_reference_value: u32, back_reference_value: u32) {
+        rt::msg_void_u32_u32(this._obj, rt::sel(#str_ptr("setStencilFrontReferenceValue:backReferenceValue:\0")), front_reference_value, back_reference_value);
+    }
+
     fn set_visibility_result_mode_offset(this, mode: VisibilityResultMode, offset: u64) {
         rt::msg_void_i64_u64(this._obj, rt::sel(#str_ptr("setVisibilityResultMode:offset:\0")), visibility_result_mode_raw(mode), offset);
     }
@@ -13948,20 +14095,38 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setStencilStoreAction:\0")), store_action_raw(store_action));
     }
 
-    // SKIPPED `drawPrimitives:vertexStart:vertexCount:`: msgSend shape `void_i64_u64_u64` not yet modelled
-    // SKIPPED `drawPrimitives:vertexStart:vertexCount:instanceCount:`: msgSend shape `void_i64_u64_u64_u64` not yet modelled
+    fn draw_primitives_vertex_start_vertex_count(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64) {
+        rt::msg_void_i64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count);
+    }
+
+    fn draw_primitives_vertex_start_vertex_count_instance_count(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64, instance_count: u64) {
+        rt::msg_void_i64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:instanceCount:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count, instance_count);
+    }
+
     fn draw_primitives_vertex_start_vertex_count_instance_count_base_instance(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64, instance_count: u64, base_instance: u64) {
         rt::msg_void_i64_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count, instance_count, base_instance);
     }
 
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:`: msgSend shape `void_i64_u64_i64_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:`: msgSend shape `void_i64_u64_i64_u64_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:baseInstance:`: msgSend shape `void_i64_u64_i64_u64_u64_u64_i64_u64` not yet modelled
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_length(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: u64, index_buffer_length: u64) {
+        rt::msg_void_i64_u64_i64_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer, index_buffer_length);
+    }
+
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_length_instance_count(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: u64, index_buffer_length: u64, instance_count: u64) {
+        rt::msg_void_i64_u64_i64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer, index_buffer_length, instance_count);
+    }
+
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_length_instance_count_base_vertex_base_instance(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: u64, index_buffer_length: u64, instance_count: u64, base_vertex: i64, base_instance: u64) {
+        rt::msg_void_i64_u64_i64_u64_u64_u64_i64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:baseInstance:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer, index_buffer_length, instance_count, base_vertex, base_instance);
+    }
+
     fn draw_primitives_indirect_buffer(this, primitive_type: PrimitiveType, indirect_buffer: u64) {
         rt::msg_void_i64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:indirectBuffer:\0")), primitive_type_raw(primitive_type), indirect_buffer);
     }
 
-    // SKIPPED `drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:`: msgSend shape `void_i64_i64_u64_u64_u64` not yet modelled
+    fn draw_indexed_primitives_index_type_index_buffer_index_buffer_length_indirect_buffer(this, primitive_type: PrimitiveType, index_type: IndexType, index_buffer: u64, index_buffer_length: u64, indirect_buffer: u64) {
+        rt::msg_void_i64_i64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:\0")), primitive_type_raw(primitive_type), index_type_raw(index_type), index_buffer, index_buffer_length, indirect_buffer);
+    }
+
     fn execute_commands_in_buffer_with_range(this, indirect_command_buffer: IndirectCommandBuffer, execution_range: rt::Range) {
         rt::msg_void_id_range(this._obj, rt::sel(#str_ptr("executeCommandsInBuffer:withRange:\0")), indirect_command_buffer.raw(), execution_range);
     }
@@ -14002,7 +14167,10 @@ impl MTL4RenderCommandEncoder {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setFrontFacingWinding:\0")), winding_raw(front_facing_winding));
     }
 
-    // SKIPPED `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:`: msgSend shape `void_i64_u64_id_u64` not yet modelled
+    fn write_timestamp_with_granularity_after_stage_into_heap_at_index(this, granularity: MTL4TimestampGranularity, stage: u64, counter_heap: MTL4CounterHeap, index: u64) {
+        rt::msg_void_i64_u64_id_u64(this._obj, rt::sel(#str_ptr("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:\0")), m_t_l4_timestamp_granularity_raw(granularity), stage, counter_heap.raw(), index);
+    }
+
     fn tile_width(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("tileWidth\0")));
     }
@@ -14067,7 +14235,10 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyFromTexture:toTexture:\0")), source_texture.raw(), destination_texture.raw());
     }
 
-    // SKIPPED `copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:`: msgSend shape `void_id_u64_u64_id_u64_u64_u64_u64` not yet modelled
+    fn copy_from_texture_source_slice_source_level_to_texture_destination_slice_destination_level_slice_count_level_count(this, source_texture: Texture, source_slice: u64, source_level: u64, destination_texture: Texture, destination_slice: u64, destination_level: u64, slice_count: u64, level_count: u64) {
+        rt::msg_void_id_u64_u64_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:\0")), source_texture.raw(), source_slice, source_level, destination_texture.raw(), destination_slice, destination_level, slice_count, level_count);
+    }
+
     fn copy_from_texture_source_slice_source_level_source_origin_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_texture: Texture, source_slice: u64, source_level: u64, source_origin: Origin, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
         objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
     }
@@ -14080,7 +14251,10 @@ impl MTL4ComputeCommandEncoder {
         objc_msg_void_id_u64_u64_Origin_Size_id_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:\0")), source_texture.raw(), source_slice, source_level, source_origin, source_size, destination_buffer.raw(), destination_offset, destination_bytes_per_row, destination_bytes_per_image, options);
     }
 
-    // SKIPPED `copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:`: msgSend shape `void_id_u64_id_u64_u64` not yet modelled
+    fn copy_from_buffer_source_offset_to_buffer_destination_offset_size(this, source_buffer: Buffer, source_offset: u64, destination_buffer: Buffer, destination_offset: u64, size: u64) {
+        rt::msg_void_id_u64_id_u64_u64(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:\0")), source_buffer.raw(), source_offset, destination_buffer.raw(), destination_offset, size);
+    }
+
     fn copy_from_buffer_source_offset_source_bytes_per_row_source_bytes_per_image_source_size_to_texture_destination_slice_destination_level_destination_origin(this, source_buffer: Buffer, source_offset: u64, source_bytes_per_row: u64, source_bytes_per_image: u64, source_size: Size, destination_texture: Texture, destination_slice: u64, destination_level: u64, destination_origin: Origin) {
         objc_msg_void_id_u64_u64_u64_Size_id_u64_u64_Origin(this._obj, rt::sel(#str_ptr("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:\0")), source_buffer.raw(), source_offset, source_bytes_per_row, source_bytes_per_image, source_size, destination_texture.raw(), destination_slice, destination_level, destination_origin);
     }
@@ -14154,7 +14328,10 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("copyAndCompactAccelerationStructure:toAccelerationStructure:\0")), source_acceleration_structure.raw(), destination_acceleration_structure.raw());
     }
 
-    // SKIPPED `writeTimestampWithGranularity:intoHeap:atIndex:`: msgSend shape `void_i64_id_u64` not yet modelled
+    fn write_timestamp_with_granularity_into_heap_at_index(this, granularity: MTL4TimestampGranularity, counter_heap: MTL4CounterHeap, index: u64) {
+        rt::msg_void_i64_id_u64(this._obj, rt::sel(#str_ptr("writeTimestampWithGranularity:intoHeap:atIndex:\0")), m_t_l4_timestamp_granularity_raw(granularity), counter_heap.raw(), index);
+    }
+
 }
 
 // `MTL4MachineLearningCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
@@ -14281,13 +14458,22 @@ impl IndirectRenderCommand {
         rt::msg_void_id_u64_u64_u64(this._obj, rt::sel(#str_ptr("setVertexBuffer:offset:attributeStride:atIndex:\0")), buffer.raw(), offset, stride, index);
     }
 
-    // SKIPPED `drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: msgSend shape `void_u64_u64_u64_id_u64_u64_u64_id_u64_u64` not yet modelled
-    // SKIPPED `drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:`: msgSend shape `void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64` not yet modelled
+    fn draw_patches_patch_start_patch_count_patch_index_buffer_patch_index_buffer_offset_instance_count_base_instance_tessellation_factor_buffer_tessellation_factor_buffer_offset_tessellation_factor_buffer_instance_stride(this, number_of_patch_control_points: u64, patch_start: u64, patch_count: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, instance_count: u64, base_instance: u64, buffer: Buffer, offset: u64, instance_stride: u64) {
+        rt::msg_void_u64_u64_u64_id_u64_u64_u64_id_u64_u64(this._obj, rt::sel(#str_ptr("drawPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:\0")), number_of_patch_control_points, patch_start, patch_count, patch_index_buffer.raw(), patch_index_buffer_offset, instance_count, base_instance, buffer.raw(), offset, instance_stride);
+    }
+
+    fn draw_indexed_patches_patch_start_patch_count_patch_index_buffer_patch_index_buffer_offset_control_point_index_buffer_control_point_index_buffer_offset_instance_count_base_instance_tessellation_factor_buffer_tessellation_factor_buffer_offset_tessellation_factor_buffer_instance_stride(this, number_of_patch_control_points: u64, patch_start: u64, patch_count: u64, patch_index_buffer: Buffer, patch_index_buffer_offset: u64, control_point_index_buffer: Buffer, control_point_index_buffer_offset: u64, instance_count: u64, base_instance: u64, buffer: Buffer, offset: u64, instance_stride: u64) {
+        rt::msg_void_u64_u64_u64_id_u64_id_u64_u64_u64_id_u64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPatches:patchStart:patchCount:patchIndexBuffer:patchIndexBufferOffset:controlPointIndexBuffer:controlPointIndexBufferOffset:instanceCount:baseInstance:tessellationFactorBuffer:tessellationFactorBufferOffset:tessellationFactorBufferInstanceStride:\0")), number_of_patch_control_points, patch_start, patch_count, patch_index_buffer.raw(), patch_index_buffer_offset, control_point_index_buffer.raw(), control_point_index_buffer_offset, instance_count, base_instance, buffer.raw(), offset, instance_stride);
+    }
+
     fn draw_primitives_vertex_start_vertex_count_instance_count_base_instance(this, primitive_type: PrimitiveType, vertex_start: u64, vertex_count: u64, instance_count: u64, base_instance: u64) {
         rt::msg_void_i64_u64_u64_u64_u64(this._obj, rt::sel(#str_ptr("drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:\0")), primitive_type_raw(primitive_type), vertex_start, vertex_count, instance_count, base_instance);
     }
 
-    // SKIPPED `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:`: msgSend shape `void_i64_u64_i64_id_u64_u64_i64_u64` not yet modelled
+    fn draw_indexed_primitives_index_count_index_type_index_buffer_index_buffer_offset_instance_count_base_vertex_base_instance(this, primitive_type: PrimitiveType, index_count: u64, index_type: IndexType, index_buffer: Buffer, index_buffer_offset: u64, instance_count: u64, base_vertex: i64, base_instance: u64) {
+        rt::msg_void_i64_u64_i64_id_u64_u64_i64_u64(this._obj, rt::sel(#str_ptr("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:\0")), primitive_type_raw(primitive_type), index_count, index_type_raw(index_type), index_buffer.raw(), index_buffer_offset, instance_count, base_vertex, base_instance);
+    }
+
     fn set_object_threadgroup_memory_length_at_index(this, length: u64, index: u64) {
         rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("setObjectThreadgroupMemoryLength:atIndex:\0")), length, index);
     }
@@ -14504,8 +14690,14 @@ impl IOCommandBuffer {
     fn from_raw(ptr: *u8) -> IOCommandBuffer { return IOCommandBuffer { _obj: ptr }; }
 
     // SKIPPED `addCompletedHandler:`: param `MTLIOCommandBufferHandler _Nonnull` — unmapped type `MTLIOCommandBufferHandler`
-    // SKIPPED `loadBytes:size:sourceHandle:sourceHandleOffset:`: msgSend shape `void_id_u64_id_u64` not yet modelled
-    // SKIPPED `loadBuffer:offset:size:sourceHandle:sourceHandleOffset:`: msgSend shape `void_id_u64_u64_id_u64` not yet modelled
+    fn load_bytes_size_source_handle_source_handle_offset(this, pointer: *u8, size: u64, source_handle: IOFileHandle, source_handle_offset: u64) {
+        rt::msg_void_id_u64_id_u64(this._obj, rt::sel(#str_ptr("loadBytes:size:sourceHandle:sourceHandleOffset:\0")), pointer, size, source_handle.raw(), source_handle_offset);
+    }
+
+    fn load_buffer_offset_size_source_handle_source_handle_offset(this, buffer: Buffer, offset: u64, size: u64, source_handle: IOFileHandle, source_handle_offset: u64) {
+        rt::msg_void_id_u64_u64_id_u64(this._obj, rt::sel(#str_ptr("loadBuffer:offset:size:sourceHandle:sourceHandleOffset:\0")), buffer.raw(), offset, size, source_handle.raw(), source_handle_offset);
+    }
+
     fn load_texture_slice_level_size_source_bytes_per_row_source_bytes_per_image_destination_origin_source_handle_source_handle_offset(this, texture: Texture, slice: u64, level: u64, size: Size, source_bytes_per_row: u64, source_bytes_per_image: u64, destination_origin: Origin, source_handle: IOFileHandle, source_handle_offset: u64) {
         objc_msg_void_id_u64_u64_Size_u64_u64_Origin_id_u64(this._obj, rt::sel(#str_ptr("loadTexture:slice:level:size:sourceBytesPerRow:sourceBytesPerImage:destinationOrigin:sourceHandle:sourceHandleOffset:\0")), texture.raw(), slice, level, size, source_bytes_per_row, source_bytes_per_image, destination_origin, source_handle.raw(), source_handle_offset);
     }
@@ -14616,7 +14808,10 @@ impl ResourceViewPool {
 
     fn from_raw(ptr: *u8) -> ResourceViewPool { return ResourceViewPool { _obj: ptr }; }
 
-    // SKIPPED `copyResourceViewsFromPool:sourceRange:destinationIndex:`: msgSend shape `u64_id_range_u64` not yet modelled
+    fn copy_resource_views_from_pool_source_range_destination_index(this, source_pool: ResourceViewPool, source_range: rt::Range, destination_index: u64) -> u64 {
+        return rt::msg_u64_id_range_u64(this._obj, rt::sel(#str_ptr("copyResourceViewsFromPool:sourceRange:destinationIndex:\0")), source_pool.raw(), source_range, destination_index);
+    }
+
     fn base_resource_i_d(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("baseResourceID\0")));
     }
