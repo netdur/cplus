@@ -85,28 +85,48 @@ pub struct ObjcEmitter {
     value_structs: HashMap<String, Vec<(String, String)>>,
     used_value_structs: HashSet<String>,
     used_struct_shapes: HashSet<String>,
+    // Distinct delegate IMP signatures a `class_addMethod` shim has been emitted
+    // for in this module (`v_id_i64` = void(id,NSInteger)). Each shim is a typed
+    // `#[link_name = "class_addMethod"]` extern; the trampoline's typed fn-pointer
+    // is passed straight to it, so any scalar-arg callback binds without a fixed
+    // synthesis-side shape zoo. Deduped module-wide.
+    emitted_addmethod: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
 struct DelegateRet {
-    tag: String,            // add_method suffix: v / id / i64 / u64 / i16 / i8
+    tag: String,            // shape-symbol stem: v / id / i64 / u64 / f64 / i8 ...
     ret_suffix: String,     // C+ return spelling: "" or " -> i64" / " -> *u8" ...
     enc: String,            // ObjC type-encoding char for the return
     default_ret: Option<String>, // noop's default return expr (None == void)
 }
 
-// (return tag, object-arg count) pairs vendor/objc/synthesis provides a
-// class_addMethod shape for. Keep in lockstep with synthesis.cplus.
-fn delegate_shape_known(tag: &str, n: usize) -> bool {
-    const SHAPES: &[(&str, usize)] = &[
-        ("v", 0), ("v", 1), ("v", 2), ("v", 3), ("v", 4), ("v", 5),
-        ("id", 0), ("id", 1), ("id", 2), ("id", 3), ("id", 4),
-        ("i64", 0), ("i64", 1), ("i64", 2),
-        ("u64", 0), ("u64", 1),
-        ("i16", 0),
-        ("i8", 1), ("i8", 2), ("i8", 3),
-    ];
-    SHAPES.contains(&(tag, n))
+// A delegate-callback argument kind: the C+ param type, its ObjC type-encoding
+// char, and a short tag used to build the (unique-per-signature) IMP shape symbol.
+#[derive(Clone)]
+struct DArg {
+    cty: String, // C+ param type: *u8 / i64 / u64 / f64 / i8 ...
+    enc: char,   // ObjC type-encoding char (@ q Q d ...)
+    tag: String, // shape-symbol fragment (id / i64 / f64 ...)
+}
+
+// The scalar C+ type / ObjC encoding / shape tag / zero default for a numeric
+// (non-object) delegate arg-or-return type. `None` for anything not a plain
+// scalar (struct, block, pointer-to-pointer) — those stay skipped.
+fn delegate_numeric(b: &str) -> Option<(&'static str, char, &'static str, &'static str)> {
+    Some(match b {
+        "NSInteger" | "long" | "long long" | "int64_t" => ("i64", 'q', "i64", "0 as i64"),
+        "NSUInteger" | "unsigned long" | "unsigned long long" | "uint64_t" => ("u64", 'Q', "u64", "0 as u64"),
+        "int" | "int32_t" => ("i32", 'i', "i32", "0 as i32"),
+        "unsigned" | "unsigned int" | "uint32_t" => ("u32", 'I', "u32", "0 as u32"),
+        "short" | "int16_t" => ("i16", 's', "i16", "0 as i16"),
+        "unsigned short" | "uint16_t" => ("u16", 'S', "u16", "0 as u16"),
+        "uint8_t" | "unsigned char" => ("u8", 'C', "u8", "0 as u8"),
+        "double" | "CGFloat" | "NSTimeInterval" | "CFTimeInterval" => ("f64", 'd', "f64", "0 as f64"),
+        "float" => ("f32", 'f', "f32", "0 as f32"),
+        "BOOL" | "_Bool" | "bool" => ("i8", 'c', "i8", "0 as i8"),
+        _ => return None,
+    })
 }
 
 #[derive(Clone)]
@@ -213,6 +233,7 @@ impl ObjcEmitter {
             value_structs: HashMap::new(),
             used_value_structs: HashSet::new(),
             used_struct_shapes: HashSet::new(),
+            emitted_addmethod: HashSet::new(),
         }
     }
 
@@ -969,9 +990,9 @@ impl ObjcEmitter {
             return;
         }
 
-        // Partition into modellable callbacks (sel, snake id, arg count, return
-        // kind) and SKIPPED notes for the rest.
-        let mut callbacks: Vec<(String, String, usize, DelegateRet)> = Vec::new();
+        // Partition into modellable callbacks (selector, snake id, typed args,
+        // return kind) and SKIPPED notes for the rest.
+        let mut callbacks: Vec<(String, String, Vec<DArg>, DelegateRet)> = Vec::new();
         let mut skips: Vec<String> = Vec::new();
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -980,7 +1001,7 @@ impl ObjcEmitter {
                 .and_then(|t| t.get("qualType"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("void");
-            let params: Vec<String> = m
+            let param_qts: Vec<String> = m
                 .get("inner")
                 .and_then(|v| v.as_array())
                 .map(|a| {
@@ -994,8 +1015,10 @@ impl ObjcEmitter {
                 skips.push(format!("// SKIPPED `{sel}`: override\n"));
                 continue;
             }
-            if params.len() > 5 || !params.iter().all(|qt| self.is_object_arg(qt)) {
-                skips.push(format!("// SKIPPED `{sel}`: arg shape (only <=5 object args modelled)\n"));
+            // self + cmd + up to 6 args stays well inside the AArch64 GP/FP register
+            // file; beyond that, skip for sanity (real delegates are far smaller).
+            if param_qts.len() > 6 {
+                skips.push(format!("// SKIPPED `{sel}`: arg shape (>6 args not modelled)\n"));
                 continue;
             }
             let ret = match self.delegate_ret(ret_qt) {
@@ -1005,8 +1028,21 @@ impl ObjcEmitter {
                     continue;
                 }
             };
-            if !delegate_shape_known(&ret.tag, params.len()) {
-                skips.push(format!("// SKIPPED `{sel}`: no `{}`-return / {}-arg IMP shape\n", ret.tag, params.len()));
+            // Each arg maps to a scalar/object C+ type; a struct/block/out-param arg
+            // (delegate_arg -> None) skips the whole callback.
+            let mut dargs: Vec<DArg> = Vec::new();
+            let mut bad: Option<String> = None;
+            for qt in &param_qts {
+                match self.delegate_arg(qt) {
+                    Some(a) => dargs.push(a),
+                    None => {
+                        bad = Some(qt.clone());
+                        break;
+                    }
+                }
+            }
+            if let Some(qt) = bad {
+                skips.push(format!("// SKIPPED `{sel}`: arg `{qt}` not modelled\n"));
                 continue;
             }
             // Override file supplies a short callback name; else the full
@@ -1019,7 +1055,7 @@ impl ObjcEmitter {
                 .unwrap_or_else(|| selector_ident(&sel));
             // The callback name becomes a struct field and accessor; escape it so
             // a selector like `type` doesn't land on a keyword (`type` -> `type_`).
-            callbacks.push((sel.clone(), crate::sanitize_ident(&mid), params.len(), ret));
+            callbacks.push((sel.clone(), crate::sanitize_ident(&mid), dargs, ret));
         }
         if callbacks.is_empty() {
             return;
@@ -1028,55 +1064,85 @@ impl ObjcEmitter {
         let key = self.synth_key;
         self.synth_key += 1;
 
-        // Handler type: fn(user, <n object args>) -> <ret> (ret_suffix is the
-        // " -> X" or empty for void).
-        let handler_ty = |n: usize, ret: &DelegateRet| format!("fn(*u8{}){}", ", *u8".repeat(n), ret.ret_suffix);
+        // Handler type `fn(user, <typed args>) -> <ret>`: the user handler receives
+        // each scalar in its natural C+ type (i64/f64/i8/...), objects as *u8.
+        let handler_ty = |args: &[DArg], ret: &DelegateRet| {
+            let a: String = args.iter().map(|d| format!(", {}", d.cty)).collect();
+            format!("fn(*u8{a}){}", ret.ret_suffix)
+        };
+        // A unique symbol per IMP signature: return tag + each arg's tag. Two
+        // callbacks with the same wire shape share one noop / one addMethod shim.
+        let shape_sym = |args: &[DArg], ret: &DelegateRet| {
+            let a: String = args.iter().map(|d| format!("_{}", d.tag)).collect();
+            format!("{}{a}", ret.tag)
+        };
         let mut s = String::new();
         s.push_str(&format!("// `{proto_objc}` delegate protocol -> runtime class-synthesis helper.\n"));
         for sk in &skips {
             s.push_str(sk);
         }
 
-        // A noop per distinct (return tag, arity), the default for each unset
-        // handler. Non-void noops return a zero/nil default.
-        let mut shapes: Vec<(String, usize)> = callbacks.iter().map(|(_, _, n, r)| (r.tag.clone(), *n)).collect();
-        shapes.sort();
-        shapes.dedup();
-        for (tag, n) in &shapes {
-            let ret = self.tag_ret(tag);
+        // A typed `class_addMethod` shim per distinct IMP signature (deduped
+        // module-wide): the trampoline fn-pointer is passed straight to it, so any
+        // scalar-arg shape binds with no synthesis-side shape zoo.
+        for (_, _, args, ret) in &callbacks {
+            let sym = shape_sym(args, ret);
+            if self.emitted_addmethod.insert(sym.clone()) {
+                let params: String = args.iter().map(|d| format!(", {}", d.cty)).collect();
+                s.push_str(&format!(
+                    "#[link_name = \"class_addMethod\"]\nextern fn cplus_add_method_{sym}(cls: *u8, sel: *u8, imp: fn(*u8, *u8{params}){}, types: *u8) -> i8;\n",
+                    ret.ret_suffix
+                ));
+            }
+        }
+        s.push('\n');
+
+        // A noop per distinct signature, the default for each unset handler.
+        let mut shapes: Vec<(String, Vec<DArg>, DelegateRet)> = Vec::new();
+        for (_, _, args, ret) in &callbacks {
+            let sym = shape_sym(args, ret);
+            if !shapes.iter().any(|(k, _, _)| *k == sym) {
+                shapes.push((
+                    sym,
+                    args.clone(),
+                    DelegateRet { tag: ret.tag.clone(), ret_suffix: ret.ret_suffix.clone(), enc: ret.enc.clone(), default_ret: ret.default_ret.clone() },
+                ));
+            }
+        }
+        for (sym, args, ret) in &shapes {
             let mut pp = vec!["user: *u8".to_string()];
-            for i in 0..*n {
-                pp.push(format!("a{i}: *u8"));
+            for (i, d) in args.iter().enumerate() {
+                pp.push(format!("a{i}: {}", d.cty));
             }
             let body = match &ret.default_ret {
                 Some(d) => format!("return {d};"),
                 None => "return;".to_string(),
             };
-            s.push_str(&format!("fn {proto_ty}_noop_{tag}_{n}({}){} {{ {body} }}\n", pp.join(", "), ret.ret_suffix));
+            s.push_str(&format!("fn {proto_ty}_noop_{sym}({}){} {{ {body} }}\n", pp.join(", "), ret.ret_suffix));
         }
         s.push('\n');
 
         // The handler table the caller fills (one fn per callback + their state).
         s.push_str(&format!("struct {proto_ty} {{\n"));
-        for (_, mid, n, r) in &callbacks {
-            s.push_str(&format!("    {mid}: {},\n", handler_ty(*n, r)));
+        for (_, mid, args, r) in &callbacks {
+            s.push_str(&format!("    {mid}: {},\n", handler_ty(args, r)));
         }
         s.push_str("    opaque user: *u8,\n}\n\n");
 
-        // Constructor: every handler starts as its noop (intra-module names, so
-        // this resolves regardless of where `_new` is called); setters install
-        // the callbacks the caller actually wants.
+        // Constructor: every handler starts as its signature's noop (intra-module
+        // names, so this resolves regardless of where `_new` is called); setters
+        // install the callbacks the caller actually wants.
         s.push_str(&format!("fn {proto_ty}_new(user: *u8) -> {proto_ty} {{\n    return {proto_ty} {{ "));
-        let mut inits: Vec<String> = callbacks.iter().map(|(_, mid, n, r)| format!("{mid}: {proto_ty}_noop_{}_{n}", r.tag)).collect();
+        let mut inits: Vec<String> = callbacks.iter().map(|(_, mid, args, r)| format!("{mid}: {proto_ty}_noop_{}", shape_sym(args, r))).collect();
         inits.push("user: user".to_string());
         s.push_str(&inits.join(", "));
         s.push_str(" };\n}\n\n");
 
         s.push_str(&format!("impl {proto_ty} {{\n"));
-        for (_, mid, n, r) in &callbacks {
+        for (_, mid, args, r) in &callbacks {
             s.push_str(&format!(
                 "    fn set_{mid}(ref this, handler: {}) {{\n        this.{mid} = handler;\n        return;\n    }}\n",
-                handler_ty(*n, r)
+                handler_ty(args, r)
             ));
         }
         s.push_str("}\n\n");
@@ -1084,16 +1150,16 @@ impl ObjcEmitter {
         s.push_str(&format!("fn {proto_ty}_key() -> *u8 {{ return {{ {key} as *u8 }}; }}\n\n"));
 
         // One IMP trampoline per callback; all share the one associated ctx.
-        for (_, mid, n, r) in &callbacks {
+        for (_, mid, args, r) in &callbacks {
             let mut imp_params = vec!["self_obj: *u8".to_string(), "cmd: *u8".to_string()];
             let mut call_args = vec!["u".to_string()];
-            for i in 0..*n {
-                imp_params.push(format!("a{i}: *u8"));
+            for (i, d) in args.iter().enumerate() {
+                imp_params.push(format!("a{i}: {}", d.cty));
                 call_args.push(format!("a{i}"));
             }
             s.push_str(&format!("fn {proto_ty}_{mid}_imp({}){} {{\n", imp_params.join(", "), r.ret_suffix));
             s.push_str(&format!("    let c: *{proto_ty} = {{ synth::get_associated(self_obj, {proto_ty}_key()) as *{proto_ty} }};\n"));
-            s.push_str(&format!("    let f: {} = {{ (*c).{mid} }};\n", handler_ty(*n, r)));
+            s.push_str(&format!("    let f: {} = {{ (*c).{mid} }};\n", handler_ty(args, r)));
             s.push_str("    let u: *u8 = { (*c).user };\n");
             let dispatch = if r.default_ret.is_some() {
                 format!("    return f({});\n", call_args.join(", "))
@@ -1111,11 +1177,12 @@ impl ObjcEmitter {
         s.push_str("    var cls: *u8 = rt::get_class(name);\n");
         s.push_str("    if cls == { 0 as *u8 } {\n");
         s.push_str("        cls = synth::allocate_class_pair(rt::get_class(#str_ptr(\"NSObject\\0\")), name, 0 as usize);\n");
-        for (sel, mid, n, r) in &callbacks {
-            let types = format!("{}@:{}", r.enc, "@".repeat(*n));
+        for (sel, mid, args, r) in &callbacks {
+            let enc: String = args.iter().map(|d| d.enc).collect();
+            let types = format!("{}@:{}", r.enc, enc);
             s.push_str(&format!(
-                "        let add_{mid}: i8 = synth::add_method_{}_{n}id(cls, rt::sel(#str_ptr(\"{sel}\\0\")), {proto_ty}_{mid}_imp, #str_ptr(\"{types}\\0\"));\n",
-                r.tag
+                "        let add_{mid}: i8 = cplus_add_method_{}(cls, rt::sel(#str_ptr(\"{sel}\\0\")), {proto_ty}_{mid}_imp, #str_ptr(\"{types}\\0\"));\n",
+                shape_sym(args, r)
             ));
         }
         s.push_str("        synth::register_class_pair(cls);\n    }\n");
@@ -1132,48 +1199,43 @@ impl ObjcEmitter {
         let (b, _) = strip_nullability(qt);
         let b = b.trim();
         if b == "void" {
-            return Some(self.tag_ret("v"));
+            return Some(DelegateRet { tag: "v".into(), ret_suffix: String::new(), enc: "v".into(), default_ret: None });
         }
+        // Enums ride their NSUInteger base; any object (`id`/`Foo *`) -> `*u8`.
         if self.enum_of(b).is_some() {
-            return Some(self.tag_ret("u64"));
+            return Some(DelegateRet { tag: "u64".into(), ret_suffix: " -> u64".into(), enc: "Q".into(), default_ret: Some("0 as u64".into()) });
         }
-        let tag = match b {
-            "NSInteger" | "long" => "i64",
-            "NSUInteger" | "unsigned long" => "u64",
-            "short" => "i16",
-            "BOOL" | "_Bool" | "bool" => "i8",
-            "instancetype" | "id" => "id",
-            other if other.ends_with('*') => "id",
-            _ => return None,
-        };
-        Some(self.tag_ret(tag))
+        if b == "instancetype" || b == "id" || b.ends_with('*') {
+            return Some(DelegateRet { tag: "id".into(), ret_suffix: " -> *u8".into(), enc: "@".into(), default_ret: Some("{ 0 as *u8 }".into()) });
+        }
+        let (cty, enc, tag, def) = delegate_numeric(b)?;
+        Some(DelegateRet { tag: tag.into(), ret_suffix: format!(" -> {cty}"), enc: enc.to_string(), default_ret: Some(def.into()) })
     }
 
-    fn tag_ret(&self, tag: &str) -> DelegateRet {
-        let (suffix, enc, default): (&str, &str, Option<&str>) = match tag {
-            "v" => ("", "v", None),
-            "id" => (" -> *u8", "@", Some("{ 0 as *u8 }")),
-            "i64" => (" -> i64", "q", Some("0 as i64")),
-            "u64" => (" -> u64", "Q", Some("0 as u64")),
-            "i16" => (" -> i16", "s", Some("0 as i16")),
-            "i8" => (" -> i8", "c", Some("0 as i8")),
-            _ => ("", "v", None),
-        };
-        DelegateRet {
-            tag: tag.to_string(),
-            ret_suffix: suffix.to_string(),
-            enc: enc.to_string(),
-            default_ret: default.map(String::from),
-        }
-    }
-
-    fn is_object_arg(&self, qt: &str) -> bool {
+    // Classify one delegate-callback argument. Objects (`id`/`Foo *`/`id<P>`) and
+    // the pointer-sized `SEL`/`Class` bind as `*u8`; scalars via `delegate_numeric`.
+    // `None` for a struct / block / pointer-to-pointer arg — the callback is then
+    // skipped as before.
+    fn delegate_arg(&self, qt: &str) -> Option<DArg> {
         let (b, _) = strip_nullability(qt);
         let b = b.trim();
-        if b.contains('^') {
-            return false;
+        if b.contains('^') || b.matches('*').count() >= 2 {
+            return None;
         }
-        b == "id" || b.ends_with('*')
+        if self.enum_of(b).is_some() {
+            return Some(DArg { cty: "u64".into(), enc: 'Q', tag: "u64".into() });
+        }
+        if b == "id" || b.starts_with("id<") || b.starts_with("id <") || b.ends_with('*') {
+            return Some(DArg { cty: "*u8".into(), enc: '@', tag: "id".into() });
+        }
+        if b == "SEL" {
+            return Some(DArg { cty: "*u8".into(), enc: ':', tag: "id".into() });
+        }
+        if b == "Class" {
+            return Some(DArg { cty: "*u8".into(), enc: '#', tag: "id".into() });
+        }
+        let (cty, enc, tag, _) = delegate_numeric(b)?;
+        Some(DArg { cty: cty.into(), enc, tag: tag.into() })
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -3305,6 +3367,83 @@ mod tests {
         assert!(out.contains("type_: fn"), "field escaped:\n{out}");
         assert!(out.contains("fn set_type_(ref this"), "setter escaped:\n{out}");
         assert!(!out.contains("\n    type: fn"), "no bare keyword field:\n{out}");
+    }
+
+    #[test]
+    fn delegate_callbacks_with_scalar_args_bind_with_typed_trampolines() {
+        // Delegate callbacks that pass a scalar (NSInteger) or return one (CGFloat /
+        // BOOL) used to skip ("only object args modelled"). They now bind: the handler
+        // receives each scalar in its natural C+ type, and a typed `class_addMethod`
+        // shim carries the exact IMP signature (no fixed shape zoo).
+        let m = |sel: &str, ret: &str, params: &[(&str, &str)]| {
+            serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+                "returnType": { "qualType": ret },
+                "inner": params.iter().map(|(n, t)| serde_json::json!(
+                    { "kind": "ParmVarDecl", "name": n, "type": { "qualType": t } })).collect::<Vec<_>>()
+            })
+        };
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl", "name": "NSThingDelegate", "loc": { "file": "test.h" },
+                "inner": [
+                    m("thing:didUpdateRow:", "void", &[("thing", "id"), ("row", "NSInteger")]),
+                    m("thing:heightOfRow:", "CGFloat", &[("thing", "id"), ("row", "NSInteger")]),
+                    m("thing:shouldSelectRow:", "BOOL", &[("thing", "id"), ("row", "NSInteger")]),
+                ]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Handler fields carry the scalar in its natural type.
+        assert!(out.contains("thing_did_update_row: fn(*u8, *u8, i64),"), "void+scalar handler:\n{out}");
+        assert!(out.contains("thing_height_of_row: fn(*u8, *u8, i64) -> f64,"), "CGFloat-return handler:\n{out}");
+        assert!(out.contains("thing_should_select_row: fn(*u8, *u8, i64) -> i8,"), "BOOL-return handler:\n{out}");
+        // A typed class_addMethod shim per distinct IMP signature; the object stays
+        // *u8, the NSInteger is i64, and CGFloat/BOOL are the real return types.
+        assert!(out.contains("#[link_name = \"class_addMethod\"]"), "emits addMethod shim:\n{out}");
+        assert!(out.contains("extern fn cplus_add_method_v_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64), types: *u8) -> i8;"),
+            "void shim:\n{out}");
+        assert!(out.contains("extern fn cplus_add_method_f64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> f64, types: *u8) -> i8;"),
+            "CGFloat shim:\n{out}");
+        // Trampoline is typed and dispatches with the scalar unchanged.
+        assert!(out.contains("fn ThingDelegate_thing_height_of_row_imp(self_obj: *u8, cmd: *u8, a0: *u8, a1: i64) -> f64 {"),
+            "typed trampoline:\n{out}");
+        // ObjC type-encoding string: return enc, then @: (self, _cmd), then arg encs.
+        assert!(out.contains(r#"#str_ptr("d@:@q\0")"#), "CGFloat/id/NSInteger encoding:\n{out}");
+        assert!(out.contains(r#"#str_ptr("v@:@q\0")"#), "void/id/NSInteger encoding:\n{out}");
+        // create_ wires each callback through its shim.
+        assert!(out.contains("cplus_add_method_v_id_i64(cls, rt::sel("), "create_ uses the shim:\n{out}");
+        // No scalar-arg skip anymore.
+        assert!(!out.contains("only <=5 object args"), "no legacy object-arg skip:\n{out}");
+    }
+
+    #[test]
+    fn delegate_callback_with_a_struct_arg_still_skips() {
+        // A by-value struct arg (NSRange / NSRect / ...) has no scalar/object shape,
+        // so the callback is skipped with an explicit note — never mis-bound. (A
+        // second, bindable callback keeps the protocol's helper alive so the skip
+        // note is recorded rather than swallowed by the empty-callbacks early return.)
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl", "name": "NSThingDelegate", "loc": { "file": "test.h" },
+                "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "thing:didSelectRange:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } },
+                        { "kind": "ParmVarDecl", "name": "range", "type": { "qualType": "NSRange" } } ] },
+                    { "kind": "ObjCMethodDecl", "name": "thingDidLoad:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "thing", "type": { "qualType": "id" } }] },
+                ]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("// SKIPPED `thing:didSelectRange:`: arg `NSRange` not modelled"),
+            "struct-arg callback skips explicitly:\n{out}");
+        assert!(!out.contains("thing_did_select_range_imp"), "no trampoline for the struct-arg callback:\n{out}");
+        // The bindable neighbor still binds.
+        assert!(out.contains("thing_did_load: fn(*u8, *u8),"), "sibling object-arg callback binds:\n{out}");
     }
 
     #[test]
