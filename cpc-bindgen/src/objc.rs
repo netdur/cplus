@@ -2232,6 +2232,9 @@ fn array_element(ty: &str) -> Option<String> {
     let t = ty.trim();
     let rest = t.strip_prefix("NSArray<")?;
     let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"))?;
+    // `NSArray<__kindof NSView *>` — the element carries the subclass qualifier;
+    // strip it so the element resolves to its wrapper (`NSView *` -> View).
+    let elem = elem.trim().strip_prefix("__kindof ").unwrap_or(elem.trim());
     Some(elem.trim().to_string())
 }
 
@@ -2487,6 +2490,26 @@ fn strip_nullability(qt: &str) -> (String, bool) {
                 s = rest.trim();
             }
         }
+        // Availability / Swift-annotation macros that leak into a clang type spelling
+        // (`API_AVAILABLE NSArray<NSString *>`, `API_DEPRECATED(...) id<...>`). Strip
+        // the macro name + an optional balanced `(...)` group. Longest names first, with
+        // a word-boundary check so `API_DEPRECATED` doesn't eat an `_WITH_...` tail.
+        for macro_name in &[
+            "API_DEPRECATED_WITH_REPLACEMENT",
+            "NS_SWIFT_UNAVAILABLE",
+            "API_UNAVAILABLE",
+            "API_DEPRECATED",
+            "API_AVAILABLE",
+        ] {
+            if let Some(rest) = s.strip_prefix(macro_name) {
+                if !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                    let rest = rest.trim_start();
+                    // skip_balanced_parens consumes the leading `(` itself — don't strip it first.
+                    let rest = if rest.starts_with('(') { skip_balanced_parens(rest) } else { rest };
+                    s = rest.trim();
+                }
+            }
+        }
         if s == before {
             break;
         }
@@ -2497,6 +2520,26 @@ fn strip_nullability(qt: &str) -> (String, bool) {
         }
     }
     (s.to_string(), false)
+}
+
+/// Given a slice that starts with `(`, return the slice past the matching `)`.
+/// Handles nesting (`API_AVAILABLE(macos(11.0))`); returns the input unchanged if
+/// the parens are unbalanced.
+fn skip_balanced_parens(s: &str) -> &str {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &s[i + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    s
 }
 
 /// Strip a leading enum-name prefix from a constant (NLTokenUnitWord -> Word).
@@ -2923,6 +2966,18 @@ mod tests {
         assert!(out.contains("rt::msg_void_id_i64(this._obj"), "wires to the void_id_i64 shim:\n{out}");
         // 8/16-bit typedef stays unmapped (skipped, never mis-typed).
         assert!(out.contains("SKIPPED `glyphAt:`: param `CGGlyph` — unmapped type"), "CGGlyph stays skipped:\n{out}");
+    }
+
+    #[test]
+    fn availability_macros_and_kindof_arrays_are_stripped() {
+        // API_AVAILABLE-family macros and __kindof leak into clang type spellings and
+        // must be stripped so the underlying type resolves.
+        assert_eq!(strip_nullability("API_AVAILABLE NSArray<NSString *> * _Nonnull").0, "NSArray<NSString *> *");
+        assert_eq!(strip_nullability("API_DEPRECATED(\"x\", macos(10.0, 11.0)) id<MTLBuffer>").0, "id<MTLBuffer>");
+        // Longest-name-first + word boundary: the shorter prefix doesn't half-eat it.
+        assert_eq!(strip_nullability("API_DEPRECATED_WITH_REPLACEMENT(\"y\") id").0, "id");
+        // __kindof inside an NSArray element resolves via array_element.
+        assert_eq!(array_element("NSArray<__kindof NSView *> *").as_deref(), Some("NSView *"));
     }
 
     #[test]
