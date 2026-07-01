@@ -4,7 +4,7 @@
 # sdk       = "26.5"
 # generator = "cpc-bindgen 0.0.25"
 # headers   = 279
-# reproduce = "cpc-bindgen --framework AppKit --prefix NS --overrides overrides.json"
+# reproduce = "cpc-bindgen --framework AppKit --prefix NS --merge --overrides overrides.json"
 
 [package]
 name    = "appkit"
