@@ -200,6 +200,10 @@ enum Ret {
     TextArray,  // NSArray<NSString *> -> Vec[Text]
     ObjectArray(String), // NSArray<id<P>> -> Vec[P]; only non-owning protocol elems
     TextSet,    // NSSet<NSString *> (or NSString typedef) -> StringSet (via -allObjects)
+    // NSSet<W *> (object-wrapper element) -> Vec[W], LOSSY on set-ness (via -allObjects):
+    // a wrapper isn't Copy/Hash/Eq, so it can't be a HashSet element. The Vec is a
+    // faithful enumeration (NSSet order is undefined anyway), just not a set type.
+    ObjectSet(String),
     Struct(String), // a by-value C struct (MTLSize) returned by value (sret)
     TextMap(MapVal), // NSDictionary<NSString *, V> -> StringMap[V]
     Unsupported(String),
@@ -239,6 +243,10 @@ enum Arg {
     // the reverse of the TextSet return bridge. Prologue folds the set's elements into
     // an NSMutableArray, then `[NSSet setWithArray:]`.
     TextSetParam { pname: String },
+    // NSSet<W *> (object-wrapper element) param built from a Vec[W] — the reverse of
+    // the ObjectSet return (lossy on set-ness). Same prologue as IdArray, then wrapped
+    // in `[NSSet setWithArray:]`.
+    ObjectSetParam { elem: String, pname: String },
     Unsupported(String),
 }
 
@@ -1384,9 +1392,12 @@ impl ObjcEmitter {
         // A param whose value is built by the general-path prologue (arr_<pname> /
         // dict_<pname>). The returns-self and collection-return paths don't build it,
         // so pairing one with such a param would dangle -> skip those combos.
-        let has_collection_param = args
-            .iter()
-            .any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. }));
+        let has_collection_param = args.iter().any(|a| {
+            matches!(
+                a,
+                Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. } | Arg::ObjectSetParam { .. }
+            )
+        });
         if is_init {
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
@@ -1472,7 +1483,7 @@ impl ObjcEmitter {
         // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
         // collection return rather than emit dangling code.
         if has_collection_param
-            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_))
+            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_))
         {
             self.body.push_str(&format!(
                 "    // SKIPPED `{sel}`: NSArray<id> param with a collection return not modelled\n"
@@ -1587,6 +1598,40 @@ impl ObjcEmitter {
             self.body.push_str(&format!(
                 "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
                  \x20       let arr: *u8 = {array_call};\n\
+                 \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
+                 \x20       var out: vec::Vec[{elem_ty}] = vec::Vec[{elem_ty}]::with_capacity(n as usize);\n\
+                 \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
+                 \x20       var i: u64 = 0 as u64;\n\
+                 \x20       while i < n {{\n\
+                 \x20           out.append({elem_ty}::from_raw({elem_handle}));\n\
+                 \x20           i = i +% (1 as u64);\n\
+                 \x20       }}\n\
+                 \x20       return out;\n    }}\n\n"
+            ));
+            return;
+        }
+
+        if let Ret::ObjectSet(elem_ty) = &ret {
+            let set_call = match self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                Some(s) => s,
+                None => {
+                    self.body.push_str(&format!("    // SKIPPED `{sel}`: NSSet arg shape not modelled\n"));
+                    return;
+                }
+            };
+            self.needs_vec = true;
+            let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
+            // Lossy on set-ness: `-allObjects` snapshots the set as an NSArray, then the
+            // same +0 elements are wrapped (retain-on-wrap for an owning W) as ObjectArray.
+            let elem_handle = if self.owning_types.contains(elem_ty) {
+                "rt::retain(rt::msg_id_u64(arr, at_sel, i))".to_string()
+            } else {
+                "rt::msg_id_u64(arr, at_sel, i)".to_string()
+            };
+            self.body.push_str(&format!(
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
+                 \x20       let set: *u8 = {set_call};\n\
+                 \x20       let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr(\"allObjects\\0\")));\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
                  \x20       var out: vec::Vec[{elem_ty}] = vec::Vec[{elem_ty}]::with_capacity(n as usize);\n\
                  \x20       let at_sel: *u8 = rt::sel(#str_ptr(\"objectAtIndex:\\0\"));\n\
@@ -1729,7 +1774,7 @@ impl ObjcEmitter {
                 let info = self.enums.get(objc_enum).unwrap();
                 (format!(" -> {}", info.cplus_name), format!("        return {}({send});\n", info.from_raw_fn))
             }
-            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+            Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
         })
     }
 
@@ -1754,7 +1799,7 @@ impl ObjcEmitter {
         // Collection returns need the multi-statement Vec/Map builders that only the
         // general path emits; a block method returning one is rare — skip rather than
         // emit a partial body.
-        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_)) {
+        if matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_)) {
             self.body.push_str(&format!("    // SKIPPED `{sel}`: block method with a collection return not modelled\n"));
             return;
         }
@@ -1807,10 +1852,12 @@ impl ObjcEmitter {
         }
         // The block path doesn't build the collection prologue, so an NSArray<id> /
         // NSDictionary leading param would reference an undefined arr_/dict_ local.
-        if send_args
-            .iter()
-            .any(|a| matches!(a, Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. }))
-        {
+        if send_args.iter().any(|a| {
+            matches!(
+                a,
+                Arg::IdArray { .. } | Arg::DictMap { .. } | Arg::TextSetParam { .. } | Arg::ObjectSetParam { .. }
+            )
+        }) {
             self.body.push_str(&format!(
                 "    // SKIPPED `{sel}`: block method with a built-collection param not modelled\n"
             ));
@@ -2059,6 +2106,16 @@ impl ObjcEmitter {
                 }
             }
         }
+        // NSSet<W *> (object wrapper) RETURN -> `Vec[W]` (lossy on set-ness), via
+        // `-allObjects`. Same wrapper gate + retain-on-wrap as ObjectArray. (The
+        // string case was already taken by `is_string_set` above.)
+        if let Some(elem) = nsset_element(base_ty) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
+                    return Ret::ObjectSet(w);
+                }
+            }
+        }
         if self.is_nsstring(base_ty) {
             return Ret::Text { nullable };
         }
@@ -2282,6 +2339,16 @@ impl ObjcEmitter {
             self.needs_string_set = true;
             return Arg::TextSetParam { pname: pname.to_string() };
         }
+        // NSSet<W *> (object wrapper) param -> built from a Vec[W] (lossy on set-ness),
+        // the reverse of the ObjectSet return. Same wrapper gate as the array param.
+        if let Some(elem) = nsset_element(base_ty) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
+                    self.needs_vec = true;
+                    return Arg::ObjectSetParam { elem: w, pname: pname.to_string() };
+                }
+            }
+        }
         if base_ty.contains('<') {
             return Arg::Unsupported("generic collection".into());
         }
@@ -2354,6 +2421,14 @@ impl ObjcEmitter {
         // NSSet<NSString *> param -> StringSet (same gate as map_arg).
         if self.is_string_set(b) {
             return "string_set::StringSet".to_string();
+        }
+        // NSSet<W *> (object wrapper) param -> Vec[W] (same gate as map_arg).
+        if let Some(elem) = nsset_element(b) {
+            if let Some(w) = self.wrapper_name_of(&elem) {
+                if self.non_owning_types.contains(&w) || self.owning_types.contains(&w) {
+                    return format!("vec::Vec[{w}]");
+                }
+            }
         }
         if let Some(objc_enum) = self.enum_of(b) {
             let info = self.enums.get(&objc_enum).unwrap();
@@ -2623,6 +2698,17 @@ fn array_element(ty: &str) -> Option<String> {
     Some(elem.trim().to_string())
 }
 
+/// The element spelling of an `NSSet<...>` (mirrors `array_element`): strips the
+/// `__kindof` subclass qualifier so `NSSet<__kindof NSScrubberLayoutAttributes *>`
+/// resolves to its wrapper. None for anything that isn't a one-parameter NSSet.
+fn nsset_element(ty: &str) -> Option<String> {
+    let t = ty.trim();
+    let rest = t.strip_prefix("NSSet<")?;
+    let elem = rest.strip_suffix("> *").or_else(|| rest.strip_suffix(">*"))?;
+    let elem = elem.trim().strip_prefix("__kindof ").unwrap_or(elem.trim());
+    Some(elem.trim().to_string())
+}
+
 /// The msgSend ABI shape `<ret>[_<arg>...]` for a (return, args) pair — the key
 /// into the runtime's typed `objc_msgSend` shims. None when a return or arg is a
 /// value type with no shim tag (NSArray/NSDictionary/Unsupported). Shared by
@@ -2646,7 +2732,7 @@ fn msg_shape(ret: &Ret, args: &[Arg]) -> Option<String> {
         Ret::Point => "point".into(),
         Ret::Size => "size".into(),
         Ret::Struct(name) => name.clone(),
-        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
+        Ret::ValueArray | Ret::TextArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_) | Ret::Unsupported(_) => return None,
     };
     let mut tags: Vec<String> = vec![ret_tag];
     for a in args {
@@ -2674,6 +2760,7 @@ fn arg_tag(a: &Arg) -> Option<String> {
         Arg::IdArray { .. } => "id".into(), // the built NSArray is an id on the wire
         Arg::DictMap { .. } => "id".into(), // the built NSDictionary is an id on the wire
         Arg::TextSetParam { .. } => "id".into(), // the built NSSet is an id on the wire
+        Arg::ObjectSetParam { .. } => "id".into(), // the built NSSet is an id on the wire
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2727,6 +2814,7 @@ fn arg_expr(a: &Arg) -> Option<String> {
         Arg::IdArray { pname, .. } => format!("arr_{pname}"),
         Arg::DictMap { pname, .. } => format!("dict_{pname}"),
         Arg::TextSetParam { pname } => format!("set_{pname}"),
+        Arg::ObjectSetParam { pname, .. } => format!("set_{pname}"),
         Arg::Unsupported(_) => return None,
     })
 }
@@ -2958,6 +3046,24 @@ fn build_id_array_prologue(args: &[Arg]) -> String {
                  \x20           }}\n\
                  \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
                  \x20       }}\n"
+            ));
+        }
+        if let Arg::ObjectSetParam { elem, pname } = a {
+            // Same Vec[W] -> NSMutableArray build as IdArray (borrow-read each element
+            // via `at_ptr`, addObject: retains), then snapshot it as an immutable NSSet.
+            prologue.push_str(&format!(
+                "        let arr_{pname}: *u8 = rt::msg_id(rt::get_class(#str_ptr(\"NSMutableArray\\0\")), rt::sel(#str_ptr(\"array\\0\")));\n\
+                 \x20       let add_sel_{pname}: *u8 = rt::sel(#str_ptr(\"addObject:\\0\"));\n\
+                 \x20       let n_{pname}: usize = {pname}.count();\n\
+                 \x20       var i_{pname}: usize = 0 as usize;\n\
+                 \x20       while i_{pname} < n_{pname} {{\n\
+                 \x20           match {pname}.at_ptr(i_{pname}) {{\n\
+                 \x20               option::Option[*{elem}]::Some(e_{pname}) => {{ rt::msg_void_id(arr_{pname}, add_sel_{pname}, (*e_{pname}).raw()); }}\n\
+                 \x20               option::Option[*{elem}]::None => {{}}\n\
+                 \x20           }}\n\
+                 \x20           i_{pname} = i_{pname} +% (1 as usize);\n\
+                 \x20       }}\n\
+                 \x20       let set_{pname}: *u8 = rt::msg_id_id(rt::get_class(#str_ptr(\"NSSet\\0\")), rt::sel(#str_ptr(\"setWithArray:\\0\")), arr_{pname});\n"
             ));
         }
         if let Arg::DictMap { val, vty, pname } = a {
@@ -4235,6 +4341,38 @@ mod tests {
         assert!(out.contains("rt::msg_void_id(arr_keywords, sadd_keywords, bridge::nsstring((*sep_keywords).view()))"), "element bridge + addObject:\n{out}");
         assert!(out.contains(r#"let set_keywords: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_keywords);"#), "setWithArray: snapshot:\n{out}");
         assert!(!out.contains("// SKIPPED `setKeywords:`"), "no generic-collection skip:\n{out}");
+    }
+
+    #[test]
+    fn nsset_of_objects_bridges_to_a_lossy_vec() {
+        // NSSet<W*> (object-wrapper element) has no faithful set type (W isn't
+        // Copy/Hash/Eq), so it bridges LOSSILY to Vec[W]: a return via `-allObjects`
+        // (snapshot -> objectAtIndex loop -> from_raw), a param via the IdArray build
+        // + `[NSSet setWithArray:]`. The `__kindof` subclass qualifier is stripped.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSIndexPath", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSCollectionView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "selectionIndexPaths", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSSet<NSIndexPath *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "kindofPaths", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSSet<__kindof NSIndexPath *> * _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "setSelectionIndexPaths:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "indexPaths", "type": { "qualType": "NSSet<NSIndexPath *> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // Return -> Vec[IndexPath] via -allObjects snapshot + from_raw.
+        assert!(out.contains("fn selection_index_paths(this) -> vec::Vec[IndexPath] {"), "object-set return:\n{out}");
+        assert!(out.contains(r#"let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")))"#), "allObjects hop:\n{out}");
+        assert!(out.contains("out.append(IndexPath::from_raw("), "element wrap:\n{out}");
+        // `__kindof` element resolves to the same wrapper.
+        assert!(out.contains("fn kindof_paths(this) -> vec::Vec[IndexPath] {"), "__kindof element:\n{out}");
+        // Param <- Vec[IndexPath]: IdArray build + setWithArray: snapshot.
+        assert!(out.contains("fn set_selection_index_paths(this, index_paths: vec::Vec[IndexPath])"), "object-set param sig:\n{out}");
+        assert!(out.contains(r#"let set_index_paths: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_index_paths);"#), "param setWithArray: snapshot:\n{out}");
+        assert!(!out.contains("// SKIPPED `selectionIndexPaths`") && !out.contains("// SKIPPED `setSelectionIndexPaths:`"), "no generic-collection skip:\n{out}");
     }
 
     #[test]
