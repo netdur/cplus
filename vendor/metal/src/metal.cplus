@@ -14468,7 +14468,10 @@ impl Buffer {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("length\0")));
     }
 
-    // SKIPPED `remoteStorageBuffer`: return `API_AVAILABLE id<MTLBuffer>` — generic collection
+    fn remote_storage_buffer(this) -> Buffer {
+        return Buffer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("remoteStorageBuffer\0"))));
+    }
+
     fn gpu_address(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuAddress\0")));
     }
@@ -14719,7 +14722,10 @@ impl Texture {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
     }
 
-    // SKIPPED `remoteStorageTexture`: return `API_AVAILABLE id<MTLTexture>` — generic collection
+    fn remote_storage_texture(this) -> Texture {
+        return Texture::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("remoteStorageTexture\0"))));
+    }
+
     // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
     fn sparse_texture_tier(this) -> TextureSparseTier {
         return texture_sparse_tier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sparseTextureTier\0"))));
