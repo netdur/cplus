@@ -11293,7 +11293,10 @@ impl Color {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("linearExposure\0")));
     }
 
-    // SKIPPED `CGColor`: return `NS_RETURNS_INNER_POINTER CGColorRef` — unmapped type `NS_RETURNS_INNER_POINTER CGColorRef`
+    fn c_g_color(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGColor\0")));
+    }
+
     fn ignores_alpha() -> bool {
         return rt::msg_i8(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("ignoresAlpha\0"))) != (0 as i8);
     }
@@ -15042,7 +15045,10 @@ impl GraphicsContext {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingToScreen\0"))) != (0 as i8);
     }
 
-    // SKIPPED `CGContext`: return `NS_RETURNS_INNER_POINTER CGContextRef` — unmapped type `NS_RETURNS_INNER_POINTER CGContextRef`
+    fn c_g_context(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGContext\0")));
+    }
+
     fn is_flipped(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isFlipped\0"))) != (0 as i8);
     }
@@ -49664,7 +49670,10 @@ impl OpenGLPixelFormat {
         return rt::msg_i32(this._obj, rt::sel(#str_ptr("numberOfVirtualScreens\0")));
     }
 
-    // SKIPPED `CGLPixelFormatObj`: return `NS_RETURNS_INNER_POINTER CGLPixelFormatObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLPixelFormatObj`
+    fn c_g_l_pixel_format_obj(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGLPixelFormatObj\0")));
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -49692,7 +49701,10 @@ impl OpenGLPixelBuffer {
         return OpenGLPixelBuffer { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCGLPBufferObj:\0")), pbuffer) };
     }
 
-    // SKIPPED `CGLPBufferObj`: return `NS_RETURNS_INNER_POINTER CGLPBufferObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLPBufferObj`
+    fn c_g_l_p_buffer_obj(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGLPBufferObj\0")));
+    }
+
     fn pixels_wide(this) -> i32 {
         return rt::msg_i32(this._obj, rt::sel(#str_ptr("pixelsWide\0")));
     }
@@ -49792,8 +49804,8 @@ impl OpenGLContext {
         return OpenGLPixelFormat::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("pixelFormat\0"))));
     }
 
-    fn view(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("view\0")));
+    fn view(this) -> View {
+        return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("view\0"))));
     }
 
     fn current_context() -> option::Option[OpenGLContext] {
@@ -49812,7 +49824,10 @@ impl OpenGLContext {
         rt::msg_void_i32(this._obj, rt::sel(#str_ptr("setCurrentVirtualScreen:\0")), current_virtual_screen);
     }
 
-    // SKIPPED `CGLContextObj`: return `NS_RETURNS_INNER_POINTER CGLContextObj` — unmapped type `NS_RETURNS_INNER_POINTER CGLContextObj`
+    fn c_g_l_context_obj(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("CGLContextObj\0")));
+    }
+
     fn set_pixel_buffer(this, pixel_buffer: OpenGLPixelBuffer, cube_map_face: u32, mip_map_level: i32, current_virtual_screen: i32) {
         rt::msg_void_id_u32_i32_i32(this._obj, rt::sel(#str_ptr("setPixelBuffer:cubeMapFace:mipMapLevel:currentVirtualScreen:\0")), pixel_buffer.raw(), cube_map_face, mip_map_level, current_virtual_screen);
     }
@@ -57930,7 +57945,10 @@ impl ValidatedUserInterfaceItem {
 
     fn from_raw(ptr: *u8) -> ValidatedUserInterfaceItem { return ValidatedUserInterfaceItem { _obj: ptr }; }
 
-    // SKIPPED `action`: return `NS_SWIFT_UI_ACTOR SEL` — unmapped type `NS_SWIFT_UI_ACTOR SEL`
+    fn action(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("action\0")));
+    }
+
     fn tag(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("tag\0")));
     }
@@ -58203,8 +58221,8 @@ impl DraggingInfo {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetSpringLoading\0")));
     }
 
-    fn dragging_destination_window(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("draggingDestinationWindow\0")));
+    fn dragging_destination_window(this) -> Window {
+        return Window::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggingDestinationWindow\0"))));
     }
 
     fn dragging_source_operation_mask(this) -> u64 {
@@ -58223,11 +58241,14 @@ impl DraggingInfo {
         return Image::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggedImage\0"))));
     }
 
-    fn dragging_pasteboard(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("draggingPasteboard\0")));
+    fn dragging_pasteboard(this) -> Pasteboard {
+        return Pasteboard::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("draggingPasteboard\0"))));
     }
 
-    // SKIPPED `draggingSource`: return `NS_SWIFT_UI_ACTOR id` — unmapped type `NS_SWIFT_UI_ACTOR id`
+    fn dragging_source(this) -> *u8 {
+        return rt::msg_id(this._obj, rt::sel(#str_ptr("draggingSource\0")));
+    }
+
     fn dragging_sequence_number(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingSequenceNumber\0")));
     }
@@ -59793,8 +59814,8 @@ impl TouchBarProvider {
 
     fn from_raw(ptr: *u8) -> TouchBarProvider { return TouchBarProvider { _obj: ptr }; }
 
-    fn touch_bar(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("touchBar\0")));
+    fn touch_bar(this) -> TouchBar {
+        return TouchBar::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("touchBar\0"))));
     }
 
 }
@@ -60665,12 +60686,12 @@ impl CollectionViewSectionHeaderView {
 
     fn from_raw(ptr: *u8) -> CollectionViewSectionHeaderView { return CollectionViewSectionHeaderView { _obj: ptr }; }
 
-    fn section_collapse_button(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("sectionCollapseButton\0")));
+    fn section_collapse_button(this) -> Button {
+        return Button::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("sectionCollapseButton\0"))));
     }
 
-    fn set_section_collapse_button(this, section_collapse_button: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSectionCollapseButton:\0")), section_collapse_button);
+    fn set_section_collapse_button(this, section_collapse_button: Button) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setSectionCollapseButton:\0")), section_collapse_button.raw());
     }
 
 }
