@@ -6241,6 +6241,8 @@ extern fn objc_msg_id_i64_i64_i64_i64(recv: *u8, sel: *u8, a0: i64, a1: i64, a2:
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64_i64_id(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_i64_id_id(recv: *u8, sel: *u8, a0: i64, a1: i64, a2: *u8, a3: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_i64_id_id_id(recv: *u8, sel: *u8, a0: i64, a1: *u8, a2: *u8, a3: *u8) -> *u8;
@@ -6330,6 +6332,8 @@ extern fn objc_msg_void_i64_id_id_rect_id_id(recv: *u8, sel: *u8, a0: i64, a1: *
 extern fn objc_msg_void_id_i64_u64_id(recv: *u8, sel: *u8, a0: *u8, a1: i64, a2: u64, a3: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_i8_id(recv: *u8, sel: *u8, a0: *u8, a1: i8, a2: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_f64_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: f64, a3: *u8, a4: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8);
 #[link_name = "objc_msgSend"]
@@ -9676,7 +9680,23 @@ impl PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("blockQuoteIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
 
-    // SKIPPED `tableIntentWithIdentity:columnCount:alignments:nestedInsideIntent:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    fn table_intent_with_identity(identity: i64, column_count: i64, alignments: vec::Vec[f64], nested_inside_intent: PresentationIntent) -> PresentationIntent {
+        let arr_alignments: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_alignments: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_alignments: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_alignments: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_alignments: usize = alignments.count();
+        var i_alignments: usize = 0 as usize;
+        while i_alignments < n_alignments {
+            match alignments.at_ptr(i_alignments) {
+                option::Option[*f64]::Some(e_alignments) => { rt::msg_void_id(arr_alignments, add_sel_alignments, rt::msg_id_f64(num_cls_alignments, num_sel_alignments, *e_alignments)); }
+                option::Option[*f64]::None => {}
+            }
+            i_alignments = i_alignments +% (1 as usize);
+        }
+        return PresentationIntent::from_raw(objc_msg_id_i64_i64_id_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("tableIntentWithIdentity:columnCount:alignments:nestedInsideIntent:\0")), identity, column_count, arr_alignments, nested_inside_intent.raw()));
+    }
+
     fn table_header_row_intent_with_identity(identity: i64, nested_inside_intent: PresentationIntent) -> PresentationIntent {
         return PresentationIntent { _obj: rt::retain(rt::msg_id_i64_id(rt::get_class(#str_ptr("NSPresentationIntent\0")), rt::sel(#str_ptr("tableHeaderRowIntentWithIdentity:nestedInsideIntent:\0")), identity, nested_inside_intent.raw())) };
     }
@@ -9713,7 +9733,21 @@ impl PresentationIntent {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("ordinal\0")));
     }
 
-    // SKIPPED `columnAlignments`: return `NSArray<NSNumber *> * _Nullable` — generic collection
+    fn column_alignments(this) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("columnAlignments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn column_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("columnCount\0")));
     }
@@ -13420,7 +13454,21 @@ impl Window {
         return rt::msg_i8_i64(this._obj, rt::sel(#str_ptr("canRepresentDisplayGamut:\0")), display_gamut_raw(display_gamut)) != (0 as i8);
     }
 
-    // SKIPPED `windowNumbersWithOptions:`: return `NSArray<NSNumber *> * _Nullable` — generic collection
+    fn window_numbers_with_options(options: u64) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id_u64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowNumbersWithOptions:\0")), options);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn window_number_at_point(point: rt::Point, below_window_with_window_number: i64) -> i64 {
         return rt::msg_i64_point_i64(rt::get_class(#str_ptr("NSWindow\0")), rt::sel(#str_ptr("windowNumberAtPoint:belowWindowWithWindowNumber:\0")), point, below_window_with_window_number);
     }
@@ -18822,8 +18870,38 @@ impl Animation {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    // SKIPPED `progressMarks`: return `NSArray<NSNumber *> * _Nonnull` — generic collection
-    // SKIPPED `setProgressMarks:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    fn progress_marks(this) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("progressMarks\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_progress_marks(this, progress_marks: vec::Vec[f64]) {
+        let arr_progress_marks: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_progress_marks: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_progress_marks: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_progress_marks: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_progress_marks: usize = progress_marks.count();
+        var i_progress_marks: usize = 0 as usize;
+        while i_progress_marks < n_progress_marks {
+            match progress_marks.at_ptr(i_progress_marks) {
+                option::Option[*f64]::Some(e_progress_marks) => { rt::msg_void_id(arr_progress_marks, add_sel_progress_marks, rt::msg_id_f64(num_cls_progress_marks, num_sel_progress_marks, *e_progress_marks)); }
+                option::Option[*f64]::None => {}
+            }
+            i_progress_marks = i_progress_marks +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setProgressMarks:\0")), arr_progress_marks);
+    }
+
     fn run_loop_modes_for_animating(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("runLoopModesForAnimating\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -43052,7 +43130,36 @@ impl RulerView {
 
     fn from_raw(ptr: *u8) -> RulerView { return RulerView { _obj: ptr }; }
 
-    // SKIPPED `registerUnitWithName:abbreviation:unitToPointsConversionFactor:stepUpCycle:stepDownCycle:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    fn register_unit_with_name(unit_name: str, abbreviation: str, unit_to_points_conversion_factor: f64, step_up_cycle: vec::Vec[f64], step_down_cycle: vec::Vec[f64]) {
+        let arr_step_up_cycle: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_step_up_cycle: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_step_up_cycle: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_step_up_cycle: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_step_up_cycle: usize = step_up_cycle.count();
+        var i_step_up_cycle: usize = 0 as usize;
+        while i_step_up_cycle < n_step_up_cycle {
+            match step_up_cycle.at_ptr(i_step_up_cycle) {
+                option::Option[*f64]::Some(e_step_up_cycle) => { rt::msg_void_id(arr_step_up_cycle, add_sel_step_up_cycle, rt::msg_id_f64(num_cls_step_up_cycle, num_sel_step_up_cycle, *e_step_up_cycle)); }
+                option::Option[*f64]::None => {}
+            }
+            i_step_up_cycle = i_step_up_cycle +% (1 as usize);
+        }
+        let arr_step_down_cycle: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_step_down_cycle: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_step_down_cycle: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_step_down_cycle: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_step_down_cycle: usize = step_down_cycle.count();
+        var i_step_down_cycle: usize = 0 as usize;
+        while i_step_down_cycle < n_step_down_cycle {
+            match step_down_cycle.at_ptr(i_step_down_cycle) {
+                option::Option[*f64]::Some(e_step_down_cycle) => { rt::msg_void_id(arr_step_down_cycle, add_sel_step_down_cycle, rt::msg_id_f64(num_cls_step_down_cycle, num_sel_step_down_cycle, *e_step_down_cycle)); }
+                option::Option[*f64]::None => {}
+            }
+            i_step_down_cycle = i_step_down_cycle +% (1 as usize);
+        }
+        objc_msg_void_id_id_f64_id_id(rt::get_class(#str_ptr("NSRulerView\0")), rt::sel(#str_ptr("registerUnitWithName:abbreviation:unitToPointsConversionFactor:stepUpCycle:stepDownCycle:\0")), bridge::nsstring(unit_name), bridge::nsstring(abbreviation), unit_to_points_conversion_factor, arr_step_up_cycle, arr_step_down_cycle);
+    }
+
     fn new(coder: *u8) -> RulerView {
         let cls: *u8 = rt::get_class(#str_ptr("NSRulerView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -52948,7 +53055,25 @@ impl PredicateEditorRowTemplate {
 
     // SKIPPED `initWithLeftExpressions:rightExpressions:modifier:operators:options:`: param `NSArray<NSExpression *> * _Nonnull` — generic collection
     // SKIPPED `initWithLeftExpressions:rightExpressionAttributeType:modifier:operators:options:`: param `NSArray<NSExpression *> * _Nonnull` — generic collection
-    // SKIPPED `initWithCompoundTypes:`: param `NSArray<NSNumber *> * _Nonnull` — generic collection
+    fn new_with_compound_types(compound_types: vec::Vec[f64]) -> PredicateEditorRowTemplate {
+        let cls: *u8 = rt::get_class(#str_ptr("NSPredicateEditorRowTemplate\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let arr_compound_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_compound_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_compound_types: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_compound_types: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_compound_types: usize = compound_types.count();
+        var i_compound_types: usize = 0 as usize;
+        while i_compound_types < n_compound_types {
+            match compound_types.at_ptr(i_compound_types) {
+                option::Option[*f64]::Some(e_compound_types) => { rt::msg_void_id(arr_compound_types, add_sel_compound_types, rt::msg_id_f64(num_cls_compound_types, num_sel_compound_types, *e_compound_types)); }
+                option::Option[*f64]::None => {}
+            }
+            i_compound_types = i_compound_types +% (1 as usize);
+        }
+        return PredicateEditorRowTemplate { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithCompoundTypes:\0")), arr_compound_types) };
+    }
+
     fn templates_with_attribute_key_paths(key_paths: vec::Vec[text::Text], in_entity_description: EntityDescription) -> vec::Vec[PredicateEditorRowTemplate] {
         let arr: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("NSPredicateEditorRowTemplate\0")), rt::sel(#str_ptr("templatesWithAttributeKeyPaths:inEntityDescription:\0")), bridge::nsarray_of_text(key_paths), in_entity_description.raw());
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -52985,12 +53110,40 @@ impl PredicateEditorRowTemplate {
         return comparison_predicate_modifier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("modifier\0"))));
     }
 
-    // SKIPPED `operators`: return `NSArray<NSNumber *> * _Nullable` — generic collection
+    fn operators(this) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("operators\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn options(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("options\0")));
     }
 
-    // SKIPPED `compoundTypes`: return `NSArray<NSNumber *> * _Nullable` — generic collection
+    fn compound_types(this) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("compoundTypes\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -57019,8 +57172,38 @@ impl Accessibility {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessibilityVerticalScrollBar:\0")), accessibility_vertical_scroll_bar);
     }
 
-    // SKIPPED `accessibilityAllowedValues`: return `API_AVAILABLE NSArray<NSNumber *> *` — generic collection
-    // SKIPPED `setAccessibilityAllowedValues:`: param `API_AVAILABLE NSArray<NSNumber *> *` — generic collection
+    fn accessibility_allowed_values(this) -> vec::Vec[f64] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("accessibilityAllowedValues\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let dv_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let value: *u8 = rt::msg_id_u64(arr, at_sel, i);
+            out.append(rt::msg_f64(value, dv_sel));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_accessibility_allowed_values(this, accessibility_allowed_values: vec::Vec[f64]) {
+        let arr_accessibility_allowed_values: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_accessibility_allowed_values: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let num_cls_accessibility_allowed_values: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        let num_sel_accessibility_allowed_values: *u8 = rt::sel(#str_ptr("numberWithDouble:\0"));
+        let n_accessibility_allowed_values: usize = accessibility_allowed_values.count();
+        var i_accessibility_allowed_values: usize = 0 as usize;
+        while i_accessibility_allowed_values < n_accessibility_allowed_values {
+            match accessibility_allowed_values.at_ptr(i_accessibility_allowed_values) {
+                option::Option[*f64]::Some(e_accessibility_allowed_values) => { rt::msg_void_id(arr_accessibility_allowed_values, add_sel_accessibility_allowed_values, rt::msg_id_f64(num_cls_accessibility_allowed_values, num_sel_accessibility_allowed_values, *e_accessibility_allowed_values)); }
+                option::Option[*f64]::None => {}
+            }
+            i_accessibility_allowed_values = i_accessibility_allowed_values +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setAccessibilityAllowedValues:\0")), arr_accessibility_allowed_values);
+    }
+
     fn accessibility_label_u_i_elements(this) -> Array {
         return Array::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("accessibilityLabelUIElements\0"))));
     }
