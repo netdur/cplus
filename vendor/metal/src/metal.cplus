@@ -657,153 +657,76 @@ fn sparse_page_size_from_raw(raw: i64) -> SparsePageSize {
     return SparsePageSize::_16;
 }
 
-// `MTLFunctionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
-const function_options_m_t_l_function_option_none: u64 = 0 as u64;
-const function_options_m_t_l_function_option_compile_to_binary: u64 = 1 as u64;
-const function_options_m_t_l_function_option_store_function_in_metal_pipelines_script: u64 = 2 as u64;
-const function_options_m_t_l_function_option_store_function_in_metal_script: u64 = 2 as u64;
-const function_options_m_t_l_function_option_fail_on_binary_archive_miss: u64 = 4 as u64;
-const function_options_m_t_l_function_option_pipeline_independent: u64 = 8 as u64;
-
-// `MTLMathMode` (NS_ENUM)
-enum MathMode {
-    Safe,
-    Relaxed,
-    Fast,
+// `MTLArgumentType` (NS_ENUM)
+enum ArgumentType {
+    Buffer,
+    ThreadgroupMemory,
+    Texture,
+    Sampler,
+    ImageblockData,
+    Imageblock,
+    VisibleFunctionTable,
+    PrimitiveAccelerationStructure,
+    InstanceAccelerationStructure,
+    IntersectionFunctionTable,
 }
 
-fn math_mode_raw(v: MathMode) -> i64 {
+fn argument_type_raw(v: ArgumentType) -> i64 {
     return match v {
-        MathMode::Safe => { 0 as i64 },
-        MathMode::Relaxed => { 1 as i64 },
-        MathMode::Fast => { 2 as i64 },
+        ArgumentType::Buffer => { 0 as i64 },
+        ArgumentType::ThreadgroupMemory => { 1 as i64 },
+        ArgumentType::Texture => { 2 as i64 },
+        ArgumentType::Sampler => { 3 as i64 },
+        ArgumentType::ImageblockData => { 16 as i64 },
+        ArgumentType::Imageblock => { 17 as i64 },
+        ArgumentType::VisibleFunctionTable => { 24 as i64 },
+        ArgumentType::PrimitiveAccelerationStructure => { 25 as i64 },
+        ArgumentType::InstanceAccelerationStructure => { 26 as i64 },
+        ArgumentType::IntersectionFunctionTable => { 27 as i64 },
     };
 }
 
-fn math_mode_from_raw(raw: i64) -> MathMode {
-    if raw == (1 as i64) { return MathMode::Relaxed; }
-    if raw == (2 as i64) { return MathMode::Fast; }
-    return MathMode::Safe;
+fn argument_type_from_raw(raw: i64) -> ArgumentType {
+    if raw == (1 as i64) { return ArgumentType::ThreadgroupMemory; }
+    if raw == (2 as i64) { return ArgumentType::Texture; }
+    if raw == (3 as i64) { return ArgumentType::Sampler; }
+    if raw == (16 as i64) { return ArgumentType::ImageblockData; }
+    if raw == (17 as i64) { return ArgumentType::Imageblock; }
+    if raw == (24 as i64) { return ArgumentType::VisibleFunctionTable; }
+    if raw == (25 as i64) { return ArgumentType::PrimitiveAccelerationStructure; }
+    if raw == (26 as i64) { return ArgumentType::InstanceAccelerationStructure; }
+    if raw == (27 as i64) { return ArgumentType::IntersectionFunctionTable; }
+    return ArgumentType::Buffer;
 }
 
-// `MTLMathFloatingPointFunctions` (NS_ENUM)
-enum MathFloatingPointFunctions {
-    Fast,
-    Precise,
+// `MTLBindingAccess` (NS_ENUM)
+enum BindingAccess {
+    ReadOnly,
+    ReadWrite,
+    WriteOnly,
+    MTLArgumentAccessReadOnly,
+    MTLArgumentAccessReadWrite,
+    MTLArgumentAccessWriteOnly,
 }
 
-fn math_floating_point_functions_raw(v: MathFloatingPointFunctions) -> i64 {
+fn binding_access_raw(v: BindingAccess) -> i64 {
     return match v {
-        MathFloatingPointFunctions::Fast => { 0 as i64 },
-        MathFloatingPointFunctions::Precise => { 1 as i64 },
+        BindingAccess::ReadOnly => { 0 as i64 },
+        BindingAccess::ReadWrite => { 1 as i64 },
+        BindingAccess::WriteOnly => { 2 as i64 },
+        BindingAccess::MTLArgumentAccessReadOnly => { 0 as i64 },
+        BindingAccess::MTLArgumentAccessReadWrite => { 1 as i64 },
+        BindingAccess::MTLArgumentAccessWriteOnly => { 2 as i64 },
     };
 }
 
-fn math_floating_point_functions_from_raw(raw: i64) -> MathFloatingPointFunctions {
-    if raw == (1 as i64) { return MathFloatingPointFunctions::Precise; }
-    return MathFloatingPointFunctions::Fast;
-}
-
-// `MTLLanguageVersion` (NS_ENUM)
-enum LanguageVersion {
-    _1_0,
-    _1_1,
-    _1_2,
-    _2_0,
-    _2_1,
-    _2_2,
-    _2_3,
-    _2_4,
-    _3_0,
-    _3_1,
-    _3_2,
-    _4_0,
-}
-
-fn language_version_raw(v: LanguageVersion) -> i64 {
-    return match v {
-        LanguageVersion::_1_0 => { 65536 as i64 },
-        LanguageVersion::_1_1 => { 65537 as i64 },
-        LanguageVersion::_1_2 => { 65538 as i64 },
-        LanguageVersion::_2_0 => { 131072 as i64 },
-        LanguageVersion::_2_1 => { 131073 as i64 },
-        LanguageVersion::_2_2 => { 131074 as i64 },
-        LanguageVersion::_2_3 => { 131075 as i64 },
-        LanguageVersion::_2_4 => { 131076 as i64 },
-        LanguageVersion::_3_0 => { 196608 as i64 },
-        LanguageVersion::_3_1 => { 196609 as i64 },
-        LanguageVersion::_3_2 => { 196610 as i64 },
-        LanguageVersion::_4_0 => { 262144 as i64 },
-    };
-}
-
-fn language_version_from_raw(raw: i64) -> LanguageVersion {
-    if raw == (65537 as i64) { return LanguageVersion::_1_1; }
-    if raw == (65538 as i64) { return LanguageVersion::_1_2; }
-    if raw == (131072 as i64) { return LanguageVersion::_2_0; }
-    if raw == (131073 as i64) { return LanguageVersion::_2_1; }
-    if raw == (131074 as i64) { return LanguageVersion::_2_2; }
-    if raw == (131075 as i64) { return LanguageVersion::_2_3; }
-    if raw == (131076 as i64) { return LanguageVersion::_2_4; }
-    if raw == (196608 as i64) { return LanguageVersion::_3_0; }
-    if raw == (196609 as i64) { return LanguageVersion::_3_1; }
-    if raw == (196610 as i64) { return LanguageVersion::_3_2; }
-    if raw == (262144 as i64) { return LanguageVersion::_4_0; }
-    return LanguageVersion::_1_0;
-}
-
-// `MTLLibraryType` (NS_ENUM)
-enum LibraryType {
-    Executable,
-    Dynamic,
-}
-
-fn library_type_raw(v: LibraryType) -> i64 {
-    return match v {
-        LibraryType::Executable => { 0 as i64 },
-        LibraryType::Dynamic => { 1 as i64 },
-    };
-}
-
-fn library_type_from_raw(raw: i64) -> LibraryType {
-    if raw == (1 as i64) { return LibraryType::Dynamic; }
-    return LibraryType::Executable;
-}
-
-// `MTLLibraryOptimizationLevel` (NS_ENUM)
-enum LibraryOptimizationLevel {
-    Default,
-    Size,
-}
-
-fn library_optimization_level_raw(v: LibraryOptimizationLevel) -> i64 {
-    return match v {
-        LibraryOptimizationLevel::Default => { 0 as i64 },
-        LibraryOptimizationLevel::Size => { 1 as i64 },
-    };
-}
-
-fn library_optimization_level_from_raw(raw: i64) -> LibraryOptimizationLevel {
-    if raw == (1 as i64) { return LibraryOptimizationLevel::Size; }
-    return LibraryOptimizationLevel::Default;
-}
-
-// `MTLCompileSymbolVisibility` (NS_ENUM)
-enum CompileSymbolVisibility {
-    Default,
-    Hidden,
-}
-
-fn compile_symbol_visibility_raw(v: CompileSymbolVisibility) -> i64 {
-    return match v {
-        CompileSymbolVisibility::Default => { 0 as i64 },
-        CompileSymbolVisibility::Hidden => { 1 as i64 },
-    };
-}
-
-fn compile_symbol_visibility_from_raw(raw: i64) -> CompileSymbolVisibility {
-    if raw == (1 as i64) { return CompileSymbolVisibility::Hidden; }
-    return CompileSymbolVisibility::Default;
+fn binding_access_from_raw(raw: i64) -> BindingAccess {
+    if raw == (1 as i64) { return BindingAccess::ReadWrite; }
+    if raw == (2 as i64) { return BindingAccess::WriteOnly; }
+    if raw == (0 as i64) { return BindingAccess::MTLArgumentAccessReadOnly; }
+    if raw == (1 as i64) { return BindingAccess::MTLArgumentAccessReadWrite; }
+    if raw == (2 as i64) { return BindingAccess::MTLArgumentAccessWriteOnly; }
+    return BindingAccess::ReadOnly;
 }
 
 // `MTLDataType` (NS_ENUM)
@@ -1107,6 +1030,155 @@ fn data_type_from_raw(raw: i64) -> DataType {
     if raw == (139 as i64) { return DataType::DepthStencilState; }
     if raw == (140 as i64) { return DataType::Tensor; }
     return DataType::None;
+}
+
+// `MTLFunctionOptions` (NS_OPTIONS) — bitfield; combine with `|`.
+const function_options_m_t_l_function_option_none: u64 = 0 as u64;
+const function_options_m_t_l_function_option_compile_to_binary: u64 = 1 as u64;
+const function_options_m_t_l_function_option_store_function_in_metal_pipelines_script: u64 = 2 as u64;
+const function_options_m_t_l_function_option_store_function_in_metal_script: u64 = 2 as u64;
+const function_options_m_t_l_function_option_fail_on_binary_archive_miss: u64 = 4 as u64;
+const function_options_m_t_l_function_option_pipeline_independent: u64 = 8 as u64;
+
+// `MTLMathMode` (NS_ENUM)
+enum MathMode {
+    Safe,
+    Relaxed,
+    Fast,
+}
+
+fn math_mode_raw(v: MathMode) -> i64 {
+    return match v {
+        MathMode::Safe => { 0 as i64 },
+        MathMode::Relaxed => { 1 as i64 },
+        MathMode::Fast => { 2 as i64 },
+    };
+}
+
+fn math_mode_from_raw(raw: i64) -> MathMode {
+    if raw == (1 as i64) { return MathMode::Relaxed; }
+    if raw == (2 as i64) { return MathMode::Fast; }
+    return MathMode::Safe;
+}
+
+// `MTLMathFloatingPointFunctions` (NS_ENUM)
+enum MathFloatingPointFunctions {
+    Fast,
+    Precise,
+}
+
+fn math_floating_point_functions_raw(v: MathFloatingPointFunctions) -> i64 {
+    return match v {
+        MathFloatingPointFunctions::Fast => { 0 as i64 },
+        MathFloatingPointFunctions::Precise => { 1 as i64 },
+    };
+}
+
+fn math_floating_point_functions_from_raw(raw: i64) -> MathFloatingPointFunctions {
+    if raw == (1 as i64) { return MathFloatingPointFunctions::Precise; }
+    return MathFloatingPointFunctions::Fast;
+}
+
+// `MTLLanguageVersion` (NS_ENUM)
+enum LanguageVersion {
+    _1_0,
+    _1_1,
+    _1_2,
+    _2_0,
+    _2_1,
+    _2_2,
+    _2_3,
+    _2_4,
+    _3_0,
+    _3_1,
+    _3_2,
+    _4_0,
+}
+
+fn language_version_raw(v: LanguageVersion) -> i64 {
+    return match v {
+        LanguageVersion::_1_0 => { 65536 as i64 },
+        LanguageVersion::_1_1 => { 65537 as i64 },
+        LanguageVersion::_1_2 => { 65538 as i64 },
+        LanguageVersion::_2_0 => { 131072 as i64 },
+        LanguageVersion::_2_1 => { 131073 as i64 },
+        LanguageVersion::_2_2 => { 131074 as i64 },
+        LanguageVersion::_2_3 => { 131075 as i64 },
+        LanguageVersion::_2_4 => { 131076 as i64 },
+        LanguageVersion::_3_0 => { 196608 as i64 },
+        LanguageVersion::_3_1 => { 196609 as i64 },
+        LanguageVersion::_3_2 => { 196610 as i64 },
+        LanguageVersion::_4_0 => { 262144 as i64 },
+    };
+}
+
+fn language_version_from_raw(raw: i64) -> LanguageVersion {
+    if raw == (65537 as i64) { return LanguageVersion::_1_1; }
+    if raw == (65538 as i64) { return LanguageVersion::_1_2; }
+    if raw == (131072 as i64) { return LanguageVersion::_2_0; }
+    if raw == (131073 as i64) { return LanguageVersion::_2_1; }
+    if raw == (131074 as i64) { return LanguageVersion::_2_2; }
+    if raw == (131075 as i64) { return LanguageVersion::_2_3; }
+    if raw == (131076 as i64) { return LanguageVersion::_2_4; }
+    if raw == (196608 as i64) { return LanguageVersion::_3_0; }
+    if raw == (196609 as i64) { return LanguageVersion::_3_1; }
+    if raw == (196610 as i64) { return LanguageVersion::_3_2; }
+    if raw == (262144 as i64) { return LanguageVersion::_4_0; }
+    return LanguageVersion::_1_0;
+}
+
+// `MTLLibraryType` (NS_ENUM)
+enum LibraryType {
+    Executable,
+    Dynamic,
+}
+
+fn library_type_raw(v: LibraryType) -> i64 {
+    return match v {
+        LibraryType::Executable => { 0 as i64 },
+        LibraryType::Dynamic => { 1 as i64 },
+    };
+}
+
+fn library_type_from_raw(raw: i64) -> LibraryType {
+    if raw == (1 as i64) { return LibraryType::Dynamic; }
+    return LibraryType::Executable;
+}
+
+// `MTLLibraryOptimizationLevel` (NS_ENUM)
+enum LibraryOptimizationLevel {
+    Default,
+    Size,
+}
+
+fn library_optimization_level_raw(v: LibraryOptimizationLevel) -> i64 {
+    return match v {
+        LibraryOptimizationLevel::Default => { 0 as i64 },
+        LibraryOptimizationLevel::Size => { 1 as i64 },
+    };
+}
+
+fn library_optimization_level_from_raw(raw: i64) -> LibraryOptimizationLevel {
+    if raw == (1 as i64) { return LibraryOptimizationLevel::Size; }
+    return LibraryOptimizationLevel::Default;
+}
+
+// `MTLCompileSymbolVisibility` (NS_ENUM)
+enum CompileSymbolVisibility {
+    Default,
+    Hidden,
+}
+
+fn compile_symbol_visibility_raw(v: CompileSymbolVisibility) -> i64 {
+    return match v {
+        CompileSymbolVisibility::Default => { 0 as i64 },
+        CompileSymbolVisibility::Hidden => { 1 as i64 },
+    };
+}
+
+fn compile_symbol_visibility_from_raw(raw: i64) -> CompileSymbolVisibility {
+    if raw == (1 as i64) { return CompileSymbolVisibility::Hidden; }
+    return CompileSymbolVisibility::Default;
 }
 
 // `MTL4AlphaToCoverageState` (NS_ENUM)
@@ -1675,6 +1747,14 @@ const indirect_command_type_concurrent_dispatch_threads: u64 = 64 as u64;
 const indirect_command_type_draw_mesh_threadgroups: u64 = 128 as u64;
 const indirect_command_type_draw_mesh_threads: u64 = 256 as u64;
 
+// `MTLAccelerationStructureUsage` (NS_OPTIONS) — bitfield; combine with `|`.
+const acceleration_structure_usage_none: u64 = 0 as u64;
+const acceleration_structure_usage_refit: u64 = 1 as u64;
+const acceleration_structure_usage_prefer_fast_build: u64 = 2 as u64;
+const acceleration_structure_usage_extended_limits: u64 = 4 as u64;
+const acceleration_structure_usage_prefer_fast_intersection: u64 = 16 as u64;
+const acceleration_structure_usage_minimize_memory: u64 = 32 as u64;
+
 // `MTLStitchedLibraryOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const stitched_library_options_m_t_l_stitched_library_option_none: u64 = 0 as u64;
 const stitched_library_options_m_t_l_stitched_library_option_fail_on_binary_archive_miss: u64 = 1 as u64;
@@ -1751,36 +1831,6 @@ fn i_o_command_queue_type_raw(v: IOCommandQueueType) -> i64 {
 fn i_o_command_queue_type_from_raw(raw: i64) -> IOCommandQueueType {
     if raw == (1 as i64) { return IOCommandQueueType::Serial; }
     return IOCommandQueueType::Concurrent;
-}
-
-// `MTLBindingAccess` (NS_ENUM)
-enum BindingAccess {
-    ReadOnly,
-    ReadWrite,
-    WriteOnly,
-    MTLArgumentAccessReadOnly,
-    MTLArgumentAccessReadWrite,
-    MTLArgumentAccessWriteOnly,
-}
-
-fn binding_access_raw(v: BindingAccess) -> i64 {
-    return match v {
-        BindingAccess::ReadOnly => { 0 as i64 },
-        BindingAccess::ReadWrite => { 1 as i64 },
-        BindingAccess::WriteOnly => { 2 as i64 },
-        BindingAccess::MTLArgumentAccessReadOnly => { 0 as i64 },
-        BindingAccess::MTLArgumentAccessReadWrite => { 1 as i64 },
-        BindingAccess::MTLArgumentAccessWriteOnly => { 2 as i64 },
-    };
-}
-
-fn binding_access_from_raw(raw: i64) -> BindingAccess {
-    if raw == (1 as i64) { return BindingAccess::ReadWrite; }
-    if raw == (2 as i64) { return BindingAccess::WriteOnly; }
-    if raw == (0 as i64) { return BindingAccess::MTLArgumentAccessReadOnly; }
-    if raw == (1 as i64) { return BindingAccess::MTLArgumentAccessReadWrite; }
-    if raw == (2 as i64) { return BindingAccess::MTLArgumentAccessWriteOnly; }
-    return BindingAccess::ReadOnly;
 }
 
 // `MTLLoadAction` (NS_ENUM)
@@ -2116,6 +2166,402 @@ fn vertex_format_from_raw(raw: i64) -> VertexFormat {
     if raw == (54 as i64) { return VertexFormat::FloatRG11B10; }
     if raw == (55 as i64) { return VertexFormat::FloatRGB9E5; }
     return VertexFormat::Invalid;
+}
+
+// `MTLStepFunction` (NS_ENUM)
+enum StepFunction {
+    Constant,
+    PerVertex,
+    PerInstance,
+    PerPatch,
+    PerPatchControlPoint,
+    ThreadPositionInGridX,
+    ThreadPositionInGridY,
+    ThreadPositionInGridXIndexed,
+    ThreadPositionInGridYIndexed,
+}
+
+fn step_function_raw(v: StepFunction) -> i64 {
+    return match v {
+        StepFunction::Constant => { 0 as i64 },
+        StepFunction::PerVertex => { 1 as i64 },
+        StepFunction::PerInstance => { 2 as i64 },
+        StepFunction::PerPatch => { 3 as i64 },
+        StepFunction::PerPatchControlPoint => { 4 as i64 },
+        StepFunction::ThreadPositionInGridX => { 5 as i64 },
+        StepFunction::ThreadPositionInGridY => { 6 as i64 },
+        StepFunction::ThreadPositionInGridXIndexed => { 7 as i64 },
+        StepFunction::ThreadPositionInGridYIndexed => { 8 as i64 },
+    };
+}
+
+fn step_function_from_raw(raw: i64) -> StepFunction {
+    if raw == (1 as i64) { return StepFunction::PerVertex; }
+    if raw == (2 as i64) { return StepFunction::PerInstance; }
+    if raw == (3 as i64) { return StepFunction::PerPatch; }
+    if raw == (4 as i64) { return StepFunction::PerPatchControlPoint; }
+    if raw == (5 as i64) { return StepFunction::ThreadPositionInGridX; }
+    if raw == (6 as i64) { return StepFunction::ThreadPositionInGridY; }
+    if raw == (7 as i64) { return StepFunction::ThreadPositionInGridXIndexed; }
+    if raw == (8 as i64) { return StepFunction::ThreadPositionInGridYIndexed; }
+    return StepFunction::Constant;
+}
+
+// `MTLAttributeFormat` (NS_ENUM)
+enum AttributeFormat {
+    Invalid,
+    UChar2,
+    UChar3,
+    UChar4,
+    Char2,
+    Char3,
+    Char4,
+    UChar2Normalized,
+    UChar3Normalized,
+    UChar4Normalized,
+    Char2Normalized,
+    Char3Normalized,
+    Char4Normalized,
+    UShort2,
+    UShort3,
+    UShort4,
+    Short2,
+    Short3,
+    Short4,
+    UShort2Normalized,
+    UShort3Normalized,
+    UShort4Normalized,
+    Short2Normalized,
+    Short3Normalized,
+    Short4Normalized,
+    Half2,
+    Half3,
+    Half4,
+    Float,
+    Float2,
+    Float3,
+    Float4,
+    Int,
+    Int2,
+    Int3,
+    Int4,
+    UInt,
+    UInt2,
+    UInt3,
+    UInt4,
+    Int1010102Normalized,
+    UInt1010102Normalized,
+    UChar4Normalized_BGRA,
+    UChar,
+    Char,
+    UCharNormalized,
+    CharNormalized,
+    UShort,
+    Short,
+    UShortNormalized,
+    ShortNormalized,
+    Half,
+    FloatRG11B10,
+    FloatRGB9E5,
+}
+
+fn attribute_format_raw(v: AttributeFormat) -> i64 {
+    return match v {
+        AttributeFormat::Invalid => { 0 as i64 },
+        AttributeFormat::UChar2 => { 1 as i64 },
+        AttributeFormat::UChar3 => { 2 as i64 },
+        AttributeFormat::UChar4 => { 3 as i64 },
+        AttributeFormat::Char2 => { 4 as i64 },
+        AttributeFormat::Char3 => { 5 as i64 },
+        AttributeFormat::Char4 => { 6 as i64 },
+        AttributeFormat::UChar2Normalized => { 7 as i64 },
+        AttributeFormat::UChar3Normalized => { 8 as i64 },
+        AttributeFormat::UChar4Normalized => { 9 as i64 },
+        AttributeFormat::Char2Normalized => { 10 as i64 },
+        AttributeFormat::Char3Normalized => { 11 as i64 },
+        AttributeFormat::Char4Normalized => { 12 as i64 },
+        AttributeFormat::UShort2 => { 13 as i64 },
+        AttributeFormat::UShort3 => { 14 as i64 },
+        AttributeFormat::UShort4 => { 15 as i64 },
+        AttributeFormat::Short2 => { 16 as i64 },
+        AttributeFormat::Short3 => { 17 as i64 },
+        AttributeFormat::Short4 => { 18 as i64 },
+        AttributeFormat::UShort2Normalized => { 19 as i64 },
+        AttributeFormat::UShort3Normalized => { 20 as i64 },
+        AttributeFormat::UShort4Normalized => { 21 as i64 },
+        AttributeFormat::Short2Normalized => { 22 as i64 },
+        AttributeFormat::Short3Normalized => { 23 as i64 },
+        AttributeFormat::Short4Normalized => { 24 as i64 },
+        AttributeFormat::Half2 => { 25 as i64 },
+        AttributeFormat::Half3 => { 26 as i64 },
+        AttributeFormat::Half4 => { 27 as i64 },
+        AttributeFormat::Float => { 28 as i64 },
+        AttributeFormat::Float2 => { 29 as i64 },
+        AttributeFormat::Float3 => { 30 as i64 },
+        AttributeFormat::Float4 => { 31 as i64 },
+        AttributeFormat::Int => { 32 as i64 },
+        AttributeFormat::Int2 => { 33 as i64 },
+        AttributeFormat::Int3 => { 34 as i64 },
+        AttributeFormat::Int4 => { 35 as i64 },
+        AttributeFormat::UInt => { 36 as i64 },
+        AttributeFormat::UInt2 => { 37 as i64 },
+        AttributeFormat::UInt3 => { 38 as i64 },
+        AttributeFormat::UInt4 => { 39 as i64 },
+        AttributeFormat::Int1010102Normalized => { 40 as i64 },
+        AttributeFormat::UInt1010102Normalized => { 41 as i64 },
+        AttributeFormat::UChar4Normalized_BGRA => { 42 as i64 },
+        AttributeFormat::UChar => { 45 as i64 },
+        AttributeFormat::Char => { 46 as i64 },
+        AttributeFormat::UCharNormalized => { 47 as i64 },
+        AttributeFormat::CharNormalized => { 48 as i64 },
+        AttributeFormat::UShort => { 49 as i64 },
+        AttributeFormat::Short => { 50 as i64 },
+        AttributeFormat::UShortNormalized => { 51 as i64 },
+        AttributeFormat::ShortNormalized => { 52 as i64 },
+        AttributeFormat::Half => { 53 as i64 },
+        AttributeFormat::FloatRG11B10 => { 54 as i64 },
+        AttributeFormat::FloatRGB9E5 => { 55 as i64 },
+    };
+}
+
+fn attribute_format_from_raw(raw: i64) -> AttributeFormat {
+    if raw == (1 as i64) { return AttributeFormat::UChar2; }
+    if raw == (2 as i64) { return AttributeFormat::UChar3; }
+    if raw == (3 as i64) { return AttributeFormat::UChar4; }
+    if raw == (4 as i64) { return AttributeFormat::Char2; }
+    if raw == (5 as i64) { return AttributeFormat::Char3; }
+    if raw == (6 as i64) { return AttributeFormat::Char4; }
+    if raw == (7 as i64) { return AttributeFormat::UChar2Normalized; }
+    if raw == (8 as i64) { return AttributeFormat::UChar3Normalized; }
+    if raw == (9 as i64) { return AttributeFormat::UChar4Normalized; }
+    if raw == (10 as i64) { return AttributeFormat::Char2Normalized; }
+    if raw == (11 as i64) { return AttributeFormat::Char3Normalized; }
+    if raw == (12 as i64) { return AttributeFormat::Char4Normalized; }
+    if raw == (13 as i64) { return AttributeFormat::UShort2; }
+    if raw == (14 as i64) { return AttributeFormat::UShort3; }
+    if raw == (15 as i64) { return AttributeFormat::UShort4; }
+    if raw == (16 as i64) { return AttributeFormat::Short2; }
+    if raw == (17 as i64) { return AttributeFormat::Short3; }
+    if raw == (18 as i64) { return AttributeFormat::Short4; }
+    if raw == (19 as i64) { return AttributeFormat::UShort2Normalized; }
+    if raw == (20 as i64) { return AttributeFormat::UShort3Normalized; }
+    if raw == (21 as i64) { return AttributeFormat::UShort4Normalized; }
+    if raw == (22 as i64) { return AttributeFormat::Short2Normalized; }
+    if raw == (23 as i64) { return AttributeFormat::Short3Normalized; }
+    if raw == (24 as i64) { return AttributeFormat::Short4Normalized; }
+    if raw == (25 as i64) { return AttributeFormat::Half2; }
+    if raw == (26 as i64) { return AttributeFormat::Half3; }
+    if raw == (27 as i64) { return AttributeFormat::Half4; }
+    if raw == (28 as i64) { return AttributeFormat::Float; }
+    if raw == (29 as i64) { return AttributeFormat::Float2; }
+    if raw == (30 as i64) { return AttributeFormat::Float3; }
+    if raw == (31 as i64) { return AttributeFormat::Float4; }
+    if raw == (32 as i64) { return AttributeFormat::Int; }
+    if raw == (33 as i64) { return AttributeFormat::Int2; }
+    if raw == (34 as i64) { return AttributeFormat::Int3; }
+    if raw == (35 as i64) { return AttributeFormat::Int4; }
+    if raw == (36 as i64) { return AttributeFormat::UInt; }
+    if raw == (37 as i64) { return AttributeFormat::UInt2; }
+    if raw == (38 as i64) { return AttributeFormat::UInt3; }
+    if raw == (39 as i64) { return AttributeFormat::UInt4; }
+    if raw == (40 as i64) { return AttributeFormat::Int1010102Normalized; }
+    if raw == (41 as i64) { return AttributeFormat::UInt1010102Normalized; }
+    if raw == (42 as i64) { return AttributeFormat::UChar4Normalized_BGRA; }
+    if raw == (45 as i64) { return AttributeFormat::UChar; }
+    if raw == (46 as i64) { return AttributeFormat::Char; }
+    if raw == (47 as i64) { return AttributeFormat::UCharNormalized; }
+    if raw == (48 as i64) { return AttributeFormat::CharNormalized; }
+    if raw == (49 as i64) { return AttributeFormat::UShort; }
+    if raw == (50 as i64) { return AttributeFormat::Short; }
+    if raw == (51 as i64) { return AttributeFormat::UShortNormalized; }
+    if raw == (52 as i64) { return AttributeFormat::ShortNormalized; }
+    if raw == (53 as i64) { return AttributeFormat::Half; }
+    if raw == (54 as i64) { return AttributeFormat::FloatRG11B10; }
+    if raw == (55 as i64) { return AttributeFormat::FloatRGB9E5; }
+    return AttributeFormat::Invalid;
+}
+
+// `MTLIndexType` (NS_ENUM)
+enum IndexType {
+    UInt16,
+    UInt32,
+}
+
+fn index_type_raw(v: IndexType) -> i64 {
+    return match v {
+        IndexType::UInt16 => { 0 as i64 },
+        IndexType::UInt32 => { 1 as i64 },
+    };
+}
+
+fn index_type_from_raw(raw: i64) -> IndexType {
+    if raw == (1 as i64) { return IndexType::UInt32; }
+    return IndexType::UInt16;
+}
+
+// `MTLMutability` (NS_ENUM)
+enum Mutability {
+    Default,
+    Mutable,
+    Immutable,
+}
+
+fn mutability_raw(v: Mutability) -> i64 {
+    return match v {
+        Mutability::Default => { 0 as i64 },
+        Mutability::Mutable => { 1 as i64 },
+        Mutability::Immutable => { 2 as i64 },
+    };
+}
+
+fn mutability_from_raw(raw: i64) -> Mutability {
+    if raw == (1 as i64) { return Mutability::Mutable; }
+    if raw == (2 as i64) { return Mutability::Immutable; }
+    return Mutability::Default;
+}
+
+// `MTLMotionBorderMode` (NS_ENUM)
+enum MotionBorderMode {
+    Clamp,
+    Vanish,
+}
+
+fn motion_border_mode_raw(v: MotionBorderMode) -> i64 {
+    return match v {
+        MotionBorderMode::Clamp => { 0 as i64 },
+        MotionBorderMode::Vanish => { 1 as i64 },
+    };
+}
+
+fn motion_border_mode_from_raw(raw: i64) -> MotionBorderMode {
+    if raw == (1 as i64) { return MotionBorderMode::Vanish; }
+    return MotionBorderMode::Clamp;
+}
+
+// `MTLMatrixLayout` (NS_ENUM)
+enum MatrixLayout {
+    ColumnMajor,
+    RowMajor,
+}
+
+fn matrix_layout_raw(v: MatrixLayout) -> i64 {
+    return match v {
+        MatrixLayout::ColumnMajor => { 0 as i64 },
+        MatrixLayout::RowMajor => { 1 as i64 },
+    };
+}
+
+fn matrix_layout_from_raw(raw: i64) -> MatrixLayout {
+    if raw == (1 as i64) { return MatrixLayout::RowMajor; }
+    return MatrixLayout::ColumnMajor;
+}
+
+// `MTLCurveType` (NS_ENUM)
+enum CurveType {
+    Round,
+    Flat,
+}
+
+fn curve_type_raw(v: CurveType) -> i64 {
+    return match v {
+        CurveType::Round => { 0 as i64 },
+        CurveType::Flat => { 1 as i64 },
+    };
+}
+
+fn curve_type_from_raw(raw: i64) -> CurveType {
+    if raw == (1 as i64) { return CurveType::Flat; }
+    return CurveType::Round;
+}
+
+// `MTLCurveBasis` (NS_ENUM)
+enum CurveBasis {
+    BSpline,
+    CatmullRom,
+    Linear,
+    Bezier,
+}
+
+fn curve_basis_raw(v: CurveBasis) -> i64 {
+    return match v {
+        CurveBasis::BSpline => { 0 as i64 },
+        CurveBasis::CatmullRom => { 1 as i64 },
+        CurveBasis::Linear => { 2 as i64 },
+        CurveBasis::Bezier => { 3 as i64 },
+    };
+}
+
+fn curve_basis_from_raw(raw: i64) -> CurveBasis {
+    if raw == (1 as i64) { return CurveBasis::CatmullRom; }
+    if raw == (2 as i64) { return CurveBasis::Linear; }
+    if raw == (3 as i64) { return CurveBasis::Bezier; }
+    return CurveBasis::BSpline;
+}
+
+// `MTLCurveEndCaps` (NS_ENUM)
+enum CurveEndCaps {
+    None,
+    Disk,
+    Sphere,
+}
+
+fn curve_end_caps_raw(v: CurveEndCaps) -> i64 {
+    return match v {
+        CurveEndCaps::None => { 0 as i64 },
+        CurveEndCaps::Disk => { 1 as i64 },
+        CurveEndCaps::Sphere => { 2 as i64 },
+    };
+}
+
+fn curve_end_caps_from_raw(raw: i64) -> CurveEndCaps {
+    if raw == (1 as i64) { return CurveEndCaps::Disk; }
+    if raw == (2 as i64) { return CurveEndCaps::Sphere; }
+    return CurveEndCaps::None;
+}
+
+// `MTLAccelerationStructureInstanceDescriptorType` (NS_ENUM)
+enum AccelerationStructureInstanceDescriptorType {
+    Default,
+    UserID,
+    Motion,
+    Indirect,
+    IndirectMotion,
+}
+
+fn acceleration_structure_instance_descriptor_type_raw(v: AccelerationStructureInstanceDescriptorType) -> i64 {
+    return match v {
+        AccelerationStructureInstanceDescriptorType::Default => { 0 as i64 },
+        AccelerationStructureInstanceDescriptorType::UserID => { 1 as i64 },
+        AccelerationStructureInstanceDescriptorType::Motion => { 2 as i64 },
+        AccelerationStructureInstanceDescriptorType::Indirect => { 3 as i64 },
+        AccelerationStructureInstanceDescriptorType::IndirectMotion => { 4 as i64 },
+    };
+}
+
+fn acceleration_structure_instance_descriptor_type_from_raw(raw: i64) -> AccelerationStructureInstanceDescriptorType {
+    if raw == (1 as i64) { return AccelerationStructureInstanceDescriptorType::UserID; }
+    if raw == (2 as i64) { return AccelerationStructureInstanceDescriptorType::Motion; }
+    if raw == (3 as i64) { return AccelerationStructureInstanceDescriptorType::Indirect; }
+    if raw == (4 as i64) { return AccelerationStructureInstanceDescriptorType::IndirectMotion; }
+    return AccelerationStructureInstanceDescriptorType::Default;
+}
+
+// `MTLTransformType` (NS_ENUM)
+enum TransformType {
+    PackedFloat4x3,
+    Component,
+}
+
+fn transform_type_raw(v: TransformType) -> i64 {
+    return match v {
+        TransformType::PackedFloat4x3 => { 0 as i64 },
+        TransformType::Component => { 1 as i64 },
+    };
+}
+
+fn transform_type_from_raw(raw: i64) -> TransformType {
+    if raw == (1 as i64) { return TransformType::Component; }
+    return TransformType::PackedFloat4x3;
 }
 
 // `MTLCaptureDestination` (NS_ENUM)
@@ -2484,6 +2930,19 @@ fn argument_buffers_tier_from_raw(raw: i64) -> ArgumentBuffersTier {
     return ArgumentBuffersTier::_1;
 }
 
+// `MTLStages` (NS_OPTIONS) — bitfield; combine with `|`.
+const stages_m_t_l_stage_vertex: u64 = 1 as u64;
+const stages_m_t_l_stage_fragment: u64 = 2 as u64;
+const stages_m_t_l_stage_tile: u64 = 4 as u64;
+const stages_m_t_l_stage_object: u64 = 8 as u64;
+const stages_m_t_l_stage_mesh: u64 = 16 as u64;
+const stages_m_t_l_stage_resource_state: u64 = 67108864 as u64;
+const stages_m_t_l_stage_dispatch: u64 = 134217728 as u64;
+const stages_m_t_l_stage_blit: u64 = 268435456 as u64;
+const stages_m_t_l_stage_acceleration_structure: u64 = 536870912 as u64;
+const stages_m_t_l_stage_machine_learning: u64 = 1073741824 as u64;
+const stages_m_t_l_stage_all: u64 = 9223372036854775807 as u64;
+
 // `MTLPurgeableState` (NS_ENUM)
 enum PurgeableState {
     KeepCurrent,
@@ -2545,6 +3004,54 @@ fn texture_sparse_tier_from_raw(raw: i64) -> TextureSparseTier {
     if raw == (1 as i64) { return TextureSparseTier::_1; }
     if raw == (2 as i64) { return TextureSparseTier::_2; }
     return TextureSparseTier::None;
+}
+
+// `MTLBindingType` (NS_ENUM)
+enum BindingType {
+    Buffer,
+    ThreadgroupMemory,
+    Texture,
+    Sampler,
+    ImageblockData,
+    Imageblock,
+    VisibleFunctionTable,
+    PrimitiveAccelerationStructure,
+    InstanceAccelerationStructure,
+    IntersectionFunctionTable,
+    ObjectPayload,
+    Tensor,
+}
+
+fn binding_type_raw(v: BindingType) -> i64 {
+    return match v {
+        BindingType::Buffer => { 0 as i64 },
+        BindingType::ThreadgroupMemory => { 1 as i64 },
+        BindingType::Texture => { 2 as i64 },
+        BindingType::Sampler => { 3 as i64 },
+        BindingType::ImageblockData => { 16 as i64 },
+        BindingType::Imageblock => { 17 as i64 },
+        BindingType::VisibleFunctionTable => { 24 as i64 },
+        BindingType::PrimitiveAccelerationStructure => { 25 as i64 },
+        BindingType::InstanceAccelerationStructure => { 26 as i64 },
+        BindingType::IntersectionFunctionTable => { 27 as i64 },
+        BindingType::ObjectPayload => { 34 as i64 },
+        BindingType::Tensor => { 37 as i64 },
+    };
+}
+
+fn binding_type_from_raw(raw: i64) -> BindingType {
+    if raw == (1 as i64) { return BindingType::ThreadgroupMemory; }
+    if raw == (2 as i64) { return BindingType::Texture; }
+    if raw == (3 as i64) { return BindingType::Sampler; }
+    if raw == (16 as i64) { return BindingType::ImageblockData; }
+    if raw == (17 as i64) { return BindingType::Imageblock; }
+    if raw == (24 as i64) { return BindingType::VisibleFunctionTable; }
+    if raw == (25 as i64) { return BindingType::PrimitiveAccelerationStructure; }
+    if raw == (26 as i64) { return BindingType::InstanceAccelerationStructure; }
+    if raw == (27 as i64) { return BindingType::IntersectionFunctionTable; }
+    if raw == (34 as i64) { return BindingType::ObjectPayload; }
+    if raw == (37 as i64) { return BindingType::Tensor; }
+    return BindingType::Buffer;
 }
 
 // `MTLFunctionType` (NS_ENUM)
@@ -2779,24 +3286,6 @@ fn primitive_type_from_raw(raw: i64) -> PrimitiveType {
     return PrimitiveType::Point;
 }
 
-// `MTLIndexType` (NS_ENUM)
-enum IndexType {
-    UInt16,
-    UInt32,
-}
-
-fn index_type_raw(v: IndexType) -> i64 {
-    return match v {
-        IndexType::UInt16 => { 0 as i64 },
-        IndexType::UInt32 => { 1 as i64 },
-    };
-}
-
-fn index_type_from_raw(raw: i64) -> IndexType {
-    if raw == (1 as i64) { return IndexType::UInt32; }
-    return IndexType::UInt16;
-}
-
 // `MTLResourceUsage` (NS_OPTIONS) — bitfield; combine with `|`.
 const resource_usage_read: u64 = 1 as u64;
 const resource_usage_write: u64 = 2 as u64;
@@ -2867,19 +3356,6 @@ fn command_encoder_error_state_from_raw(raw: i64) -> CommandEncoderErrorState {
     if raw == (4 as i64) { return CommandEncoderErrorState::Faulted; }
     return CommandEncoderErrorState::Unknown;
 }
-
-// `MTLStages` (NS_OPTIONS) — bitfield; combine with `|`.
-const stages_m_t_l_stage_vertex: u64 = 1 as u64;
-const stages_m_t_l_stage_fragment: u64 = 2 as u64;
-const stages_m_t_l_stage_tile: u64 = 4 as u64;
-const stages_m_t_l_stage_object: u64 = 8 as u64;
-const stages_m_t_l_stage_mesh: u64 = 16 as u64;
-const stages_m_t_l_stage_resource_state: u64 = 67108864 as u64;
-const stages_m_t_l_stage_dispatch: u64 = 134217728 as u64;
-const stages_m_t_l_stage_blit: u64 = 268435456 as u64;
-const stages_m_t_l_stage_acceleration_structure: u64 = 536870912 as u64;
-const stages_m_t_l_stage_machine_learning: u64 = 1073741824 as u64;
-const stages_m_t_l_stage_all: u64 = 9223372036854775807 as u64;
 
 // `MTL4VisibilityOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const m_t_l4_visibility_options_m_t_l4_visibility_option_none: u64 = 0 as u64;
@@ -3029,6 +3505,8 @@ extern fn objc_msg_AccelerationStructureSizes_id(recv: *u8, sel: *u8, a0: *u8) -
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_ClearColor(recv: *u8, sel: *u8) -> ClearColor;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_MTL4BufferRange(recv: *u8, sel: *u8) -> MTL4BufferRange;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_SamplePosition_SamplePosition_u64(recv: *u8, sel: *u8, a0: SamplePosition, a1: u64) -> SamplePosition;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_Size(recv: *u8, sel: *u8) -> Size;
@@ -3058,6 +3536,8 @@ extern fn objc_msg_id_Size_u64_id(recv: *u8, sel: *u8, a0: Size, a1: u64, a2: *u
 extern fn objc_msg_u64_Size(recv: *u8, sel: *u8, a0: Size) -> u64;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_ClearColor(recv: *u8, sel: *u8, a0: ClearColor);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_MTL4BufferRange(recv: *u8, sel: *u8, a0: MTL4BufferRange);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_Region(recv: *u8, sel: *u8, a0: Region);
 #[link_name = "objc_msgSend"]
@@ -3525,6 +4005,407 @@ impl TextureViewDescriptor {
     // SKIPPED `setSwizzle:`: param `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
 }
 
+// `MTLArgument` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct Argument {
+    opaque _obj: *u8,
+}
+
+impl Argument {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Argument { return Argument { _obj: ptr }; }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn type_(this) -> ArgumentType {
+        return argument_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
+    }
+
+    fn access(this) -> BindingAccess {
+        return binding_access_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("access\0"))));
+    }
+
+    fn index(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("index\0")));
+    }
+
+    fn is_active(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isActive\0"))) != (0 as i8);
+    }
+
+    fn buffer_alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferAlignment\0")));
+    }
+
+    fn buffer_data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferDataSize\0")));
+    }
+
+    fn buffer_data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bufferDataType\0"))));
+    }
+
+    fn buffer_struct_type(this) -> option::Option[StructType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bufferStructType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructType]::None;
+        }
+        return option::some(StructType::from_raw(obj));
+    }
+
+    fn buffer_pointer_type(this) -> option::Option[PointerType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bufferPointerType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[PointerType]::None;
+        }
+        return option::some(PointerType::from_raw(obj));
+    }
+
+    fn threadgroup_memory_alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("threadgroupMemoryAlignment\0")));
+    }
+
+    fn threadgroup_memory_data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("threadgroupMemoryDataSize\0")));
+    }
+
+    fn texture_type(this) -> TextureType {
+        return texture_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureType\0"))));
+    }
+
+    fn texture_data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureDataType\0"))));
+    }
+
+    fn is_depth_texture(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDepthTexture\0"))) != (0 as i8);
+    }
+
+    fn array_length(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("arrayLength\0")));
+    }
+
+}
+
+// `MTLStructType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct StructType {
+    opaque _obj: *u8,
+}
+
+impl StructType {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StructType { return StructType { _obj: ptr }; }
+
+    fn member_by_name(this, name: str) -> option::Option[StructMember] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("memberByName:\0")), bridge::nsstring(name));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructMember]::None;
+        }
+        return option::some(StructMember::from_raw(obj));
+    }
+
+    fn members(this) -> vec::Vec[StructMember] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("members\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[StructMember] = vec::Vec[StructMember]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(StructMember::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+}
+
+// `MTLArrayType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct ArrayType {
+    opaque _obj: *u8,
+}
+
+impl ArrayType {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ArrayType { return ArrayType { _obj: ptr }; }
+
+    fn element_struct_type(this) -> option::Option[StructType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementStructType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructType]::None;
+        }
+        return option::some(StructType::from_raw(obj));
+    }
+
+    fn element_array_type(this) -> option::Option[ArrayType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementArrayType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ArrayType]::None;
+        }
+        return option::some(ArrayType::from_raw(obj));
+    }
+
+    fn element_texture_reference_type(this) -> option::Option[TextureReferenceType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementTextureReferenceType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextureReferenceType]::None;
+        }
+        return option::some(TextureReferenceType::from_raw(obj));
+    }
+
+    fn element_pointer_type(this) -> option::Option[PointerType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementPointerType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[PointerType]::None;
+        }
+        return option::some(PointerType::from_raw(obj));
+    }
+
+    fn element_tensor_reference_type(this) -> option::Option[TensorReferenceType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementTensorReferenceType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorReferenceType]::None;
+        }
+        return option::some(TensorReferenceType::from_raw(obj));
+    }
+
+    fn element_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("elementType\0"))));
+    }
+
+    fn array_length(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("arrayLength\0")));
+    }
+
+    fn stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("stride\0")));
+    }
+
+    fn argument_index_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("argumentIndexStride\0")));
+    }
+
+}
+
+// `MTLTextureReferenceType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct TextureReferenceType {
+    opaque _obj: *u8,
+}
+
+impl TextureReferenceType {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextureReferenceType { return TextureReferenceType { _obj: ptr }; }
+
+    fn texture_data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureDataType\0"))));
+    }
+
+    fn texture_type(this) -> TextureType {
+        return texture_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureType\0"))));
+    }
+
+    fn access(this) -> BindingAccess {
+        return binding_access_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("access\0"))));
+    }
+
+    fn is_depth_texture(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDepthTexture\0"))) != (0 as i8);
+    }
+
+}
+
+// `MTLPointerType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct PointerType {
+    opaque _obj: *u8,
+}
+
+impl PointerType {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PointerType { return PointerType { _obj: ptr }; }
+
+    fn element_struct_type(this) -> option::Option[StructType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementStructType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructType]::None;
+        }
+        return option::some(StructType::from_raw(obj));
+    }
+
+    fn element_array_type(this) -> option::Option[ArrayType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementArrayType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ArrayType]::None;
+        }
+        return option::some(ArrayType::from_raw(obj));
+    }
+
+    fn element_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("elementType\0"))));
+    }
+
+    fn access(this) -> BindingAccess {
+        return binding_access_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("access\0"))));
+    }
+
+    fn alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("alignment\0")));
+    }
+
+    fn data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("dataSize\0")));
+    }
+
+    fn element_is_argument_buffer(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("elementIsArgumentBuffer\0"))) != (0 as i8);
+    }
+
+}
+
+// `MTLTensorReferenceType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct TensorReferenceType {
+    opaque _obj: *u8,
+}
+
+impl TensorReferenceType {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TensorReferenceType { return TensorReferenceType { _obj: ptr }; }
+
+    fn tensor_data_type(this) -> TensorDataType {
+        return tensor_data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tensorDataType\0"))));
+    }
+
+    fn index_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn dimensions(this) -> option::Option[TensorExtents] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dimensions\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorExtents]::None;
+        }
+        return option::some(TensorExtents::from_raw(obj));
+    }
+
+    fn access(this) -> BindingAccess {
+        return binding_access_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("access\0"))));
+    }
+
+}
+
+// `MTLType` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct Type {
+    opaque _obj: *u8,
+}
+
+impl Type {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Type { return Type { _obj: ptr }; }
+
+    fn data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dataType\0"))));
+    }
+
+}
+
+// `MTLStructMember` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct StructMember {
+    opaque _obj: *u8,
+}
+
+impl StructMember {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StructMember { return StructMember { _obj: ptr }; }
+
+    fn struct_type(this) -> option::Option[StructType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("structType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructType]::None;
+        }
+        return option::some(StructType::from_raw(obj));
+    }
+
+    fn array_type(this) -> option::Option[ArrayType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("arrayType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[ArrayType]::None;
+        }
+        return option::some(ArrayType::from_raw(obj));
+    }
+
+    fn texture_reference_type(this) -> option::Option[TextureReferenceType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("textureReferenceType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TextureReferenceType]::None;
+        }
+        return option::some(TextureReferenceType::from_raw(obj));
+    }
+
+    fn pointer_type(this) -> option::Option[PointerType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("pointerType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[PointerType]::None;
+        }
+        return option::some(PointerType::from_raw(obj));
+    }
+
+    fn tensor_reference_type(this) -> option::Option[TensorReferenceType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tensorReferenceType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorReferenceType]::None;
+        }
+        return option::some(TensorReferenceType::from_raw(obj));
+    }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("offset\0")));
+    }
+
+    fn data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("dataType\0"))));
+    }
+
+    fn argument_index(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("argumentIndex\0")));
+    }
+
+}
+
+// `MTLFunctionConstantValues` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct FunctionConstantValues {
+    opaque _obj: *u8,
+}
+
+impl FunctionConstantValues {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> FunctionConstantValues { return FunctionConstantValues { _obj: ptr }; }
+
+    // SKIPPED `setConstantValue:type:atIndex:`: msgSend shape `void_id_i64_u64` not yet modelled
+    // SKIPPED `setConstantValues:type:withRange:`: msgSend shape `void_id_i64_range` not yet modelled
+    fn set_constant_value_type_with_name(this, value: *u8, type_: DataType, name: str) {
+        rt::msg_void_id_i64_id(this._obj, rt::sel(#str_ptr("setConstantValue:type:withName:\0")), value, data_type_raw(type_), bridge::nsstring(name));
+    }
+
+    fn reset(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
+    }
+
+}
+
 // `MTLFunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct FunctionDescriptor {
     opaque _obj: *u8,
@@ -3766,18 +4647,6 @@ impl CompileOptions {
 
 }
 
-// `MTLFunctionConstantValues` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct FunctionConstantValues {
-    opaque _obj: *u8,
-}
-
-impl FunctionConstantValues {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> FunctionConstantValues { return FunctionConstantValues { _obj: ptr }; }
-
-}
-
 // `MTLRenderPipelineReflection` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct RenderPipelineReflection {
     opaque _obj: *u8,
@@ -3788,14 +4657,110 @@ impl RenderPipelineReflection {
 
     fn from_raw(ptr: *u8) -> RenderPipelineReflection { return RenderPipelineReflection { _obj: ptr }; }
 
-    // SKIPPED `vertexBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `fragmentBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `tileBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `objectBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `meshBindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `vertexArguments`: return `NSArray<MTLArgument *> * _Nullable` — generic collection
-    // SKIPPED `fragmentArguments`: return `NSArray<MTLArgument *> * _Nullable` — generic collection
-    // SKIPPED `tileArguments`: return `NSArray<MTLArgument *> * _Nullable` — generic collection
+    fn vertex_bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexBindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn fragment_bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentBindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn tile_bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileBindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn object_bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("objectBindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn mesh_bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("meshBindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn vertex_arguments(this) -> vec::Vec[Argument] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexArguments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Argument] = vec::Vec[Argument]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn fragment_arguments(this) -> vec::Vec[Argument] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentArguments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Argument] = vec::Vec[Argument]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn tile_arguments(this) -> vec::Vec[Argument] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("tileArguments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Argument] = vec::Vec[Argument]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `MTLComputePipelineReflection` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -3808,8 +4773,32 @@ impl ComputePipelineReflection {
 
     fn from_raw(ptr: *u8) -> ComputePipelineReflection { return ComputePipelineReflection { _obj: ptr }; }
 
-    // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
-    // SKIPPED `arguments`: return `NSArray<MTLArgument *> * _Nonnull` — generic collection
+    fn bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn arguments(this) -> vec::Vec[Argument] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("arguments\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Argument] = vec::Vec[Argument]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Argument::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `MTLVertexAttribute` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -3925,7 +4914,19 @@ impl FunctionReflection {
 
     fn from_raw(ptr: *u8) -> FunctionReflection { return FunctionReflection { _obj: ptr }; }
 
-    // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
+    fn bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn user_annotation(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("userAnnotation\0")));
         return bridge::to_text_option(ns);
@@ -4770,8 +5771,8 @@ impl TileRenderPipelineDescriptor {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setThreadgroupSizeMatchesTileSize:\0")), threadgroup_size_matches_tile_size as i8);
     }
 
-    fn tile_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("tileBuffers\0")));
+    fn tile_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("tileBuffers\0"))));
     }
 
     fn max_total_threads_per_threadgroup(this) -> u64 {
@@ -4999,16 +6000,16 @@ impl MeshRenderPipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadgroupsPerMeshGrid:\0")), max_total_threadgroups_per_mesh_grid);
     }
 
-    fn object_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("objectBuffers\0")));
+    fn object_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("objectBuffers\0"))));
     }
 
-    fn mesh_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("meshBuffers\0")));
+    fn mesh_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("meshBuffers\0"))));
     }
 
-    fn fragment_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentBuffers\0")));
+    fn fragment_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentBuffers\0"))));
     }
 
     fn raster_sample_count(this) -> u64 {
@@ -5634,12 +6635,12 @@ impl RenderPipelineDescriptor {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTessellationOutputWindingOrder:\0")), winding_raw(tessellation_output_winding_order));
     }
 
-    fn vertex_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("vertexBuffers\0")));
+    fn vertex_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("vertexBuffers\0"))));
     }
 
-    fn fragment_buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentBuffers\0")));
+    fn fragment_buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("fragmentBuffers\0"))));
     }
 
     fn support_indirect_command_buffers(this) -> bool {
@@ -6043,17 +7044,20 @@ impl ComputePipelineDescriptor {
         rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxTotalThreadsPerThreadgroup:\0")), max_total_threads_per_threadgroup);
     }
 
-    fn stage_input_descriptor(this) -> option::Option[*u8] {
+    fn stage_input_descriptor(this) -> option::Option[StageInputOutputDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("stageInputDescriptor\0")));
-        return bridge::obj_option(obj);
+        if obj == { 0 as *u8 } {
+            return option::Option[StageInputOutputDescriptor]::None;
+        }
+        return option::some(StageInputOutputDescriptor::from_raw(obj));
     }
 
-    fn set_stage_input_descriptor(this, stage_input_descriptor: *u8) {
-        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStageInputDescriptor:\0")), stage_input_descriptor);
+    fn set_stage_input_descriptor(this, stage_input_descriptor: StageInputOutputDescriptor) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setStageInputDescriptor:\0")), stage_input_descriptor.raw());
     }
 
-    fn buffers(this) -> *u8 {
-        return rt::msg_id(this._obj, rt::sel(#str_ptr("buffers\0")));
+    fn buffers(this) -> PipelineBufferDescriptorArray {
+        return PipelineBufferDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("buffers\0"))));
     }
 
     fn support_indirect_command_buffers(this) -> bool {
@@ -6513,6 +7517,14 @@ impl AccelerationStructureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn usage(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("usage\0")));
+    }
+
+    fn set_usage(this, usage: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setUsage:\0")), usage);
+    }
 
 }
 
@@ -7749,6 +8761,202 @@ impl VertexDescriptor {
 
 }
 
+// `MTLBufferLayoutDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct BufferLayoutDescriptor {
+    opaque _obj: *u8,
+}
+
+impl BufferLayoutDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BufferLayoutDescriptor { return BufferLayoutDescriptor { _obj: ptr }; }
+
+    fn stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("stride\0")));
+    }
+
+    fn set_stride(this, stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setStride:\0")), stride);
+    }
+
+    fn step_function(this) -> StepFunction {
+        return step_function_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("stepFunction\0"))));
+    }
+
+    fn set_step_function(this, step_function: StepFunction) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setStepFunction:\0")), step_function_raw(step_function));
+    }
+
+    fn step_rate(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("stepRate\0")));
+    }
+
+    fn set_step_rate(this, step_rate: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setStepRate:\0")), step_rate);
+    }
+
+}
+
+// `MTLBufferLayoutDescriptorArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct BufferLayoutDescriptorArray {
+    opaque _obj: *u8,
+}
+
+impl BufferLayoutDescriptorArray {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BufferLayoutDescriptorArray { return BufferLayoutDescriptorArray { _obj: ptr }; }
+
+    fn object_at_indexed_subscript(this, index: u64) -> BufferLayoutDescriptor {
+        return BufferLayoutDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index));
+    }
+
+    fn set_object_at_indexed_subscript(this, buffer_desc: BufferLayoutDescriptor, index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setObject:atIndexedSubscript:\0")), buffer_desc.raw(), index);
+    }
+
+}
+
+// `MTLAttributeDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AttributeDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AttributeDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AttributeDescriptor { return AttributeDescriptor { _obj: ptr }; }
+
+    fn format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("format\0"))));
+    }
+
+    fn set_format(this, format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setFormat:\0")), attribute_format_raw(format));
+    }
+
+    fn offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("offset\0")));
+    }
+
+    fn set_offset(this, offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setOffset:\0")), offset);
+    }
+
+    fn buffer_index(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferIndex\0")));
+    }
+
+    fn set_buffer_index(this, buffer_index: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBufferIndex:\0")), buffer_index);
+    }
+
+}
+
+// `MTLAttributeDescriptorArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AttributeDescriptorArray {
+    opaque _obj: *u8,
+}
+
+impl AttributeDescriptorArray {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AttributeDescriptorArray { return AttributeDescriptorArray { _obj: ptr }; }
+
+    fn object_at_indexed_subscript(this, index: u64) -> AttributeDescriptor {
+        return AttributeDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), index));
+    }
+
+    fn set_object_at_indexed_subscript(this, attribute_desc: AttributeDescriptor, index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setObject:atIndexedSubscript:\0")), attribute_desc.raw(), index);
+    }
+
+}
+
+// `MTLStageInputOutputDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct StageInputOutputDescriptor {
+    opaque _obj: *u8,
+}
+
+impl StageInputOutputDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> StageInputOutputDescriptor { return StageInputOutputDescriptor { _obj: ptr }; }
+
+    fn stage_input_output_descriptor() -> StageInputOutputDescriptor {
+        return StageInputOutputDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLStageInputOutputDescriptor\0")), rt::sel(#str_ptr("stageInputOutputDescriptor\0"))) };
+    }
+
+    fn reset(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
+    }
+
+    fn layouts(this) -> BufferLayoutDescriptorArray {
+        return BufferLayoutDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layouts\0"))));
+    }
+
+    fn attributes(this) -> AttributeDescriptorArray {
+        return AttributeDescriptorArray::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributes\0"))));
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn index_buffer_index(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("indexBufferIndex\0")));
+    }
+
+    fn set_index_buffer_index(this, index_buffer_index: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIndexBufferIndex:\0")), index_buffer_index);
+    }
+
+}
+
+// `MTLPipelineBufferDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct PipelineBufferDescriptor {
+    opaque _obj: *u8,
+}
+
+impl PipelineBufferDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PipelineBufferDescriptor { return PipelineBufferDescriptor { _obj: ptr }; }
+
+    fn mutability(this) -> Mutability {
+        return mutability_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("mutability\0"))));
+    }
+
+    fn set_mutability(this, mutability: Mutability) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMutability:\0")), mutability_raw(mutability));
+    }
+
+}
+
+// `MTLPipelineBufferDescriptorArray` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct PipelineBufferDescriptorArray {
+    opaque _obj: *u8,
+}
+
+impl PipelineBufferDescriptorArray {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PipelineBufferDescriptorArray { return PipelineBufferDescriptorArray { _obj: ptr }; }
+
+    fn object_at_indexed_subscript(this, buffer_index: u64) -> PipelineBufferDescriptor {
+        return PipelineBufferDescriptor::from_raw(rt::msg_id_u64(this._obj, rt::sel(#str_ptr("objectAtIndexedSubscript:\0")), buffer_index));
+    }
+
+    fn set_object_at_indexed_subscript(this, buffer: PipelineBufferDescriptor, buffer_index: u64) {
+        rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setObject:atIndexedSubscript:\0")), buffer.raw(), buffer_index);
+    }
+
+}
+
 // `MTLLinkedFunctions` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct LinkedFunctions {
     opaque _obj: *u8,
@@ -8183,6 +9391,1195 @@ impl TileRenderPipelineColorAttachmentDescriptorArray {
 
     fn set_object_at_indexed_subscript(this, attachment: TileRenderPipelineColorAttachmentDescriptor, attachment_index: u64) {
         rt::msg_void_id_u64(this._obj, rt::sel(#str_ptr("setObject:atIndexedSubscript:\0")), attachment.raw(), attachment_index);
+    }
+
+}
+
+// `MTLAccelerationStructureGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor { _obj: ptr }; }
+
+    fn intersection_function_table_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("intersectionFunctionTableOffset\0")));
+    }
+
+    fn set_intersection_function_table_offset(this, intersection_function_table_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIntersectionFunctionTableOffset:\0")), intersection_function_table_offset);
+    }
+
+    fn opaque_(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("opaque\0"))) != (0 as i8);
+    }
+
+    fn set_opaque(this, opaque_: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setOpaque:\0")), opaque_ as i8);
+    }
+
+    fn allow_duplicate_intersection_function_invocation(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowDuplicateIntersectionFunctionInvocation\0"))) != (0 as i8);
+    }
+
+    fn set_allow_duplicate_intersection_function_invocation(this, allow_duplicate_intersection_function_invocation: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowDuplicateIntersectionFunctionInvocation:\0")), allow_duplicate_intersection_function_invocation as i8);
+    }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
+    fn set_label(this, label: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
+    }
+
+    fn primitive_data_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("primitiveDataBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_primitive_data_buffer(this, primitive_data_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setPrimitiveDataBuffer:\0")), primitive_data_buffer.raw());
+    }
+
+    fn primitive_data_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("primitiveDataBufferOffset\0")));
+    }
+
+    fn set_primitive_data_buffer_offset(this, primitive_data_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPrimitiveDataBufferOffset:\0")), primitive_data_buffer_offset);
+    }
+
+    fn primitive_data_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("primitiveDataStride\0")));
+    }
+
+    fn set_primitive_data_stride(this, primitive_data_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPrimitiveDataStride:\0")), primitive_data_stride);
+    }
+
+    fn primitive_data_element_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("primitiveDataElementSize\0")));
+    }
+
+    fn set_primitive_data_element_size(this, primitive_data_element_size: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPrimitiveDataElementSize:\0")), primitive_data_element_size);
+    }
+
+}
+
+// `MTLPrimitiveAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct PrimitiveAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl PrimitiveAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> PrimitiveAccelerationStructureDescriptor { return PrimitiveAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> PrimitiveAccelerationStructureDescriptor {
+        return PrimitiveAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLPrimitiveAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn geometry_descriptors(this) -> vec::Vec[AccelerationStructureGeometryDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("geometryDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AccelerationStructureGeometryDescriptor] = vec::Vec[AccelerationStructureGeometryDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_geometry_descriptors(this, geometry_descriptors: vec::Vec[AccelerationStructureGeometryDescriptor]) {
+        let arr_geometry_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_geometry_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_geometry_descriptors: usize = geometry_descriptors.count();
+        var i_geometry_descriptors: usize = 0 as usize;
+        while i_geometry_descriptors < n_geometry_descriptors {
+            match geometry_descriptors.at(i_geometry_descriptors) {
+                option::Option[AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, e_geometry_descriptors.raw()); }
+                option::Option[AccelerationStructureGeometryDescriptor]::None => {}
+            }
+            i_geometry_descriptors = i_geometry_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setGeometryDescriptors:\0")), arr_geometry_descriptors);
+    }
+
+    fn motion_start_border_mode(this) -> MotionBorderMode {
+        return motion_border_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionStartBorderMode\0"))));
+    }
+
+    fn set_motion_start_border_mode(this, motion_start_border_mode: MotionBorderMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionStartBorderMode:\0")), motion_border_mode_raw(motion_start_border_mode));
+    }
+
+    fn motion_end_border_mode(this) -> MotionBorderMode {
+        return motion_border_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionEndBorderMode\0"))));
+    }
+
+    fn set_motion_end_border_mode(this, motion_end_border_mode: MotionBorderMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionEndBorderMode:\0")), motion_border_mode_raw(motion_end_border_mode));
+    }
+
+    fn motion_start_time(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("motionStartTime\0")));
+    }
+
+    fn set_motion_start_time(this, motion_start_time: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setMotionStartTime:\0")), motion_start_time);
+    }
+
+    fn motion_end_time(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("motionEndTime\0")));
+    }
+
+    fn set_motion_end_time(this, motion_end_time: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setMotionEndTime:\0")), motion_end_time);
+    }
+
+    fn motion_keyframe_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionKeyframeCount\0")));
+    }
+
+    fn set_motion_keyframe_count(this, motion_keyframe_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionKeyframeCount:\0")), motion_keyframe_count);
+    }
+
+}
+
+// `MTLAccelerationStructureTriangleGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureTriangleGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureTriangleGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureTriangleGeometryDescriptor { return AccelerationStructureTriangleGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureTriangleGeometryDescriptor {
+        return AccelerationStructureTriangleGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureTriangleGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn vertex_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_vertex_buffer(this, vertex_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexBuffer:\0")), vertex_buffer.raw());
+    }
+
+    fn vertex_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("vertexBufferOffset\0")));
+    }
+
+    fn set_vertex_buffer_offset(this, vertex_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setVertexBufferOffset:\0")), vertex_buffer_offset);
+    }
+
+    fn vertex_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("vertexFormat\0"))));
+    }
+
+    fn set_vertex_format(this, vertex_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVertexFormat:\0")), attribute_format_raw(vertex_format));
+    }
+
+    fn vertex_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("vertexStride\0")));
+    }
+
+    fn set_vertex_stride(this, vertex_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setVertexStride:\0")), vertex_stride);
+    }
+
+    fn index_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_index_buffer(this, index_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer.raw());
+    }
+
+    fn index_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("indexBufferOffset\0")));
+    }
+
+    fn set_index_buffer_offset(this, index_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIndexBufferOffset:\0")), index_buffer_offset);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn triangle_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("triangleCount\0")));
+    }
+
+    fn set_triangle_count(this, triangle_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTriangleCount:\0")), triangle_count);
+    }
+
+    fn transformation_matrix_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("transformationMatrixBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_transformation_matrix_buffer(this, transformation_matrix_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTransformationMatrixBuffer:\0")), transformation_matrix_buffer.raw());
+    }
+
+    fn transformation_matrix_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("transformationMatrixBufferOffset\0")));
+    }
+
+    fn set_transformation_matrix_buffer_offset(this, transformation_matrix_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTransformationMatrixBufferOffset:\0")), transformation_matrix_buffer_offset);
+    }
+
+    fn transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transformationMatrixLayout\0"))));
+    }
+
+    fn set_transformation_matrix_layout(this, transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTransformationMatrixLayout:\0")), matrix_layout_raw(transformation_matrix_layout));
+    }
+
+}
+
+// `MTLAccelerationStructureBoundingBoxGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureBoundingBoxGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureBoundingBoxGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureBoundingBoxGeometryDescriptor { return AccelerationStructureBoundingBoxGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureBoundingBoxGeometryDescriptor {
+        return AccelerationStructureBoundingBoxGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureBoundingBoxGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn bounding_box_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("boundingBoxBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_bounding_box_buffer(this, bounding_box_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBoundingBoxBuffer:\0")), bounding_box_buffer.raw());
+    }
+
+    fn bounding_box_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxBufferOffset\0")));
+    }
+
+    fn set_bounding_box_buffer_offset(this, bounding_box_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxBufferOffset:\0")), bounding_box_buffer_offset);
+    }
+
+    fn bounding_box_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxStride\0")));
+    }
+
+    fn set_bounding_box_stride(this, bounding_box_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxStride:\0")), bounding_box_stride);
+    }
+
+    fn bounding_box_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxCount\0")));
+    }
+
+    fn set_bounding_box_count(this, bounding_box_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxCount:\0")), bounding_box_count);
+    }
+
+}
+
+// `MTLMotionKeyframeData` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MotionKeyframeData {
+    opaque _obj: *u8,
+}
+
+impl MotionKeyframeData {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MotionKeyframeData { return MotionKeyframeData { _obj: ptr }; }
+
+    fn data() -> MotionKeyframeData {
+        return MotionKeyframeData { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLMotionKeyframeData\0")), rt::sel(#str_ptr("data\0"))) };
+    }
+
+    fn buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("buffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_buffer(this, buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBuffer:\0")), buffer.raw());
+    }
+
+    fn offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("offset\0")));
+    }
+
+    fn set_offset(this, offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setOffset:\0")), offset);
+    }
+
+}
+
+// `MTLAccelerationStructureMotionTriangleGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureMotionTriangleGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureMotionTriangleGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureMotionTriangleGeometryDescriptor { return AccelerationStructureMotionTriangleGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureMotionTriangleGeometryDescriptor {
+        return AccelerationStructureMotionTriangleGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionTriangleGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn vertex_buffers(this) -> vec::Vec[MotionKeyframeData] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("vertexBuffers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MotionKeyframeData] = vec::Vec[MotionKeyframeData]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_vertex_buffers(this, vertex_buffers: vec::Vec[MotionKeyframeData]) {
+        let arr_vertex_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_vertex_buffers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_vertex_buffers: usize = vertex_buffers.count();
+        var i_vertex_buffers: usize = 0 as usize;
+        while i_vertex_buffers < n_vertex_buffers {
+            match vertex_buffers.at(i_vertex_buffers) {
+                option::Option[MotionKeyframeData]::Some(e_vertex_buffers) => { rt::msg_void_id(arr_vertex_buffers, add_sel_vertex_buffers, e_vertex_buffers.raw()); }
+                option::Option[MotionKeyframeData]::None => {}
+            }
+            i_vertex_buffers = i_vertex_buffers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setVertexBuffers:\0")), arr_vertex_buffers);
+    }
+
+    fn vertex_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("vertexFormat\0"))));
+    }
+
+    fn set_vertex_format(this, vertex_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVertexFormat:\0")), attribute_format_raw(vertex_format));
+    }
+
+    fn vertex_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("vertexStride\0")));
+    }
+
+    fn set_vertex_stride(this, vertex_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setVertexStride:\0")), vertex_stride);
+    }
+
+    fn index_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_index_buffer(this, index_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer.raw());
+    }
+
+    fn index_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("indexBufferOffset\0")));
+    }
+
+    fn set_index_buffer_offset(this, index_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIndexBufferOffset:\0")), index_buffer_offset);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn triangle_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("triangleCount\0")));
+    }
+
+    fn set_triangle_count(this, triangle_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTriangleCount:\0")), triangle_count);
+    }
+
+    fn transformation_matrix_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("transformationMatrixBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_transformation_matrix_buffer(this, transformation_matrix_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTransformationMatrixBuffer:\0")), transformation_matrix_buffer.raw());
+    }
+
+    fn transformation_matrix_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("transformationMatrixBufferOffset\0")));
+    }
+
+    fn set_transformation_matrix_buffer_offset(this, transformation_matrix_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTransformationMatrixBufferOffset:\0")), transformation_matrix_buffer_offset);
+    }
+
+    fn transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transformationMatrixLayout\0"))));
+    }
+
+    fn set_transformation_matrix_layout(this, transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTransformationMatrixLayout:\0")), matrix_layout_raw(transformation_matrix_layout));
+    }
+
+}
+
+// `MTLAccelerationStructureMotionBoundingBoxGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureMotionBoundingBoxGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureMotionBoundingBoxGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureMotionBoundingBoxGeometryDescriptor { return AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureMotionBoundingBoxGeometryDescriptor {
+        return AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionBoundingBoxGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn bounding_box_buffers(this) -> vec::Vec[MotionKeyframeData] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("boundingBoxBuffers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MotionKeyframeData] = vec::Vec[MotionKeyframeData]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_bounding_box_buffers(this, bounding_box_buffers: vec::Vec[MotionKeyframeData]) {
+        let arr_bounding_box_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_bounding_box_buffers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_bounding_box_buffers: usize = bounding_box_buffers.count();
+        var i_bounding_box_buffers: usize = 0 as usize;
+        while i_bounding_box_buffers < n_bounding_box_buffers {
+            match bounding_box_buffers.at(i_bounding_box_buffers) {
+                option::Option[MotionKeyframeData]::Some(e_bounding_box_buffers) => { rt::msg_void_id(arr_bounding_box_buffers, add_sel_bounding_box_buffers, e_bounding_box_buffers.raw()); }
+                option::Option[MotionKeyframeData]::None => {}
+            }
+            i_bounding_box_buffers = i_bounding_box_buffers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setBoundingBoxBuffers:\0")), arr_bounding_box_buffers);
+    }
+
+    fn bounding_box_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxStride\0")));
+    }
+
+    fn set_bounding_box_stride(this, bounding_box_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxStride:\0")), bounding_box_stride);
+    }
+
+    fn bounding_box_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxCount\0")));
+    }
+
+    fn set_bounding_box_count(this, bounding_box_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxCount:\0")), bounding_box_count);
+    }
+
+}
+
+// `MTLAccelerationStructureCurveGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureCurveGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureCurveGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureCurveGeometryDescriptor { return AccelerationStructureCurveGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureCurveGeometryDescriptor {
+        return AccelerationStructureCurveGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureCurveGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn control_point_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("controlPointBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_control_point_buffer(this, control_point_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setControlPointBuffer:\0")), control_point_buffer.raw());
+    }
+
+    fn control_point_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointBufferOffset\0")));
+    }
+
+    fn set_control_point_buffer_offset(this, control_point_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointBufferOffset:\0")), control_point_buffer_offset);
+    }
+
+    fn control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointCount\0")));
+    }
+
+    fn set_control_point_count(this, control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointCount:\0")), control_point_count);
+    }
+
+    fn control_point_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointStride\0")));
+    }
+
+    fn set_control_point_stride(this, control_point_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointStride:\0")), control_point_stride);
+    }
+
+    fn control_point_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlPointFormat\0"))));
+    }
+
+    fn set_control_point_format(this, control_point_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlPointFormat:\0")), attribute_format_raw(control_point_format));
+    }
+
+    fn radius_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("radiusBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_radius_buffer(this, radius_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRadiusBuffer:\0")), radius_buffer.raw());
+    }
+
+    fn radius_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("radiusBufferOffset\0")));
+    }
+
+    fn set_radius_buffer_offset(this, radius_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setRadiusBufferOffset:\0")), radius_buffer_offset);
+    }
+
+    fn radius_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("radiusFormat\0"))));
+    }
+
+    fn set_radius_format(this, radius_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRadiusFormat:\0")), attribute_format_raw(radius_format));
+    }
+
+    fn radius_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("radiusStride\0")));
+    }
+
+    fn set_radius_stride(this, radius_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setRadiusStride:\0")), radius_stride);
+    }
+
+    fn index_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_index_buffer(this, index_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer.raw());
+    }
+
+    fn index_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("indexBufferOffset\0")));
+    }
+
+    fn set_index_buffer_offset(this, index_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIndexBufferOffset:\0")), index_buffer_offset);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn segment_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
+    }
+
+    fn set_segment_count(this, segment_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentCount:\0")), segment_count);
+    }
+
+    fn segment_control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentControlPointCount\0")));
+    }
+
+    fn set_segment_control_point_count(this, segment_control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentControlPointCount:\0")), segment_control_point_count);
+    }
+
+    fn curve_type(this) -> CurveType {
+        return curve_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveType\0"))));
+    }
+
+    fn set_curve_type(this, curve_type: CurveType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveType:\0")), curve_type_raw(curve_type));
+    }
+
+    fn curve_basis(this) -> CurveBasis {
+        return curve_basis_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveBasis\0"))));
+    }
+
+    fn set_curve_basis(this, curve_basis: CurveBasis) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveBasis:\0")), curve_basis_raw(curve_basis));
+    }
+
+    fn curve_end_caps(this) -> CurveEndCaps {
+        return curve_end_caps_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveEndCaps\0"))));
+    }
+
+    fn set_curve_end_caps(this, curve_end_caps: CurveEndCaps) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveEndCaps:\0")), curve_end_caps_raw(curve_end_caps));
+    }
+
+}
+
+// `MTLAccelerationStructureMotionCurveGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct AccelerationStructureMotionCurveGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl AccelerationStructureMotionCurveGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> AccelerationStructureMotionCurveGeometryDescriptor { return AccelerationStructureMotionCurveGeometryDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> AccelerationStructureMotionCurveGeometryDescriptor {
+        return AccelerationStructureMotionCurveGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionCurveGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn control_point_buffers(this) -> vec::Vec[MotionKeyframeData] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("controlPointBuffers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MotionKeyframeData] = vec::Vec[MotionKeyframeData]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_control_point_buffers(this, control_point_buffers: vec::Vec[MotionKeyframeData]) {
+        let arr_control_point_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_control_point_buffers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_control_point_buffers: usize = control_point_buffers.count();
+        var i_control_point_buffers: usize = 0 as usize;
+        while i_control_point_buffers < n_control_point_buffers {
+            match control_point_buffers.at(i_control_point_buffers) {
+                option::Option[MotionKeyframeData]::Some(e_control_point_buffers) => { rt::msg_void_id(arr_control_point_buffers, add_sel_control_point_buffers, e_control_point_buffers.raw()); }
+                option::Option[MotionKeyframeData]::None => {}
+            }
+            i_control_point_buffers = i_control_point_buffers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setControlPointBuffers:\0")), arr_control_point_buffers);
+    }
+
+    fn control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointCount\0")));
+    }
+
+    fn set_control_point_count(this, control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointCount:\0")), control_point_count);
+    }
+
+    fn control_point_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointStride\0")));
+    }
+
+    fn set_control_point_stride(this, control_point_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointStride:\0")), control_point_stride);
+    }
+
+    fn control_point_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlPointFormat\0"))));
+    }
+
+    fn set_control_point_format(this, control_point_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlPointFormat:\0")), attribute_format_raw(control_point_format));
+    }
+
+    fn radius_buffers(this) -> vec::Vec[MotionKeyframeData] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("radiusBuffers\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MotionKeyframeData] = vec::Vec[MotionKeyframeData]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MotionKeyframeData::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_radius_buffers(this, radius_buffers: vec::Vec[MotionKeyframeData]) {
+        let arr_radius_buffers: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_radius_buffers: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_radius_buffers: usize = radius_buffers.count();
+        var i_radius_buffers: usize = 0 as usize;
+        while i_radius_buffers < n_radius_buffers {
+            match radius_buffers.at(i_radius_buffers) {
+                option::Option[MotionKeyframeData]::Some(e_radius_buffers) => { rt::msg_void_id(arr_radius_buffers, add_sel_radius_buffers, e_radius_buffers.raw()); }
+                option::Option[MotionKeyframeData]::None => {}
+            }
+            i_radius_buffers = i_radius_buffers +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setRadiusBuffers:\0")), arr_radius_buffers);
+    }
+
+    fn radius_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("radiusFormat\0"))));
+    }
+
+    fn set_radius_format(this, radius_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRadiusFormat:\0")), attribute_format_raw(radius_format));
+    }
+
+    fn radius_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("radiusStride\0")));
+    }
+
+    fn set_radius_stride(this, radius_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setRadiusStride:\0")), radius_stride);
+    }
+
+    fn index_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_index_buffer(this, index_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer.raw());
+    }
+
+    fn index_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("indexBufferOffset\0")));
+    }
+
+    fn set_index_buffer_offset(this, index_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIndexBufferOffset:\0")), index_buffer_offset);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn segment_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
+    }
+
+    fn set_segment_count(this, segment_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentCount:\0")), segment_count);
+    }
+
+    fn segment_control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentControlPointCount\0")));
+    }
+
+    fn set_segment_control_point_count(this, segment_control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentControlPointCount:\0")), segment_control_point_count);
+    }
+
+    fn curve_type(this) -> CurveType {
+        return curve_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveType\0"))));
+    }
+
+    fn set_curve_type(this, curve_type: CurveType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveType:\0")), curve_type_raw(curve_type));
+    }
+
+    fn curve_basis(this) -> CurveBasis {
+        return curve_basis_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveBasis\0"))));
+    }
+
+    fn set_curve_basis(this, curve_basis: CurveBasis) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveBasis:\0")), curve_basis_raw(curve_basis));
+    }
+
+    fn curve_end_caps(this) -> CurveEndCaps {
+        return curve_end_caps_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveEndCaps\0"))));
+    }
+
+    fn set_curve_end_caps(this, curve_end_caps: CurveEndCaps) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveEndCaps:\0")), curve_end_caps_raw(curve_end_caps));
+    }
+
+}
+
+// `MTLInstanceAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct InstanceAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl InstanceAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> InstanceAccelerationStructureDescriptor { return InstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> InstanceAccelerationStructureDescriptor {
+        return InstanceAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLInstanceAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn instance_descriptor_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_instance_descriptor_buffer(this, instance_descriptor_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBuffer:\0")), instance_descriptor_buffer.raw());
+    }
+
+    fn instance_descriptor_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorBufferOffset\0")));
+    }
+
+    fn set_instance_descriptor_buffer_offset(this, instance_descriptor_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBufferOffset:\0")), instance_descriptor_buffer_offset);
+    }
+
+    fn instance_descriptor_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorStride\0")));
+    }
+
+    fn set_instance_descriptor_stride(this, instance_descriptor_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorStride:\0")), instance_descriptor_stride);
+    }
+
+    fn instance_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceCount\0")));
+    }
+
+    fn set_instance_count(this, instance_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceCount:\0")), instance_count);
+    }
+
+    fn instanced_acceleration_structures(this) -> vec::Vec[AccelerationStructure] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instancedAccelerationStructures\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[AccelerationStructure] = vec::Vec[AccelerationStructure]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(AccelerationStructure::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_instanced_acceleration_structures(this, instanced_acceleration_structures: vec::Vec[AccelerationStructure]) {
+        let arr_instanced_acceleration_structures: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_instanced_acceleration_structures: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_instanced_acceleration_structures: usize = instanced_acceleration_structures.count();
+        var i_instanced_acceleration_structures: usize = 0 as usize;
+        while i_instanced_acceleration_structures < n_instanced_acceleration_structures {
+            match instanced_acceleration_structures.at(i_instanced_acceleration_structures) {
+                option::Option[AccelerationStructure]::Some(e_instanced_acceleration_structures) => { rt::msg_void_id(arr_instanced_acceleration_structures, add_sel_instanced_acceleration_structures, e_instanced_acceleration_structures.raw()); }
+                option::Option[AccelerationStructure]::None => {}
+            }
+            i_instanced_acceleration_structures = i_instanced_acceleration_structures +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInstancedAccelerationStructures:\0")), arr_instanced_acceleration_structures);
+    }
+
+    fn instance_descriptor_type(this) -> AccelerationStructureInstanceDescriptorType {
+        return acceleration_structure_instance_descriptor_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceDescriptorType\0"))));
+    }
+
+    fn set_instance_descriptor_type(this, instance_descriptor_type: AccelerationStructureInstanceDescriptorType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorType:\0")), acceleration_structure_instance_descriptor_type_raw(instance_descriptor_type));
+    }
+
+    fn motion_transform_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("motionTransformBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_motion_transform_buffer(this, motion_transform_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMotionTransformBuffer:\0")), motion_transform_buffer.raw());
+    }
+
+    fn motion_transform_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformBufferOffset\0")));
+    }
+
+    fn set_motion_transform_buffer_offset(this, motion_transform_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformBufferOffset:\0")), motion_transform_buffer_offset);
+    }
+
+    fn motion_transform_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformCount\0")));
+    }
+
+    fn set_motion_transform_count(this, motion_transform_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformCount:\0")), motion_transform_count);
+    }
+
+    fn instance_transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceTransformationMatrixLayout\0"))));
+    }
+
+    fn set_instance_transformation_matrix_layout(this, instance_transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceTransformationMatrixLayout:\0")), matrix_layout_raw(instance_transformation_matrix_layout));
+    }
+
+    fn motion_transform_type(this) -> TransformType {
+        return transform_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionTransformType\0"))));
+    }
+
+    fn set_motion_transform_type(this, motion_transform_type: TransformType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionTransformType:\0")), transform_type_raw(motion_transform_type));
+    }
+
+    fn motion_transform_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformStride\0")));
+    }
+
+    fn set_motion_transform_stride(this, motion_transform_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformStride:\0")), motion_transform_stride);
+    }
+
+}
+
+// `MTLIndirectInstanceAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct IndirectInstanceAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl IndirectInstanceAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> IndirectInstanceAccelerationStructureDescriptor { return IndirectInstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn descriptor() -> IndirectInstanceAccelerationStructureDescriptor {
+        return IndirectInstanceAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLIndirectInstanceAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
+    }
+
+    fn instance_descriptor_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_instance_descriptor_buffer(this, instance_descriptor_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBuffer:\0")), instance_descriptor_buffer.raw());
+    }
+
+    fn instance_descriptor_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorBufferOffset\0")));
+    }
+
+    fn set_instance_descriptor_buffer_offset(this, instance_descriptor_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBufferOffset:\0")), instance_descriptor_buffer_offset);
+    }
+
+    fn instance_descriptor_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorStride\0")));
+    }
+
+    fn set_instance_descriptor_stride(this, instance_descriptor_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorStride:\0")), instance_descriptor_stride);
+    }
+
+    fn max_instance_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxInstanceCount\0")));
+    }
+
+    fn set_max_instance_count(this, max_instance_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxInstanceCount:\0")), max_instance_count);
+    }
+
+    fn instance_count_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("instanceCountBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_instance_count_buffer(this, instance_count_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setInstanceCountBuffer:\0")), instance_count_buffer.raw());
+    }
+
+    fn instance_count_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceCountBufferOffset\0")));
+    }
+
+    fn set_instance_count_buffer_offset(this, instance_count_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceCountBufferOffset:\0")), instance_count_buffer_offset);
+    }
+
+    fn instance_descriptor_type(this) -> AccelerationStructureInstanceDescriptorType {
+        return acceleration_structure_instance_descriptor_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceDescriptorType\0"))));
+    }
+
+    fn set_instance_descriptor_type(this, instance_descriptor_type: AccelerationStructureInstanceDescriptorType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorType:\0")), acceleration_structure_instance_descriptor_type_raw(instance_descriptor_type));
+    }
+
+    fn motion_transform_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("motionTransformBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_motion_transform_buffer(this, motion_transform_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMotionTransformBuffer:\0")), motion_transform_buffer.raw());
+    }
+
+    fn motion_transform_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformBufferOffset\0")));
+    }
+
+    fn set_motion_transform_buffer_offset(this, motion_transform_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformBufferOffset:\0")), motion_transform_buffer_offset);
+    }
+
+    fn max_motion_transform_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxMotionTransformCount\0")));
+    }
+
+    fn set_max_motion_transform_count(this, max_motion_transform_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxMotionTransformCount:\0")), max_motion_transform_count);
+    }
+
+    fn motion_transform_count_buffer(this) -> option::Option[Buffer] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("motionTransformCountBuffer\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[Buffer]::None;
+        }
+        return option::some(Buffer::from_raw(obj));
+    }
+
+    fn set_motion_transform_count_buffer(this, motion_transform_count_buffer: Buffer) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setMotionTransformCountBuffer:\0")), motion_transform_count_buffer.raw());
+    }
+
+    fn motion_transform_count_buffer_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformCountBufferOffset\0")));
+    }
+
+    fn set_motion_transform_count_buffer_offset(this, motion_transform_count_buffer_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformCountBufferOffset:\0")), motion_transform_count_buffer_offset);
+    }
+
+    fn instance_transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceTransformationMatrixLayout\0"))));
+    }
+
+    fn set_instance_transformation_matrix_layout(this, instance_transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceTransformationMatrixLayout:\0")), matrix_layout_raw(instance_transformation_matrix_layout));
+    }
+
+    fn motion_transform_type(this) -> TransformType {
+        return transform_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionTransformType\0"))));
+    }
+
+    fn set_motion_transform_type(this, motion_transform_type: TransformType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionTransformType:\0")), transform_type_raw(motion_transform_type));
+    }
+
+    fn motion_transform_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformStride\0")));
+    }
+
+    fn set_motion_transform_stride(this, motion_transform_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformStride:\0")), motion_transform_stride);
     }
 
 }
@@ -8809,6 +11206,823 @@ impl FunctionStitchingGraph {
     }
 }
 
+// `MTL4AccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureDescriptor { return MTL4AccelerationStructureDescriptor { _obj: ptr }; }
+
+}
+
+// `MTL4AccelerationStructureGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor { _obj: ptr }; }
+
+    fn intersection_function_table_offset(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("intersectionFunctionTableOffset\0")));
+    }
+
+    fn set_intersection_function_table_offset(this, intersection_function_table_offset: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setIntersectionFunctionTableOffset:\0")), intersection_function_table_offset);
+    }
+
+    fn opaque_(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("opaque\0"))) != (0 as i8);
+    }
+
+    fn set_opaque(this, opaque_: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setOpaque:\0")), opaque_ as i8);
+    }
+
+    fn allow_duplicate_intersection_function_invocation(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("allowDuplicateIntersectionFunctionInvocation\0"))) != (0 as i8);
+    }
+
+    fn set_allow_duplicate_intersection_function_invocation(this, allow_duplicate_intersection_function_invocation: bool) {
+        rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowDuplicateIntersectionFunctionInvocation:\0")), allow_duplicate_intersection_function_invocation as i8);
+    }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
+    fn set_label(this, label: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
+    }
+
+    fn primitive_data_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("primitiveDataBuffer\0")));
+    }
+
+    fn set_primitive_data_buffer(this, primitive_data_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setPrimitiveDataBuffer:\0")), primitive_data_buffer);
+    }
+
+    fn primitive_data_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("primitiveDataStride\0")));
+    }
+
+    fn set_primitive_data_stride(this, primitive_data_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPrimitiveDataStride:\0")), primitive_data_stride);
+    }
+
+    fn primitive_data_element_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("primitiveDataElementSize\0")));
+    }
+
+    fn set_primitive_data_element_size(this, primitive_data_element_size: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setPrimitiveDataElementSize:\0")), primitive_data_element_size);
+    }
+
+}
+
+// `MTL4PrimitiveAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4PrimitiveAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4PrimitiveAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4PrimitiveAccelerationStructureDescriptor { return MTL4PrimitiveAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn geometry_descriptors(this) -> vec::Vec[MTL4AccelerationStructureGeometryDescriptor] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("geometryDescriptors\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[MTL4AccelerationStructureGeometryDescriptor] = vec::Vec[MTL4AccelerationStructureGeometryDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(MTL4AccelerationStructureGeometryDescriptor::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
+    fn set_geometry_descriptors(this, geometry_descriptors: vec::Vec[MTL4AccelerationStructureGeometryDescriptor]) {
+        let arr_geometry_descriptors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_geometry_descriptors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_geometry_descriptors: usize = geometry_descriptors.count();
+        var i_geometry_descriptors: usize = 0 as usize;
+        while i_geometry_descriptors < n_geometry_descriptors {
+            match geometry_descriptors.at(i_geometry_descriptors) {
+                option::Option[MTL4AccelerationStructureGeometryDescriptor]::Some(e_geometry_descriptors) => { rt::msg_void_id(arr_geometry_descriptors, add_sel_geometry_descriptors, e_geometry_descriptors.raw()); }
+                option::Option[MTL4AccelerationStructureGeometryDescriptor]::None => {}
+            }
+            i_geometry_descriptors = i_geometry_descriptors +% (1 as usize);
+        }
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setGeometryDescriptors:\0")), arr_geometry_descriptors);
+    }
+
+    fn motion_start_border_mode(this) -> MotionBorderMode {
+        return motion_border_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionStartBorderMode\0"))));
+    }
+
+    fn set_motion_start_border_mode(this, motion_start_border_mode: MotionBorderMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionStartBorderMode:\0")), motion_border_mode_raw(motion_start_border_mode));
+    }
+
+    fn motion_end_border_mode(this) -> MotionBorderMode {
+        return motion_border_mode_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionEndBorderMode\0"))));
+    }
+
+    fn set_motion_end_border_mode(this, motion_end_border_mode: MotionBorderMode) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionEndBorderMode:\0")), motion_border_mode_raw(motion_end_border_mode));
+    }
+
+    fn motion_start_time(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("motionStartTime\0")));
+    }
+
+    fn set_motion_start_time(this, motion_start_time: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setMotionStartTime:\0")), motion_start_time);
+    }
+
+    fn motion_end_time(this) -> f32 {
+        return rt::msg_f32(this._obj, rt::sel(#str_ptr("motionEndTime\0")));
+    }
+
+    fn set_motion_end_time(this, motion_end_time: f32) {
+        rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setMotionEndTime:\0")), motion_end_time);
+    }
+
+    fn motion_keyframe_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionKeyframeCount\0")));
+    }
+
+    fn set_motion_keyframe_count(this, motion_keyframe_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionKeyframeCount:\0")), motion_keyframe_count);
+    }
+
+}
+
+// `MTL4AccelerationStructureTriangleGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureTriangleGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureTriangleGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureTriangleGeometryDescriptor { return MTL4AccelerationStructureTriangleGeometryDescriptor { _obj: ptr }; }
+
+    fn vertex_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("vertexBuffer\0")));
+    }
+
+    fn set_vertex_buffer(this, vertex_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setVertexBuffer:\0")), vertex_buffer);
+    }
+
+    fn vertex_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("vertexFormat\0"))));
+    }
+
+    fn set_vertex_format(this, vertex_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVertexFormat:\0")), attribute_format_raw(vertex_format));
+    }
+
+    fn vertex_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("vertexStride\0")));
+    }
+
+    fn set_vertex_stride(this, vertex_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setVertexStride:\0")), vertex_stride);
+    }
+
+    fn index_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+    }
+
+    fn set_index_buffer(this, index_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn triangle_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("triangleCount\0")));
+    }
+
+    fn set_triangle_count(this, triangle_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTriangleCount:\0")), triangle_count);
+    }
+
+    fn transformation_matrix_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("transformationMatrixBuffer\0")));
+    }
+
+    fn set_transformation_matrix_buffer(this, transformation_matrix_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setTransformationMatrixBuffer:\0")), transformation_matrix_buffer);
+    }
+
+    fn transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transformationMatrixLayout\0"))));
+    }
+
+    fn set_transformation_matrix_layout(this, transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTransformationMatrixLayout:\0")), matrix_layout_raw(transformation_matrix_layout));
+    }
+
+}
+
+// `MTL4AccelerationStructureBoundingBoxGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureBoundingBoxGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureBoundingBoxGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureBoundingBoxGeometryDescriptor { return MTL4AccelerationStructureBoundingBoxGeometryDescriptor { _obj: ptr }; }
+
+    fn bounding_box_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("boundingBoxBuffer\0")));
+    }
+
+    fn set_bounding_box_buffer(this, bounding_box_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setBoundingBoxBuffer:\0")), bounding_box_buffer);
+    }
+
+    fn bounding_box_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxStride\0")));
+    }
+
+    fn set_bounding_box_stride(this, bounding_box_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxStride:\0")), bounding_box_stride);
+    }
+
+    fn bounding_box_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxCount\0")));
+    }
+
+    fn set_bounding_box_count(this, bounding_box_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxCount:\0")), bounding_box_count);
+    }
+
+}
+
+// `MTL4AccelerationStructureMotionTriangleGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureMotionTriangleGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureMotionTriangleGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionTriangleGeometryDescriptor { return MTL4AccelerationStructureMotionTriangleGeometryDescriptor { _obj: ptr }; }
+
+    fn vertex_buffers(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("vertexBuffers\0")));
+    }
+
+    fn set_vertex_buffers(this, vertex_buffers: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setVertexBuffers:\0")), vertex_buffers);
+    }
+
+    fn vertex_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("vertexFormat\0"))));
+    }
+
+    fn set_vertex_format(this, vertex_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setVertexFormat:\0")), attribute_format_raw(vertex_format));
+    }
+
+    fn vertex_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("vertexStride\0")));
+    }
+
+    fn set_vertex_stride(this, vertex_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setVertexStride:\0")), vertex_stride);
+    }
+
+    fn index_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+    }
+
+    fn set_index_buffer(this, index_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn triangle_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("triangleCount\0")));
+    }
+
+    fn set_triangle_count(this, triangle_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setTriangleCount:\0")), triangle_count);
+    }
+
+    fn transformation_matrix_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("transformationMatrixBuffer\0")));
+    }
+
+    fn set_transformation_matrix_buffer(this, transformation_matrix_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setTransformationMatrixBuffer:\0")), transformation_matrix_buffer);
+    }
+
+    fn transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("transformationMatrixLayout\0"))));
+    }
+
+    fn set_transformation_matrix_layout(this, transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTransformationMatrixLayout:\0")), matrix_layout_raw(transformation_matrix_layout));
+    }
+
+}
+
+// `MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor { return MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: ptr }; }
+
+    fn bounding_box_buffers(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("boundingBoxBuffers\0")));
+    }
+
+    fn set_bounding_box_buffers(this, bounding_box_buffers: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setBoundingBoxBuffers:\0")), bounding_box_buffers);
+    }
+
+    fn bounding_box_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxStride\0")));
+    }
+
+    fn set_bounding_box_stride(this, bounding_box_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxStride:\0")), bounding_box_stride);
+    }
+
+    fn bounding_box_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("boundingBoxCount\0")));
+    }
+
+    fn set_bounding_box_count(this, bounding_box_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setBoundingBoxCount:\0")), bounding_box_count);
+    }
+
+}
+
+// `MTL4AccelerationStructureCurveGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureCurveGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureCurveGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureCurveGeometryDescriptor { return MTL4AccelerationStructureCurveGeometryDescriptor { _obj: ptr }; }
+
+    fn control_point_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("controlPointBuffer\0")));
+    }
+
+    fn set_control_point_buffer(this, control_point_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setControlPointBuffer:\0")), control_point_buffer);
+    }
+
+    fn control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointCount\0")));
+    }
+
+    fn set_control_point_count(this, control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointCount:\0")), control_point_count);
+    }
+
+    fn control_point_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointStride\0")));
+    }
+
+    fn set_control_point_stride(this, control_point_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointStride:\0")), control_point_stride);
+    }
+
+    fn control_point_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlPointFormat\0"))));
+    }
+
+    fn set_control_point_format(this, control_point_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlPointFormat:\0")), attribute_format_raw(control_point_format));
+    }
+
+    fn radius_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("radiusBuffer\0")));
+    }
+
+    fn set_radius_buffer(this, radius_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setRadiusBuffer:\0")), radius_buffer);
+    }
+
+    fn radius_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("radiusFormat\0"))));
+    }
+
+    fn set_radius_format(this, radius_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRadiusFormat:\0")), attribute_format_raw(radius_format));
+    }
+
+    fn radius_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("radiusStride\0")));
+    }
+
+    fn set_radius_stride(this, radius_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setRadiusStride:\0")), radius_stride);
+    }
+
+    fn index_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+    }
+
+    fn set_index_buffer(this, index_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn segment_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
+    }
+
+    fn set_segment_count(this, segment_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentCount:\0")), segment_count);
+    }
+
+    fn segment_control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentControlPointCount\0")));
+    }
+
+    fn set_segment_control_point_count(this, segment_control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentControlPointCount:\0")), segment_control_point_count);
+    }
+
+    fn curve_type(this) -> CurveType {
+        return curve_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveType\0"))));
+    }
+
+    fn set_curve_type(this, curve_type: CurveType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveType:\0")), curve_type_raw(curve_type));
+    }
+
+    fn curve_basis(this) -> CurveBasis {
+        return curve_basis_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveBasis\0"))));
+    }
+
+    fn set_curve_basis(this, curve_basis: CurveBasis) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveBasis:\0")), curve_basis_raw(curve_basis));
+    }
+
+    fn curve_end_caps(this) -> CurveEndCaps {
+        return curve_end_caps_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveEndCaps\0"))));
+    }
+
+    fn set_curve_end_caps(this, curve_end_caps: CurveEndCaps) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveEndCaps:\0")), curve_end_caps_raw(curve_end_caps));
+    }
+
+}
+
+// `MTL4AccelerationStructureMotionCurveGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4AccelerationStructureMotionCurveGeometryDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4AccelerationStructureMotionCurveGeometryDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionCurveGeometryDescriptor { return MTL4AccelerationStructureMotionCurveGeometryDescriptor { _obj: ptr }; }
+
+    fn control_point_buffers(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("controlPointBuffers\0")));
+    }
+
+    fn set_control_point_buffers(this, control_point_buffers: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setControlPointBuffers:\0")), control_point_buffers);
+    }
+
+    fn control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointCount\0")));
+    }
+
+    fn set_control_point_count(this, control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointCount:\0")), control_point_count);
+    }
+
+    fn control_point_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("controlPointStride\0")));
+    }
+
+    fn set_control_point_stride(this, control_point_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setControlPointStride:\0")), control_point_stride);
+    }
+
+    fn control_point_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("controlPointFormat\0"))));
+    }
+
+    fn set_control_point_format(this, control_point_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setControlPointFormat:\0")), attribute_format_raw(control_point_format));
+    }
+
+    fn radius_buffers(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("radiusBuffers\0")));
+    }
+
+    fn set_radius_buffers(this, radius_buffers: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setRadiusBuffers:\0")), radius_buffers);
+    }
+
+    fn radius_format(this) -> AttributeFormat {
+        return attribute_format_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("radiusFormat\0"))));
+    }
+
+    fn set_radius_format(this, radius_format: AttributeFormat) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setRadiusFormat:\0")), attribute_format_raw(radius_format));
+    }
+
+    fn radius_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("radiusStride\0")));
+    }
+
+    fn set_radius_stride(this, radius_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setRadiusStride:\0")), radius_stride);
+    }
+
+    fn index_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("indexBuffer\0")));
+    }
+
+    fn set_index_buffer(this, index_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setIndexBuffer:\0")), index_buffer);
+    }
+
+    fn index_type(this) -> IndexType {
+        return index_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn set_index_type(this, index_type: IndexType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setIndexType:\0")), index_type_raw(index_type));
+    }
+
+    fn segment_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentCount\0")));
+    }
+
+    fn set_segment_count(this, segment_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentCount:\0")), segment_count);
+    }
+
+    fn segment_control_point_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("segmentControlPointCount\0")));
+    }
+
+    fn set_segment_control_point_count(this, segment_control_point_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setSegmentControlPointCount:\0")), segment_control_point_count);
+    }
+
+    fn curve_type(this) -> CurveType {
+        return curve_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveType\0"))));
+    }
+
+    fn set_curve_type(this, curve_type: CurveType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveType:\0")), curve_type_raw(curve_type));
+    }
+
+    fn curve_basis(this) -> CurveBasis {
+        return curve_basis_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveBasis\0"))));
+    }
+
+    fn set_curve_basis(this, curve_basis: CurveBasis) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveBasis:\0")), curve_basis_raw(curve_basis));
+    }
+
+    fn curve_end_caps(this) -> CurveEndCaps {
+        return curve_end_caps_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("curveEndCaps\0"))));
+    }
+
+    fn set_curve_end_caps(this, curve_end_caps: CurveEndCaps) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setCurveEndCaps:\0")), curve_end_caps_raw(curve_end_caps));
+    }
+
+}
+
+// `MTL4InstanceAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4InstanceAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4InstanceAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4InstanceAccelerationStructureDescriptor { return MTL4InstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn instance_descriptor_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
+    }
+
+    fn set_instance_descriptor_buffer(this, instance_descriptor_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBuffer:\0")), instance_descriptor_buffer);
+    }
+
+    fn instance_descriptor_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorStride\0")));
+    }
+
+    fn set_instance_descriptor_stride(this, instance_descriptor_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorStride:\0")), instance_descriptor_stride);
+    }
+
+    fn instance_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceCount\0")));
+    }
+
+    fn set_instance_count(this, instance_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceCount:\0")), instance_count);
+    }
+
+    fn instance_descriptor_type(this) -> AccelerationStructureInstanceDescriptorType {
+        return acceleration_structure_instance_descriptor_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceDescriptorType\0"))));
+    }
+
+    fn set_instance_descriptor_type(this, instance_descriptor_type: AccelerationStructureInstanceDescriptorType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorType:\0")), acceleration_structure_instance_descriptor_type_raw(instance_descriptor_type));
+    }
+
+    fn motion_transform_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("motionTransformBuffer\0")));
+    }
+
+    fn set_motion_transform_buffer(this, motion_transform_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setMotionTransformBuffer:\0")), motion_transform_buffer);
+    }
+
+    fn motion_transform_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformCount\0")));
+    }
+
+    fn set_motion_transform_count(this, motion_transform_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformCount:\0")), motion_transform_count);
+    }
+
+    fn instance_transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceTransformationMatrixLayout\0"))));
+    }
+
+    fn set_instance_transformation_matrix_layout(this, instance_transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceTransformationMatrixLayout:\0")), matrix_layout_raw(instance_transformation_matrix_layout));
+    }
+
+    fn motion_transform_type(this) -> TransformType {
+        return transform_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionTransformType\0"))));
+    }
+
+    fn set_motion_transform_type(this, motion_transform_type: TransformType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionTransformType:\0")), transform_type_raw(motion_transform_type));
+    }
+
+    fn motion_transform_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformStride\0")));
+    }
+
+    fn set_motion_transform_stride(this, motion_transform_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformStride:\0")), motion_transform_stride);
+    }
+
+}
+
+// `MTL4IndirectInstanceAccelerationStructureDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
+struct MTL4IndirectInstanceAccelerationStructureDescriptor {
+    opaque _obj: *u8,
+}
+
+impl MTL4IndirectInstanceAccelerationStructureDescriptor {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> MTL4IndirectInstanceAccelerationStructureDescriptor { return MTL4IndirectInstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    fn instance_descriptor_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
+    }
+
+    fn set_instance_descriptor_buffer(this, instance_descriptor_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setInstanceDescriptorBuffer:\0")), instance_descriptor_buffer);
+    }
+
+    fn instance_descriptor_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("instanceDescriptorStride\0")));
+    }
+
+    fn set_instance_descriptor_stride(this, instance_descriptor_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorStride:\0")), instance_descriptor_stride);
+    }
+
+    fn max_instance_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxInstanceCount\0")));
+    }
+
+    fn set_max_instance_count(this, max_instance_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxInstanceCount:\0")), max_instance_count);
+    }
+
+    fn instance_count_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("instanceCountBuffer\0")));
+    }
+
+    fn set_instance_count_buffer(this, instance_count_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setInstanceCountBuffer:\0")), instance_count_buffer);
+    }
+
+    fn instance_descriptor_type(this) -> AccelerationStructureInstanceDescriptorType {
+        return acceleration_structure_instance_descriptor_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceDescriptorType\0"))));
+    }
+
+    fn set_instance_descriptor_type(this, instance_descriptor_type: AccelerationStructureInstanceDescriptorType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceDescriptorType:\0")), acceleration_structure_instance_descriptor_type_raw(instance_descriptor_type));
+    }
+
+    fn motion_transform_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("motionTransformBuffer\0")));
+    }
+
+    fn set_motion_transform_buffer(this, motion_transform_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setMotionTransformBuffer:\0")), motion_transform_buffer);
+    }
+
+    fn max_motion_transform_count(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("maxMotionTransformCount\0")));
+    }
+
+    fn set_max_motion_transform_count(this, max_motion_transform_count: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMaxMotionTransformCount:\0")), max_motion_transform_count);
+    }
+
+    fn motion_transform_count_buffer(this) -> MTL4BufferRange {
+        return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("motionTransformCountBuffer\0")));
+    }
+
+    fn set_motion_transform_count_buffer(this, motion_transform_count_buffer: MTL4BufferRange) {
+        objc_msg_void_MTL4BufferRange(this._obj, rt::sel(#str_ptr("setMotionTransformCountBuffer:\0")), motion_transform_count_buffer);
+    }
+
+    fn instance_transformation_matrix_layout(this) -> MatrixLayout {
+        return matrix_layout_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceTransformationMatrixLayout\0"))));
+    }
+
+    fn set_instance_transformation_matrix_layout(this, instance_transformation_matrix_layout: MatrixLayout) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setInstanceTransformationMatrixLayout:\0")), matrix_layout_raw(instance_transformation_matrix_layout));
+    }
+
+    fn motion_transform_type(this) -> TransformType {
+        return transform_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("motionTransformType\0"))));
+    }
+
+    fn set_motion_transform_type(this, motion_transform_type: TransformType) {
+        rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setMotionTransformType:\0")), transform_type_raw(motion_transform_type));
+    }
+
+    fn motion_transform_stride(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("motionTransformStride\0")));
+    }
+
+    fn set_motion_transform_stride(this, motion_transform_stride: u64) {
+        rt::msg_void_u64(this._obj, rt::sel(#str_ptr("setMotionTransformStride:\0")), motion_transform_stride);
+    }
+
+}
+
 // `MTL4LibraryFunctionDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct MTL4LibraryFunctionDescriptor {
     opaque _obj: *u8,
@@ -9159,7 +12373,19 @@ impl MTL4MachineLearningPipelineReflection {
 
     fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineReflection { return MTL4MachineLearningPipelineReflection { _obj: ptr }; }
 
-    // SKIPPED `bindings`: return `NSArray<id<MTLBinding>> * _Nonnull` — generic collection
+    fn bindings(this) -> vec::Vec[Binding] {
+        let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bindings\0")));
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[Binding] = vec::Vec[Binding]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(Binding::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
 }
 
 // `MTL4TileRenderPipelineDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -9487,22 +12713,6 @@ impl DynamicLibrary {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> DynamicLibrary { return DynamicLibrary { _obj: ptr }; }
-
-}
-
-// `MTLAllocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
-struct Allocation {
-    opaque _obj: *u8,
-}
-
-impl Allocation {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> Allocation { return Allocation { _obj: ptr }; }
-
-    fn allocated_size(this) -> u64 {
-        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocatedSize\0")));
-    }
 
 }
 
@@ -9917,8 +13127,8 @@ impl Device {
         rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("sampleTimestamps:gpuTimestamp:\0")), cpu_timestamp, gpu_timestamp);
     }
 
-    fn new_argument_encoder_with_buffer_binding(this, buffer_binding: *u8) -> ArgumentEncoder {
-        return ArgumentEncoder::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newArgumentEncoderWithBufferBinding:\0")), buffer_binding));
+    fn new_argument_encoder_with_buffer_binding(this, buffer_binding: BufferBinding) -> ArgumentEncoder {
+        return ArgumentEncoder::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("newArgumentEncoderWithBufferBinding:\0")), buffer_binding.raw()));
     }
 
     fn supports_counter_sampling(this, sampling_point: CounterSamplingPoint) -> bool {
@@ -10301,6 +13511,67 @@ impl Device {
 
     fn maximum_concurrent_compilation_task_count(this) -> u64 {
         return rt::msg_u64(this._obj, rt::sel(#str_ptr("maximumConcurrentCompilationTaskCount\0")));
+    }
+
+}
+
+// `MTLCommandEncoder` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct CommandEncoder {
+    opaque _obj: *u8,
+}
+
+impl CommandEncoder {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> CommandEncoder { return CommandEncoder { _obj: ptr }; }
+
+    fn end_encoding(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("endEncoding\0")));
+    }
+
+    fn barrier_after_queue_stages_before_stages(this, after_queue_stages: u64, before_stages: u64) {
+        rt::msg_void_u64_u64(this._obj, rt::sel(#str_ptr("barrierAfterQueueStages:beforeStages:\0")), after_queue_stages, before_stages);
+    }
+
+    fn insert_debug_signpost(this, string: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("insertDebugSignpost:\0")), bridge::nsstring(string));
+    }
+
+    fn push_debug_group(this, string: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("pushDebugGroup:\0")), bridge::nsstring(string));
+    }
+
+    fn pop_debug_group(this) {
+        rt::msg_void(this._obj, rt::sel(#str_ptr("popDebugGroup\0")));
+    }
+
+    fn device(this) -> Device {
+        return Device::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("device\0"))));
+    }
+
+    fn label(this) -> option::Option[text::Text] {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("label\0")));
+        return bridge::to_text_option(ns);
+    }
+
+    fn set_label(this, label: str) {
+        rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring(label));
+    }
+
+}
+
+// `MTLAllocation` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Allocation {
+    opaque _obj: *u8,
+}
+
+impl Allocation {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Allocation { return Allocation { _obj: ptr }; }
+
+    fn allocated_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("allocatedSize\0")));
     }
 
 }
@@ -10816,6 +14087,179 @@ impl Texture {
     // SKIPPED `swizzle`: return `MTLTextureSwizzleChannels` — unmapped type `MTLTextureSwizzleChannels`
     fn sparse_texture_tier(this) -> TextureSparseTier {
         return texture_sparse_tier_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("sparseTextureTier\0"))));
+    }
+
+}
+
+// `MTLBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct Binding {
+    opaque _obj: *u8,
+}
+
+impl Binding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> Binding { return Binding { _obj: ptr }; }
+
+    fn name(this) -> text::Text {
+        let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
+        return bridge::to_text(ns);
+    }
+
+    fn type_(this) -> BindingType {
+        return binding_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("type\0"))));
+    }
+
+    fn access(this) -> BindingAccess {
+        return binding_access_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("access\0"))));
+    }
+
+    fn index(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("index\0")));
+    }
+
+    fn is_used(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isUsed\0"))) != (0 as i8);
+    }
+
+    fn is_argument(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isArgument\0"))) != (0 as i8);
+    }
+
+}
+
+// `MTLBufferBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct BufferBinding {
+    opaque _obj: *u8,
+}
+
+impl BufferBinding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> BufferBinding { return BufferBinding { _obj: ptr }; }
+
+    fn buffer_alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferAlignment\0")));
+    }
+
+    fn buffer_data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("bufferDataSize\0")));
+    }
+
+    fn buffer_data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("bufferDataType\0"))));
+    }
+
+    fn buffer_struct_type(this) -> option::Option[StructType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bufferStructType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[StructType]::None;
+        }
+        return option::some(StructType::from_raw(obj));
+    }
+
+    fn buffer_pointer_type(this) -> option::Option[PointerType] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("bufferPointerType\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[PointerType]::None;
+        }
+        return option::some(PointerType::from_raw(obj));
+    }
+
+}
+
+// `MTLThreadgroupBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ThreadgroupBinding {
+    opaque _obj: *u8,
+}
+
+impl ThreadgroupBinding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ThreadgroupBinding { return ThreadgroupBinding { _obj: ptr }; }
+
+    fn threadgroup_memory_alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("threadgroupMemoryAlignment\0")));
+    }
+
+    fn threadgroup_memory_data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("threadgroupMemoryDataSize\0")));
+    }
+
+}
+
+// `MTLTextureBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TextureBinding {
+    opaque _obj: *u8,
+}
+
+impl TextureBinding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TextureBinding { return TextureBinding { _obj: ptr }; }
+
+    fn texture_type(this) -> TextureType {
+        return texture_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureType\0"))));
+    }
+
+    fn texture_data_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureDataType\0"))));
+    }
+
+    fn is_depth_texture(this) -> bool {
+        return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDepthTexture\0"))) != (0 as i8);
+    }
+
+    fn array_length(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("arrayLength\0")));
+    }
+
+}
+
+// `MTLObjectPayloadBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct ObjectPayloadBinding {
+    opaque _obj: *u8,
+}
+
+impl ObjectPayloadBinding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> ObjectPayloadBinding { return ObjectPayloadBinding { _obj: ptr }; }
+
+    fn object_payload_alignment(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("objectPayloadAlignment\0")));
+    }
+
+    fn object_payload_data_size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("objectPayloadDataSize\0")));
+    }
+
+}
+
+// `MTLTensorBinding` (ObjC protocol). Non-owning handle; `opaque`, no drop.
+struct TensorBinding {
+    opaque _obj: *u8,
+}
+
+impl TensorBinding {
+    fn raw(this) -> *u8 { return this._obj; }
+
+    fn from_raw(ptr: *u8) -> TensorBinding { return TensorBinding { _obj: ptr }; }
+
+    fn tensor_data_type(this) -> TensorDataType {
+        return tensor_data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tensorDataType\0"))));
+    }
+
+    fn index_type(this) -> DataType {
+        return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("indexType\0"))));
+    }
+
+    fn dimensions(this) -> option::Option[TensorExtents] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("dimensions\0")));
+        if obj == { 0 as *u8 } {
+            return option::Option[TensorExtents]::None;
+        }
+        return option::some(TensorExtents::from_raw(obj));
     }
 
 }
@@ -12231,6 +15675,14 @@ impl AccelerationStructure {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructure { return AccelerationStructure { _obj: ptr }; }
+
+    fn size(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("size\0")));
+    }
+
+    fn gpu_resource_i_d(this) -> u64 {
+        return rt::msg_u64(this._obj, rt::sel(#str_ptr("gpuResourceID\0")));
+    }
 
 }
 
@@ -14342,16 +17794,16 @@ impl MTL4ComputeCommandEncoder {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setArgumentTable:\0")), argument_table.raw());
     }
 
-    fn build_acceleration_structure_descriptor_scratch_buffer(this, acceleration_structure: AccelerationStructure, descriptor: *u8, scratch_buffer: MTL4BufferRange) {
-        objc_msg_void_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("buildAccelerationStructure:descriptor:scratchBuffer:\0")), acceleration_structure.raw(), descriptor, scratch_buffer);
+    fn build_acceleration_structure_descriptor_scratch_buffer(this, acceleration_structure: AccelerationStructure, descriptor: MTL4AccelerationStructureDescriptor, scratch_buffer: MTL4BufferRange) {
+        objc_msg_void_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("buildAccelerationStructure:descriptor:scratchBuffer:\0")), acceleration_structure.raw(), descriptor.raw(), scratch_buffer);
     }
 
-    fn refit_acceleration_structure_descriptor_destination_scratch_buffer(this, source_acceleration_structure: AccelerationStructure, descriptor: *u8, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange) {
-        objc_msg_void_id_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:\0")), source_acceleration_structure.raw(), descriptor, destination_acceleration_structure.raw(), scratch_buffer);
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer(this, source_acceleration_structure: AccelerationStructure, descriptor: MTL4AccelerationStructureDescriptor, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange) {
+        objc_msg_void_id_id_id_MTL4BufferRange(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:\0")), source_acceleration_structure.raw(), descriptor.raw(), destination_acceleration_structure.raw(), scratch_buffer);
     }
 
-    fn refit_acceleration_structure_descriptor_destination_scratch_buffer_options(this, source_acceleration_structure: AccelerationStructure, descriptor: *u8, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange, options: u64) {
-        objc_msg_void_id_id_id_MTL4BufferRange_u64(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:options:\0")), source_acceleration_structure.raw(), descriptor, destination_acceleration_structure.raw(), scratch_buffer, options);
+    fn refit_acceleration_structure_descriptor_destination_scratch_buffer_options(this, source_acceleration_structure: AccelerationStructure, descriptor: MTL4AccelerationStructureDescriptor, destination_acceleration_structure: AccelerationStructure, scratch_buffer: MTL4BufferRange, options: u64) {
+        objc_msg_void_id_id_id_MTL4BufferRange_u64(this._obj, rt::sel(#str_ptr("refitAccelerationStructure:descriptor:destination:scratchBuffer:options:\0")), source_acceleration_structure.raw(), descriptor.raw(), destination_acceleration_structure.raw(), scratch_buffer, options);
     }
 
     fn copy_acceleration_structure_to_acceleration_structure(this, source_acceleration_structure: AccelerationStructure, destination_acceleration_structure: AccelerationStructure) {
