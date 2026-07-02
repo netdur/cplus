@@ -475,6 +475,11 @@ struct Emitter<'a> {
     /// Foreign namespaces mapped in via `--use` (namespace name -> its wrapper/
     /// enum sets + import alias), so `Gtk.Widget` resolves to `gtk4::Widget`.
     foreign: HashMap<String, Foreign>,
+    /// In-namespace boxed `<record>` names (those with a `glib:type-name`).
+    /// They're bound as opaque handles, but only where the C ABI passes them by
+    /// pointer (`c:type` ends with `*`) — a by-value value-struct must not become
+    /// a handle.
+    record_types: HashSet<String>,
     /// Foreign package aliases actually imported (referenced in the output) —
     /// the subset of `--use` that becomes a real dependency.
     imported: Vec<String>,
@@ -519,6 +524,14 @@ impl<'a> Emitter<'a> {
                 enum_types.insert(n.to_string(), "u32".to_string());
             }
         }
+        let mut record_types = HashSet::new();
+        for r in ns.children_named("record") {
+            if r.attr("glib:type-name").is_some() {
+                if let Some(n) = r.attr("name") {
+                    record_types.insert(n.to_string());
+                }
+            }
+        }
         Emitter {
             ns,
             out,
@@ -529,6 +542,7 @@ impl<'a> Emitter<'a> {
             seen_types: HashSet::new(),
             enum_types,
             foreign,
+            record_types,
             imported: Vec::new(),
         }
     }
@@ -583,6 +597,12 @@ impl<'a> Emitter<'a> {
         if let Some(wt) = self.wrapper_type_of(name) {
             return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(wt) });
         }
+        // Boxed record -> opaque handle, but ONLY where the ABI passes it by
+        // pointer (`c:type` ends with `*`). A by-value value-struct can't be a
+        // handle, so it stays a SKIP.
+        if self.record_types.contains(name) && ctype_is_pointer(t) {
+            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ident_type(name)) });
+        }
         None
     }
 
@@ -602,6 +622,10 @@ impl<'a> Emitter<'a> {
         self.out.push_str("\n// === Interfaces ===\n\n");
         for c in self.ns.children_named("interface") {
             self.emit_class(c);
+        }
+        self.out.push_str("\n// === Boxed records ===\n\n");
+        for r in self.ns.children_named("record") {
+            self.emit_record(r);
         }
         self.out.push_str("\n// === Classes ===\n\n");
         for c in self.ns.children_named("class") {
@@ -925,6 +949,40 @@ impl<'a> Emitter<'a> {
         self.out.push_str(&format!("impl {ty} {{\n{body}}}\n\n"));
     }
 
+    /// Bind a boxed `<record>` (e.g. GtkTextIter) as an opaque handle wrapper —
+    /// like a class but with no parent/interfaces/signals. Only records with a
+    /// `glib:type-name` reach here (plain value-structs are left as SKIPs, since
+    /// treating a by-value struct as a handle would be ABI-wrong).
+    fn emit_record(&mut self, r: &Node) {
+        let name = match r.attr("name") {
+            Some(n) => n,
+            None => return,
+        };
+        if r.attr("glib:type-name").is_none() {
+            return; // value struct, not a boxed handle
+        }
+        let ty = ident_type(name);
+        if !self.seen_types.insert(ty.clone()) {
+            self.skip("record", name, &format!("type `{ty}` already defined"));
+            return;
+        }
+        let mut methods: HashSet<String> = HashSet::new();
+        methods.insert("raw".to_string());
+        methods.insert("from_raw".to_string());
+        let mut body = String::new();
+        body.push_str("    fn raw(this) -> *u8 { return this._raw; }\n");
+        body.push_str(&format!("    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _raw: ptr }}; }}\n\n"));
+        for ctor in r.children_named("constructor") {
+            self.emit_ctor(&ty, ctor, &mut methods, &mut body);
+        }
+        for m in r.children_named("method") {
+            self.emit_method(name, m, &mut methods, &mut body);
+        }
+        self.out.push_str(&format!("// `{name}` — boxed record (non-owning handle).\n"));
+        self.out.push_str(&format!("struct {ty} {{\n    opaque _raw: *u8,\n}}\n\n"));
+        self.out.push_str(&format!("impl {ty} {{\n{body}}}\n\n"));
+    }
+
     fn emit_ctor(&mut self, ty: &str, ctor: &Node, methods: &mut HashSet<String>, body: &mut String) {
         let name = match ctor.attr("name") {
             Some(n) => n,
@@ -1162,6 +1220,13 @@ fn map_type(t: &Node) -> Option<Mapped> {
         "gunichar" => scalar("u32"),
         _ => None,
     }
+}
+
+/// True if a `<type>`'s `c:type` denotes a pointer (`GtkTextIter*`,
+/// `const GtkTextIter*`). Absent `c:type` -> not treated as a pointer (safe
+/// default: skip rather than mis-bind a by-value struct as a handle).
+fn ctype_is_pointer(t: &Node) -> bool {
+    t.attr("c:type").map(|c| c.trim_end().ends_with('*')).unwrap_or(false)
 }
 
 /// Human reason for a SKIP, naming the offending GIR type.
@@ -1484,6 +1549,44 @@ mod tests {
         // resolve (it is emitted as a wrapper struct).
         let out = emit(CLASSES);
         assert!(out.contains("struct Editable {"));
+    }
+
+    #[test]
+    fn boxed_record_binds_by_pointer_not_by_value() {
+        let src = r#"<repository><namespace name="Gtk">
+          <record name="TextIter" glib:type-name="GtkTextIter">
+            <method name="get_offset" c:identifier="gtk_text_iter_get_offset">
+              <return-value><type name="gint"/></return-value>
+              <parameters><instance-parameter name="iter"><type name="TextIter" c:type="GtkTextIter*"/></instance-parameter></parameters>
+            </method>
+          </record>
+          <record name="Border" glib:type-name="GtkBorder"/>
+          <class name="Buffer" c:type="GtkTextBuffer" glib:type-name="GtkTextBuffer">
+            <method name="place_cursor" c:identifier="gtk_text_buffer_place_cursor">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="buffer"><type name="Buffer"/></instance-parameter>
+                <parameter name="pos"><type name="TextIter" c:type="const GtkTextIter*"/></parameter>
+              </parameters>
+            </method>
+            <method name="set_border" c:identifier="gtk_text_buffer_set_border">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="buffer"><type name="Buffer"/></instance-parameter>
+                <parameter name="b"><type name="Border" c:type="GtkBorder"/></parameter>
+              </parameters>
+            </method>
+          </class></namespace></repository>"#;
+        let out = emit(src);
+        // boxed record -> wrapper struct with its methods
+        assert!(out.contains("struct TextIter {"));
+        assert!(out.contains("fn get_offset(this) -> i32 {"));
+        // pointer use resolves to the wrapper (by value)
+        assert!(out.contains("fn place_cursor(this, pos: TextIter) {"));
+        assert!(out.contains("__c_gtk_text_buffer_place_cursor(this._raw, pos.raw())"));
+        // by-value use of a boxed record must be a SKIP, never a mis-bound handle
+        assert!(out.contains("// SKIPPED method `Buffer::set_border`"));
+        assert!(!out.contains("fn set_border("));
     }
 
     #[test]
