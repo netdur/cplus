@@ -1,0 +1,24 @@
+[package]
+name    = "gobject"
+version = "0.0.1"
+edition = "2026"
+
+# Shared GObject runtime for generated (and hand-written) GTK-stack bindings —
+# the Linux/GNOME analog of `vendor/objc`. Where ObjC funnels every call through
+# one dynamic entry point (`objc_msgSend`), GObject does NOT: each method is its
+# own C symbol (`gtk_button_set_label`, ...), which a plain `extern fn` already
+# models. So this package has NO message-shim zoo. What it DOES centralize is the
+# part every GObject binding needs and that raw method calls don't give you:
+#
+#   runtime — GObject lifetime (ref / unref / floating-ref sink) + GType casts
+#   signal  — `g_signal_connect` callback wiring (the delegate/closure analog)
+#   bridge  — gchar* <-> Text (borrowed and transfer-full) string conversion
+#
+# `libgobject-2.0` / `libglib-2.0` carry these symbols; they land on the
+# consumer's link line. GTK/Adwaita bindings depend on THIS for lifecycle and
+# signals, exactly as AppKit/Metal depend on `vendor/objc`.
+[dependencies]
+stdlib = "*"
+
+[link]
+libs = ["gobject-2.0", "glib-2.0"]

@@ -1,0 +1,13 @@
+// gobject — shared GObject runtime for generated & hand-written GTK-stack
+// bindings. Package facade: consumers import the submodules directly
+// (`import "gobject/runtime" as g;`, `import "gobject/signal" as sig;`,
+// `import "gobject/bridge" as bridge;`), and this umbrella is the entry point
+// that re-exports them.
+//
+// The GObject analog of `vendor/objc`: `runtime` is lifetime + GType casts (the
+// class/ARC helpers, minus the msgSend zoo GObject doesn't need), `signal` is
+// callback wiring (the delegate analog), `bridge` is gchar* <-> Text.
+
+import "./runtime" as runtime;
+import "./signal" as signal;
+import "./bridge" as bridge;

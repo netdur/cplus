@@ -1,0 +1,65 @@
+// GObject signal wiring — the callback half of the runtime, analogous to the
+// delegate/closure synthesis in `vendor/objc/src/synthesis.cplus`. GTK has no
+// message zoo; instead behavior is attached by connecting a C handler to a named
+// signal. `g_signal_connect(obj, "clicked", cb, data)` is a C macro for
+// `g_signal_connect_data(obj, "clicked", cb, data, NULL, 0)`; the real exported
+// symbol is `g_signal_connect_data`, so that is what we bind.
+//
+// A handler is a plain C-ABI function pointer whose signature is fixed by the
+// signal: the receiving instance first, then the signal's own arguments, then
+// the `user_data` pointer last. Like ObjC's per-shape `objc_msgSend` aliases,
+// each distinct handler shape is a separate typed alias of the one underlying
+// symbol; the two most common shapes are provided here (void-returning and
+// gboolean-returning, instance + user_data). Add a shape by aliasing
+// `g_signal_connect_data` with the exact handler `fn(...)` type.
+//
+// `user_data` flows back to the handler untouched — stash a C+ context pointer
+// there (or via `runtime::set_data`) to recover state inside the callback.
+
+import "./runtime" as rt;
+
+// void handler(instance, user_data) — clicked / activate / destroy / notify::* .
+#[link_name = "g_signal_connect_data"]
+extern fn g_signal_connect_data_void(
+    instance: *u8,
+    detailed_signal: *u8,
+    c_handler: fn(*u8, *u8),
+    data: *u8,
+    destroy_data: *u8,
+    connect_flags: i32,
+) -> u64;
+
+// gboolean handler(instance, user_data) -> gboolean — close-request /
+// delete-event style, where returning TRUE stops further propagation.
+#[link_name = "g_signal_connect_data"]
+extern fn g_signal_connect_data_bool(
+    instance: *u8,
+    detailed_signal: *u8,
+    c_handler: fn(*u8, *u8) -> i32,
+    data: *u8,
+    destroy_data: *u8,
+    connect_flags: i32,
+) -> u64;
+
+// Connect a void-returning handler to a named signal. `signal` is NUL-terminated
+// (`#str_ptr("clicked\0")`). Returns the handler id (0 on failure), usable with
+// g_signal_handler_disconnect. No GClosureNotify / connect flags (the common case).
+fn connect(instance: *u8, signal: *u8, handler: fn(*u8, *u8), user: *u8) -> u64 {
+    return { g_signal_connect_data_void(instance, signal, handler, user, { 0 as *u8 }, 0 as i32) };
+}
+
+// Connect a gboolean-returning handler (return TRUE to halt propagation).
+fn connect_bool(instance: *u8, signal: *u8, handler: fn(*u8, *u8) -> i32, user: *u8) -> u64 {
+    return { g_signal_connect_data_bool(instance, signal, handler, user, { 0 as *u8 }, 0 as i32) };
+}
+
+// --- Disconnection (libgobject-2.0) ---
+
+#[link_name = "g_signal_handler_disconnect"]
+extern fn g_signal_handler_disconnect(instance: *u8, handler_id: u64);
+
+// Tear down a connection made by `connect` / `connect_bool`, by its handler id.
+fn disconnect(instance: *u8, handler_id: u64) {
+    { g_signal_handler_disconnect(instance, handler_id); }
+    return;
+}

@@ -1,0 +1,122 @@
+// Framework-agnostic GObject runtime: lifetime + type-cast primitives that every
+// GObject-based binding (GTK, Adwaita, ...) builds on, so each one stops
+// re-declaring `g_object_ref` / `g_type_*` inline. The GObject analog of the
+// class/selector/ARC helpers in `vendor/objc/src/runtime.cplus` — minus the
+// `objc_msgSend` shims, which GObject does not need (every method is its own
+// C symbol).
+//
+// Ownership model. A GObject is reference-counted like an ObjC object, but with
+// one extra state ObjC lacks: a *floating* reference. Freshly-constructed
+// `GtkWidget`s (and any `GInitiallyUnowned`) start with a floating ref that the
+// container "sinks" when you add the widget to it. So the +1/drop model is:
+//   - a widget you hand to a container: let the container sink it; do nothing.
+//   - a widget you keep yourself: `object_ref_sink` to claim ownership, and
+//     `object_unref` when done.
+//   - a plain GObject (non-floating): `object_ref` / `object_unref` as usual.
+
+// --- GObject lifetime (libgobject-2.0) ---
+
+#[link_name = "g_object_ref"]
+extern fn g_object_ref(obj: *u8) -> *u8;
+
+#[link_name = "g_object_unref"]
+extern fn g_object_unref(obj: *u8);
+
+#[link_name = "g_object_ref_sink"]
+extern fn g_object_ref_sink(obj: *u8) -> *u8;
+
+#[link_name = "g_object_is_floating"]
+extern fn g_object_is_floating(obj: *u8) -> i32;
+
+// Increment the reference count (+1). Returns the same handle for chaining.
+fn object_ref(obj: *u8) -> *u8 {
+    return { g_object_ref(obj) };
+}
+
+// Decrement the reference count; frees the object when it reaches zero.
+fn object_unref(obj: *u8) {
+    { g_object_unref(obj); }
+    return;
+}
+
+// Claim ownership of a possibly-floating object: sinks the floating ref if
+// present (turning it into a real +1 you own), otherwise takes a normal +1.
+// This is the call to make when C+ keeps a widget rather than handing it to a
+// container. Returns the same handle for chaining.
+fn object_ref_sink(obj: *u8) -> *u8 {
+    return { g_object_ref_sink(obj) };
+}
+
+// True while `obj` still carries an un-sunk floating reference (nobody owns it
+// yet). A container `add`/`append` sinks it; after that this is false.
+fn object_is_floating(obj: *u8) -> bool {
+    return { g_object_is_floating(obj) } != (0 as i32);
+}
+
+// --- Per-instance user data (libgobject-2.0) ---
+// Keyed opaque slots on any GObject — the standard place to stash a C+ pointer
+// (an agent id, a callback context) so a signal handler can recover it later.
+
+#[link_name = "g_object_set_data"]
+extern fn g_object_set_data(obj: *u8, key: *u8, data: *u8);
+
+#[link_name = "g_object_get_data"]
+extern fn g_object_get_data(obj: *u8, key: *u8) -> *u8;
+
+// Associate `data` with `obj` under NUL-terminated `key` (e.g. `#str_ptr("id\0")`).
+fn set_data(obj: *u8, key: *u8, data: *u8) {
+    { g_object_set_data(obj, key, data); }
+    return;
+}
+
+// Retrieve data previously stored under `key` (null if unset).
+fn get_data(obj: *u8, key: *u8) -> *u8 {
+    return { g_object_get_data(obj, key) };
+}
+
+// --- GType identity & safe casting (libgobject-2.0) ---
+// GObject's `GTK_BUTTON(w)`-style casts are C macros, not symbols. Upcasts are
+// free (a GtkButton* IS a GtkWidget*/GObject*). A *downcast* must be checked:
+// resolve the target GType by name and test membership before treating the
+// handle as that type.
+
+#[link_name = "g_type_from_name"]
+extern fn g_type_from_name(name: *u8) -> usize;
+
+#[link_name = "g_type_check_instance_is_a"]
+extern fn g_type_check_instance_is_a(instance: *u8, iface_type: usize) -> i32;
+
+#[link_name = "g_type_name_from_instance"]
+extern fn g_type_name_from_instance(instance: *u8) -> *u8;
+
+// Look up the registered GType id for a type name (`#str_ptr("GtkButton\0")`).
+// Zero if the type is not registered (its module was never loaded).
+fn type_from_name(name: *u8) -> usize {
+    return { g_type_from_name(name) };
+}
+
+// True iff `instance` is (a subtype of) the named GObject type — the runtime
+// half of a safe downcast. `type_name` is NUL-terminated (`#str_ptr("GtkLabel\0")`).
+fn is_a(instance: *u8, type_name: *u8) -> bool {
+    let gtype: usize = { g_type_from_name(type_name) };
+    if gtype == (0 as usize) { return false; }
+    return { g_type_check_instance_is_a(instance, gtype) } != (0 as i32);
+}
+
+// The runtime type name of an instance (borrowed `const gchar*`; do not free).
+fn instance_type_name(instance: *u8) -> *u8 {
+    return { g_type_name_from_instance(instance) };
+}
+
+// --- GLib allocator (libglib-2.0) ---
+// GObject APIs that return owned strings/buffers (transfer-full) must be freed
+// with `g_free`, NOT libc `free`. The bridge uses this for transfer-full copies.
+
+#[link_name = "g_free"]
+extern fn g_free(p: *u8);
+
+// Free a block returned by a glib/GObject API (transfer-full result).
+fn free(p: *u8) {
+    { g_free(p); }
+    return;
+}

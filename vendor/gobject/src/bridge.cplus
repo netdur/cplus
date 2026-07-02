@@ -1,0 +1,74 @@
+// C+ <-> GObject string bridge — the GObject analog of `vendor/objc/src/bridge.cplus`.
+// GTK-stack functions take and return `const gchar*` (NUL-terminated, UTF-8).
+// C+ `str` is a fat pointer (ptr + len, not guaranteed NUL-terminated); `Text`
+// is an owned heap copy. These convert between the two worlds.
+//
+// Ownership rules (GObject "transfer" annotations spelled out):
+//   cstr_to_text        — transfer-none return: borrow the callee's string, copy
+//                         out; do NOT free the source.
+//   cstr_to_text_full   — transfer-full return: copy out, then `g_free` the
+//                         source (it was allocated for us).
+//   cstr_to_str_unsafe  — borrow as a `str` view (NOT null-safe; source must
+//                         outlive the view).
+//   str_to_cstring      — allocate a NUL-terminated copy for a callee; release
+//                         with `free_cstring` once the call has copied it (GTK
+//                         setters copy internally, so typically right after).
+
+import "./runtime" as rt;
+import "stdlib/text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Length of a NUL-terminated C string (bytes, excluding the NUL).
+fn c_strlen(p: *u8) -> usize {
+    var n: usize = 0 as usize;
+    loop {
+        let b: u8 = { *(p + n) };
+        if b == (0 as u8) { return n; }
+        n = n +% (1 as usize);
+    }
+    return n;
+}
+
+// Borrowed `const gchar*` (transfer-none) -> owned Text. Null-safe: "" for null.
+fn cstr_to_text(p: *u8) -> text::Text {
+    if p == { 0 as *u8 } { return text::from_str(""); }
+    let len: usize = c_strlen(p);
+    return text::from_str({ #str_from_raw_parts(p, len) });
+}
+
+// Owned `gchar*` (transfer-full) -> owned Text, then `g_free` the source. Use for
+// APIs documented "transfer full" / "caller must g_free" (e.g. gtk_*_dup_*,
+// g_file_get_path). Null-safe. The copy happens before the free, so the returned
+// Text is independent of the freed buffer.
+fn cstr_to_text_full(p: *u8) -> text::Text {
+    if p == { 0 as *u8 } { return text::from_str(""); }
+    let len: usize = c_strlen(p);
+    let owned: text::Text = text::from_str({ #str_from_raw_parts(p, len) });
+    rt::free(p);
+    return owned;
+}
+
+// Borrowed `const gchar*` -> str fat-pointer view (borrows p; NOT null-safe).
+fn cstr_to_str_unsafe(p: *u8) -> str {
+    return { #str_from_raw_parts(p, c_strlen(p)) };
+}
+
+// Allocate a NUL-terminated copy of a C+ `str` for a GTK callee. Free with
+// `free_cstring` once the callee has copied it (GTK setters copy internally).
+fn str_to_cstring(s: str) -> *u8 {
+    let len: usize = { #str_len(s) };
+    let p: *u8 = { malloc(len +% (1 as usize)) };
+    { memcpy(p, #str_ptr(s), len); }
+    { *(p + len) = 0 as u8; }
+    return p;
+}
+
+// Free a `str_to_cstring` result (libc `free` — it was libc-`malloc`'d here, not
+// glib-allocated; do not confuse with `runtime::free`/`g_free`).
+fn free_cstring(p: *u8) {
+    { free(p); }
+    return;
+}
