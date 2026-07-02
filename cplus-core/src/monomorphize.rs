@@ -346,6 +346,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => TypeKind::FnPtr {
             params: params
@@ -353,6 +354,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
                 .map(|p| ty_to_type_ast(p, type_name_of))
                 .collect(),
             param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
             return_type: if matches!(**return_type, Ty::Unit) {
                 None
             } else {
@@ -596,6 +598,7 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => TypeKind::FnPtr {
             params: params
@@ -603,6 +606,7 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
                 .map(|p| rewrite_self_in_type(p, mangled_name))
                 .collect(),
             param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
             return_type: return_type
                 .as_ref()
                 .map(|rt| Box::new(rewrite_self_in_type(rt, mangled_name))),
@@ -919,6 +923,7 @@ fn type_ast_to_ty_with_subst(
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let params: Option<Vec<Ty>> = params
@@ -932,6 +937,7 @@ fn type_ast_to_ty_with_subst(
             Some(Ty::FnPtr {
                 params: params?,
                 param_takes: param_takes.clone(),
+                param_refs: param_refs.clone(),
                 return_type: Box::new(ret),
             })
         }
@@ -971,10 +977,12 @@ fn subst_ty_plain(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty 
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => Ty::FnPtr {
             params: params.iter().map(|p| subst_ty_plain(p, subst)).collect(),
             param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
             return_type: Box::new(subst_ty_plain(return_type, subst)),
         },
         other => other.clone(),
@@ -1468,6 +1476,7 @@ fn subst_type_ast(
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => TypeKind::FnPtr {
             params: params
@@ -1475,6 +1484,7 @@ fn subst_type_ast(
                 .map(|p| subst_type_ast(p, subst, type_name_of, struct_lookup))
                 .collect(),
             param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
             return_type: return_type
                 .as_ref()
                 .map(|rt| Box::new(subst_type_ast(rt, subst, type_name_of, struct_lookup))),
@@ -3127,6 +3137,7 @@ fn mangle_type_ast_arg(t: &Type) -> String {
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let mut s = String::from("fn");
@@ -3134,6 +3145,8 @@ fn mangle_type_ast_arg(t: &Type) -> String {
                 s.push('_');
                 if param_takes.get(i).copied().unwrap_or(false) {
                     s.push_str("take_");
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    s.push_str("ref_");
                 }
                 s.push_str(&mangle_type_ast_arg(p));
             }
@@ -3195,6 +3208,7 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let mut s = String::from("fn");
@@ -3202,6 +3216,8 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
                 s.push('_');
                 if param_takes.get(i).copied().unwrap_or(false) {
                     s.push_str("take_");
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    s.push_str("ref_");
                 }
                 s.push_str(&mangle_ty(p, type_name_of));
             }

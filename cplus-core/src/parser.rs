@@ -1643,26 +1643,23 @@ impl Parser {
                 self.expect(&TokenKind::LParen, "`(` after `fn` in fn-pointer type")?;
                 let mut params: Vec<Type> = Vec::new();
                 let mut param_takes: Vec<bool> = Vec::new();
+                let mut param_refs: Vec<bool> = Vec::new();
                 while !self.at(&TokenKind::RParen) {
                     // v0.0.24 #9: a fn-pointer param may carry the `take`
-                    // (consuming) marker — `fn(take R)`. A bare `fn(R)` param is
-                    // a read-only borrow. `ref` write-back params cannot ride a
-                    // by-value fn-pointer and are rejected here.
-                    if matches!(self.peek_kind(), TokenKind::Ident(s) if s == "ref")
+                    // (consuming) marker — `fn(take R)`. Handle-projection
+                    // Tier 2: or the `ref` (exclusive write-back) marker —
+                    // `fn(ref R)`, pointer-passed like a named `ref x: T`
+                    // param. A bare `fn(R)` param is a read-only borrow.
+                    let refs = matches!(self.peek_kind(), TokenKind::Ident(s) if s == "ref")
                         && matches!(
                             self.peek_kind_n(1),
                             TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
-                        )
-                    {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                found: "`ref`".into(),
-                                expected: "a fn-pointer parameter type — `ref` (write-back) cannot ride a `fn(...)` pointer; use a bare type or `take`",
-                            },
-                            span: self.peek().span,
-                        });
+                        );
+                    if refs {
+                        self.bump();
                     }
-                    let takes = matches!(self.peek_kind(), TokenKind::Ident(s) if s == "take")
+                    let takes = !refs
+                        && matches!(self.peek_kind(), TokenKind::Ident(s) if s == "take")
                         && matches!(
                             self.peek_kind_n(1),
                             TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
@@ -1672,6 +1669,7 @@ impl Parser {
                     }
                     params.push(self.parse_type()?);
                     param_takes.push(takes);
+                    param_refs.push(refs);
                     if !self.eat(&TokenKind::Comma) {
                         break;
                     }
@@ -1689,6 +1687,7 @@ impl Parser {
                     kind: TypeKind::FnPtr {
                         params,
                         param_takes,
+                        param_refs,
                         return_type,
                     },
                     span: start.merge(end_span),

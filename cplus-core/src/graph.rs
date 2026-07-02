@@ -2192,6 +2192,7 @@ pub fn type_to_string(t: &Type) -> String {
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let parts: Vec<String> = params
@@ -2200,6 +2201,8 @@ pub fn type_to_string(t: &Type) -> String {
                 .map(|(i, p)| {
                     let mark = if param_takes.get(i).copied().unwrap_or(false) {
                         "take "
+                    } else if param_refs.get(i).copied().unwrap_or(false) {
+                        "ref "
                     } else {
                         ""
                     };

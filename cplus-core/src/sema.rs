@@ -105,6 +105,10 @@ pub enum Ty {
         /// `false` = bare read-only borrow. Same length as `params`. `fn(R)`
         /// borrows its arg (caller keeps ownership); `fn(take R)` consumes it.
         param_takes: Vec<bool>,
+        /// Handle-projection Tier 2: per-param `ref` marker — `true` =
+        /// `fn(ref R)` (exclusive write-back, pointer-passed for every type).
+        /// Same length as `params`; never `true` where `param_takes` is.
+        param_refs: Vec<bool>,
         return_type: Box<Ty>,
     },
     Enum(EnumId),
@@ -1948,6 +1952,7 @@ impl SemaCx<'_> {
             Ty::FnPtr {
                 params,
                 param_takes,
+                param_refs,
                 return_type,
             } => {
                 let ps = params
@@ -1956,6 +1961,8 @@ impl SemaCx<'_> {
                     .map(|(i, p)| {
                         let mark = if param_takes.get(i).copied().unwrap_or(false) {
                             "take "
+                        } else if param_refs.get(i).copied().unwrap_or(false) {
+                            "ref "
                         } else {
                             ""
                         };
@@ -8613,6 +8620,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if let Ty::FnPtr {
                     params,
                     param_takes,
+                    param_refs,
                     return_type,
                 } = info.ty.clone()
                 {
@@ -8650,13 +8658,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // keeps ownership); a `fn(take R)` param consumes it. Drive
                     // the move-check off the per-param `take` marker — a `take`
                     // arg is consumed (E0335 use-after-move, E0509/E0337 partial
-                    // moves), a bare arg is only borrowed.
+                    // moves), a bare arg is only borrowed. A `fn(ref R)` param
+                    // writes back, so its arg must be a `var` place (E0328,
+                    // enforced by check_arg_with_move off `mutable`).
                     for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
                         self.check_arg_with_move(
                             a,
                             &ParamSig {
                                 ty: p.clone(),
-                                mutable: false,
+                                mutable: param_refs.get(i).copied().unwrap_or(false),
                                 move_: param_takes.get(i).copied().unwrap_or(false),
                                 borrow_: false,
                             },
@@ -8679,6 +8689,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     if let Ty::FnPtr {
                         params,
                         param_takes,
+                        param_refs,
                         return_type,
                     } = ft
                     {
@@ -8705,14 +8716,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             }
                             return *return_type;
                         }
-                        // v0.0.24 #9: consume `take` args, borrow bare args (see
-                        // the Ident fn-pointer branch above).
+                        // v0.0.24 #9: consume `take` args, borrow bare args,
+                        // require a `var` place for `ref` args (see the Ident
+                        // fn-pointer branch above).
                         for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
                             self.check_arg_with_move(
                                 a,
                                 &ParamSig {
                                     ty: p.clone(),
-                                    mutable: false,
+                                    mutable: param_refs.get(i).copied().unwrap_or(false),
                                     move_: param_takes.get(i).copied().unwrap_or(false),
                                     borrow_: false,
                                 },
@@ -9081,6 +9093,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let expected_f = Ty::FnPtr {
                 params: vec![],
                 param_takes: vec![],
+                param_refs: vec![],
                 return_type: Box::new(o_ty.clone()),
             };
             let _f_ty = self.check_expr(&args[0], Some(expected_f));
@@ -9431,6 +9444,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let expected_f = Ty::FnPtr {
             params: vec![i_ty.clone()],
             param_takes: vec![true],
+            param_refs: vec![false],
             return_type: Box::new(o_ty.clone()),
         };
         let _f = self.check_expr(&args[1], Some(expected_f));
@@ -13219,6 +13233,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             TypeKind::FnPtr {
                 params,
                 param_takes,
+                param_refs,
                 return_type,
             } => {
                 let resolved_params: Vec<Ty> =
@@ -13230,6 +13245,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 return Ty::FnPtr {
                     params: resolved_params,
                     param_takes: param_takes.clone(),
+                    param_refs: param_refs.clone(),
                     return_type: Box::new(resolved_ret),
                 };
             }
@@ -13703,6 +13719,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             Ty::FnPtr {
                 params,
                 param_takes,
+                param_refs,
                 return_type,
             } => {
                 let params = params
@@ -13713,6 +13730,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 Ty::FnPtr {
                     params,
                     param_takes: param_takes.clone(),
+                    param_refs: param_refs.clone(),
                     return_type,
                 }
             }
@@ -14118,6 +14136,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             TypeKind::FnPtr {
                 params,
                 param_takes,
+                param_refs,
                 return_type,
             } => {
                 let resolved_params: Vec<Ty> = params
@@ -14131,6 +14150,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 Ty::FnPtr {
                     params: resolved_params,
                     param_takes: param_takes.clone(),
+                    param_refs: param_refs.clone(),
                     return_type: Box::new(resolved_ret),
                 }
             }
@@ -14275,29 +14295,38 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if want_fn_ptr {
                 // v0.0.24 #9: a fn-pointer type carries each param's ownership
                 // convention — `fn(R)` borrows its arg (caller keeps ownership),
-                // `fn(take R)` consumes it. The pointed-to function's param
-                // conventions must MATCH the expected fn-pointer type's markers:
-                // a bare param ↔ a `fn(R)` borrow slot, a `take` param ↔ a
-                // `fn(take R)` consume slot. A `ref` (write-back) param cannot
-                // ride a by-value fn-pointer at all. (`borrow` is removed — a
-                // bare parameter IS the read-only borrow.)
-                let expected_takes: Vec<bool> = match expected {
-                    Some(Ty::FnPtr { param_takes, .. }) => param_takes.clone(),
-                    _ => Vec::new(),
+                // `fn(take R)` consumes it, `fn(ref R)` writes back through a
+                // pointer (handle-projection Tier 2). The pointed-to function's
+                // param conventions must MATCH the expected fn-pointer type's
+                // markers: a bare param ↔ a `fn(R)` borrow slot, a `take` param
+                // ↔ a `fn(take R)` consume slot, a `ref` param ↔ a `fn(ref R)`
+                // slot. (`borrow` is removed — a bare parameter IS the
+                // read-only borrow.)
+                let (expected_takes, expected_refs): (Vec<bool>, Vec<bool>) = match expected {
+                    Some(Ty::FnPtr {
+                        param_takes,
+                        param_refs,
+                        ..
+                    }) => (param_takes.clone(), param_refs.clone()),
+                    _ => (Vec::new(), Vec::new()),
                 };
-                // The pointed-to function's param conventions must match the
-                // fn-pointer type's per-param markers. A bare param fits a
-                // borrowing `fn(R)` slot (caller keeps ownership; non-Copy is
-                // passed by pointer); a `take` param fits a `fn(take R)` slot
-                // (callee consumes; by value). A Copy type fits any slot (Copy
-                // has no ownership). A `ref` (write-back) param cannot ride a
-                // fn-pointer.
+                // A Copy type fits either ownership slot (bare/`take` — Copy has
+                // no ownership), but the `ref` marker must match EXACTLY for
+                // every type: a `ref` param is pointer-passed and writes back,
+                // so a mode mismatch is an ABI mismatch (a Copy `ref n: i32`
+                // lowers to `i32*`, not `i32`).
                 let bad = sig.params.iter().enumerate().find_map(|(i, p)| {
-                    if p.mutable {
-                        return Some((
-                            i,
-                            "is `ref` (write-back), which a `fn(...)` type cannot express".to_string(),
-                        ));
+                    let want_ref = expected_refs.get(i).copied().unwrap_or(false);
+                    if p.mutable != want_ref {
+                        let msg = if p.mutable {
+                            "is `ref` (write-back, pointer-passed), but the expected fn-pointer slot is not `ref` — write `fn(ref R)`"
+                        } else {
+                            "is not `ref`, but the expected fn-pointer slot is `fn(ref R)` — make it a `ref` parameter"
+                        };
+                        return Some((i, msg.to_string()));
+                    }
+                    if want_ref {
+                        return None; // ref slots matched; no take/borrow check
                     }
                     if self.is_copy(&p.ty) {
                         return None; // Copy: no ownership, fits any slot
@@ -14323,16 +14352,19 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 let params: Vec<Ty> = sig.params.iter().map(|p| p.ty.clone()).collect();
                 // The coerced value's type takes the expected slot's markers (so
-                // the binding type-checks); for Copy params the marker is
-                // cosmetic, for non-Copy it equals the function's `take`.
+                // the binding type-checks); for Copy params the take-marker is
+                // cosmetic, for non-Copy it equals the function's `take`. The
+                // ref-marker always equals the function's own (matched above).
                 let param_takes: Vec<bool> = if expected_takes.len() == params.len() {
                     expected_takes
                 } else {
                     sig.params.iter().map(|p| p.move_).collect()
                 };
+                let param_refs: Vec<bool> = sig.params.iter().map(|p| p.mutable).collect();
                 return Ty::FnPtr {
                     params,
                     param_takes,
+                    param_refs,
                     return_type: Box::new(sig.return_type),
                 };
             }
@@ -15011,6 +15043,7 @@ fn ty_display(ty: &Ty) -> String {
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let params_s = params
@@ -15019,6 +15052,8 @@ fn ty_display(ty: &Ty) -> String {
                 .map(|(i, p)| {
                     let mark = if param_takes.get(i).copied().unwrap_or(false) {
                         "take "
+                    } else if param_refs.get(i).copied().unwrap_or(false) {
+                        "ref "
                     } else {
                         ""
                     };
@@ -15096,6 +15131,7 @@ fn substitute_param_in_type_ast_with_tables(
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => TypeKind::FnPtr {
             params: params
@@ -15103,6 +15139,7 @@ fn substitute_param_in_type_ast_with_tables(
                 .map(|p| substitute_param_in_type_ast_with_tables(p, subst, structs, enums))
                 .collect(),
             param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
             return_type: return_type.as_ref().map(|rt| {
                 Box::new(substitute_param_in_type_ast_with_tables(
                     rt, subst, structs, enums,
@@ -15220,6 +15257,7 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let mut s = String::from("fn");
@@ -15227,6 +15265,8 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
                 s.push('_');
                 if param_takes.get(i).copied().unwrap_or(false) {
                     s.push_str("take_");
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    s.push_str("ref_");
                 }
                 s.push_str(&mangle_ty_for_name(p, structs, enums));
             }
@@ -15287,15 +15327,18 @@ fn ty_eq_modulo_self(
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => match impl_ty {
             Ty::FnPtr {
                 params: bparams,
                 param_takes: btakes,
+                param_refs: brefs,
                 return_type: breturn,
             } => {
                 params.len() == bparams.len()
                     && param_takes == btakes
+                    && param_refs == brefs
                     && params
                         .iter()
                         .zip(bparams.iter())
@@ -17116,26 +17159,33 @@ fn main() -> i32 { return 0; }\n";
         // records each param's `take` marker. So a function fits a fn-pointer
         // slot only when it is by-value-compatible AND its convention matches:
         //   - a `take` (consuming) non-Copy param fits a `fn(take R)` slot;
-        //   - a Copy-typed param fits any slot (Copy has no ownership);
+        //   - a Copy-typed param fits either ownership slot (Copy has no
+        //     ownership);
         //   - a bare non-Copy param is a read-only borrow passed BY POINTER, so
         //     it cannot ride a by-value fn-pointer at all;
-        //   - a `ref` (write-back) param cannot either.
+        //   - a `ref` (write-back) param fits ONLY a `fn(ref R)` slot
+        //     (handle-projection Tier 2) — for every type, including Copy,
+        //     since a ref slot is pointer-passed (`ref n: i32` ⇒ `i32*`).
         const DECLS: &str = "\
 struct R { tag: i32 }\n\
 impl R { fn drop(ref this) { return; } }\n\
 fn peek(r: R) -> i32 { return r.tag; }\n\
 fn pm(ref r: R) -> i32 { return 0; }\n\
 fn sink(take r: R) -> i32 { return 0; }\n\
-fn cnt(n: i32) -> i32 { return n; }\n";
+fn cnt(n: i32) -> i32 { return n; }\n\
+fn bump(ref n: i32) -> i32 { return 0; }\n";
         let borrow_slot = |target: &str| {
             format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {target}; return; }}\nfn main() -> i32 {{ return 0; }}")
         };
         let take_slot = |target: &str| {
             format!("{DECLS}fn u() {{ let _f: fn(take R) -> i32 = {target}; return; }}\nfn main() -> i32 {{ return 0; }}")
         };
+        let ref_slot = |target: &str| {
+            format!("{DECLS}fn u() {{ let _f: fn(ref R) -> i32 = {target}; return; }}\nfn main() -> i32 {{ return 0; }}")
+        };
         // Marker must match: a bare param fits a borrowing `fn(R)` slot (the
         // non-Copy value rides by pointer), a `take` param fits a `fn(take R)`
-        // slot.
+        // slot, a `ref` param fits a `fn(ref R)` slot.
         assert!(
             errors(&borrow_slot("peek")).is_empty(),
             "bare param must fit a borrowing `fn(R)` slot"
@@ -17143,6 +17193,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert!(
             errors(&take_slot("sink")).is_empty(),
             "take param must fit a `fn(take R)` slot"
+        );
+        assert!(
+            errors(&ref_slot("pm")).is_empty(),
+            "ref param must fit a `fn(ref R)` slot"
         );
         // Mismatched markers are rejected in both directions.
         assert!(
@@ -17153,14 +17207,68 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             errors(&borrow_slot("sink")).contains(&"E0312"),
             "take worker must not fit a borrowing `fn(R)` slot"
         );
-        // `ref` write-back can't ride a fn-pointer at all.
+        // `ref` is exact-match: a ref param rejects a non-ref slot, and a
+        // non-ref param rejects a ref slot.
         assert!(
             errors(&borrow_slot("pm")).contains(&"E0312"),
-            "`ref` param must reject"
+            "`ref` param must not fit a borrowing `fn(R)` slot"
         );
-        // A Copy-typed param rides any slot (Copy has no ownership).
+        assert!(
+            errors(&take_slot("pm")).contains(&"E0312"),
+            "`ref` param must not fit a `fn(take R)` slot"
+        );
+        assert!(
+            errors(&ref_slot("peek")).contains(&"E0312"),
+            "bare param must not fit a `fn(ref R)` slot"
+        );
+        assert!(
+            errors(&ref_slot("sink")).contains(&"E0312"),
+            "take param must not fit a `fn(ref R)` slot"
+        );
+        // A Copy-typed param rides either ownership slot (Copy has no
+        // ownership) — but the ref marker still must match exactly (ABI).
         let prog_copy = format!("{DECLS}fn u() {{ let _f: fn(i32) -> i32 = cnt; return; }}\nfn main() -> i32 {{ return 0; }}");
         assert!(errors(&prog_copy).is_empty(), "Copy param must be accepted");
+        let prog_copy_ref = format!("{DECLS}fn u() {{ let _f: fn(ref i32) -> i32 = bump; return; }}\nfn main() -> i32 {{ return 0; }}");
+        assert!(
+            errors(&prog_copy_ref).is_empty(),
+            "Copy ref param must fit a `fn(ref i32)` slot"
+        );
+        let prog_copy_ref_mismatch = format!("{DECLS}fn u() {{ let _f: fn(ref i32) -> i32 = cnt; return; }}\nfn main() -> i32 {{ return 0; }}");
+        assert!(
+            errors(&prog_copy_ref_mismatch).contains(&"E0312"),
+            "bare Copy param must not fit a `fn(ref i32)` slot (pointer-passed)"
+        );
+        let prog_copy_bare_mismatch = format!("{DECLS}fn u() {{ let _f: fn(i32) -> i32 = bump; return; }}\nfn main() -> i32 {{ return 0; }}");
+        assert!(
+            errors(&prog_copy_bare_mismatch).contains(&"E0312"),
+            "Copy ref param must not fit a bare `fn(i32)` slot (pointer-passed)"
+        );
+    }
+
+    #[test]
+    fn fn_pointer_ref_param_call_requires_var_place() {
+        // Handle-projection Tier 2: calling through a `fn(ref R)` pointer
+        // writes back to the caller's place, so the argument must be a `var`
+        // (writable) place — same E0328 rule as a named `ref` param.
+        const DECLS: &str = "\
+struct R { tag: i32 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+fn pm(ref r: R) -> i32 { return 0; }\n";
+        let ok = format!(
+            "{DECLS}fn u() {{ let f: fn(ref R) -> i32 = pm; var r: R = R {{ tag: 1 }}; let _n: i32 = f(r); return; }}\nfn main() -> i32 {{ return 0; }}"
+        );
+        assert!(
+            errors(&ok).is_empty(),
+            "var arg through a `fn(ref R)` pointer must be accepted"
+        );
+        let frozen = format!(
+            "{DECLS}fn u() {{ let f: fn(ref R) -> i32 = pm; let r: R = R {{ tag: 1 }}; let _n: i32 = f(r); return; }}\nfn main() -> i32 {{ return 0; }}"
+        );
+        assert!(
+            errors(&frozen).contains(&"E0328"),
+            "let arg through a `fn(ref R)` pointer must reject with E0328"
+        );
     }
 
     // ---- `f16` literal suffix ----
@@ -22166,6 +22274,22 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct Actions { on_click: fn(i32) -> i32 } \
              fn click(x: i32) -> i32 { return x +% 1; } \
              fn main() -> i32 { let a: Actions = Actions { on_click: click }; return a.on_click(5); }",
+        );
+    }
+
+    #[test]
+    fn fn_pointer_ref_param_type_parses_and_calls() {
+        // Handle-projection Tier 2: `fn(ref R)` parses in a let annotation,
+        // coerces from a matching `ref`-param fn, and is callable with a
+        // `var` place arg — including through a struct field.
+        assert_clean(
+            "fn bump(ref x: i32) { x = x +% 1; return; } \
+             fn main() -> i32 { let f: fn(ref i32) = bump; var n: i32 = 1; f(n); return 0; }",
+        );
+        assert_clean(
+            "struct Hooks { mutate: fn(ref i32) } \
+             fn bump(ref x: i32) { x = x +% 1; return; } \
+             fn main() -> i32 { let h: Hooks = Hooks { mutate: bump }; var n: i32 = 1; h.mutate(n); return 0; }",
         );
     }
 

@@ -2781,17 +2781,40 @@ impl Analyzer<'_> {
         }
         self.apply_expr(callee, state);
 
-        let move_flags: Option<Vec<bool>> = match &callee.kind {
+        let mut move_flags: Option<Vec<bool>> = match &callee.kind {
             ExprKind::Ident(name) => self.sigs.fn_param_moves(name).cloned(),
             _ => None,
         };
         // Slice 6BC.1: per-parameter `ref` flags for the callee, parallel
         // to `move_flags`. None for non-Ident callees and unknown fns —
         // matches the conservative gate Phase 5 already applies.
-        let mut_flags: Option<Vec<bool>> = match &callee.kind {
+        let mut mut_flags: Option<Vec<bool>> = match &callee.kind {
             ExprKind::Ident(name) => self.sigs.fn_param_muts(name).cloned(),
             _ => None,
         };
+        // Handle-projection Tier 2: an indirect call through a fn-pointer
+        // local. The callee ident isn't a named fn, but its recorded binding
+        // type carries the per-param `take`/`ref` markers — source the same
+        // flags from there so intra-call conflicts (E0380/E0381/E0382/E0374)
+        // and move transitions fire identically for `f(ref x, x)` whether `f`
+        // is a named fn or a fn-pointer.
+        if move_flags.is_none() && mut_flags.is_none() {
+            if let ExprKind::Ident(name) = &callee.kind {
+                if let Some(Type {
+                    kind:
+                        TypeKind::FnPtr {
+                            param_takes,
+                            param_refs,
+                            ..
+                        },
+                    ..
+                }) = self.binding_type(name)
+                {
+                    move_flags = Some(param_takes.clone());
+                    mut_flags = Some(param_refs.clone());
+                }
+            }
+        }
 
         // Slice 6BC.3 — intra-call conflict detection, place-aware.
         // Builds a per-arg `Claim` (place + kind) and walks pairs. The
@@ -4594,6 +4617,50 @@ fn caller() {
         assert_eq!(
             count, 1,
             "expected exactly one E0380, got {count}: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn e0380_fires_through_fn_pointer_ref_slots() {
+        // Handle-projection Tier 2: intra-call conflict detection sources the
+        // per-param `take`/`ref` flags from a fn-pointer local's binding type,
+        // so `f(y, y)` through a `fn(ref B, ref B)` pointer rejects exactly
+        // like the named-fn call.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
+fn caller() {
+  let f: fn(ref B, ref B) = modify_both;
+  var y: B = B { x: 1 };
+  f(y, y);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0380"),
+            "expected E0380 through fn-pointer ref slots in {codes:?}"
+        );
+    }
+
+    #[test]
+    fn e0381_fires_through_fn_pointer_ref_plus_shared() {
+        // Mut + Shared of the same place through a fn-pointer call → E0381,
+        // same as the named-fn form.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn mix(ref a: B, b: B) { return; }
+fn caller() {
+  let f: fn(ref B, B) = mix;
+  var y: B = B { x: 1 };
+  f(y, y);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "expected E0381 through fn-pointer ref+shared slots in {codes:?}"
         );
     }
 

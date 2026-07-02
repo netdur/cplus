@@ -474,6 +474,7 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let mut s = String::from("fn");
@@ -481,6 +482,8 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
                 s.push('_');
                 if param_takes.get(i).copied().unwrap_or(false) {
                     s.push_str("take_");
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    s.push_str("ref_");
                 }
                 s.push_str(&mangle_o_for_tramp_with_types(p, types));
             }
@@ -1919,6 +1922,7 @@ fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
         Ty::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let mut s = String::from("fn");
@@ -1926,6 +1930,8 @@ fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
                 s.push('_');
                 if param_takes.get(i).copied().unwrap_or(false) {
                     s.push_str("take_");
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    s.push_str("ref_");
                 }
                 s.push_str(&tuple_elem_mangle(p, types));
             }
@@ -3499,6 +3505,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         TypeKind::FnPtr {
             params,
             param_takes,
+            param_refs,
             return_type,
         } => {
             let resolved_params: Vec<Ty> = params.iter().map(|p| ty_from(p, types)).collect();
@@ -3509,6 +3516,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             return Ty::FnPtr {
                 params: resolved_params,
                 param_takes: param_takes.clone(),
+                param_refs: param_refs.clone(),
                 return_type: Box::new(resolved_ret),
             };
         }
@@ -9744,10 +9752,17 @@ impl<'a> FnState<'a> {
                 if let Some(sig) = self.sigs.get(name).cloned() {
                     let symbol: String = sig.link_name.clone().unwrap_or_else(|| name.to_string());
                     let params: Vec<Ty> = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
-                    let param_takes: Vec<bool> = sig.params.iter().map(|(_, _, m, _)| *m).collect();
+                    // FnSig params are `(ty, move_, mutable, restrict)`: element 1
+                    // is the `take` marker, element 2 the `ref` marker. (This
+                    // previously read element 2 into `param_takes` — latent, as
+                    // annotated `let`s use the declared type, but wrong for any
+                    // consumer of this expression-side type.)
+                    let param_takes: Vec<bool> = sig.params.iter().map(|(_, m, _, _)| *m).collect();
+                    let param_refs: Vec<bool> = sig.params.iter().map(|(_, _, r, _)| *r).collect();
                     let ty = Ty::FnPtr {
                         params,
                         param_takes,
+                        param_refs,
                         return_type: Box::new(sig.return_type.clone()),
                     };
                     return Some((format!("@{symbol}"), ty));
@@ -11993,6 +12008,7 @@ impl<'a> FnState<'a> {
                 if let Ty::FnPtr {
                     params,
                     param_takes,
+                    param_refs,
                     return_type,
                 } = ty
                 {
@@ -12000,52 +12016,24 @@ impl<'a> FnState<'a> {
                     // v0.0.7 Slice 1.2: fn-ptr load — ptr leaf.
                     let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
                     self.gen_load(&v, &fnptr_ty, &slot);
-                    return self.gen_indirect_call(&v, &params, &param_takes, &return_type, args);
+                    return self.gen_indirect_call(
+                        &v,
+                        &params,
+                        &param_takes,
+                        &param_refs,
+                        &return_type,
+                        args,
+                    );
                 }
             }
         }
-        if let ExprKind::Field { receiver, name } = &callee.kind {
-            // Check if the field type is FnPtr — if so, indirect call.
-            // gen_place returns the address; we load the pointer value.
-            let (recv_addr, recv_ty) = self.gen_place(receiver);
-            if let Ty::Struct(id) = recv_ty {
-                let info = &self.types.struct_defs[id.0 as usize];
-                if let Some((idx, ft)) = info
-                    .fields
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (fname, _))| fname == &name.name)
-                    .map(|(i, (_, t))| (i as u32, t.clone()))
-                {
-                    if matches!(ft, Ty::FnPtr { .. }) {
-                        let Ty::FnPtr {
-                            params,
-                            param_takes,
-                            return_type,
-                        } = ft
-                        else {
-                            unreachable!()
-                        };
-                        let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
-                        let field_ptr = self.next_tmp();
-                        self.emit(&format!(
-                            "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_addr}, i32 0, i32 {idx}"
-                        ));
-                        let fn_val = self.next_tmp();
-                        // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
-                        let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
-                        self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
-                        return self.gen_indirect_call(
-                            &fn_val,
-                            &params,
-                            &param_takes,
-                            &return_type,
-                            args,
-                        );
-                    }
-                }
-            }
-        }
+        // Struct-of-callbacks calls (`recv.field(args)` where `field` is a
+        // FnPtr-typed field) are handled INSIDE `gen_method_call`, at the same
+        // `gen_place` that materializes the receiver for a method call. The
+        // old pre-flight sniff here ran `gen_place(receiver)` a first time and
+        // then fell through to `gen_method_call`, which evaluated the receiver
+        // AGAIN — double-firing any side-effectful receiver (`c.touch().is_ok()`
+        // ran `touch` twice; a chained `t.append(s).is_ok()` appended twice).
         match &callee.kind {
             ExprKind::Ident(name) => self.gen_named_call(name, args, type_args),
             ExprKind::Field { receiver, name } => self.gen_method_call(receiver, name, args),
@@ -12063,6 +12051,7 @@ impl<'a> FnState<'a> {
         callee_val: &str,
         params: &[Ty],
         param_takes: &[bool],
+        param_refs: &[bool],
         return_type: &Ty,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
@@ -12076,6 +12065,23 @@ impl<'a> FnState<'a> {
         // marker. All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         for (i, (a, pty)) in args.iter().zip(params.iter()).enumerate() {
+            // Handle-projection Tier 2: a `fn(ref R)` param is pointer-passed
+            // for EVERY type (same ABI as a named `ref x: T` param — see
+            // `param_passes_by_ptr`): take the address of the source place so
+            // the callee's writes land in the caller's storage. Checked before
+            // the Copy-struct C-ABI arm — a Copy struct in a `ref` slot is a
+            // `T*` out-param, never a coerced value.
+            if param_refs.get(i).copied().unwrap_or(false) {
+                let (addr, _) = self.gen_place(a);
+                let attrs = param_attrs(pty, false, true, false, true, self.types);
+                let ty_str = if attrs.is_empty() {
+                    "ptr".to_string()
+                } else {
+                    format!("ptr {attrs}")
+                };
+                arg_vals.push((addr, ty_str));
+                continue;
+            }
             // A by-value COPY struct arg lowers through the C ABI so the indirect
             // call matches a C (or unified cpc) callee — a raw aggregate
             // segfaults a C target (the headline fn-pointer ABI bug). Non-Copy
@@ -13649,11 +13655,52 @@ impl<'a> FnState<'a> {
             unreachable!("sema validated")
         };
         let struct_name = self.types.struct_defs[id.0 as usize].name.clone();
-        let info = self.types.struct_defs[id.0 as usize]
+        // Struct-of-callbacks: `recv.field(args)` where `field` is a
+        // FnPtr-typed FIELD, not a method. Dispatched here — against the
+        // receiver place `gen_place` materialized above — so the receiver is
+        // evaluated exactly once (the old pre-flight sniff in `gen_call`
+        // evaluated it a second time; see the note there).
+        let Some(info) = self.types.struct_defs[id.0 as usize]
             .methods
             .get(&name.name)
-            .expect("sema validated")
-            .clone();
+            .cloned()
+        else {
+            let sinfo = &self.types.struct_defs[id.0 as usize];
+            if let Some((idx, ft)) = sinfo
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, (fname, _))| fname == &name.name)
+                .map(|(i, (_, t))| (i as u32, t.clone()))
+            {
+                if let Ty::FnPtr {
+                    params,
+                    param_takes,
+                    param_refs,
+                    return_type,
+                } = ft
+                {
+                    let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
+                    let field_ptr = self.next_tmp();
+                    self.emit(&format!(
+                        "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {idx}"
+                    ));
+                    let fn_val = self.next_tmp();
+                    // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
+                    let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
+                    self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
+                    return self.gen_indirect_call(
+                        &fn_val,
+                        &params,
+                        &param_takes,
+                        &param_refs,
+                        &return_type,
+                        args,
+                    );
+                }
+            }
+            unreachable!("sema validated")
+        };
         let rcv = info.receiver.expect("sema validated instance call");
         let mangled = mangle(&struct_name, &name.name);
 
@@ -16272,6 +16319,50 @@ mod tests {
 
         // Restore the default for any other test that generates async IR.
         set_coro_end_returns_void(true);
+    }
+
+    /// Regression (2026-07-02): a chained method call on a side-effectful
+    /// receiver — `c.touch().is_ok()` — lowered the receiver TWICE: the
+    /// struct-of-callbacks pre-flight in `gen_call` ran `gen_place(receiver)`
+    /// (first evaluation), missed (no fn-ptr field on the receiver type), and
+    /// fell through to `gen_method_call`, which evaluated the receiver again.
+    /// `touch` fired twice per chain (a chained `t.append(s).is_ok()` appended
+    /// twice). The fn-ptr-field dispatch now lives inside `gen_method_call`,
+    /// against the single materialized receiver place.
+    #[test]
+    fn chained_method_call_evaluates_receiver_once() {
+        let ir = gen_src(
+            "enum St { Ok, Bad } \
+             impl St { fn is_ok(this) -> bool { return this == St::Ok; } } \
+             struct C { n: i32 } \
+             impl C { fn touch(ref this) -> St { this.n = this.n +% 1; return St::Ok; } } \
+             fn main() -> i32 { var c: C = C { n: 0 }; let ok: bool = c.touch().is_ok(); if ok { return 0; } return 1; }",
+        );
+        let touch_calls = ir
+            .lines()
+            .filter(|l| l.contains("call ") && l.contains("touch"))
+            .count();
+        assert_eq!(
+            touch_calls, 1,
+            "chained receiver must lower exactly one `touch` call:\n{ir}"
+        );
+    }
+
+    /// Companion to `chained_method_call_evaluates_receiver_once`: the
+    /// relocated struct-of-callbacks dispatch must still lower a fn-ptr FIELD
+    /// call (`h.mutate(n)`) as field-load + indirect call.
+    #[test]
+    fn fn_ptr_field_call_lowers_field_load_plus_indirect_call() {
+        let ir = gen_src(
+            "struct Hooks { mutate: fn(ref i32) } \
+             fn bump(ref x: i32) { x = x +% 1; return; } \
+             fn main() -> i32 { let h: Hooks = Hooks { mutate: bump }; var n: i32 = 1; h.mutate(n); if n == 2 { return 0; } return 1; }",
+        );
+        assert!(
+            ir.lines()
+                .any(|l| l.contains("call ") && l.contains('%') && !l.contains('@')),
+            "expected an indirect call through the loaded fn-ptr field:\n{ir}"
+        );
     }
 
     /// Regression: a negative float literal (`-5.0`) was const-folded to the

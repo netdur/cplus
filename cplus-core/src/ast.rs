@@ -510,6 +510,12 @@ pub enum TypeKind {
         /// as `params`. `fn(R)` borrows; `fn(take R)` consumes. The pointed-to
         /// function's param conventions must match this (checked at coercion).
         param_takes: Vec<bool>,
+        /// Handle-projection Tier 2: per-param `ref` marker — `true` for a
+        /// `fn(ref R)` (exclusive write-back) param. Same length as `params`;
+        /// mutually exclusive with the `take` marker at parse time. Mirrors
+        /// `Param`'s `mutable`/`move_` pair. A `ref` slot is pointer-passed
+        /// for every type (same ABI as a named `ref x: T` param).
+        param_refs: Vec<bool>,
         return_type: Option<Box<Type>>,
     },
     /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
