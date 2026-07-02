@@ -6238,6 +6238,8 @@ extern fn objc_msg_i8_id_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_id_id_range_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: rt::Range, a3: *u8) -> i8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id_u64_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: u64, a3: *u8, a4: *u8) -> i8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_rect_rect_i64_f64_i8_id(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: i64, a3: f64, a4: i8, a5: *u8) -> i8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_rect_rect_id_id_i8(recv: *u8, sel: *u8, a0: rt::Rect, a1: rt::Rect, a2: *u8, a3: *u8, a4: i8) -> i8;
@@ -9081,8 +9083,56 @@ impl AttributedString {
         return AttributedString::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("attributedStringByInflectingString\0"))));
     }
 
-    // SKIPPED `initWithURL:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithData:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    fn new_with_u_r_l_options_document_attributes_error(url: URL, options: string_map::StringMap[AnyObject], dict: *u8, error: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return AttributedString { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithURL:options:documentAttributes:error:\0")), url.raw(), dict_options, dict, error) };
+    }
+
+    fn new_with_data_options_document_attributes_error(data: Data, options: string_map::StringMap[AnyObject], dict: *u8, error: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return AttributedString { _obj: rt::msg_id_id_id_id_id(alloced, rt::sel(#str_ptr("initWithData:options:documentAttributes:error:\0")), data.raw(), dict_options, dict, error) };
+    }
+
     fn data_from_range(this, range: rt::Range, document_attributes: string_map::StringMap[AnyObject], error: *u8) -> option::Option[Data] {
         let dict_document_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_document_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -9145,13 +9195,67 @@ impl AttributedString {
         return rt::msg_i8_range(this._obj, rt::sel(#str_ptr("prefersRTFDInRange:\0")), range) != (0 as i8);
     }
 
-    // SKIPPED `initWithRTF:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithRTFD:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithHTML:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithHTML:baseURL:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithDocFormat:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithHTML:options:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `initWithRTFDFileWrapper:documentAttributes:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    fn new_with_r_t_f_document_attributes(data: Data, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithRTF:documentAttributes:\0")), data.raw(), dict) };
+    }
+
+    fn new_with_r_t_f_d_document_attributes(data: Data, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithRTFD:documentAttributes:\0")), data.raw(), dict) };
+    }
+
+    fn new_with_h_t_m_l_document_attributes(data: Data, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithHTML:documentAttributes:\0")), data.raw(), dict) };
+    }
+
+    fn new_with_h_t_m_l_base_u_r_l_document_attributes(data: Data, base: URL, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithHTML:baseURL:documentAttributes:\0")), data.raw(), base.raw(), dict) };
+    }
+
+    fn new_with_doc_format_document_attributes(data: Data, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithDocFormat:documentAttributes:\0")), data.raw(), dict) };
+    }
+
+    fn new_with_h_t_m_l_options_document_attributes(data: Data, options: string_map::StringMap[AnyObject], dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return AttributedString { _obj: rt::msg_id_id_id_id(alloced, rt::sel(#str_ptr("initWithHTML:options:documentAttributes:\0")), data.raw(), dict_options, dict) };
+    }
+
+    fn new_with_r_t_f_d_file_wrapper_document_attributes(wrapper: FileWrapper, dict: *u8) -> AttributedString {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AttributedString { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithRTFDFileWrapper:documentAttributes:\0")), wrapper.raw(), dict) };
+    }
+
     fn r_t_f_from_range(this, range: rt::Range, document_attributes: string_map::StringMap[AnyObject]) -> option::Option[Data] {
         let dict_document_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_document_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -9585,8 +9689,52 @@ impl MutableAttributedString {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("fixAttributesInRange:\0")), range);
     }
 
-    // SKIPPED `readFromURL:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
-    // SKIPPED `readFromData:options:documentAttributes:error:`: param `NSDictionary<NSAttributedStringDocumentAttributeKey,id> * _Nullable * _Nullable` — generic collection
+    fn read_from_u_r_l_options(this, url: URL, opts: string_map::StringMap[AnyObject], document_attributes: *u8, error: *u8) -> bool {
+        let dict_opts: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_opts: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_opts: usize = opts.slot_capacity();
+        var dsi_opts: usize = 0 as usize;
+        while dsi_opts < dcap_opts {
+            match opts.value_ptr_at_slot(dsi_opts) {
+                option::Option[*AnyObject]::Some(dvp_opts) => {
+                    match opts.key_ptr_at_slot(dsi_opts) {
+                        option::Option[*text::Text]::Some(dkp_opts) => {
+                    let dval_opts: *u8 = (*dvp_opts).raw();
+                            rt::msg_void_id_id(dict_opts, dset_opts, dval_opts, bridge::nsstring((*dkp_opts).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_opts = dsi_opts +% (1 as usize);
+        }
+        return objc_msg_i8_id_id_id_id(this._obj, rt::sel(#str_ptr("readFromURL:options:documentAttributes:error:\0")), url.raw(), dict_opts, document_attributes, error) != (0 as i8);
+    }
+
+    fn read_from_data_options(this, data: Data, opts: string_map::StringMap[AnyObject], document_attributes: *u8, error: *u8) -> bool {
+        let dict_opts: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_opts: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_opts: usize = opts.slot_capacity();
+        var dsi_opts: usize = 0 as usize;
+        while dsi_opts < dcap_opts {
+            match opts.value_ptr_at_slot(dsi_opts) {
+                option::Option[*AnyObject]::Some(dvp_opts) => {
+                    match opts.key_ptr_at_slot(dsi_opts) {
+                        option::Option[*text::Text]::Some(dkp_opts) => {
+                    let dval_opts: *u8 = (*dvp_opts).raw();
+                            rt::msg_void_id_id(dict_opts, dset_opts, dval_opts, bridge::nsstring((*dkp_opts).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_opts = dsi_opts +% (1 as usize);
+        }
+        return objc_msg_i8_id_id_id_id(this._obj, rt::sel(#str_ptr("readFromData:options:documentAttributes:error:\0")), data.raw(), dict_opts, document_attributes, error) != (0 as i8);
+    }
+
     fn fix_font_attribute_in_range(this, range: rt::Range) {
         rt::msg_void_range(this._obj, rt::sel(#str_ptr("fixFontAttributeInRange:\0")), range);
     }
@@ -15523,7 +15671,12 @@ impl AccessibilityCustomRotorItemResult {
         return AccessibilityCustomRotorItemResult { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTargetElement:\0")), target_element.raw()) };
     }
 
-    // SKIPPED `initWithItemLoadingToken:customLabel:`: param `NSAccessibilityLoadingToken _Nonnull` — unmapped type `NSAccessibilityLoadingToken`
+    fn new_with_item_loading_token_custom_label(item_loading_token: *u8, custom_label: str) -> AccessibilityCustomRotorItemResult {
+        let cls: *u8 = rt::get_class(#str_ptr("NSAccessibilityCustomRotorItemResult\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return AccessibilityCustomRotorItemResult { _obj: rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithItemLoadingToken:customLabel:\0")), item_loading_token, bridge::nsstring(custom_label)) };
+    }
+
     fn target_element(this) -> option::Option[AccessibilityElement] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("targetElement\0")));
         if obj == { 0 as *u8 } {
@@ -15532,7 +15685,11 @@ impl AccessibilityCustomRotorItemResult {
         return option::some(AccessibilityElement::from_raw(obj));
     }
 
-    // SKIPPED `itemLoadingToken`: return `NSAccessibilityLoadingToken _Nullable` — unmapped type `NSAccessibilityLoadingToken`
+    fn item_loading_token(this) -> option::Option[*u8] {
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("itemLoadingToken\0")));
+        return bridge::obj_option(obj);
+    }
+
     fn target_range(this) -> rt::Range {
         return rt::msg_range(this._obj, rt::sel(#str_ptr("targetRange\0")));
     }
@@ -17144,7 +17301,21 @@ impl Workspace {
         return rt::msg_i8_id_u64_id_id(this._obj, rt::sel(#str_ptr("launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:\0")), bridge::nsstring(bundle_identifier), options, additional_event_param_descriptor.raw(), launch_identifier) != (0 as i8);
     }
 
-    // SKIPPED `openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:`: param `NSArray<NSNumber *> * _Nullable * _Nullable` — generic collection
+    fn open_u_r_ls_with_app_bundle_identifier(this, urls: vec::Vec[URL], bundle_identifier: str, options: u64, additional_event_param_descriptor: AppleEventDescriptor, launch_identifiers: *u8) -> bool {
+        let arr_urls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_urls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_urls: usize = urls.count();
+        var i_urls: usize = 0 as usize;
+        while i_urls < n_urls {
+            match urls.at_ptr(i_urls) {
+                option::Option[*URL]::Some(e_urls) => { rt::msg_void_id(arr_urls, add_sel_urls, (*e_urls).raw()); }
+                option::Option[*URL]::None => {}
+            }
+            i_urls = i_urls +% (1 as usize);
+        }
+        return objc_msg_i8_id_id_u64_id_id(this._obj, rt::sel(#str_ptr("openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:\0")), arr_urls, bridge::nsstring(bundle_identifier), options, additional_event_param_descriptor.raw(), launch_identifiers) != (0 as i8);
+    }
+
     fn open_temp_file(this, full_path: str) -> bool {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("openTempFile:\0")), bridge::nsstring(full_path)) != (0 as i8);
     }
@@ -41760,7 +41931,10 @@ impl SpellChecker {
         return rt::msg_i64_id_id(this._obj, rt::sel(#str_ptr("countWordsInString:language:\0")), bridge::nsstring(string_to_count), bridge::nsstring(language));
     }
 
-    // SKIPPED `checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:`: param `NSArray<NSDictionary<NSString *,id> *> * _Nullable * _Nullable` — generic collection
+    fn check_grammar_of_string(this, string_to_check: str, starting_at: i64, language: str, wrap: bool, in_spell_document_with_tag: i64, details: *u8) -> rt::Range {
+        return rt::msg_range_id_i64_id_i8_i64_id(this._obj, rt::sel(#str_ptr("checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:\0")), bridge::nsstring(string_to_check), starting_at, bridge::nsstring(language), wrap as i8, in_spell_document_with_tag, details);
+    }
+
     // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: return `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
     // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
     // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
@@ -57043,8 +57217,18 @@ impl AccessibilityElementLoading {
 
     fn from_raw(ptr: *u8) -> AccessibilityElementLoading { return AccessibilityElementLoading { _obj: ptr }; }
 
-    // SKIPPED `accessibilityElementWithToken:`: param `NSAccessibilityLoadingToken _Nonnull` — unmapped type `NSAccessibilityLoadingToken`
-    // SKIPPED `accessibilityRangeInTargetElementWithToken:`: param `NSAccessibilityLoadingToken _Nonnull` — unmapped type `NSAccessibilityLoadingToken`
+    fn accessibility_element_with_token(this, token: *u8) -> option::Option[AccessibilityElement] {
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("accessibilityElementWithToken:\0")), token);
+        if obj == { 0 as *u8 } {
+            return option::Option[AccessibilityElement]::None;
+        }
+        return option::some(AccessibilityElement::from_raw(obj));
+    }
+
+    fn accessibility_range_in_target_element_with_token(this, token: *u8) -> rt::Range {
+        return rt::msg_range_id(this._obj, rt::sel(#str_ptr("accessibilityRangeInTargetElementWithToken:\0")), token);
+    }
+
 }
 
 // `NSAccessibility` (ObjC protocol). Non-owning handle; `opaque`, no drop.
