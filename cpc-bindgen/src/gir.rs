@@ -37,6 +37,8 @@ const RESERVED: &[&str] = &[
     "str_to_cstring", "free_cstring", "malloc", "memcpy", "realloc", "memcmp",
     // stdlib/text + stdlib/option module-level API
     "from_str", "some", "new", "with_capacity",
+    // the program entry point — a module-level `fn main` must be `fn main() -> i32`
+    "main",
 ];
 
 // ---------------------------------------------------------------------------
@@ -306,13 +308,18 @@ pub fn generate(arg: &str) -> Result<String, String> {
 
 struct Emitter<'a> {
     ns: &'a Node,
-    ns_name: String,
     out: String,
     skips: usize,
     emitted: usize,
     /// Bare wrapper names already defined (this module + reserved imports), so a
     /// later collision becomes a SKIP instead of an E0301.
     seen: HashSet<String>,
+    /// Names of `<class>`/`<interface>` in this namespace — the set an object
+    /// type must be in to resolve to a wrapper struct (else it stays foreign).
+    wrapper_types: HashSet<String>,
+    /// Wrapper struct type names already emitted (types are a separate name
+    /// space from fns); a collision is skipped.
+    seen_types: HashSet<String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -330,7 +337,28 @@ impl<'a> Emitter<'a> {
         out.push_str("import \"stdlib/text\" as text;\n");
         out.push_str("import \"stdlib/option\" as option;\n\n");
         let seen: HashSet<String> = RESERVED.iter().map(|s| s.to_string()).collect();
-        Emitter { ns, ns_name, out, skips: 0, emitted: 0, seen }
+        // Every class/interface name is a candidate wrapper type — collected up
+        // front so an object return/param anywhere resolves regardless of order.
+        let mut wrapper_types = HashSet::new();
+        for c in ns.children_named("class") {
+            if let Some(n) = c.attr("name") {
+                wrapper_types.insert(n.to_string());
+            }
+        }
+        for c in ns.children_named("interface") {
+            if let Some(n) = c.attr("name") {
+                wrapper_types.insert(n.to_string());
+            }
+        }
+        Emitter {
+            ns,
+            out,
+            skips: 0,
+            emitted: 0,
+            seen,
+            wrapper_types,
+            seen_types: HashSet::new(),
+        }
     }
 
     /// Reserve a wrapper name; returns false if it was already taken (caller
@@ -338,6 +366,23 @@ impl<'a> Emitter<'a> {
     /// collisions with `vendor/gobject` / `stdlib`.
     fn claim(&mut self, name: &str) -> bool {
         self.seen.insert(name.to_string())
+    }
+
+    /// Map a `<type>` node, resolving in-namespace object types to their wrapper
+    /// struct on top of the scalar/string vocabulary. A namespaced name (`Gdk.`,
+    /// `GObject.`) is foreign -> None. Arrays/callbacks (no `name`) -> None.
+    fn map(&self, t: &Node) -> Option<Mapped> {
+        if let Some(m) = map_type(t) {
+            return Some(m);
+        }
+        let name = t.attr("name")?;
+        if name.contains('.') {
+            return None; // foreign namespace (Gdk.Rectangle, GObject.Object, GLib.List)
+        }
+        if self.wrapper_types.contains(name) {
+            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ident_type(name)) });
+        }
+        None
     }
 
     fn run(&mut self) -> String {
@@ -352,6 +397,14 @@ impl<'a> Emitter<'a> {
         self.out.push_str("\n// === Free functions ===\n\n");
         for f in self.ns.children_named("function") {
             self.emit_function(f);
+        }
+        self.out.push_str("\n// === Interfaces ===\n\n");
+        for c in self.ns.children_named("interface") {
+            self.emit_class(c);
+        }
+        self.out.push_str("\n// === Classes ===\n\n");
+        for c in self.ns.children_named("class") {
+            self.emit_class(c);
         }
         self.out.push_str(&format!(
             "\n// cpc-bindgen --gobject: {} items emitted, {} SKIPPED.\n",
@@ -457,76 +510,325 @@ impl<'a> Emitter<'a> {
             self.skip("fn", name, &format!("name `{wname}` already defined (would collide with a sibling or `vendor/gobject`/`stdlib`)"));
             return;
         }
-        self.render_fn(name, cid, &ret, ret_full, ret_nullable, &params);
+        let (ext, wrap) = self.render(&wname, cid, None, &ret, ret_full, ret_nullable, &params);
+        self.out.push_str(&ext);
+        // `render` indents for an `impl` body; a free function sits at column 0.
+        self.out.push_str(&dedent4(&wrap));
         self.emitted += 1;
     }
 
-    /// Emit the `extern fn` + ergonomic wrapper for a fully-mapped function.
-    fn render_fn(&mut self, name: &str, cid: &str, ret: &Mapped, ret_full: bool, ret_nullable: bool, params: &[(String, Mapped)]) {
-        let wname = ident(name);
-        // extern signature (wire types).
-        let ext_params: Vec<String> = params.iter().map(|(n, m)| format!("{n}: {}", m.extern_ty)).collect();
-        let ext_ret = if ret.extern_ty == "()" { String::new() } else { format!(" -> {}", ret.extern_ty) };
-        self.out.push_str(&format!("#[link_name = \"{cid}\"]\n"));
-        self.out.push_str(&format!("extern fn __c_{wname}({}){ext_ret};\n", ext_params.join(", ")));
+    /// Build the `extern fn __c_<symbol>` declaration + the ergonomic wrapper for
+    /// one callable. `recv = Some("this._raw")` makes it a method (leading opaque
+    /// receiver). Returns `(extern_decl, wrapper_fn)` as separate strings so the
+    /// caller can place the extern at module level and the wrapper inside an
+    /// `impl`. Handles scalar/bool/string/gpointer/object params & returns; string
+    /// params allocate a temp cstring freed after the call; object params take a
+    /// `ref` and pass `.raw()`; object returns wrap via `from_raw`.
+    fn render(
+        &self,
+        wname: &str,
+        cid: &str,
+        recv: Option<&str>,
+        ret: &Mapped,
+        ret_full: bool,
+        ret_nullable: bool,
+        params: &[(String, Mapped)],
+    ) -> (String, String) {
+        let ext_name = format!("__c_{}", sanitize_sym(cid));
 
-        // wrapper signature (ergonomic types).
-        let wrap_params: Vec<String> = params.iter().map(|(n, m)| format!("{n}: {}", m.wrap_param_ty())).collect();
+        // --- extern declaration (wire types) ---
+        let mut ext_params: Vec<String> = Vec::new();
+        if recv.is_some() {
+            ext_params.push("__recv: *u8".to_string());
+        }
+        for (n, m) in params {
+            ext_params.push(format!("{n}: {}", m.extern_ty));
+        }
+        let ext_ret = if ret.extern_ty == "()" { String::new() } else { format!(" -> {}", ret.extern_ty) };
+        let ext = format!(
+            "#[link_name = \"{cid}\"]\nextern fn {ext_name}({}){ext_ret};\n",
+            ext_params.join(", ")
+        );
+
+        // --- wrapper signature (ergonomic types) ---
+        let mut wrap_params: Vec<String> = Vec::new();
+        if recv.is_some() {
+            wrap_params.push("this".to_string());
+        }
+        for (n, m) in params {
+            // Object params bind by reference (`ref name: T`) so the caller keeps
+            // its wrapper; scalars/strings/bools bind by value.
+            if m.cat == Cat::Obj {
+                wrap_params.push(format!("ref {n}: {}", m.wrap_param_ty()));
+            } else {
+                wrap_params.push(format!("{n}: {}", m.wrap_param_ty()));
+            }
+        }
         let wrap_ret = ret.wrap_ret_ty(ret_nullable);
         let wrap_ret_sig = if wrap_ret == "()" { String::new() } else { format!(" -> {wrap_ret}") };
-        self.out.push_str(&format!("fn {wname}({}){wrap_ret_sig} {{\n", wrap_params.join(", ")));
+        let mut w = format!("    fn {wname}({}){wrap_ret_sig} {{\n", wrap_params.join(", "));
 
-        // marshal string params in, remember cstrings to free after the call.
+        // --- marshal params in ---
         let mut call_args: Vec<String> = Vec::new();
+        if let Some(r) = recv {
+            call_args.push(r.to_string());
+        }
         let mut frees: Vec<String> = Vec::new();
         for (n, m) in params {
             match m.cat {
                 Cat::Str => {
-                    self.out.push_str(&format!("    let __cs_{n}: *u8 = bridge::str_to_cstring({n});\n"));
+                    w.push_str(&format!("        let __cs_{n}: *u8 = bridge::str_to_cstring({n});\n"));
                     call_args.push(format!("__cs_{n}"));
                     frees.push(format!("__cs_{n}"));
                 }
                 Cat::Bool => call_args.push(format!("(if {n} {{ 1 as i32 }} else {{ 0 as i32 }})")),
+                Cat::Obj => call_args.push(format!("{n}.raw()")),
                 _ => call_args.push(n.clone()),
             }
         }
-        let call = format!("{{ __c_{wname}({}) }}", call_args.join(", "));
+        let call = format!("{{ {ext_name}({}) }}", call_args.join(", "));
 
-        // Invoke + convert the return, freeing any temp cstrings first.
         let emit_frees = |out: &mut String| {
             for fr in &frees {
-                out.push_str(&format!("    bridge::free_cstring({fr});\n"));
+                out.push_str(&format!("        bridge::free_cstring({fr});\n"));
             }
         };
+
+        // --- invoke + convert the return ---
         match ret.cat {
             Cat::Void => {
-                self.out.push_str(&format!("    {call};\n"));
-                emit_frees(&mut self.out);
-                self.out.push_str("    return;\n");
+                w.push_str(&format!("        {call};\n"));
+                emit_frees(&mut w);
+                w.push_str("        return;\n");
             }
             Cat::Str => {
-                self.out.push_str(&format!("    let __r: *u8 = {call};\n"));
-                emit_frees(&mut self.out);
+                w.push_str(&format!("        let __r: *u8 = {call};\n"));
+                emit_frees(&mut w);
                 let conv = if ret_full { "bridge::cstr_to_text_full(__r)" } else { "bridge::cstr_to_text(__r)" };
                 if ret_nullable {
-                    self.out.push_str("    if __r == { 0 as *u8 } { return option::Option[text::Text]::None; }\n");
-                    self.out.push_str(&format!("    return option::some({conv});\n"));
+                    w.push_str("        if __r == { 0 as *u8 } { return option::Option[text::Text]::None; }\n");
+                    w.push_str(&format!("        return option::some({conv});\n"));
                 } else {
-                    self.out.push_str(&format!("    return {conv};\n"));
+                    w.push_str(&format!("        return {conv};\n"));
                 }
             }
             Cat::Bool => {
-                self.out.push_str(&format!("    let __r: i32 = {call};\n"));
-                emit_frees(&mut self.out);
-                self.out.push_str("    return __r != (0 as i32);\n");
+                w.push_str(&format!("        let __r: i32 = {call};\n"));
+                emit_frees(&mut w);
+                w.push_str("        return __r != (0 as i32);\n");
+            }
+            Cat::Obj => {
+                let o = ret.obj.clone().unwrap();
+                w.push_str(&format!("        let __r: *u8 = {call};\n"));
+                emit_frees(&mut w);
+                if ret_nullable {
+                    w.push_str(&format!("        if __r == {{ 0 as *u8 }} {{ return option::Option[{o}]::None; }}\n"));
+                    w.push_str(&format!("        return option::some({o}::from_raw(__r));\n"));
+                } else {
+                    w.push_str(&format!("        return {o}::from_raw(__r);\n"));
+                }
             }
             _ => {
-                self.out.push_str(&format!("    let __r: {} = {call};\n", ret.extern_ty));
-                emit_frees(&mut self.out);
-                self.out.push_str("    return __r;\n");
+                w.push_str(&format!("        let __r: {} = {call};\n", ret.extern_ty));
+                emit_frees(&mut w);
+                w.push_str("        return __r;\n");
             }
         }
-        self.out.push_str("}\n\n");
+        w.push_str("    }\n\n");
+        (ext, w)
+    }
+
+    // --- classes: wrapper struct over a GObject handle ---
+    fn emit_class(&mut self, c: &Node) {
+        let name = match c.attr("name") {
+            Some(n) => n,
+            None => return,
+        };
+        let ty = ident_type(name);
+        if !self.seen_types.insert(ty.clone()) {
+            self.skip("class", name, &format!("type `{ty}` already defined"));
+            return;
+        }
+        let parent = c.attr("parent").unwrap_or("");
+        let doc = if parent.is_empty() {
+            format!("// `{name}` — GObject wrapper (non-owning handle).\n")
+        } else {
+            format!("// `{name}` — GObject wrapper (non-owning handle); parent `{parent}`.\n")
+        };
+
+        // Wrapper method names are scoped to this impl (not the global fn space),
+        // so a fresh set per class; raw/from_raw are always present.
+        let mut methods: HashSet<String> = HashSet::new();
+        methods.insert("raw".to_string());
+        methods.insert("from_raw".to_string());
+
+        let mut body = String::new();
+        body.push_str("    fn raw(this) -> *u8 { return this._raw; }\n");
+        body.push_str(&format!("    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _raw: ptr }}; }}\n\n"));
+
+        for ctor in c.children_named("constructor") {
+            self.emit_ctor(&ty, ctor, &mut methods, &mut body);
+        }
+        for m in c.children_named("method") {
+            self.emit_method(name, m, &mut methods, &mut body);
+        }
+        for s in c.children_named("glib:signal") {
+            self.emit_signal(&ty, s, &mut methods, &mut body);
+        }
+
+        // struct + impl. Externs for this class were already pushed to self.out
+        // by the emit_* calls above (module level, before the impl).
+        self.out.push_str(&doc);
+        self.out.push_str(&format!("struct {ty} {{\n    opaque _raw: *u8,\n}}\n\n"));
+        self.out.push_str(&format!("impl {ty} {{\n{body}}}\n\n"));
+    }
+
+    fn emit_ctor(&mut self, ty: &str, ctor: &Node, methods: &mut HashSet<String>, body: &mut String) {
+        let name = match ctor.attr("name") {
+            Some(n) => n,
+            None => return,
+        };
+        let cid = match ctor.attr("c:identifier") {
+            Some(c) => c,
+            None => return,
+        };
+        let wname = ident(name);
+        if !methods.insert(wname.clone()) {
+            self.skip("ctor", &format!("{ty}::{name}"), &format!("method name `{wname}` already defined"));
+            return;
+        }
+        let params = match self.map_params(ctor, "ctor", &format!("{ty}::{name}")) {
+            Some(p) => p,
+            None => return,
+        };
+        // A constructor always yields an instance of its class; the declared
+        // return is the base (`Widget`), so force the wrapper return to Self.
+        let nullable = ctor
+            .child_named("return-value")
+            .and_then(|r| r.attr("nullable"))
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let ret = Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ty.to_string()) };
+        let (ext, wrap) = self.render(&wname, cid, None, &ret, false, nullable, &params);
+        self.out.push_str(&ext);
+        body.push_str(&wrap);
+        self.emitted += 1;
+    }
+
+    fn emit_method(&mut self, class: &str, m: &Node, methods: &mut HashSet<String>, body: &mut String) {
+        let name = match m.attr("name") {
+            Some(n) => n,
+            None => return,
+        };
+        let cid = match m.attr("c:identifier") {
+            Some(c) => c,
+            None => return,
+        };
+        let label = format!("{class}::{name}");
+        let rv = match m.child_named("return-value") {
+            Some(r) => r,
+            None => {
+                self.skip("method", &label, "no return-value");
+                return;
+            }
+        };
+        let ret_ty = rv.child_named("type");
+        let ret = match ret_ty.and_then(|t| self.map(t)) {
+            Some(m) => m,
+            None => {
+                self.skip("method", &label, &format!("return type — {}", type_reason(ret_ty)));
+                return;
+            }
+        };
+        let ret_full = matches!(rv.attr("transfer-ownership"), Some("full"));
+        let ret_nullable = matches!(rv.attr("nullable"), Some("1"));
+        let params = match self.map_params(m, "method", &label) {
+            Some(p) => p,
+            None => return,
+        };
+        let wname = ident(name);
+        if !methods.insert(wname.clone()) {
+            self.skip("method", &label, &format!("method name `{wname}` already defined"));
+            return;
+        }
+        let (ext, wrap) = self.render(&wname, cid, Some("this._raw"), &ret, ret_full, ret_nullable, &params);
+        self.out.push_str(&ext);
+        body.push_str(&wrap);
+        self.emitted += 1;
+    }
+
+    /// Map the non-instance parameters of a method/ctor/function. Returns None
+    /// (after emitting a SKIP) if any param is variadic, out/inout, or an
+    /// unmapped type — the whole callable is then skipped.
+    fn map_params(&mut self, node: &Node, kind: &str, label: &str) -> Option<Vec<(String, Mapped)>> {
+        let mut params: Vec<(String, Mapped)> = Vec::new();
+        if let Some(ps) = node.child_named("parameters") {
+            for p in ps.children_named("parameter") {
+                if p.child_named("varargs").is_some() {
+                    self.skip(kind, label, "variadic");
+                    return None;
+                }
+                if matches!(p.attr("direction"), Some("out") | Some("inout")) {
+                    self.skip(kind, label, "out/inout parameter");
+                    return None;
+                }
+                let pty = p.child_named("type");
+                let m = match pty.and_then(|t| self.map(t)) {
+                    Some(m) if m.usable_as_param() => m,
+                    _ => {
+                        self.skip(kind, label, &format!("param `{}` — {}", p.attr("name").unwrap_or("?"), type_reason(pty)));
+                        return None;
+                    }
+                };
+                let pname = ident(p.attr("name").unwrap_or("arg"));
+                params.push((pname, m));
+            }
+        }
+        Some(params)
+    }
+
+    /// Bind a signal as `connect_<name>`. Slice 2 handles the two handler shapes
+    /// vendor/gobject provides: a void handler `(instance, user_data)` and a
+    /// gboolean handler; anything with extra signal args is skipped.
+    fn emit_signal(&mut self, ty: &str, s: &Node, methods: &mut HashSet<String>, body: &mut String) {
+        let sig_name = match s.attr("name") {
+            Some(n) => n,
+            None => return,
+        };
+        let label = format!("{ty}::signal {sig_name}");
+        // Extra signal args (beyond the implicit instance + user_data) aren't
+        // modelled yet.
+        let has_extra_args = s
+            .child_named("parameters")
+            .map(|ps| ps.children_named("parameter").next().is_some())
+            .unwrap_or(false);
+        if has_extra_args {
+            self.skip("signal", &label, "handler has extra arguments");
+            return;
+        }
+        let ret_name = s
+            .child_named("return-value")
+            .and_then(|r| r.child_named("type"))
+            .and_then(|t| t.attr("name"))
+            .unwrap_or("none");
+        let (helper, htype) = match ret_name {
+            "none" => ("connect", "fn(*u8, *u8)"),
+            "gboolean" => ("connect_bool", "fn(*u8, *u8) -> i32"),
+            other => {
+                self.skip("signal", &label, &format!("handler return `{other}` not modelled"));
+                return;
+            }
+        };
+        let wname = ident(&format!("connect_{}", sig_name.replace('-', "_")));
+        if !methods.insert(wname.clone()) {
+            self.skip("signal", &label, &format!("name `{wname}` already defined"));
+            return;
+        }
+        body.push_str(&format!("    fn {wname}(this, handler: {htype}, user: *u8) -> u64 {{\n"));
+        body.push_str(&format!(
+            "        return sig::{helper}(this._raw, #str_ptr(\"{sig_name}\\0\"), handler, user);\n    }}\n\n"
+        ));
+        self.emitted += 1;
     }
 }
 
@@ -541,22 +843,29 @@ enum Cat {
     Bool,
     Str,
     Ptr,
+    Obj,
 }
 
 #[derive(Clone)]
 struct Mapped {
     cat: Cat,
     extern_ty: String,
+    /// For `Cat::Obj`: the wrapper struct name (a class/interface in this
+    /// namespace). None otherwise.
+    obj: Option<String>,
 }
 
 impl Mapped {
     fn usable_as_param(&self) -> bool {
         self.cat != Cat::Void
     }
+    /// Ergonomic parameter type (the type only — the `ref` binding-mode for
+    /// object params is applied at the call site, before the parameter name).
     fn wrap_param_ty(&self) -> String {
         match self.cat {
             Cat::Str => "str".to_string(),
             Cat::Bool => "bool".to_string(),
+            Cat::Obj => self.obj.clone().unwrap(),
             _ => self.extern_ty.clone(),
         }
     }
@@ -571,22 +880,31 @@ impl Mapped {
                     "text::Text".to_string()
                 }
             }
+            Cat::Obj => {
+                let o = self.obj.clone().unwrap();
+                if nullable {
+                    format!("option::Option[{o}]")
+                } else {
+                    o
+                }
+            }
             _ => self.extern_ty.clone(),
         }
     }
 }
 
-/// Map a `<type>` node to a wire/ergonomic pair, or None if unmodelled (slice 1:
-/// scalars, bool, strings, gpointer, void). Object/record/array/callback types
-/// return None and become SKIPs until the class-graph pass lands.
+/// Map a `<type>` node against a scalar/string/pointer vocabulary. Object,
+/// record, array, and callback types return None here; object resolution (into
+/// a wrapper struct) is layered on in `Emitter::map`, which knows the namespace's
+/// class set.
 fn map_type(t: &Node) -> Option<Mapped> {
     let name = t.attr("name")?;
-    let scalar = |s: &str| Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string() });
+    let scalar = |s: &str| Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None });
     match name {
-        "none" => Some(Mapped { cat: Cat::Void, extern_ty: "()".to_string() }),
-        "gboolean" => Some(Mapped { cat: Cat::Bool, extern_ty: "i32".to_string() }),
-        "utf8" | "filename" => Some(Mapped { cat: Cat::Str, extern_ty: "*u8".to_string() }),
-        "gpointer" => Some(Mapped { cat: Cat::Ptr, extern_ty: "*u8".to_string() }),
+        "none" => Some(Mapped { cat: Cat::Void, extern_ty: "()".to_string(), obj: None }),
+        "gboolean" => Some(Mapped { cat: Cat::Bool, extern_ty: "i32".to_string(), obj: None }),
+        "utf8" | "filename" => Some(Mapped { cat: Cat::Str, extern_ty: "*u8".to_string(), obj: None }),
+        "gpointer" => Some(Mapped { cat: Cat::Ptr, extern_ty: "*u8".to_string(), obj: None }),
         "gint" | "gint32" => scalar("i32"),
         "guint" | "guint32" => scalar("u32"),
         "gint8" | "gchar" => scalar("i8"),
@@ -648,6 +966,43 @@ fn ident(s: &str) -> String {
     } else {
         safe
     }
+}
+
+/// A wrapper struct type name from a GIR class/interface name. GObject class
+/// names are already PascalCase (`Button`, `ApplicationWindow`); we only guard a
+/// leading digit. Type names live in their own name space, so keywords don't
+/// clash here — but a `_` suffix is added defensively for the rare keyword-cased
+/// type.
+fn ident_type(s: &str) -> String {
+    let s = s.replace('-', "_");
+    let s = if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        format!("_{s}")
+    } else {
+        s
+    };
+    if is_keyword(&s) {
+        format!("{s}_")
+    } else {
+        s
+    }
+}
+
+/// Strip up to four leading spaces from every line — turns an `impl`-indented
+/// wrapper (from `render`) into a column-0 free function.
+fn dedent4(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
+        let trimmed = line.strip_prefix("    ").unwrap_or(line);
+        out.push_str(trimmed);
+    }
+    out
+}
+
+/// Sanitize a C symbol (`c:identifier`) into the tail of an `extern fn` name.
+/// C identifiers are already `[A-Za-z0-9_]`, so this is near-identity; it exists
+/// to centralize the rule and guard anything unexpected.
+fn sanitize_sym(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect()
 }
 
 fn is_keyword(s: &str) -> bool {
@@ -751,6 +1106,95 @@ mod tests {
         assert!(out.contains("unmapped type `Widget`"));
         // never emit a wrapper for the skipped function
         assert!(!out.contains("fn take_widget("));
+    }
+
+    const CLASSES: &str = r#"<repository><namespace name="Gtk">
+      <interface name="Editable"/>
+      <class name="Widget" c:type="GtkWidget" glib:type-name="GtkWidget">
+        <method name="set_visible" c:identifier="gtk_widget_set_visible">
+          <return-value><type name="none"/></return-value>
+          <parameters>
+            <instance-parameter name="widget"><type name="Widget"/></instance-parameter>
+            <parameter name="visible"><type name="gboolean"/></parameter>
+          </parameters>
+        </method>
+        <glib:signal name="destroy"><return-value><type name="none"/></return-value></glib:signal>
+      </class>
+      <class name="Button" c:type="GtkButton" parent="Widget" glib:type-name="GtkButton">
+        <constructor name="new_with_label" c:identifier="gtk_button_new_with_label">
+          <return-value transfer-ownership="none"><type name="Widget" c:type="GtkWidget*"/></return-value>
+          <parameters><parameter name="label"><type name="utf8" c:type="const char*"/></parameter></parameters>
+        </constructor>
+        <method name="get_child" c:identifier="gtk_button_get_child">
+          <return-value transfer-ownership="none" nullable="1"><type name="Widget" c:type="GtkWidget*"/></return-value>
+          <parameters><instance-parameter name="button"><type name="Button"/></instance-parameter></parameters>
+        </method>
+        <method name="set_child" c:identifier="gtk_button_set_child">
+          <return-value><type name="none"/></return-value>
+          <parameters>
+            <instance-parameter name="button"><type name="Button"/></instance-parameter>
+            <parameter name="child"><type name="Widget" c:type="GtkWidget*"/></parameter>
+          </parameters>
+        </method>
+        <glib:signal name="clicked"><return-value><type name="none"/></return-value></glib:signal>
+      </class></namespace></repository>"#;
+
+    #[test]
+    fn class_becomes_wrapper_struct_with_raw() {
+        let out = emit(CLASSES);
+        assert!(out.contains("struct Button {\n    opaque _raw: *u8,\n}"));
+        assert!(out.contains("impl Button {"));
+        assert!(out.contains("fn raw(this) -> *u8 { return this._raw; }"));
+        assert!(out.contains("fn from_raw(ptr: *u8) -> Button"));
+    }
+
+    #[test]
+    fn constructor_returns_self_not_declared_base() {
+        // gtk_button_new_with_label is declared to return Widget; the wrapper
+        // must return Button (Self), wrapping via from_raw.
+        let out = emit(CLASSES);
+        assert!(out.contains("fn new_with_label(label: str) -> Button {"));
+        assert!(out.contains("return Button::from_raw(__r);"));
+        assert!(out.contains("#[link_name = \"gtk_button_new_with_label\"]"));
+    }
+
+    #[test]
+    fn method_has_receiver_and_marshals_bool() {
+        let out = emit(CLASSES);
+        // instance-parameter is dropped; bool param becomes a `bool` wrapper arg
+        assert!(out.contains("fn set_visible(this, visible: bool) {"));
+        assert!(out.contains("extern fn __c_gtk_widget_set_visible(__recv: *u8, visible: i32)"));
+        assert!(out.contains("{ __c_gtk_widget_set_visible(this._raw, (if visible { 1 as i32 } else { 0 as i32 })) }"));
+    }
+
+    #[test]
+    fn object_return_wraps_and_nullable_is_option() {
+        let out = emit(CLASSES);
+        // get_child returns nullable Widget -> Option[Widget], wrapped via from_raw
+        assert!(out.contains("fn get_child(this) -> option::Option[Widget] {"));
+        assert!(out.contains("return option::some(Widget::from_raw(__r));"));
+    }
+
+    #[test]
+    fn object_param_binds_by_ref_and_passes_raw() {
+        let out = emit(CLASSES);
+        assert!(out.contains("fn set_child(this, ref child: Widget) {"));
+        assert!(out.contains("__c_gtk_button_set_child(this._raw, child.raw())"));
+    }
+
+    #[test]
+    fn signals_become_connect_helpers() {
+        let out = emit(CLASSES);
+        assert!(out.contains("fn connect_clicked(this, handler: fn(*u8, *u8), user: *u8) -> u64 {"));
+        assert!(out.contains("sig::connect(this._raw, #str_ptr(\"clicked\\0\"), handler, user)"));
+    }
+
+    #[test]
+    fn interface_referenced_as_type_is_emitted() {
+        // Editable is an interface with no methods; referencing it must still
+        // resolve (it is emitted as a wrapper struct).
+        let out = emit(CLASSES);
+        assert!(out.contains("struct Editable {"));
     }
 
     #[test]
