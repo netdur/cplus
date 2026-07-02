@@ -33,6 +33,13 @@ fn main() {
     // binding package that provides its wrappers (e.g. `Gtk=gtk4`), so
     // cross-namespace object/enum types resolve and auto-import.
     let mut gobject_uses: Vec<(String, String)> = Vec::new();
+    // C package mode (`--cpackage`): bind one or more C headers into a whole C+
+    // package, with `[link]` libs/search-paths from pkg-config or explicit flags.
+    let mut cpackage_mode = false;
+    let mut pkg_configs: Vec<String> = Vec::new();
+    let mut c_headers: Vec<String> = Vec::new();
+    let mut c_links: Vec<String> = Vec::new();
+    let mut c_search_paths: Vec<String> = Vec::new();
     let mut swift_mode = false;
     let mut bridge_mode = false;
     let mut bridge_spec_path: Option<String> = None;
@@ -81,6 +88,61 @@ fn main() {
                 if let Some((ns, pkg)) = v.split_once('=') {
                     gobject_uses.push((ns.to_string(), pkg.to_string()));
                 }
+                i += 1;
+                continue;
+            }
+            // C package mode: `--cpackage --out DIR [--pkg NAME]... [--header H]...
+            // [--clib L]... [--search-path P]... [-- <clang args>]`.
+            if a == "--cpackage" {
+                cpackage_mode = true;
+                i += 1;
+                continue;
+            }
+            if a == "--pkg" {
+                if let Some(v) = raw.get(i + 1) {
+                    pkg_configs.push(v.clone());
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--pkg=") {
+                pkg_configs.push(v.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--header" {
+                if let Some(v) = raw.get(i + 1) {
+                    c_headers.push(v.clone());
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--header=") {
+                c_headers.push(v.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--clib" {
+                if let Some(v) = raw.get(i + 1) {
+                    c_links.push(v.clone());
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--clib=") {
+                c_links.push(v.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--search-path" {
+                if let Some(v) = raw.get(i + 1) {
+                    c_search_paths.push(v.clone());
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--search-path=") {
+                c_search_paths.push(v.to_string());
                 i += 1;
                 continue;
             }
@@ -252,6 +314,29 @@ fn main() {
         }
     }
 
+    // C package mode: bind C headers into a whole package (the pkg-config
+    // sibling of `--framework`/`--gobject --out`), for cblas/cuda-style libs.
+    if cpackage_mode {
+        let dir = match out_dir.as_deref() {
+            Some(d) => d,
+            None => {
+                eprintln!("cpc-bindgen --cpackage: requires --out DIR");
+                std::process::exit(2);
+            }
+        };
+        // A bare positional header is accepted too (in addition to --header).
+        if let Some(h) = header.take() {
+            c_headers.push(h);
+        }
+        match generate_c_package(dir, &pkg_configs, &c_headers, &c_links, &c_search_paths, &clang_args) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("cpc-bindgen --cpackage: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Swift mode: bind a `swift symbolgraph-extract` JSON graph. Either a
     // module name (we run the extractor) or a pre-extracted `.symbols.json`.
     if swift_mode {
@@ -369,6 +454,168 @@ fn main() {
         emitter.walk(&v);
         print!("{}", emitter.finish());
     }
+}
+
+/// Bind one C header to a C+ module (clang JSON AST dump -> `Emitter`). Shared
+/// by the single-header path and the `--cpackage` package path.
+fn emit_c_header(header: &str, clang_args: &[String]) -> Result<String, String> {
+    let mut cmd = Command::new("clang");
+    cmd.arg("-Xclang").arg("-ast-dump=json").arg("-fsyntax-only").arg("-x").arg("c");
+    for a in clang_args {
+        cmd.arg(a);
+    }
+    cmd.arg(header);
+    let out = cmd.output().map_err(|e| format!("failed to invoke clang: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("clang failed on {header}:\n{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("clang JSON parse failed for {header}: {e}"))?;
+    let mut emitter = Emitter::new(header);
+    emitter.walk(&v);
+    Ok(emitter.finish())
+}
+
+/// `--cpackage`: bind C headers into a whole C+ package — the pkg-config sibling
+/// of `--framework`/`--gobject --out`. cflags/libs come from `pkg-config` (via
+/// `--pkg NAME`) and/or explicit `--clib`/`--search-path`; each header becomes a
+/// module, with a `<pkg>` umbrella when there is more than one.
+fn generate_c_package(
+    out_dir: &str,
+    pkgs: &[String],
+    headers: &[String],
+    explicit_links: &[String],
+    explicit_search: &[String],
+    extra_clang: &[String],
+) -> Result<(), String> {
+    if headers.is_empty() {
+        return Err("no headers — pass one or more `--header <path>` (or a bare header path)".into());
+    }
+    // Resolve pkg-config cflags (-> clang) and libs (-> [link]).
+    let mut clang_args: Vec<String> = Vec::new();
+    let mut links: Vec<String> = explicit_links.to_vec();
+    let mut search: Vec<String> = explicit_search.to_vec();
+    for pkg in pkgs {
+        let cflags = pkg_config(pkg, "--cflags")?;
+        clang_args.extend(cflags);
+        for tok in pkg_config(pkg, "--libs")? {
+            if let Some(l) = tok.strip_prefix("-l") {
+                links.push(l.to_string());
+            } else if let Some(p) = tok.strip_prefix("-L") {
+                search.push(p.to_string());
+            }
+        }
+    }
+    clang_args.extend(extra_clang.iter().cloned());
+    links.dedup();
+    search.dedup();
+
+    let out = std::path::Path::new(out_dir);
+    let pkg_name = out
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("--out DIR has no basename")?
+        .to_string();
+    let srcdir = out.join("src");
+    std::fs::create_dir_all(&srcdir).map_err(|e| format!("mkdir {}: {e}", srcdir.display()))?;
+
+    // One module per header; a single header IS the package module.
+    let single = headers.len() == 1;
+    let mut modules: Vec<String> = Vec::new();
+    for header in headers {
+        let src = emit_c_header(header, &clang_args)?;
+        let module = if single {
+            pkg_name.clone()
+        } else {
+            std::path::Path::new(header)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("mod")
+                .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+        };
+        std::fs::write(srcdir.join(format!("{module}.cplus")), src)
+            .map_err(|e| format!("write {module}.cplus: {e}"))?;
+        modules.push(module);
+    }
+    // Umbrella that imports every module, when there is more than one.
+    if !single {
+        let mut umbrella = String::from("// Auto-generated by cpc-bindgen --cpackage. Umbrella module.\n\n");
+        for m in &modules {
+            umbrella.push_str(&format!("import \"./{m}\" as {m};\n"));
+        }
+        std::fs::write(srcdir.join(format!("{pkg_name}.cplus")), umbrella)
+            .map_err(|e| format!("write umbrella: {e}"))?;
+    }
+
+    // Cplus.toml with [link] libs + search-paths and a provenance header.
+    let libs_toml = links.iter().map(|l| format!("\"{l}\"")).collect::<Vec<_>>().join(", ");
+    let mut link_block = format!("[link]\nlibs = [{libs_toml}]\n");
+    if !search.is_empty() {
+        let sp = search.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+        link_block.push_str(&format!("search-paths = [{sp}]\n"));
+    }
+    let repro = reproduce_cmd(out_dir, pkgs, headers, explicit_links, explicit_search, extra_clang);
+    let manifest = format!(
+        "[package]\n\
+         name    = \"{pkg_name}\"\n\
+         version = \"0.0.1\"\n\
+         edition = \"2026\"\n\n\
+         # Auto-generated by cpc-bindgen --cpackage (C headers -> C+ FFI).\n\
+         # Headers:   {hdrs}\n\
+         # Reproduce: {repro}\n\n\
+         [dependencies]\n\
+         stdlib = \"*\"\n\n\
+         {link_block}",
+        hdrs = headers.join(", "),
+    );
+    std::fs::write(out.join("Cplus.toml"), manifest).map_err(|e| format!("write Cplus.toml: {e}"))?;
+    eprintln!(
+        "cpc-bindgen --cpackage: wrote {out_dir}/ ({pkg_name}: {} module(s), links {links:?})",
+        modules.len()
+    );
+    Ok(())
+}
+
+/// Run `pkg-config <flag> <pkg>` and return its whitespace-split tokens.
+fn pkg_config(pkg: &str, flag: &str) -> Result<Vec<String>, String> {
+    let out = Command::new("pkg-config")
+        .arg(flag)
+        .arg(pkg)
+        .output()
+        .map_err(|e| format!("failed to run pkg-config (is it installed?): {e}"))?;
+    if !out.status.success() {
+        return Err(format!("pkg-config {flag} {pkg} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().map(|s| s.to_string()).collect())
+}
+
+/// The exact command that reproduces a `--cpackage` run (for the manifest).
+fn reproduce_cmd(
+    out_dir: &str,
+    pkgs: &[String],
+    headers: &[String],
+    links: &[String],
+    search: &[String],
+    extra_clang: &[String],
+) -> String {
+    let mut s = format!("cpc-bindgen --cpackage --out {out_dir}");
+    for p in pkgs {
+        s.push_str(&format!(" --pkg {p}"));
+    }
+    for h in headers {
+        s.push_str(&format!(" --header {h}"));
+    }
+    for l in links {
+        s.push_str(&format!(" --clib {l}"));
+    }
+    for p in search {
+        s.push_str(&format!(" --search-path {p}"));
+    }
+    if !extra_clang.is_empty() {
+        s.push_str(" -- ");
+        s.push_str(&extra_clang.join(" "));
+    }
+    s
 }
 
 /// Resolve a Swift symbol graph + module name from either a `--swift-module`
