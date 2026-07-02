@@ -483,6 +483,9 @@ struct Emitter<'a> {
     /// Foreign package aliases actually imported (referenced in the output) —
     /// the subset of `--use` that becomes a real dependency.
     imported: Vec<String>,
+    /// Module-local `g_signal_connect_data` alias names already emitted (one per
+    /// distinct arg-carrying handler shape), so they aren't re-declared.
+    sig_shapes: HashSet<String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -544,6 +547,7 @@ impl<'a> Emitter<'a> {
             foreign,
             record_types,
             imported: Vec::new(),
+            sig_shapes: HashSet::new(),
         }
     }
 
@@ -1117,40 +1121,109 @@ impl<'a> Emitter<'a> {
             None => return,
         };
         let label = format!("{ty}::signal {sig_name}");
-        // Extra signal args (beyond the implicit instance + user_data) aren't
-        // modelled yet.
-        let has_extra_args = s
-            .child_named("parameters")
-            .map(|ps| ps.children_named("parameter").next().is_some())
-            .unwrap_or(false);
-        if has_extra_args {
-            self.skip("signal", &label, "handler has extra arguments");
-            return;
-        }
-        let ret_name = s
-            .child_named("return-value")
-            .and_then(|r| r.child_named("type"))
-            .and_then(|t| t.attr("name"))
-            .unwrap_or("none");
-        let (helper, htype) = match ret_name {
-            "none" => ("connect", "fn(*u8, *u8)"),
-            "gboolean" => ("connect_bool", "fn(*u8, *u8) -> i32"),
-            other => {
-                self.skip("signal", &label, &format!("handler return `{other}` not modelled"));
-                return;
+
+        // Map the handler's return + extra args to their WIRE types (objects and
+        // strings arrive as raw `*u8`, enums as ints). A handler is
+        // `fn(instance, ...args..., user_data)`; the GIR <parameters> list only
+        // the extra args. Anything unmappable (array/callback) skips the signal.
+        // A handler arg/return arrives at its raw C-ABI wire type. A pointer arg
+        // (a pointer `c:type`, `gpointer`, or an out/inout param — which GIR
+        // spells `<type name="gint" c:type="gpointer"/>`) is passed as `*u8`, not
+        // the pointee's by-value type; else the handler ABI is wrong.
+        let wire = |ptr: bool, m: &Mapped| -> String {
+            if ptr && !m.extern_ty.starts_with('*') {
+                "*u8".to_string()
+            } else {
+                m.extern_ty.clone()
             }
         };
+        let ret_wire = match s.child_named("return-value").and_then(|r| r.child_named("type")) {
+            Some(t) => match self.map(t) {
+                Some(m) => wire(ctype_is_pointer(t), &m),
+                None => {
+                    self.skip("signal", &label, "handler return not modelled");
+                    return;
+                }
+            },
+            None => "()".to_string(),
+        };
+        let mut arg_wires: Vec<String> = Vec::new();
+        if let Some(ps) = s.child_named("parameters") {
+            for p in ps.children_named("parameter") {
+                let t = match p.child_named("type") {
+                    Some(t) => t,
+                    None => {
+                        self.skip("signal", &label, "handler argument not modelled");
+                        return;
+                    }
+                };
+                let ptr = matches!(p.attr("direction"), Some("out") | Some("inout")) || ctype_is_pointer(t);
+                match self.map(t) {
+                    Some(m) if m.cat != Cat::Void => arg_wires.push(wire(ptr, &m)),
+                    _ => {
+                        self.skip("signal", &label, "handler argument not modelled");
+                        return;
+                    }
+                }
+            }
+        }
+
         let wname = ident(&format!("connect_{}", sig_name.replace('-', "_")));
         if !methods.insert(wname.clone()) {
             self.skip("signal", &label, &format!("name `{wname}` already defined"));
             return;
         }
+
+        // No extra args: use vendor/gobject's ready-made connect / connect_bool.
+        if arg_wires.is_empty() && (ret_wire == "()" || ret_wire == "i32") {
+            let (helper, htype) = if ret_wire == "()" {
+                ("connect", "fn(*u8, *u8)".to_string())
+            } else {
+                ("connect_bool", "fn(*u8, *u8) -> i32".to_string())
+            };
+            body.push_str(&format!("    fn {wname}(this, handler: {htype}, user: *u8) -> u64 {{\n"));
+            body.push_str(&format!(
+                "        return sig::{helper}(this._raw, #str_ptr(\"{sig_name}\\0\"), handler, user);\n    }}\n\n"
+            ));
+            self.emitted += 1;
+            return;
+        }
+
+        // Arg-carrying (or non-void/bool return) signal: emit a module-local
+        // typed alias of g_signal_connect_data for this exact handler shape
+        // (deduped across the module), then the connect wrapper.
+        let ret_sig = if ret_wire == "()" { String::new() } else { format!(" -> {ret_wire}") };
+        let mut handler_args = vec!["*u8".to_string()];
+        handler_args.extend(arg_wires.iter().cloned());
+        handler_args.push("*u8".to_string());
+        let htype = format!("fn({}){ret_sig}", handler_args.join(", "));
+        let key = sig_shape_key(&arg_wires, &ret_wire);
+        let alias = format!("__sigc_{key}");
+        if self.sig_shapes.insert(alias.clone()) {
+            self.out.push_str(&format!(
+                "#[link_name = \"g_signal_connect_data\"]\nextern fn {alias}(instance: *u8, detailed: *u8, handler: {htype}, data: *u8, destroy: *u8, flags: i32) -> u64;\n"
+            ));
+        }
         body.push_str(&format!("    fn {wname}(this, handler: {htype}, user: *u8) -> u64 {{\n"));
         body.push_str(&format!(
-            "        return sig::{helper}(this._raw, #str_ptr(\"{sig_name}\\0\"), handler, user);\n    }}\n\n"
+            "        return {{ {alias}(this._raw, #str_ptr(\"{sig_name}\\0\"), handler, user, {{ 0 as *u8 }}, 0 as i32) }};\n    }}\n\n"
         ));
         self.emitted += 1;
     }
+}
+
+/// A short, deterministic key for a signal handler shape (arg wire types + ret),
+/// used to name+dedup the module-local `g_signal_connect_data` alias.
+fn sig_shape_key(args: &[String], ret: &str) -> String {
+    let tag = |t: &str| -> String {
+        match t {
+            "()" => "v".to_string(),
+            "*u8" => "p".to_string(),
+            _ => t.replace(|c: char| !c.is_ascii_alphanumeric(), ""),
+        }
+    };
+    let a: String = args.iter().map(|t| tag(t)).collect::<Vec<_>>().join("");
+    format!("{a}_{}", tag(ret))
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,11 +1325,18 @@ fn map_type(t: &Node) -> Option<Mapped> {
     }
 }
 
-/// True if a `<type>`'s `c:type` denotes a pointer (`GtkTextIter*`,
-/// `const GtkTextIter*`). Absent `c:type` -> not treated as a pointer (safe
+/// True if a `<type>`'s `c:type` denotes a pointer — `GtkTextIter*`,
+/// `const GtkTextIter*`, or the introspection spelling `gpointer`/`gconstpointer`
+/// (used for e.g. an inout `gint*`). Absent `c:type` -> not a pointer (safe
 /// default: skip rather than mis-bind a by-value struct as a handle).
 fn ctype_is_pointer(t: &Node) -> bool {
-    t.attr("c:type").map(|c| c.trim_end().ends_with('*')).unwrap_or(false)
+    match t.attr("c:type") {
+        Some(c) => {
+            let c = c.trim_end();
+            c.ends_with('*') || c == "gpointer" || c == "gconstpointer"
+        }
+        None => false,
+    }
 }
 
 /// Human reason for a SKIP, naming the offending GIR type.
@@ -1560,6 +1640,26 @@ mod tests {
         let out = emit(CLASSES);
         assert!(out.contains("fn connect_clicked(this, handler: fn(*u8, *u8), user: *u8) -> u64 {"));
         assert!(out.contains("sig::connect(this._raw, #str_ptr(\"clicked\\0\"), handler, user)"));
+    }
+
+    #[test]
+    fn signal_with_args_emits_typed_handler_and_alias() {
+        let src = r#"<repository><namespace name="Gtk">
+          <class name="View" c:type="GtkView" glib:type-name="GtkView">
+            <glib:signal name="moved">
+              <return-value><type name="gboolean"/></return-value>
+              <parameters>
+                <parameter name="steps"><type name="gint" c:type="gint"/></parameter>
+                <parameter name="pos" direction="inout"><type name="gint" c:type="gpointer"/></parameter>
+              </parameters>
+            </glib:signal>
+          </class></namespace></repository>"#;
+        let out = emit(src);
+        // scalar arg stays i32, the inout pointer arg becomes *u8, gboolean ret -> i32
+        assert!(out.contains("fn connect_moved(this, handler: fn(*u8, i32, *u8, *u8) -> i32, user: *u8) -> u64 {"));
+        // a module-local typed alias of g_signal_connect_data for this shape
+        assert!(out.contains("#[link_name = \"g_signal_connect_data\"]"));
+        assert!(out.contains("extern fn __sigc_i32p_i32(instance: *u8, detailed: *u8, handler: fn(*u8, i32, *u8, *u8) -> i32"));
     }
 
     #[test]
