@@ -16,6 +16,7 @@
 // enough not to need a full XML crate, and cpc-bindgen stays dependency-free),
 // and an emitter that walks the parsed <namespace>.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -275,25 +276,33 @@ fn find_gir_file(arg: &str) -> Option<PathBuf> {
         if exact.is_file() {
             return Some(exact);
         }
-        // `arg` may be a bare namespace ("Gtk"); match the first `arg-*.gir`.
+        // `arg` may be a bare namespace ("Gtk"); pick the HIGHEST version among
+        // `arg-<ver>.gir` (so bare `Gtk` binds Gtk-4.0, not Gtk-2.0 — a plain
+        // lexicographic sort would wrongly prefer the older 2.0).
         if let Ok(rd) = std::fs::read_dir(d) {
-            let mut hits: Vec<PathBuf> = rd
+            let prefix = format!("{arg}-");
+            let mut hits: Vec<(Vec<u32>, PathBuf)> = rd
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with(&format!("{arg}-")) && n.ends_with(".gir"))
-                        .unwrap_or(false)
+                .filter_map(|p| {
+                    let n = p.file_name()?.to_str()?.to_string();
+                    let ver = n.strip_prefix(&prefix)?.strip_suffix(".gir")?;
+                    Some((parse_version(ver), p))
                 })
                 .collect();
             hits.sort();
-            if let Some(h) = hits.into_iter().next() {
+            if let Some((_, h)) = hits.into_iter().next_back() {
                 return Some(h);
             }
         }
     }
     None
+}
+
+/// Parse a GIR version stem (`"4.0"`, `"2.0"`) into comparable numeric parts;
+/// non-numeric segments sort as 0 so a numeric compare orders 4.0 > 2.0 > 1.
+fn parse_version(v: &str) -> Vec<u32> {
+    v.split('.').map(|s| s.parse::<u32>().unwrap_or(0)).collect()
 }
 
 pub fn generate(arg: &str) -> Result<String, String> {
@@ -320,6 +329,10 @@ struct Emitter<'a> {
     /// Wrapper struct type names already emitted (types are a separate name
     /// space from fns); a collision is skipped.
     seen_types: HashSet<String>,
+    /// In-namespace enum/bitfield names -> their C+ integer repr (`i32` for an
+    /// `<enumeration>`, `u32` for a `<bitfield>`). Used to bind enum-typed params
+    /// and returns as their ABI integer (callers pass the emitted constant fns).
+    enum_types: HashMap<String, String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -350,6 +363,17 @@ impl<'a> Emitter<'a> {
                 wrapper_types.insert(n.to_string());
             }
         }
+        let mut enum_types = HashMap::new();
+        for e in ns.children_named("enumeration") {
+            if let Some(n) = e.attr("name") {
+                enum_types.insert(n.to_string(), "i32".to_string());
+            }
+        }
+        for e in ns.children_named("bitfield") {
+            if let Some(n) = e.attr("name") {
+                enum_types.insert(n.to_string(), "u32".to_string());
+            }
+        }
         Emitter {
             ns,
             out,
@@ -358,6 +382,7 @@ impl<'a> Emitter<'a> {
             seen,
             wrapper_types,
             seen_types: HashSet::new(),
+            enum_types,
         }
     }
 
@@ -378,6 +403,11 @@ impl<'a> Emitter<'a> {
         let name = t.attr("name")?;
         if name.contains('.') {
             return None; // foreign namespace (Gdk.Rectangle, GObject.Object, GLib.List)
+        }
+        // In-namespace enum/bitfield -> its ABI integer. Callers pass the emitted
+        // constant fns (e.g. `orientation_horizontal()`).
+        if let Some(repr) = self.enum_types.get(name) {
+            return Some(Mapped { cat: Cat::Scalar, extern_ty: repr.clone(), obj: None });
         }
         if self.wrapper_types.contains(name) {
             return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ident_type(name)) });
@@ -467,7 +497,7 @@ impl<'a> Emitter<'a> {
             }
         };
         let ret_ty = rv.child_named("type");
-        let ret = match ret_ty.and_then(|t| map_type(t)) {
+        let ret = match ret_ty.and_then(|t| self.map(t)) {
             Some(m) => m,
             None => {
                 self.skip("fn", name, &format!("return type — {}", type_reason(ret_ty)));
@@ -477,30 +507,10 @@ impl<'a> Emitter<'a> {
         let ret_full = matches!(rv.attr("transfer-ownership"), Some("full"));
         let ret_nullable = matches!(rv.attr("nullable"), Some("1"));
 
-        // Parameters.
-        let mut params: Vec<(String, Mapped)> = Vec::new();
-        if let Some(ps) = f.child_named("parameters") {
-            for p in ps.children_named("parameter") {
-                if p.child_named("varargs").is_some() {
-                    self.skip("fn", name, "variadic");
-                    return;
-                }
-                if matches!(p.attr("direction"), Some("out") | Some("inout")) {
-                    self.skip("fn", name, "out/inout parameter");
-                    return;
-                }
-                let pty = p.child_named("type");
-                let m = match pty.and_then(|t| map_type(t)) {
-                    Some(m) if m.usable_as_param() => m,
-                    _ => {
-                        self.skip("fn", name, &format!("param `{}` — {}", p.attr("name").unwrap_or("?"), type_reason(pty)));
-                        return;
-                    }
-                };
-                let pname = ident(p.attr("name").unwrap_or("arg"));
-                params.push((pname, m));
-            }
-        }
+        let params = match self.map_params(f, "fn", name) {
+            Some(p) => p,
+            None => return,
+        };
 
         // C+ free functions share one global name space; a wrapper whose bare
         // name is already taken (a sibling function or a reserved import symbol)
@@ -1097,6 +1107,23 @@ mod tests {
         let out = emit(MINI);
         assert!(out.contains("fn color_red() -> i32 { return 0 as i32; }"));
         assert!(out.contains("fn color_green() -> i32 { return 1 as i32; }"));
+    }
+
+    #[test]
+    fn enum_typed_param_binds_as_integer() {
+        // a function taking the in-namespace enum `Color` binds it as i32 (the
+        // ABI integer), not a SKIP — callers pass `color_red()` etc.
+        let src = r#"<repository><namespace name="Test">
+          <enumeration name="Color" c:type="TestColor">
+            <member name="red" value="0" c:identifier="TEST_COLOR_RED"/>
+          </enumeration>
+          <function name="paint" c:identifier="test_paint">
+            <return-value><type name="Color"/></return-value>
+            <parameters><parameter name="c"><type name="Color"/></parameter></parameters>
+          </function></namespace></repository>"#;
+        let out = emit(src);
+        assert!(out.contains("fn paint(c: i32) -> i32 {"));
+        assert!(out.contains("extern fn __c_test_paint(c: i32) -> i32"));
     }
 
     #[test]
