@@ -1664,19 +1664,13 @@ impl ObjcEmitter {
             }
         }
 
-        // The `Vec[W] -> NSMutableArray` prologue (the `arr_<pname>` locals) is
-        // built only in the general scalar/object path below. The collection-return
-        // paths build their own multi-statement bodies and would reference an
-        // undefined `arr_<pname>`, so skip an NSArray<id> param combined with a
-        // collection return rather than emit dangling code.
-        if has_collection_param
-            && matches!(ret, Ret::ValueArray | Ret::TextArray | Ret::NumberArray | Ret::ObjectArray(_) | Ret::TextSet | Ret::ObjectSet(_) | Ret::TextMap(_))
-        {
-            self.body.push_str(&format!(
-                "    // SKIPPED `{sel}`: NSArray<id> param with a collection return not modelled\n"
-            ));
-            return;
-        }
+        // A collection PARAM combined with a collection RETURN: each collection-return
+        // body below prepends `build_id_array_prologue(&args)` (a no-op when there is
+        // no collection param), which builds the `arr_/dict_/set_<pname>` locals the
+        // `send_expr` array/dict/set call references — so the two compose. (ValueArray
+        // is the exception: its hardcoded single-`NSRange`-arg body has no `send_expr`
+        // prologue hook, so a collection param there falls to its own arg-shape skip.)
+        let coll_prologue = build_id_array_prologue(&args);
 
         // ValueArray is a multi-statement body; handle it separately.
         if let Ret::ValueArray = ret {
@@ -1718,7 +1712,7 @@ impl ObjcEmitter {
             self.needs_vec = true;
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[text::Text] {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[text::Text] {{\n{coll_prologue}\
                  \x20       let arr: *u8 = {array_call};\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
                  \x20       var out: vec::Vec[text::Text] = vec::Vec[text::Text]::with_capacity(n as usize);\n\
@@ -1747,7 +1741,7 @@ impl ObjcEmitter {
             // Each NSNumber is read as a double (the widest single scalar it boxes),
             // the same f64 bridge the dictionary NSNumber value uses.
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[f64] {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[f64] {{\n{coll_prologue}\
                  \x20       let arr: *u8 = {array_call};\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
                  \x20       var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n as usize);\n\
@@ -1777,7 +1771,7 @@ impl ObjcEmitter {
             // NSSet has no index; take `-allObjects` (an NSArray snapshot) and fold
             // each NSString element into an owning StringSet.
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> string_set::StringSet {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> string_set::StringSet {{\n{coll_prologue}\
                  \x20       let set: *u8 = {set_call};\n\
                  \x20       let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr(\"allObjects\\0\")));\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
@@ -1813,7 +1807,7 @@ impl ObjcEmitter {
                 "rt::msg_id_u64(arr, at_sel, i)".to_string()
             };
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n{coll_prologue}\
                  \x20       let arr: *u8 = {array_call};\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
                  \x20       var out: vec::Vec[{elem_ty}] = vec::Vec[{elem_ty}]::with_capacity(n as usize);\n\
@@ -1846,7 +1840,7 @@ impl ObjcEmitter {
                 "rt::msg_id_u64(arr, at_sel, i)".to_string()
             };
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n{coll_prologue}\
                  \x20       let set: *u8 = {set_call};\n\
                  \x20       let arr: *u8 = rt::msg_id(set, rt::sel(#str_ptr(\"allObjects\\0\")));\n\
                  \x20       let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr(\"count\\0\")));\n\
@@ -1903,7 +1897,7 @@ impl ObjcEmitter {
             };
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
             self.body.push_str(&format!(
-                "    fn {name}({receiver}{sep}{sig_param}) -> string_map::StringMap[{val_ty}] {{\n\
+                "    fn {name}({receiver}{sep}{sig_param}) -> string_map::StringMap[{val_ty}] {{\n{coll_prologue}\
                  \x20       let dict: *u8 = {dict_call};\n\
                  \x20       let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr(\"allKeys\\0\")));\n\
                  \x20       let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr(\"count\\0\")));\n\
@@ -1941,10 +1935,9 @@ impl ObjcEmitter {
             .expect("collection/unsupported returns are handled earlier in emit_method");
 
         // Prologue: build an NSMutableArray from each Vec[P] param (the send call
-        // already references the `arr_<pname>` local via arg_expr).
-        let prologue = build_id_array_prologue(&args);
-
-        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{prologue}{body_line}    }}\n\n"));
+        // already references the `arr_<pname>` local via arg_expr). Same value the
+        // collection-return bodies above inject.
+        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{coll_prologue}{body_line}    }}\n\n"));
     }
 
     /// A method with a trailing `usingBlock:` param: emit a per-method
@@ -5248,20 +5241,21 @@ mod tests {
     }
 
     #[test]
-    fn nsarray_id_param_with_collection_return_or_block_skips_not_breaks() {
-        // The `Vec[W] -> NSMutableArray` prologue is only built in the general
-        // path. A method that pairs an NSArray<id> param with a collection return
-        // or a block builds its body elsewhere and would reference an undefined
-        // `arr_<pname>` — those combos must SKIP, not emit broken code.
+    fn nsarray_id_param_composes_with_collection_return() {
+        // A collection PARAM paired with a collection RETURN now composes: each
+        // collection-return body prepends `build_id_array_prologue`, so the built
+        // `arr_<pname>` the send call references is defined. (Previously skipped as
+        // "NSArray<id> param with a collection return not modelled".) A block method
+        // still routes to the block path, which does not yet build a collection param.
         let tu = serde_json::json!({
             "inner": [
                 { "kind": "ObjCInterfaceDecl", "name": "NSScreen", "loc": { "file": "test.h" }, "inner": [] },
                 { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
-                    // NSArray<id> param + NSArray return -> skip
+                    // NSArray<id> param + NSArray return -> binds (Vec[Screen] -> Vec[Screen])
                     { "kind": "ObjCMethodDecl", "name": "filter:", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "NSArray<NSScreen *> * _Nonnull" },
                       "inner": [{ "kind": "ParmVarDecl", "name": "items", "type": { "qualType": "NSArray<NSScreen *> *" } }] },
-                    // NSArray<id> param + block -> skip
+                    // NSArray<id> param + block -> still skips (block path)
                     { "kind": "ObjCMethodDecl", "name": "process:completion:", "instance": true, "loc": { "file": "test.h" },
                       "returnType": { "qualType": "void" },
                       "inner": [
@@ -5270,12 +5264,17 @@ mod tests {
             ]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        assert!(out.contains("// SKIPPED `filter:`: NSArray<id> param with a collection return not modelled"),
-            "collection-return combo must skip:\n{out}");
+        assert!(!out.contains("// SKIPPED `filter:`"), "collection param + return now binds, not skips:\n{out}");
+        assert!(out.contains("fn filter(this, items: vec::Vec[Screen]) -> vec::Vec[Screen]"),
+            "Vec param + Vec return signature:\n{out}");
+        // The build prologue is emitted (defines arr_items) AND the send references it,
+        // so the local is no longer dangling.
+        assert!(out.contains("match items.at_ptr(i_items)"), "param-build prologue emitted:\n{out}");
+        assert!(out.contains("let arr: *u8 = objc_msg_id_id(this._obj, rt::sel(#str_ptr(\"filter:\\0\")), arr_items)")
+            || out.contains("arr_items)"), "send references the built array:\n{out}");
+        // The block combo remains skipped (separate, un-touched path).
         assert!(out.contains("// SKIPPED `process:completion:`: block method with a built-collection param not modelled"),
-            "block combo must skip:\n{out}");
-        // And no dangling `arr_items` reference leaked into emitted code.
-        assert!(!out.contains("arr_items"), "no undefined array local emitted:\n{out}");
+            "block combo still skips:\n{out}");
     }
 
     #[test]
