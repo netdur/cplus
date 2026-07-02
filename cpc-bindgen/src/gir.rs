@@ -763,7 +763,7 @@ impl<'a> Emitter<'a> {
         ret: &Mapped,
         ret_full: bool,
         ret_nullable: bool,
-        params: &[(String, Mapped)],
+        params: &[Param],
     ) -> (String, String) {
         let ext_name = format!("__c_{}", sanitize_sym(cid));
 
@@ -772,8 +772,10 @@ impl<'a> Emitter<'a> {
         if recv.is_some() {
             ext_params.push("__recv: *u8".to_string());
         }
-        for (n, m) in params {
-            ext_params.push(format!("{n}: {}", m.extern_ty));
+        for p in params {
+            // An out scalar is a pointer to the scalar in the C ABI.
+            let ty = if p.out { format!("*{}", p.m.extern_ty) } else { p.m.extern_ty.clone() };
+            ext_params.push(format!("{}: {ty}", p.name));
         }
         let ext_ret = if ret.extern_ty == "()" { String::new() } else { format!(" -> {}", ret.extern_ty) };
         let ext = format!(
@@ -786,12 +788,15 @@ impl<'a> Emitter<'a> {
         if recv.is_some() {
             wrap_params.push("this".to_string());
         }
-        for (n, m) in params {
-            // Object params take the wrapper by value and pass its `.raw()`
-            // handle (the wrapper is a non-owning handle, so the move is safe;
-            // `ref` is out — in C+ it is a mutable write-back borrow). Matches
-            // how the ObjC binder passes wrapper args.
-            wrap_params.push(format!("{n}: {}", m.wrap_param_ty()));
+        for p in params {
+            // Out scalar -> `ref name: T` (C+ `ref` is a mutable write-back
+            // borrow, exactly an out-param). Others take the wrapper/scalar by
+            // value (object wrappers are non-owning handles, so the move is safe).
+            if p.out {
+                wrap_params.push(format!("ref {}: {}", p.name, p.m.wrap_param_ty()));
+            } else {
+                wrap_params.push(format!("{}: {}", p.name, p.m.wrap_param_ty()));
+            }
         }
         let wrap_ret = ret.wrap_ret_ty(ret_nullable);
         let wrap_ret_sig = if wrap_ret == "()" { String::new() } else { format!(" -> {wrap_ret}") };
@@ -803,8 +808,15 @@ impl<'a> Emitter<'a> {
             call_args.push(r.to_string());
         }
         let mut frees: Vec<String> = Vec::new();
-        for (n, m) in params {
-            match m.cat {
+        for p in params {
+            let n = &p.name;
+            if p.out {
+                // Pass the address of the caller's `ref` place; the callee writes
+                // through it.
+                call_args.push(format!("({{ #addr_of({n}) as *{} }})", p.m.extern_ty));
+                continue;
+            }
+            match p.m.cat {
                 Cat::Str => {
                     w.push_str(&format!("        let __cs_{n}: *u8 = bridge::str_to_cstring({n});\n"));
                     call_args.push(format!("__cs_{n}"));
@@ -1058,20 +1070,22 @@ impl<'a> Emitter<'a> {
     }
 
     /// Map the non-instance parameters of a method/ctor/function. Returns None
-    /// (after emitting a SKIP) if any param is variadic, out/inout, or an
-    /// unmapped type — the whole callable is then skipped.
-    fn map_params(&mut self, node: &Node, kind: &str, label: &str) -> Option<Vec<(String, Mapped)>> {
-        let mut params: Vec<(String, Mapped)> = Vec::new();
+    /// (after emitting a SKIP) if any param is variadic, inout, an unmodelled out
+    /// param, or an unmapped type — the whole callable is then skipped.
+    fn map_params(&mut self, node: &Node, kind: &str, label: &str) -> Option<Vec<Param>> {
+        let mut params: Vec<Param> = Vec::new();
         if let Some(ps) = node.child_named("parameters") {
             for p in ps.children_named("parameter") {
                 if p.child_named("varargs").is_some() {
                     self.skip(kind, label, "variadic");
                     return None;
                 }
-                if matches!(p.attr("direction"), Some("out") | Some("inout")) {
-                    self.skip(kind, label, "out/inout parameter");
+                let dir = p.attr("direction");
+                if matches!(dir, Some("inout")) {
+                    self.skip(kind, label, "inout parameter");
                     return None;
                 }
+                let is_out = matches!(dir, Some("out"));
                 let pty = p.child_named("type");
                 let m = match pty.and_then(|t| self.map(t)) {
                     Some(m) if m.usable_as_param() => m,
@@ -1080,8 +1094,15 @@ impl<'a> Emitter<'a> {
                         return None;
                     }
                 };
+                // Out params are bound only for plain scalars (`ref x: T` write-
+                // back). An out string/object/bool/record needs alloc/convert we
+                // don't model yet, so skip the whole callable.
+                if is_out && m.cat != Cat::Scalar {
+                    self.skip(kind, label, &format!("out parameter `{}` — only scalar out-params are bound", p.attr("name").unwrap_or("?")));
+                    return None;
+                }
                 let pname = ident(p.attr("name").unwrap_or("arg"));
-                params.push((pname, m));
+                params.push(Param { name: pname, m, out: is_out });
             }
         }
         Some(params)
@@ -1153,6 +1174,15 @@ struct Mapped {
     /// For `Cat::Obj`: the wrapper struct name (a class/interface in this
     /// namespace). None otherwise.
     obj: Option<String>,
+}
+
+/// One bound parameter: its name, mapped type, and whether it is an out
+/// parameter (`direction="out"`), which becomes a `ref` write-back.
+#[derive(Clone)]
+struct Param {
+    name: String,
+    m: Mapped,
+    out: bool,
 }
 
 impl Mapped {
@@ -1549,6 +1579,36 @@ mod tests {
         // resolve (it is emitted as a wrapper struct).
         let out = emit(CLASSES);
         assert!(out.contains("struct Editable {"));
+    }
+
+    #[test]
+    fn scalar_out_param_becomes_ref_writeback() {
+        let src = r#"<repository><namespace name="Gtk">
+          <class name="Widget" c:type="GtkWidget" glib:type-name="GtkWidget">
+            <method name="get_size_request" c:identifier="gtk_widget_get_size_request">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="w"><type name="Widget"/></instance-parameter>
+                <parameter name="width" direction="out"><type name="gint" c:type="gint*"/></parameter>
+                <parameter name="height" direction="out"><type name="gint" c:type="gint*"/></parameter>
+              </parameters>
+            </method>
+            <method name="get_name" c:identifier="gtk_widget_get_name_out">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="w"><type name="Widget"/></instance-parameter>
+                <parameter name="name" direction="out"><type name="utf8" c:type="char**"/></parameter>
+              </parameters>
+            </method>
+          </class></namespace></repository>"#;
+        let out = emit(src);
+        // scalar out -> `ref name: T`, extern takes `*T`, call passes #addr_of
+        assert!(out.contains("fn get_size_request(this, ref width: i32, ref height: i32) {"));
+        assert!(out.contains("extern fn __c_gtk_widget_get_size_request(__recv: *u8, width: *i32, height: *i32)"));
+        assert!(out.contains("#addr_of(width) as *i32"));
+        // out string is not modelled -> the whole method is skipped
+        assert!(out.contains("// SKIPPED method `Widget::get_name`"));
+        assert!(!out.contains("fn get_name("));
     }
 
     #[test]
