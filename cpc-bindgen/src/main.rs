@@ -210,6 +210,16 @@ fn main() {
                 std::process::exit(2);
             }
         };
+        // `--out DIR` writes a whole package; without it, emit to stdout.
+        if let Some(dir) = out_dir.as_deref() {
+            match gir::generate_package(&arg, dir) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("cpc-bindgen --gobject: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         match gir::generate(&arg) {
             Ok(src) => {
                 print!("{src}");
