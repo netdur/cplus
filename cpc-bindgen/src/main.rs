@@ -536,9 +536,13 @@ impl Emitter {
                 }
             }
         }
+        // Which top-level decls originate from our header (vs an #included
+        // system/dependency header). Sticky per-file, computed once in TU order;
+        // both passes below index it by position.
+        let in_header = self.compute_in_header_flags(inner);
         // Two-pass: structs/typedefs first so functions reference defined types.
-        for decl in inner {
-            if !self.decl_in_header(decl) {
+        for (i, decl) in inner.iter().enumerate() {
+            if !in_header[i] {
                 continue;
             }
             match decl.get("kind").and_then(|v| v.as_str()) {
@@ -548,8 +552,8 @@ impl Emitter {
                 _ => {}
             }
         }
-        for decl in inner {
-            if !self.decl_in_header(decl) {
+        for (i, decl) in inner.iter().enumerate() {
+            if !in_header[i] {
                 continue;
             }
             if decl.get("kind").and_then(|v| v.as_str()) == Some("FunctionDecl") {
@@ -587,32 +591,41 @@ impl Emitter {
     }
 
     /// True iff `decl` originated from the user's header (not a system include).
-    /// Filter on `loc.file` matching the header path's basename — clang's
-    /// JSON elides file fields for repeated locations, so we treat absent
-    /// fields as "same file as previous decl" (sticky). To keep MVP small
-    /// we approximate: if the loc has an explicit file, it must match our
-    /// header; if no file, we assume it's from our header too (stays
-    /// sticky to the last loc, which started at our TU).
-    fn decl_in_header(&self, decl: &serde_json::Value) -> bool {
-        let loc = decl.get("loc");
-        let file = loc.and_then(|l| l.get("file")).and_then(|f| f.as_str());
-        let included_from = loc.and_then(|l| l.get("includedFrom"));
-        if included_from.is_some() {
-            // Anything in an included sub-header is system / dependency code.
-            return false;
-        }
-        match file {
-            Some(f) => {
-                let basename = |p: &str| -> String {
-                    std::path::Path::new(p)
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default()
-                };
-                basename(f) == basename(&self.header_path)
+    /// For each top-level decl (in TU order), decide whether it comes from our
+    /// header rather than an #included system/dependency header.
+    ///
+    /// clang's `-ast-dump=json` writes `loc.file` only when the source file
+    /// *changes*; a run of decls from the same file omits it. So file identity
+    /// is sticky: carry the last explicit `loc.file` forward across decls that
+    /// omit it. (The previous per-decl check treated an omitted file as "our
+    /// header" unconditionally, which leaked the entire transitive libc include
+    /// closure — `<stdio.h>`'s fscanf/scanf, `<complex.h>` math — into the
+    /// output, because only the *first* decl of each system-header run carries
+    /// the file that would have excluded it.)
+    ///
+    /// The TU's own file is the main header, so decls before any explicit file
+    /// change default to in-header.
+    fn compute_in_header_flags(&self, inner: &[serde_json::Value]) -> Vec<bool> {
+        let basename = |p: &str| -> String {
+            std::path::Path::new(p)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let want = basename(&self.header_path);
+        let mut current_in_header = true;
+        let mut flags = Vec::with_capacity(inner.len());
+        for decl in inner {
+            if let Some(f) = decl
+                .get("loc")
+                .and_then(|l| l.get("file"))
+                .and_then(|f| f.as_str())
+            {
+                current_in_header = basename(f) == want;
             }
-            None => true,
+            flags.push(current_in_header);
         }
+        flags
     }
 
     fn finish(self) -> String {
@@ -1340,5 +1353,31 @@ mod tests {
         assert_eq!(ret, "void");
         assert!(params.is_empty());
         assert!(!var);
+    }
+
+    // clang elides `loc.file` for consecutive decls from the same file, so a run
+    // of #included system-header decls carries the file only on its first entry.
+    // The in-header filter must stay sticky across the elided ones, else the
+    // whole transitive libc include closure (stdio's fscanf, ...) leaks into the
+    // output. Reproduces the exact shape and asserts the run stays excluded.
+    #[test]
+    fn in_header_filter_is_sticky_across_elided_files() {
+        let e = Emitter::new("/usr/include/cblas.h");
+        let d = |file: Option<&str>| match file {
+            Some(f) => serde_json::json!({ "loc": { "file": f }, "kind": "FunctionDecl" }),
+            None => serde_json::json!({ "loc": {}, "kind": "FunctionDecl" }),
+        };
+        let inner = vec![
+            d(Some("/usr/include/cblas.h")), // our header      -> in
+            d(Some("/usr/include/stdio.h")), // system run head -> out
+            d(None),                         // elided (sticky) -> out
+            d(None),                         // elided (sticky) -> out
+            d(Some("/usr/include/cblas.h")), // back to header  -> in
+            d(None),                         // elided (sticky) -> in
+        ];
+        assert_eq!(
+            e.compute_in_header_flags(&inner),
+            vec![true, false, false, false, true, true],
+        );
     }
 }
