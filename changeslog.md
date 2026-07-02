@@ -3,6 +3,88 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.26 — 2026-07-02
+
+> A bindings release. `cpc-bindgen` grows from a C-header FFI generator into a
+> framework binding generator: it reads Objective-C and Swift framework
+> interfaces and emits typed, idiomatic C+ packages, bridging C object and
+> collection types to standard-library types on both sides of a call. A set of
+> generated vendor packages ships with it, and the standard library gains set
+> and map primitives plus reference-counting uniqueness. The language changes
+> are additive — named arguments, default parameter values, and a `fn(ref T)`
+> pointer mode — together with soundness and codegen fixes.
+
+### Framework binding generation
+- `cpc-bindgen --framework` generates a whole C+ package from an Apple
+  framework: its umbrella header, subframeworks, and transitively imported
+  headers. C and Objective-C frameworks are both supported.
+- An **Objective-C front-end** reads class, category, protocol, and enum
+  declarations. Category methods merge into their class; `NS_ENUM` /
+  `NS_OPTIONS` become C+ enums and constants.
+- `--merge` emits a framework as a **single module** with full cross-type
+  chaining, so a method returning one framework type resolves to that type's
+  wrapper instead of an opaque handle.
+- **Typed object wrappers**: object returns and arguments bind to the wrapping
+  C+ type; nullable returns become `Option`; class factories return `Self`.
+- **By-value structs**: geometry and descriptor structs (`MTLSize`, `NSRange`,
+  `CGAffineTransform`, `CGVector`, `CATransform3D`, …) bind as C+ value structs
+  with a proven struct-return ABI; typedef aliases and enum-typed fields are
+  resolved.
+- **Collection bridging**, both directions: `NSArray<NSString*>` ↔ `Vec[Text]`,
+  `NSArray<id<P>>` ↔ `Vec[P]`, `NSArray<NSNumber*>` → `Vec[f64]`,
+  `NSSet<NSString*>` ↔ `StringSet`, and `NSDictionary` ↔ `StringMap`.
+- **Delegate synthesis**: a protocol becomes a C+ delegate whose callbacks carry
+  scalar, struct, typedef, and collection arguments and non-void returns.
+- **Blocks**: `usingBlock:` methods, completion-handler (typedef'd block)
+  parameters, and value-returning blocks bind to C+ callbacks.
+- `SEL` and `Class` bind as handles; `BOOL` ↔ `bool`; `**` out-parameters bind;
+  Objective-C lightweight generics erase to `id`.
+
+### Swift binding generation
+- `cpc-bindgen --swift` reads a Swift module's symbol graph. `--swift-bridge`
+  emits a compiled `@_cdecl` Swift bridge rather than a classification, and
+  `--bridge-spec` supplies human-declared copyability the graph cannot express.
+
+### SIMD and C vector types
+- C SIMD vector types and canonical function-pointer types map to C+; integer
+  and unsigned lane-vector wrappers are added to the `simd` package.
+
+### Generated vendor packages
+- New naming-guideline-aligned packages: `metal`, `appkit`, `uikit`,
+  `accelerate`, `cblas`, `simd`, `win32`, `adwaita`, `android_view`, `jni`,
+  `cuda`, `espidf`, `llama_cpp`, `coreai`, `log`, `uuid`, `arena`,
+  `static-arena`, `rt`, and `rt_darwin`.
+
+### Standard library
+- **No-crash error model**: fallible operations return `Status` / `Option` /
+  `Result` instead of trapping. The whole standard library is converted.
+- **Named arguments and default parameter values** at call sites.
+- New primitives: `HashSet[T]`, `StringSet` (a `Text`-keyed set), and
+  `StringMap` (a `Text`-keyed owning map) with slot enumeration.
+- **`Rc` / `Arc` uniqueness**: `is_unique`, `try_unwrap`, and a scoped
+  `with_mut`; `MutexGuard` gains scoped `with` / `with_mut`.
+- A Swift-style API pass across the standard library: value-centric method
+  names, private (`_`) internals, and per-module tests. `json` migrates onto it.
+
+### Language
+- A function-pointer type can carry the `ref` mode (`fn(ref T)`): the callee
+  borrows through the pointer, complementing the existing `fn(take T)`.
+
+### Soundness & correctness
+- Narrow-integer `extern` arguments and returns are zero/sign-extended on both
+  the import and export sides, matching clang; `uint8_t` and other sub-word
+  scalars now round-trip correctly across the C ABI.
+- The `sret` return attribute is applied at a non-musttail `objc_msgSend` call
+  site, so a struct-returning message no longer clobbers its receiver.
+- A chained receiver (`a.b().c()`) no longer evaluates the inner receiver twice.
+- Field privacy is resolved from a generic type's template origin, so an
+  instantiation no longer loses its private-field marking.
+- Same-named `extern` functions with conflicting signatures are rejected
+  (E0357).
+
+### Tooling
+- `cpc fmt`: unary `+` / `-` hugs its operand; bitwise-or `|` is spaced.
+
 ## v0.0.25 — 2026-06-22
 
 > A platforms-and-UI release. It also breaks the language feature freeze: the

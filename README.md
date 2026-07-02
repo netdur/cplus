@@ -71,7 +71,7 @@ The C+ repository includes a robust suite of practical tooling to improve the de
 - **`cpc lsp`**: Starts the Language Server (goto-definition, references, hover, outline — served from the code graph).
 - **`cpc graph` / `cpc query` / `cpc mcp`**: The resolved, typed code-knowledge graph — as JSON, as per-symbol queries (`def`/`refs`/`callers`/`callees`/`call-hierarchy`/`type-at`/`context`/…), or as a resident MCP server for agents.
 - **`cpc --realtime-report`**: Whole-project digest of the real-time contract analysis.
-- **`cpc-bindgen`**: Generates C+ FFI declarations from C headers.
+- **`cpc-bindgen`**: Generates C+ FFI bindings from C headers, and whole typed C+ packages from Objective-C and Swift frameworks (`--framework` / `--swift`).
 
 ### Creating a C+ Project
 
@@ -92,7 +92,7 @@ The C+ toolchain is implemented as a Rust workspace containing:
 - `cplus-core`: The core compiler library (lexer, parser, AST, semantic analyzer, borrow checker, monomorphizer, LLVM IR codegen).
 - `cpc`: The command-line compiler and build driver.
 - `cpc-lsp`: The JSON-RPC language server for editor integration.
-- `cpc-bindgen`: A C header to C+ FFI generator.
+- `cpc-bindgen`: A binding generator — C headers to C+ FFI declarations, and Objective-C / Swift frameworks to whole typed C+ packages.
 - `cpc-wasm`: A WebAssembly build of the front end powering the in-browser playground on [cplus-lang.dev](https://cplus-lang.dev) (source → diagnostics + LLVM IR, client-side).
 
 ### Building from Source
