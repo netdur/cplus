@@ -29,6 +29,10 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
     let mut gobject_mode = false;
+    // `--use <Namespace>=<package>` maps a foreign GIR namespace to the C+
+    // binding package that provides its wrappers (e.g. `Gtk=gtk4`), so
+    // cross-namespace object/enum types resolve and auto-import.
+    let mut gobject_uses: Vec<(String, String)> = Vec::new();
     let mut swift_mode = false;
     let mut bridge_mode = false;
     let mut bridge_spec_path: Option<String> = None;
@@ -61,6 +65,22 @@ fn main() {
             // graph (GTK/GLib/Adwaita) — the Linux analog of --objc/--framework.
             if a == "--gobject" {
                 gobject_mode = true;
+                i += 1;
+                continue;
+            }
+            // `--use NS=pkg` (repeatable): resolve foreign namespace `NS` via the
+            // C+ package `pkg`.
+            if a == "--use" {
+                if let Some((ns, pkg)) = raw.get(i + 1).and_then(|v| v.split_once('=')) {
+                    gobject_uses.push((ns.to_string(), pkg.to_string()));
+                }
+                i += 2;
+                continue;
+            }
+            if let Some(v) = a.strip_prefix("--use=") {
+                if let Some((ns, pkg)) = v.split_once('=') {
+                    gobject_uses.push((ns.to_string(), pkg.to_string()));
+                }
                 i += 1;
                 continue;
             }
@@ -212,7 +232,7 @@ fn main() {
         };
         // `--out DIR` writes a whole package; without it, emit to stdout.
         if let Some(dir) = out_dir.as_deref() {
-            match gir::generate_package(&arg, dir) {
+            match gir::generate_package(&arg, dir, &gobject_uses) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("cpc-bindgen --gobject: {e}");
@@ -220,7 +240,7 @@ fn main() {
                 }
             }
         }
-        match gir::generate(&arg) {
+        match gir::generate(&arg, &gobject_uses) {
             Ok(src) => {
                 print!("{src}");
                 std::process::exit(0);

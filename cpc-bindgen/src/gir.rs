@@ -305,13 +305,68 @@ fn parse_version(v: &str) -> Vec<u32> {
     v.split('.').map(|s| s.parse::<u32>().unwrap_or(0)).collect()
 }
 
-pub fn generate(arg: &str) -> Result<String, String> {
+/// A foreign namespace mapped in via `--use`: which of its types are wrapper
+/// (class/interface) types and which are enums, plus the C+ package that
+/// provides them (the import alias).
+struct Foreign {
+    alias: String,
+    classes: HashSet<String>,
+    enums: HashMap<String, String>,
+}
+
+/// Load the `--use NS=pkg` foreign registries by parsing each named GIR and
+/// collecting its class/interface + enum sets. A namespace that can't be found
+/// is skipped with a warning (its types stay SKIPs).
+fn load_foreign(uses: &[(String, String)]) -> HashMap<String, Foreign> {
+    let mut map = HashMap::new();
+    for (ns_arg, pkg) in uses {
+        let path = match find_gir_file(ns_arg) {
+            Some(p) => p,
+            None => {
+                eprintln!("cpc-bindgen --gobject: --use {ns_arg}: GIR not found, its types stay SKIPs");
+                continue;
+            }
+        };
+        let src = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let root = parse(&src);
+        let ns = match root.child_named("repository").and_then(|r| r.child_named("namespace")) {
+            Some(n) => n,
+            None => continue,
+        };
+        let ns_name = ns.attr("name").unwrap_or(ns_arg).to_string();
+        let mut classes = HashSet::new();
+        for c in ns.children_named("class").chain(ns.children_named("interface")) {
+            if let Some(n) = c.attr("name") {
+                classes.insert(n.to_string());
+            }
+        }
+        let mut enums = HashMap::new();
+        for e in ns.children_named("enumeration") {
+            if let Some(n) = e.attr("name") {
+                enums.insert(n.to_string(), "i32".to_string());
+            }
+        }
+        for e in ns.children_named("bitfield") {
+            if let Some(n) = e.attr("name") {
+                enums.insert(n.to_string(), "u32".to_string());
+            }
+        }
+        map.insert(ns_name, Foreign { alias: pkg.clone(), classes, enums });
+    }
+    map
+}
+
+pub fn generate(arg: &str, uses: &[(String, String)]) -> Result<String, String> {
     let path = find_gir_file(arg).ok_or_else(|| format!("cannot find GIR for `{arg}` (looked in /usr/share/gir-1.0 and the arch libdir)"))?;
     let src = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let foreign = load_foreign(uses);
     let root = parse(&src);
     let repo = root.child_named("repository").ok_or("no <repository> in GIR")?;
     let ns = repo.child_named("namespace").ok_or("no <namespace> in GIR")?;
-    let mut em = Emitter::new(ns, &path.display().to_string());
+    let mut em = Emitter::new(ns, &path.display().to_string(), foreign);
     Ok(em.run())
 }
 
@@ -320,9 +375,10 @@ pub fn generate(arg: &str) -> Result<String, String> {
 /// (deps on gobject + stdlib, `[link]` libs derived from the GIR
 /// `shared-library`, and a provenance header). `<pkg>` is the output directory's
 /// basename, so it satisfies the vendor "name matches directory" rule.
-pub fn generate_package(arg: &str, out_dir: &str) -> Result<(), String> {
+pub fn generate_package(arg: &str, out_dir: &str, uses: &[(String, String)]) -> Result<(), String> {
     let path = find_gir_file(arg).ok_or_else(|| format!("cannot find GIR for `{arg}`"))?;
     let src = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let foreign = load_foreign(uses);
     let root = parse(&src);
     let repo = root.child_named("repository").ok_or("no <repository> in GIR")?;
     let ns = repo.child_named("namespace").ok_or("no <namespace> in GIR")?;
@@ -330,9 +386,10 @@ pub fn generate_package(arg: &str, out_dir: &str) -> Result<(), String> {
     let ns_ver = ns.attr("version").unwrap_or("").to_string();
     let libs = link_libs(ns);
 
-    let mut em = Emitter::new(ns, &path.display().to_string());
+    let mut em = Emitter::new(ns, &path.display().to_string(), foreign);
     let module = em.run();
     let (emitted, skips) = (em.emitted, em.skips);
+    let imported = em.imported.clone();
 
     let out = PathBuf::from(out_dir);
     let pkg = out
@@ -344,6 +401,16 @@ pub fn generate_package(arg: &str, out_dir: &str) -> Result<(), String> {
     std::fs::create_dir_all(&srcdir).map_err(|e| format!("mkdir {}: {e}", srcdir.display()))?;
 
     let libs_toml = libs.iter().map(|l| format!("\"{l}\"")).collect::<Vec<_>>().join(", ");
+    // Only foreign packages actually imported (referenced) become dependencies —
+    // a `--use` whose types never appear must not add a dangling dep.
+    let mut foreign_deps = String::new();
+    for dep_pkg in &imported {
+        foreign_deps.push_str(&format!("{dep_pkg:<7} = \"*\"\n"));
+    }
+    let use_flags = uses
+        .iter()
+        .map(|(ns, pkg)| format!(" --use {ns}={pkg}"))
+        .collect::<String>();
     let manifest = format!(
         "[package]\n\
          name    = \"{pkg}\"\n\
@@ -351,11 +418,12 @@ pub fn generate_package(arg: &str, out_dir: &str) -> Result<(), String> {
          edition = \"2026\"\n\n\
          # Auto-generated by cpc-bindgen --gobject.\n\
          # GIR:       {gir} (namespace {ns_name} {ns_ver})\n\
-         # Reproduce: cpc-bindgen --gobject {arg} --out {out_dir}\n\
+         # Reproduce: cpc-bindgen --gobject {arg} --out {out_dir}{use_flags}\n\
          # Coverage:  {emitted} items, {skips} SKIPPED (see `// SKIPPED` in src).\n\n\
          [dependencies]\n\
          gobject = \"*\"\n\
-         stdlib  = \"*\"\n\n\
+         stdlib  = \"*\"\n\
+         {foreign_deps}\n\
          [link]\n\
          libs = [{libs_toml}]\n",
         gir = path.display(),
@@ -404,10 +472,16 @@ struct Emitter<'a> {
     /// `<enumeration>`, `u32` for a `<bitfield>`). Used to bind enum-typed params
     /// and returns as their ABI integer (callers pass the emitted constant fns).
     enum_types: HashMap<String, String>,
+    /// Foreign namespaces mapped in via `--use` (namespace name -> its wrapper/
+    /// enum sets + import alias), so `Gtk.Widget` resolves to `gtk4::Widget`.
+    foreign: HashMap<String, Foreign>,
+    /// Foreign package aliases actually imported (referenced in the output) —
+    /// the subset of `--use` that becomes a real dependency.
+    imported: Vec<String>,
 }
 
 impl<'a> Emitter<'a> {
-    fn new(ns: &'a Node, source: &str) -> Self {
+    fn new(ns: &'a Node, source: &str, foreign: HashMap<String, Foreign>) -> Self {
         let ns_name = ns.attr("name").unwrap_or("Unknown").to_string();
         let mut out = String::new();
         out.push_str("// Auto-generated by cpc-bindgen --gobject. DO NOT EDIT.\n");
@@ -454,7 +528,35 @@ impl<'a> Emitter<'a> {
             wrapper_types,
             seen_types: HashSet::new(),
             enum_types,
+            foreign,
+            imported: Vec::new(),
         }
+    }
+
+    /// The qualified C+ wrapper type for a GIR class/interface name, or None if
+    /// it isn't a wrapper we bind. Handles both in-namespace (`Widget` ->
+    /// `Widget`) and foreign (`Gtk.Widget` -> `gtk4::Widget`, when `--use`d).
+    fn wrapper_type_of(&self, name: &str) -> Option<String> {
+        if let Some((ns, local)) = name.split_once('.') {
+            let f = self.foreign.get(ns)?;
+            if f.classes.contains(local) {
+                return Some(format!("{}::{}", f.alias, ident_type(local)));
+            }
+            return None;
+        }
+        if self.wrapper_types.contains(name) {
+            return Some(ident_type(name));
+        }
+        None
+    }
+
+    /// The integer repr for a GIR enum/bitfield name (in-namespace or foreign
+    /// via `--use`), or None if it isn't an enum we know.
+    fn enum_repr_of(&self, name: &str) -> Option<String> {
+        if let Some((ns, local)) = name.split_once('.') {
+            return self.foreign.get(ns).and_then(|f| f.enums.get(local).cloned());
+        }
+        self.enum_types.get(name).cloned()
     }
 
     /// Reserve a wrapper name; returns false if it was already taken (caller
@@ -472,16 +574,14 @@ impl<'a> Emitter<'a> {
             return Some(m);
         }
         let name = t.attr("name")?;
-        if name.contains('.') {
-            return None; // foreign namespace (Gdk.Rectangle, GObject.Object, GLib.List)
+        // Enum/bitfield (in-namespace or foreign) -> its ABI integer. Callers pass
+        // the emitted constant fns (e.g. `orientation_horizontal()`).
+        if let Some(repr) = self.enum_repr_of(name) {
+            return Some(Mapped { cat: Cat::Scalar, extern_ty: repr, obj: None });
         }
-        // In-namespace enum/bitfield -> its ABI integer. Callers pass the emitted
-        // constant fns (e.g. `orientation_horizontal()`).
-        if let Some(repr) = self.enum_types.get(name) {
-            return Some(Mapped { cat: Cat::Scalar, extern_ty: repr.clone(), obj: None });
-        }
-        if self.wrapper_types.contains(name) {
-            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ident_type(name)) });
+        // Class/interface (in-namespace or foreign via --use) -> wrapper struct.
+        if let Some(wt) = self.wrapper_type_of(name) {
+            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(wt) });
         }
         None
     }
@@ -511,7 +611,33 @@ impl<'a> Emitter<'a> {
             "\n// cpc-bindgen --gobject: {} items emitted, {} SKIPPED.\n",
             self.emitted, self.skips
         ));
+        self.inject_foreign_imports();
         std::mem::take(&mut self.out)
+    }
+
+    /// A foreign `--use` package is imported only if its wrappers were actually
+    /// referenced (`<alias>::` appears in the output). The imports are inserted
+    /// after the fixed ones, sorted for byte-stable output.
+    fn inject_foreign_imports(&mut self) {
+        let mut aliases: Vec<&str> = self
+            .foreign
+            .values()
+            .map(|f| f.alias.as_str())
+            .filter(|a| self.out.contains(&format!("{a}::")))
+            .collect();
+        aliases.sort();
+        aliases.dedup();
+        self.imported = aliases.iter().map(|a| a.to_string()).collect();
+        if aliases.is_empty() {
+            return;
+        }
+        let imports: String = aliases
+            .iter()
+            .map(|a| format!("import \"{a}/{a}\" as {a};\n"))
+            .collect();
+        if let Some(pos) = self.out.find("\n// === ") {
+            self.out.insert_str(pos, &format!("\n{imports}"));
+        }
     }
 
     fn skip(&mut self, kind: &str, name: &str, reason: &str) {
@@ -637,13 +763,11 @@ impl<'a> Emitter<'a> {
             wrap_params.push("this".to_string());
         }
         for (n, m) in params {
-            // Object params bind by reference (`ref name: T`) so the caller keeps
-            // its wrapper; scalars/strings/bools bind by value.
-            if m.cat == Cat::Obj {
-                wrap_params.push(format!("ref {n}: {}", m.wrap_param_ty()));
-            } else {
-                wrap_params.push(format!("{n}: {}", m.wrap_param_ty()));
-            }
+            // Object params take the wrapper by value and pass its `.raw()`
+            // handle (the wrapper is a non-owning handle, so the move is safe;
+            // `ref` is out — in C+ it is a mutable write-back borrow). Matches
+            // how the ObjC binder passes wrapper args.
+            wrap_params.push(format!("{n}: {}", m.wrap_param_ty()));
         }
         let wrap_ret = ret.wrap_ret_ty(ret_nullable);
         let wrap_ret_sig = if wrap_ret == "()" { String::new() } else { format!(" -> {wrap_ret}") };
@@ -765,22 +889,28 @@ impl<'a> Emitter<'a> {
         // in-namespace supertypes are bridged; a foreign parent (GObject.Object)
         // is left to `.raw()`.
         if let Some(parent) = c.attr("parent") {
-            if !parent.contains('.') && self.wrapper_types.contains(parent) && methods.insert("upcast".to_string()) {
-                let pty = ident_type(parent);
-                body.push_str(&format!(
-                    "    // upcast to parent `{parent}` (safe; the handle is-a {parent}).\n    fn upcast(this) -> {pty} {{ return {pty}::from_raw(this._raw); }}\n\n"
-                ));
-                self.emitted += 1;
+            if let Some(pty) = self.wrapper_type_of(parent) {
+                if methods.insert("upcast".to_string()) {
+                    body.push_str(&format!(
+                        "    // upcast to parent `{parent}` (safe; the handle is-a {parent}).\n    fn upcast(this) -> {pty} {{ return {pty}::from_raw(this._raw); }}\n\n"
+                    ));
+                    self.emitted += 1;
+                }
             }
         }
         for imp in c.children_named("implements") {
             let iname = match imp.attr("name") {
-                Some(n) if !n.contains('.') && self.wrapper_types.contains(n) => n,
-                _ => continue,
+                Some(n) => n,
+                None => continue,
             };
-            let mname = ident(&format!("as_{}", snake(iname)));
+            let ity = match self.wrapper_type_of(iname) {
+                Some(t) => t,
+                None => continue,
+            };
+            // as_<iface>: strip any namespace prefix for the method name.
+            let local = iname.rsplit('.').next().unwrap_or(iname);
+            let mname = ident(&format!("as_{}", snake(local)));
             if methods.insert(mname.clone()) {
-                let ity = ident_type(iname);
                 body.push_str(&format!(
                     "    fn {mname}(this) -> {ity} {{ return {ity}::from_raw(this._raw); }}\n\n"
                 ));
@@ -971,8 +1101,8 @@ impl Mapped {
     fn usable_as_param(&self) -> bool {
         self.cat != Cat::Void
     }
-    /// Ergonomic parameter type (the type only — the `ref` binding-mode for
-    /// object params is applied at the call site, before the parameter name).
+    /// Ergonomic parameter type. Object params are passed by value (the wrapper
+    /// is a non-owning handle; the callee just reads its `.raw()`).
     fn wrap_param_ty(&self) -> String {
         match self.cat {
             Cat::Str => "str".to_string(),
@@ -1117,14 +1247,18 @@ fn sanitize_sym(s: &str) -> String {
     s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect()
 }
 
+/// The C+ reserved words (the lexer keyword set in `cplus-core/src/lexer.rs`).
+/// A GIR name equal to one of these can't be an identifier, so it is escaped
+/// with a trailing `_`.
 fn is_keyword(s: &str) -> bool {
     matches!(
         s,
-        "fn" | "let" | "var" | "if" | "else" | "while" | "loop" | "for" | "return"
-            | "break" | "continue" | "match" | "struct" | "enum" | "trait" | "impl"
-            | "type" | "as" | "in" | "true" | "false" | "extern" | "import" | "pub"
-            | "mut" | "ref" | "self" | "this" | "move" | "take" | "str" | "usize"
-            | "isize" | "bool" | "unsafe" | "const" | "static" | "where" | "use"
+        "_" | "fn" | "let" | "mut" | "const" | "static" | "if" | "else" | "while"
+            | "for" | "in" | "return" | "true" | "false" | "as" | "unsafe" | "extern"
+            | "struct" | "enum" | "union" | "match" | "trait" | "impl" | "pub"
+            | "export" | "use" | "mod" | "import" | "this" | "defer" | "try" | "break"
+            | "continue" | "loop" | "move" | "restrict" | "guard" | "assert" | "borrow"
+            | "opaque" | "interface" | "type" | "async" | "gen" | "yield" | "await"
     )
 }
 
@@ -1161,10 +1295,14 @@ mod tests {
 </repository>"#;
 
     fn emit(src: &str) -> String {
+        emit_with(src, HashMap::new())
+    }
+
+    fn emit_with(src: &str, foreign: HashMap<String, Foreign>) -> String {
         let root = parse(src);
         let repo = root.child_named("repository").unwrap();
         let ns = repo.child_named("namespace").unwrap();
-        Emitter::new(ns, "test.gir").run()
+        Emitter::new(ns, "test.gir", foreign).run()
     }
 
     #[test]
@@ -1316,9 +1454,9 @@ mod tests {
     }
 
     #[test]
-    fn object_param_binds_by_ref_and_passes_raw() {
+    fn object_param_binds_by_value_and_passes_raw() {
         let out = emit(CLASSES);
-        assert!(out.contains("fn set_child(this, ref child: Widget) {"));
+        assert!(out.contains("fn set_child(this, child: Widget) {"));
         assert!(out.contains("__c_gtk_button_set_child(this._raw, child.raw())"));
     }
 
