@@ -312,6 +312,7 @@ struct Foreign {
     alias: String,
     classes: HashSet<String>,
     enums: HashMap<String, String>,
+    records: HashSet<String>,
 }
 
 /// Load the `--use NS=pkg` foreign registries by parsing each named GIR and
@@ -354,7 +355,15 @@ fn load_foreign(uses: &[(String, String)]) -> HashMap<String, Foreign> {
                 enums.insert(n.to_string(), "u32".to_string());
             }
         }
-        map.insert(ns_name, Foreign { alias: pkg.clone(), classes, enums });
+        let mut records = HashSet::new();
+        for r in ns.children_named("record") {
+            if r.attr("glib:type-name").is_some() {
+                if let Some(n) = r.attr("name") {
+                    records.insert(n.to_string());
+                }
+            }
+        }
+        map.insert(ns_name, Foreign { alias: pkg.clone(), classes, enums, records });
     }
     map
 }
@@ -577,6 +586,23 @@ impl<'a> Emitter<'a> {
         self.enum_types.get(name).cloned()
     }
 
+    /// The qualified C+ wrapper type for a boxed `<record>` name (in-namespace or
+    /// foreign via `--use`), or None. Only tells you it IS a record wrapper; the
+    /// caller still gates on the use-site `c:type` being a pointer.
+    fn record_type_of(&self, name: &str) -> Option<String> {
+        if let Some((ns, local)) = name.split_once('.') {
+            let f = self.foreign.get(ns)?;
+            if f.records.contains(local) {
+                return Some(format!("{}::{}", f.alias, ident_type(local)));
+            }
+            return None;
+        }
+        if self.record_types.contains(name) {
+            return Some(ident_type(name));
+        }
+        None
+    }
+
     /// Reserve a wrapper name; returns false if it was already taken (caller
     /// should SKIP). Reserved-import names are pre-seeded, so this also rejects
     /// collisions with `vendor/gobject` / `stdlib`.
@@ -592,6 +618,15 @@ impl<'a> Emitter<'a> {
             return Some(m);
         }
         let name = t.attr("name")?;
+        // A few foreign scalar typedefs used pervasively across the stack.
+        let foreign_scalar = match name {
+            "GLib.Quark" => Some("u32"),
+            "GObject.Type" | "GLib.Type" => Some("usize"),
+            _ => None,
+        };
+        if let Some(s) = foreign_scalar {
+            return Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None });
+        }
         // Enum/bitfield (in-namespace or foreign) -> its ABI integer. Callers pass
         // the emitted constant fns (e.g. `orientation_horizontal()`).
         if let Some(repr) = self.enum_repr_of(name) {
@@ -601,11 +636,13 @@ impl<'a> Emitter<'a> {
         if let Some(wt) = self.wrapper_type_of(name) {
             return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(wt) });
         }
-        // Boxed record -> opaque handle, but ONLY where the ABI passes it by
-        // pointer (`c:type` ends with `*`). A by-value value-struct can't be a
-        // handle, so it stays a SKIP.
-        if self.record_types.contains(name) && ctype_is_pointer(t) {
-            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ident_type(name)) });
+        // Boxed record (in-namespace or foreign) -> opaque handle, but ONLY where
+        // the ABI passes it by pointer. A by-value value-struct can't be a handle,
+        // so it stays a SKIP.
+        if ctype_is_pointer(t) {
+            if let Some(rt) = self.record_type_of(name) {
+                return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(rt) });
+            }
         }
         None
     }
@@ -1321,6 +1358,9 @@ fn map_type(t: &Node) -> Option<Mapped> {
         "gfloat" => scalar("f32"),
         "gdouble" => scalar("f64"),
         "gunichar" => scalar("u32"),
+        // Pervasive integer typedefs from the type system.
+        "GType" => scalar("usize"),   // gsize-wide type id
+        "GQuark" => scalar("u32"),    // interned-string id
         _ => None,
     }
 }
@@ -1679,6 +1719,35 @@ mod tests {
         // resolve (it is emitted as a wrapper struct).
         let out = emit(CLASSES);
         assert!(out.contains("struct Editable {"));
+    }
+
+    #[test]
+    fn foreign_record_resolves_by_pointer() {
+        let mut foreign = HashMap::new();
+        foreign.insert(
+            "Gdk".to_string(),
+            Foreign {
+                alias: "gdk".to_string(),
+                classes: HashSet::new(),
+                enums: HashMap::new(),
+                records: ["Rectangle".to_string()].into_iter().collect(),
+            },
+        );
+        let src = r#"<repository><namespace name="Gtk">
+          <class name="Widget" c:type="GtkWidget" glib:type-name="GtkWidget">
+            <method name="set_clip" c:identifier="gtk_widget_set_clip">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="w"><type name="Widget"/></instance-parameter>
+                <parameter name="clip"><type name="Gdk.Rectangle" c:type="const GdkRectangle*"/></parameter>
+              </parameters>
+            </method>
+          </class></namespace></repository>"#;
+        let out = emit_with(src, foreign);
+        // foreign record by pointer -> `gdk::Rectangle` (by value at call, .raw() passed)
+        assert!(out.contains("fn set_clip(this, clip: gdk::Rectangle) {"));
+        assert!(out.contains("gtk_widget_set_clip(this._raw, clip.raw())"));
+        assert!(out.contains("import \"gdk/gdk\" as gdk;"));
     }
 
     #[test]
