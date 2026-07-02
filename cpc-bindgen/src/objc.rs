@@ -2066,23 +2066,12 @@ impl ObjcEmitter {
             sig_parts.push(format!("{pn}: {}", self.param_sig_type(pqt)));
             send_args.push(a);
         }
-        // The block path doesn't build the collection prologue, so an NSArray<id> /
-        // NSDictionary leading param would reference an undefined arr_/dict_ local.
-        if send_args.iter().any(|a| {
-            matches!(
-                a,
-                Arg::IdArray { .. }
-                    | Arg::DictMap { .. }
-                    | Arg::TextSetParam { .. }
-                    | Arg::ObjectSetParam { .. }
-                    | Arg::NumberArrayParam { .. }
-            )
-        }) {
-            self.body.push_str(&format!(
-                "    // SKIPPED `{sel}`: block method with a built-collection param not modelled\n"
-            ));
-            return;
-        }
+        // A leading built-collection param (NSArray<id> / NSDictionary / NSSet) is
+        // supported: the wrapper body below prepends `build_id_array_prologue`, so the
+        // `arr_/dict_/set_<pname>` locals the send call references are defined — the
+        // same composition the general path uses (bp is set up first, then the
+        // prologue, then the send).
+        let coll_prologue = build_id_array_prologue(&send_args);
         send_args.push(Arg::Id("bp".to_string()));
 
         let recv = if is_instance {
@@ -2152,7 +2141,7 @@ impl ObjcEmitter {
             body_line
         };
         self.body.push_str(&format!(
-            "    fn {name}({sig}){ret_spelling} {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n{body_line}    }}\n\n"
+            "    fn {name}({sig}){ret_spelling} {{\n        var desc: rt::BlockDescriptor = rt::BlockDescriptor {{ reserved: 0 as u64, size: 48 as u64 }};\n        var blk: {struct_name} = {struct_name} {{ isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: {invoke_name}, descriptor: {{ #addr_of(desc) as *u8 }}, user_fn: cb, ctx: ctx }};\n        let bp: *u8 = {{ #addr_of(blk) as *u8 }};\n{coll_prologue}{body_line}    }}\n\n"
         ));
     }
 
@@ -5272,9 +5261,11 @@ mod tests {
         assert!(out.contains("match items.at_ptr(i_items)"), "param-build prologue emitted:\n{out}");
         assert!(out.contains("let arr: *u8 = objc_msg_id_id(this._obj, rt::sel(#str_ptr(\"filter:\\0\")), arr_items)")
             || out.contains("arr_items)"), "send references the built array:\n{out}");
-        // The block combo remains skipped (separate, un-touched path).
-        assert!(out.contains("// SKIPPED `process:completion:`: block method with a built-collection param not modelled"),
-            "block combo still skips:\n{out}");
+        // The block combo ALSO composes now: a block method with a leading built-
+        // collection param prepends the same prologue after the block slot is set up.
+        assert!(!out.contains("// SKIPPED `process:completion:`"), "block + collection param now binds:\n{out}");
+        assert!(out.contains("fn process(this, items: vec::Vec[Screen], cb: fn(*u8), ctx: *u8)"),
+            "block-method Vec param signature:\n{out}");
     }
 
     #[test]
