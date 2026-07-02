@@ -2580,6 +2580,20 @@ impl ObjcEmitter {
         if base_ty.contains('^') {
             return Arg::Unsupported("block".into());
         }
+        // A pointer-to-pointer param (`NSError **`, `NSDictionary<...> **`) is an
+        // out-param: a pointer to an object slot the method fills in. At the ABI
+        // level it is just a pointer, bound as a raw `*u8` — the caller passes the
+        // address of a `*u8` local, or `0 as *u8` to ignore it. This is exactly the
+        // treatment `NSError **` already gets via the trailing-`*` catch-all below;
+        // detecting it here, before the generic-collection guard, lets a collection
+        // out-param (`NSDictionary<K,V> **` documentAttributes) bind as an out-param
+        // rather than skip as an un-bridgeable collection. `outer_ptr_depth` ignores
+        // `*` inside generic args (a single-star `NSDictionary<NSString *, id> *` is
+        // depth 1, untouched); `ends_with('*')` excludes a function pointer, which
+        // ends with `)`.
+        if outer_ptr_depth(base_ty) >= 2 && base_ty.ends_with('*') {
+            return Arg::Id(pname.to_string());
+        }
         // Protocol-qualified id -> ordinary object pointer (before the
         // generic-collection guard). A typed wrapper param passes `.raw()`.
         if base_ty.starts_with("id<") || base_ty.starts_with("id <") {
@@ -2820,6 +2834,15 @@ impl ObjcEmitter {
                 _ => {}
             }
             if c.ends_with('*') {
+                return Some(TdCanon::Ptr);
+            }
+            // A bare or protocol-qualified `id` (`id`, `id<NSSecureCoding, NSObject>`)
+            // is an ObjC object pointer — ABI-identical to a raw pointer. Catches
+            // object typedefs like `NSAccessibilityLoadingToken`
+            // (`typedef id<NSSecureCoding, NSObject> NSAccessibilityLoadingToken;`)
+            // that never spell a trailing `*`, so they'd otherwise bottom out as
+            // unmapped.
+            if c == "id" || c.starts_with("id<") || c.starts_with("id <") {
                 return Some(TdCanon::Ptr);
             }
             match self.typedefs.get(c) {
@@ -3381,6 +3404,24 @@ pub(crate) fn loc_file(loc: &serde_json::Value) -> Option<String> {
 fn loc_included(loc: &serde_json::Value) -> bool {
     loc.get("includedFrom").is_some()
         || loc.get("expansionLoc").and_then(|e| e.get("includedFrom")).is_some()
+}
+
+/// The outer pointer depth of a type spelling, ignoring `*` that appear inside
+/// generic `<...>` arguments. `NSDictionary<NSString *, id> **` is depth 2 (the
+/// two trailing pointer levels), not 3 — the inner `NSString *` does not count.
+/// A non-pointer or single-pointer type is depth 0 or 1.
+fn outer_ptr_depth(ty: &str) -> usize {
+    let mut depth = 0i32;
+    let mut stars = 0usize;
+    for c in ty.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            '*' if depth == 0 => stars += 1,
+            _ => {}
+        }
+    }
+    stars
 }
 
 fn strip_nullability(qt: &str) -> (String, bool) {
@@ -4101,6 +4142,58 @@ mod tests {
         assert!(out.contains("struct AnyObject {"), "AnyObject wrapper emitted:\n{out}");
         assert!(out.contains("fn macros(this) -> string_map::StringMap[AnyObject]"), "id-dict -> StringMap[AnyObject]:\n{out}");
         assert!(out.contains("AnyObject::from_raw(nsval)"), "value wrapped via AnyObject:\n{out}");
+    }
+
+    #[test]
+    fn pointer_to_pointer_out_param_binds_as_raw_ptr() {
+        // A `**` out-param is a pointer to an object slot the method fills in. It
+        // binds as a raw `*u8` (the caller passes `0 as *u8` to ignore, or the
+        // address of a local) — the same treatment `NSError **` already gets, even
+        // when the inner type is a generic collection (`NSDictionary<...> **`
+        // documentAttributes), which used to skip as "generic collection".
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSAttributedString", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "readFromData:documentAttributes:error:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "BOOL" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "data", "type": { "qualType": "NSData * _Nonnull" } },
+                        { "kind": "ParmVarDecl", "name": "documentAttributes", "type": { "qualType": "NSDictionary<NSString *,id> * _Nullable * _Nullable" } },
+                        { "kind": "ParmVarDecl", "name": "error", "type": { "qualType": "NSError * _Nullable * _Nullable" } },
+                      ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(!out.contains("generic collection"), "no longer skips as generic collection:\n{out}");
+        assert!(out.contains("document_attributes: *u8"), "collection out-param -> *u8:\n{out}");
+        assert!(out.contains("error: *u8"), "NSError out-param -> *u8:\n{out}");
+        // A single-star collection value is still bridged, not mistaken for an
+        // out-param: the inner element `*` must not inflate the outer pointer depth.
+        assert_eq!(outer_ptr_depth("NSDictionary<NSString *,id> *"), 1);
+        assert_eq!(outer_ptr_depth("NSDictionary<NSString *,id> * _Nullable *"), 2);
+    }
+
+    #[test]
+    fn object_typedef_resolves_through_id_qualified_chain() {
+        // `typedef id<NSSecureCoding, NSObject> NSAccessibilityLoadingToken;` is an
+        // object pointer; it resolves to a `*u8` object handle (return + param), not
+        // a skip as an unmapped type. A bare/protocol-qualified `id` typedef never
+        // spells a trailing `*`, so the typedef chain now recognizes `id<...>` = Ptr.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "NSAccessibilityLoadingToken", "type": { "qualType": "id<NSSecureCoding, NSObject>" } },
+                { "kind": "ObjCInterfaceDecl", "name": "NSFoo", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "itemLoadingToken", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSAccessibilityLoadingToken _Nonnull" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "elementWithToken:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "token", "type": { "qualType": "NSAccessibilityLoadingToken _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(!out.contains("unmapped type `NSAccessibilityLoadingToken`"), "typedef no longer unmapped:\n{out}");
+        assert!(out.contains("fn element_with_token(this, token: *u8)"), "id-typedef param -> *u8:\n{out}");
+        assert!(out.contains("fn item_loading_token(this) -> *u8"), "id-typedef return -> *u8:\n{out}");
     }
 
     #[test]
