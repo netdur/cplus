@@ -6234,6 +6234,10 @@ extern fn objc_msg_EdgeInsets_id_id_i64(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_f64_id_point(recv: *u8, sel: *u8, a0: *u8, a1: rt::Point) -> f64;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_id_range_u64_id_i64_id(recv: *u8, sel: *u8, a0: *u8, a1: rt::Range, a2: u64, a3: *u8, a4: i64, a5: *u8) -> i64;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_range_id_u64_id_i64_id(recv: *u8, sel: *u8, a0: rt::Range, a1: *u8, a2: u64, a3: *u8, a4: i64, a5: *u8) -> i64;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_id_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: *u8, a3: *u8) -> i8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_id_id_range_id(recv: *u8, sel: *u8, a0: *u8, a1: *u8, a2: rt::Range, a3: *u8) -> i8;
@@ -6405,6 +6409,8 @@ extern fn objc_msg_void_u16_id(recv: *u8, sel: *u8, a0: u16, a1: *u8);
 extern fn objc_msg_void_u64_f64_f64_id(recv: *u8, sel: *u8, a0: u64, a1: f64, a2: f64, a3: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_u64_f64_id_id(recv: *u8, sel: *u8, a0: u64, a1: f64, a2: *u8, a3: *u8);
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_u64_id_id_id_id(recv: *u8, sel: *u8, a0: u64, a1: *u8, a2: *u8, a3: *u8, a4: *u8);
 
 #[repr(C)]
 struct ItemProvider_register_data_representation_for_type_identifier_block {
@@ -6768,6 +6774,25 @@ fn Color_color_with_name_invoke(block: *u8, a0: *u8) {
 }
 
 #[repr(C)]
+struct View_show_definition_for_attributed_string_range_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, rt::Range),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, rt::Range),
+    opaque ctx: *u8,
+}
+
+fn View_show_definition_for_attributed_string_range_invoke(block: *u8, a0: rt::Range) {
+    let bl: *View_show_definition_for_attributed_string_range_block = { block as *View_show_definition_for_attributed_string_range_block };
+    let f: fn(*u8, rt::Range) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct Window_begin_sheet_block {
     opaque isa: *u8,
     flags: i32,
@@ -6958,6 +6983,25 @@ fn Workspace_open_u_r_l_configuration_invoke(block: *u8, a0: *u8, a1: *u8) {
 }
 
 #[repr(C)]
+struct Workspace_open_u_r_ls_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_open_u_r_ls_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_open_u_r_ls_block = { block as *Workspace_open_u_r_ls_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
 struct Workspace_open_application_at_u_r_l_block {
     opaque isa: *u8,
     flags: i32,
@@ -6970,6 +7014,44 @@ struct Workspace_open_application_at_u_r_l_block {
 
 fn Workspace_open_application_at_u_r_l_invoke(block: *u8, a0: *u8, a1: *u8) {
     let bl: *Workspace_open_application_at_u_r_l_block = { block as *Workspace_open_application_at_u_r_l_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_recycle_u_r_ls_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_recycle_u_r_ls_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_recycle_u_r_ls_block = { block as *Workspace_recycle_u_r_ls_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Workspace_duplicate_u_r_ls_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Workspace_duplicate_u_r_ls_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Workspace_duplicate_u_r_ls_block = { block as *Workspace_duplicate_u_r_ls_block };
     let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1);
@@ -7129,6 +7211,158 @@ fn Event_add_local_monitor_for_events_matching_mask_invoke(block: *u8, a0: *u8) 
 }
 
 #[repr(C)]
+struct Pasteboard_detect_patterns_for_patterns_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Pasteboard_detect_patterns_for_patterns_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Pasteboard_detect_patterns_for_patterns_block = { block as *Pasteboard_detect_patterns_for_patterns_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Pasteboard_detect_values_for_patterns_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Pasteboard_detect_values_for_patterns_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Pasteboard_detect_values_for_patterns_block = { block as *Pasteboard_detect_values_for_patterns_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Pasteboard_detect_metadata_for_types_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Pasteboard_detect_metadata_for_types_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *Pasteboard_detect_metadata_for_types_block = { block as *Pasteboard_detect_metadata_for_types_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct PasteboardItem_detect_patterns_for_patterns_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn PasteboardItem_detect_patterns_for_patterns_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *PasteboardItem_detect_patterns_for_patterns_block = { block as *PasteboardItem_detect_patterns_for_patterns_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct PasteboardItem_detect_values_for_patterns_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn PasteboardItem_detect_values_for_patterns_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *PasteboardItem_detect_values_for_patterns_block = { block as *PasteboardItem_detect_values_for_patterns_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct PasteboardItem_detect_metadata_for_types_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn PasteboardItem_detect_metadata_for_types_invoke(block: *u8, a0: *u8, a1: *u8) {
+    let bl: *PasteboardItem_detect_metadata_for_types_block = { block as *PasteboardItem_detect_metadata_for_types_block };
+    let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct Menu_palette_menu_with_colors_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Menu_palette_menu_with_colors_invoke(block: *u8, a0: *u8) {
+    let bl: *Menu_palette_menu_with_colors_block = { block as *Menu_palette_menu_with_colors_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
+struct Menu_palette_menu_with_colors_titles_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+fn Menu_palette_menu_with_colors_titles_invoke(block: *u8, a0: *u8) {
+    let bl: *Menu_palette_menu_with_colors_titles_block = { block as *Menu_palette_menu_with_colors_titles_block };
+    let f: fn(*u8, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0);
+    return;
+}
+
+#[repr(C)]
 struct Appearance_perform_as_current_drawing_appearance_block {
     opaque isa: *u8,
     flags: i32,
@@ -7163,6 +7397,25 @@ fn DraggingItem_set_image_components_provider_invoke(block: *u8) {
     let f: fn(*u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx);
+    return;
+}
+
+#[repr(C)]
+struct DraggingSession_enumerate_dragging_items_with_options_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn DraggingSession_enumerate_dragging_items_with_options_invoke(block: *u8, a0: *u8, a1: i64, a2: *u8) {
+    let bl: *DraggingSession_enumerate_dragging_items_with_options_block = { block as *DraggingSession_enumerate_dragging_items_with_options_block };
+    let f: fn(*u8, *u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
     return;
 }
 
@@ -8117,6 +8370,44 @@ fn SliderAccessoryBehavior_behavior_with_handler_invoke(block: *u8, a0: *u8) {
 }
 
 #[repr(C)]
+struct SpellChecker_request_checking_of_string_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8, *u8, i64),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8, *u8, i64),
+    opaque ctx: *u8,
+}
+
+fn SpellChecker_request_checking_of_string_invoke(block: *u8, a0: i64, a1: *u8, a2: *u8, a3: i64) {
+    let bl: *SpellChecker_request_checking_of_string_block = { block as *SpellChecker_request_checking_of_string_block };
+    let f: fn(*u8, i64, *u8, *u8, i64) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2, a3);
+    return;
+}
+
+#[repr(C)]
+struct SpellChecker_request_candidates_for_selected_range_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn SpellChecker_request_candidates_for_selected_range_invoke(block: *u8, a0: i64, a1: *u8) {
+    let bl: *SpellChecker_request_candidates_for_selected_range_block = { block as *SpellChecker_request_candidates_for_selected_range_block };
+    let f: fn(*u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
 struct SpellChecker_show_correction_indicator_of_type_block {
     opaque isa: *u8,
     flags: i32,
@@ -8512,6 +8803,25 @@ fn ItemProviderWriting_load_data_with_type_identifier_invoke(block: *u8, a0: *u8
     let f: fn(*u8, *u8, *u8) = { (*bl).user_fn };
     let ctx: *u8 = { (*bl).ctx };
     f(ctx, a0, a1);
+    return;
+}
+
+#[repr(C)]
+struct DraggingInfo_enumerate_dragging_items_with_options_block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, i64, *u8),
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8, i64, *u8),
+    opaque ctx: *u8,
+}
+
+fn DraggingInfo_enumerate_dragging_items_with_options_invoke(block: *u8, a0: *u8, a1: i64, a2: *u8) {
+    let bl: *DraggingInfo_enumerate_dragging_items_with_options_block = { block as *DraggingInfo_enumerate_dragging_items_with_options_block };
+    let f: fn(*u8, *u8, i64, *u8) = { (*bl).user_fn };
+    let ctx: *u8 = { (*bl).ctx };
+    f(ctx, a0, a1, a2);
     return;
 }
 
@@ -12833,7 +13143,33 @@ impl View {
         rt::msg_void_id_point(this._obj, rt::sel(#str_ptr("showDefinitionForAttributedString:atPoint:\0")), attr_string.raw(), at_point);
     }
 
-    // SKIPPED `showDefinitionForAttributedString:range:options:baselineOriginProvider:`: block method with a built-collection param not modelled
+    fn show_definition_for_attributed_string_range(this, attr_string: AttributedString, target_range: rt::Range, options: string_map::StringMap[AnyObject], cb: fn(*u8, rt::Range), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: View_show_definition_for_attributed_string_range_block = View_show_definition_for_attributed_string_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: View_show_definition_for_attributed_string_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        rt::msg_void_id_range_id_id(this._obj, rt::sel(#str_ptr("showDefinitionForAttributedString:range:options:baselineOriginProvider:\0")), attr_string.raw(), target_range, dict_options, bp);
+        return;
+    }
+
     fn is_drawing_find_indicator(this) -> bool {
         return rt::msg_i8(this._obj, rt::sel(#str_ptr("isDrawingFindIndicator\0"))) != (0 as i8);
     }
@@ -16901,7 +17237,25 @@ impl Workspace {
         return;
     }
 
-    // SKIPPED `openURLs:withApplicationAtURL:configuration:completionHandler:`: block method with a built-collection param not modelled
+    fn open_u_r_ls(this, urls: vec::Vec[URL], with_application_at_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_open_u_r_ls_block = Workspace_open_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_urls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_urls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_urls: usize = urls.count();
+        var i_urls: usize = 0 as usize;
+        while i_urls < n_urls {
+            match urls.at_ptr(i_urls) {
+                option::Option[*URL]::Some(e_urls) => { rt::msg_void_id(arr_urls, add_sel_urls, (*e_urls).raw()); }
+                option::Option[*URL]::None => {}
+            }
+            i_urls = i_urls +% (1 as usize);
+        }
+        rt::msg_void_id_id_id_id(this._obj, rt::sel(#str_ptr("openURLs:withApplicationAtURL:configuration:completionHandler:\0")), arr_urls, with_application_at_u_r_l.raw(), configuration.raw(), bp);
+        return;
+    }
+
     fn open_application_at_u_r_l(this, application_u_r_l: URL, configuration: WorkspaceOpenConfiguration, cb: fn(*u8, *u8, *u8), ctx: *u8) {
         var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
         var blk: Workspace_open_application_at_u_r_l_block = Workspace_open_application_at_u_r_l_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_open_application_at_u_r_l_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
@@ -16961,8 +17315,44 @@ impl Workspace {
         return rt::msg_i8_id_id_u64(this._obj, rt::sel(#str_ptr("setIcon:forFile:options:\0")), image.raw(), bridge::nsstring(for_file), options) != (0 as i8);
     }
 
-    // SKIPPED `recycleURLs:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `duplicateURLs:completionHandler:`: block method with a built-collection param not modelled
+    fn recycle_u_r_ls(this, u_r_ls: vec::Vec[URL], cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_recycle_u_r_ls_block = Workspace_recycle_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_recycle_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_u_r_ls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_u_r_ls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_u_r_ls: usize = u_r_ls.count();
+        var i_u_r_ls: usize = 0 as usize;
+        while i_u_r_ls < n_u_r_ls {
+            match u_r_ls.at_ptr(i_u_r_ls) {
+                option::Option[*URL]::Some(e_u_r_ls) => { rt::msg_void_id(arr_u_r_ls, add_sel_u_r_ls, (*e_u_r_ls).raw()); }
+                option::Option[*URL]::None => {}
+            }
+            i_u_r_ls = i_u_r_ls +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("recycleURLs:completionHandler:\0")), arr_u_r_ls, bp);
+        return;
+    }
+
+    fn duplicate_u_r_ls(this, u_r_ls: vec::Vec[URL], cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Workspace_duplicate_u_r_ls_block = Workspace_duplicate_u_r_ls_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Workspace_duplicate_u_r_ls_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_u_r_ls: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_u_r_ls: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_u_r_ls: usize = u_r_ls.count();
+        var i_u_r_ls: usize = 0 as usize;
+        while i_u_r_ls < n_u_r_ls {
+            match u_r_ls.at_ptr(i_u_r_ls) {
+                option::Option[*URL]::Some(e_u_r_ls) => { rt::msg_void_id(arr_u_r_ls, add_sel_u_r_ls, (*e_u_r_ls).raw()); }
+                option::Option[*URL]::None => {}
+            }
+            i_u_r_ls = i_u_r_ls +% (1 as usize);
+        }
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("duplicateURLs:completionHandler:\0")), arr_u_r_ls, bp);
+        return;
+    }
+
     fn get_file_system_info_for_path(this, full_path: str, is_removable: *u8, is_writable: *u8, is_unmountable: *u8, description: *u8, type_: *u8) -> bool {
         return rt::msg_i8_id_id_id_id_id_id(this._obj, rt::sel(#str_ptr("getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:\0")), bridge::nsstring(full_path), is_removable, is_writable, is_unmountable, description, type_) != (0 as i8);
     }
@@ -18158,9 +18548,66 @@ impl Pasteboard {
         return bridge::to_text_option(ns);
     }
 
-    // SKIPPED `detectPatternsForPatterns:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `detectValuesForPatterns:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `detectMetadataForTypes:completionHandler:`: block method with a built-collection param not modelled
+    fn detect_patterns_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Pasteboard_detect_patterns_for_patterns_block = Pasteboard_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_patterns_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_patterns: usize = patterns.slot_capacity();
+        var ssi_patterns: usize = 0 as usize;
+        while ssi_patterns < scap_patterns {
+            match patterns.element_ptr_at_slot(ssi_patterns) {
+                option::Option[*text::Text]::Some(sep_patterns) => { rt::msg_void_id(arr_patterns, sadd_patterns, bridge::nsstring((*sep_patterns).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_patterns = ssi_patterns +% (1 as usize);
+        }
+        let set_patterns: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_patterns);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectPatternsForPatterns:completionHandler:\0")), set_patterns, bp);
+        return;
+    }
+
+    fn detect_values_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Pasteboard_detect_values_for_patterns_block = Pasteboard_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_values_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_patterns: usize = patterns.slot_capacity();
+        var ssi_patterns: usize = 0 as usize;
+        while ssi_patterns < scap_patterns {
+            match patterns.element_ptr_at_slot(ssi_patterns) {
+                option::Option[*text::Text]::Some(sep_patterns) => { rt::msg_void_id(arr_patterns, sadd_patterns, bridge::nsstring((*sep_patterns).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_patterns = ssi_patterns +% (1 as usize);
+        }
+        let set_patterns: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_patterns);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectValuesForPatterns:completionHandler:\0")), set_patterns, bp);
+        return;
+    }
+
+    fn detect_metadata_for_types(this, types: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Pasteboard_detect_metadata_for_types_block = Pasteboard_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Pasteboard_detect_metadata_for_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_types: usize = types.slot_capacity();
+        var ssi_types: usize = 0 as usize;
+        while ssi_types < scap_types {
+            match types.element_ptr_at_slot(ssi_types) {
+                option::Option[*text::Text]::Some(sep_types) => { rt::msg_void_id(arr_types, sadd_types, bridge::nsstring((*sep_types).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_types = ssi_types +% (1 as usize);
+        }
+        let set_types: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_types);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectMetadataForTypes:completionHandler:\0")), set_types, bp);
+        return;
+    }
+
     fn general_pasteboard() -> Pasteboard {
         return Pasteboard { _obj: rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("generalPasteboard\0"))) };
     }
@@ -18303,9 +18750,66 @@ impl PasteboardItem {
         return bridge::obj_option(obj);
     }
 
-    // SKIPPED `detectPatternsForPatterns:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `detectValuesForPatterns:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `detectMetadataForTypes:completionHandler:`: block method with a built-collection param not modelled
+    fn detect_patterns_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: PasteboardItem_detect_patterns_for_patterns_block = PasteboardItem_detect_patterns_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_patterns_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_patterns: usize = patterns.slot_capacity();
+        var ssi_patterns: usize = 0 as usize;
+        while ssi_patterns < scap_patterns {
+            match patterns.element_ptr_at_slot(ssi_patterns) {
+                option::Option[*text::Text]::Some(sep_patterns) => { rt::msg_void_id(arr_patterns, sadd_patterns, bridge::nsstring((*sep_patterns).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_patterns = ssi_patterns +% (1 as usize);
+        }
+        let set_patterns: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_patterns);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectPatternsForPatterns:completionHandler:\0")), set_patterns, bp);
+        return;
+    }
+
+    fn detect_values_for_patterns(this, patterns: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: PasteboardItem_detect_values_for_patterns_block = PasteboardItem_detect_values_for_patterns_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_values_for_patterns_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_patterns: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_patterns: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_patterns: usize = patterns.slot_capacity();
+        var ssi_patterns: usize = 0 as usize;
+        while ssi_patterns < scap_patterns {
+            match patterns.element_ptr_at_slot(ssi_patterns) {
+                option::Option[*text::Text]::Some(sep_patterns) => { rt::msg_void_id(arr_patterns, sadd_patterns, bridge::nsstring((*sep_patterns).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_patterns = ssi_patterns +% (1 as usize);
+        }
+        let set_patterns: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_patterns);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectValuesForPatterns:completionHandler:\0")), set_patterns, bp);
+        return;
+    }
+
+    fn detect_metadata_for_types(this, types: string_set::StringSet, cb: fn(*u8, *u8, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: PasteboardItem_detect_metadata_for_types_block = PasteboardItem_detect_metadata_for_types_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: PasteboardItem_detect_metadata_for_types_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_types: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_types: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_types: usize = types.slot_capacity();
+        var ssi_types: usize = 0 as usize;
+        while ssi_types < scap_types {
+            match types.element_ptr_at_slot(ssi_types) {
+                option::Option[*text::Text]::Some(sep_types) => { rt::msg_void_id(arr_types, sadd_types, bridge::nsstring((*sep_types).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_types = ssi_types +% (1 as usize);
+        }
+        let set_types: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_types);
+        rt::msg_void_id_id(this._obj, rt::sel(#str_ptr("detectMetadataForTypes:completionHandler:\0")), set_types, bp);
+        return;
+    }
+
     fn types(this) -> vec::Vec[text::Text] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("types\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -18598,8 +19102,42 @@ impl Menu {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), user_interface_layout_direction_raw(user_interface_layout_direction));
     }
 
-    // SKIPPED `paletteMenuWithColors:titles:selectionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `paletteMenuWithColors:titles:templateImage:selectionHandler:`: block method with a built-collection param not modelled
+    fn palette_menu_with_colors(colors: vec::Vec[Color], titles: vec::Vec[text::Text], cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Menu_palette_menu_with_colors_block = Menu_palette_menu_with_colors_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_colors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_colors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_colors: usize = colors.count();
+        var i_colors: usize = 0 as usize;
+        while i_colors < n_colors {
+            match colors.at_ptr(i_colors) {
+                option::Option[*Color]::Some(e_colors) => { rt::msg_void_id(arr_colors, add_sel_colors, (*e_colors).raw()); }
+                option::Option[*Color]::None => {}
+            }
+            i_colors = i_colors +% (1 as usize);
+        }
+        return rt::msg_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("paletteMenuWithColors:titles:selectionHandler:\0")), arr_colors, bridge::nsarray_of_text(titles), bp);
+    }
+
+    fn palette_menu_with_colors_titles(colors: vec::Vec[Color], item_titles: vec::Vec[text::Text], template_image: Image, cb: fn(*u8, *u8), ctx: *u8) -> *u8 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: Menu_palette_menu_with_colors_titles_block = Menu_palette_menu_with_colors_titles_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: Menu_palette_menu_with_colors_titles_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_colors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_colors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_colors: usize = colors.count();
+        var i_colors: usize = 0 as usize;
+        while i_colors < n_colors {
+            match colors.at_ptr(i_colors) {
+                option::Option[*Color]::Some(e_colors) => { rt::msg_void_id(arr_colors, add_sel_colors, (*e_colors).raw()); }
+                option::Option[*Color]::None => {}
+            }
+            i_colors = i_colors +% (1 as usize);
+        }
+        return rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("paletteMenuWithColors:titles:templateImage:selectionHandler:\0")), arr_colors, bridge::nsarray_of_text(item_titles), template_image.raw(), bp);
+    }
+
     fn presentation_style(this) -> MenuPresentationStyle {
         return menu_presentation_style_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("presentationStyle\0"))));
     }
@@ -19571,7 +20109,44 @@ impl DraggingSession {
 
     fn from_raw(ptr: *u8) -> DraggingSession { return DraggingSession { _obj: ptr }; }
 
-    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: block method with a built-collection param not modelled
+    fn enumerate_dragging_items_with_options(this, enum_opts: u64, for_view: View, classes: vec::Vec[AnyObject], search_options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: DraggingSession_enumerate_dragging_items_with_options_block = DraggingSession_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingSession_enumerate_dragging_items_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_classes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_classes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_classes: usize = classes.count();
+        var i_classes: usize = 0 as usize;
+        while i_classes < n_classes {
+            match classes.at_ptr(i_classes) {
+                option::Option[*AnyObject]::Some(e_classes) => { rt::msg_void_id(arr_classes, add_sel_classes, (*e_classes).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_classes = i_classes +% (1 as usize);
+        }
+        let dict_search_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_search_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_search_options: usize = search_options.slot_capacity();
+        var dsi_search_options: usize = 0 as usize;
+        while dsi_search_options < dcap_search_options {
+            match search_options.value_ptr_at_slot(dsi_search_options) {
+                option::Option[*AnyObject]::Some(dvp_search_options) => {
+                    match search_options.key_ptr_at_slot(dsi_search_options) {
+                        option::Option[*text::Text]::Some(dkp_search_options) => {
+                    let dval_search_options: *u8 = (*dvp_search_options).raw();
+                            rt::msg_void_id_id(dict_search_options, dset_search_options, dval_search_options, bridge::nsstring((*dkp_search_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_search_options = dsi_search_options +% (1 as usize);
+        }
+        objc_msg_void_u64_id_id_id_id(this._obj, rt::sel(#str_ptr("enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:\0")), enum_opts, for_view.raw(), arr_classes, dict_search_options, bp);
+        return;
+    }
+
     fn dragging_formation(this) -> DraggingFormation {
         return dragging_formation_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("draggingFormation\0"))));
     }
@@ -42132,8 +42707,58 @@ impl SpellChecker {
     }
 
     // SKIPPED `checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:`: return `NSArray<NSTextCheckingResult *> * _Nonnull` — generic collection
-    // SKIPPED `requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
-    // SKIPPED `requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:`: block method with a built-collection param not modelled
+    fn request_checking_of_string(this, string_to_check: str, range: rt::Range, types: u64, options: string_map::StringMap[AnyObject], in_spell_document_with_tag: i64, cb: fn(*u8, i64, *u8, *u8, i64), ctx: *u8) -> i64 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SpellChecker_request_checking_of_string_block = SpellChecker_request_checking_of_string_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_checking_of_string_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return objc_msg_i64_id_range_u64_id_i64_id(this._obj, rt::sel(#str_ptr("requestCheckingOfString:range:types:options:inSpellDocumentWithTag:completionHandler:\0")), bridge::nsstring(string_to_check), range, types, dict_options, in_spell_document_with_tag, bp);
+    }
+
+    fn request_candidates_for_selected_range(this, selected_range: rt::Range, in_string: str, types: u64, options: string_map::StringMap[AnyObject], in_spell_document_with_tag: i64, cb: fn(*u8, i64, *u8), ctx: *u8) -> i64 {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: SpellChecker_request_candidates_for_selected_range_block = SpellChecker_request_candidates_for_selected_range_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: SpellChecker_request_candidates_for_selected_range_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return objc_msg_i64_range_id_u64_id_i64_id(this._obj, rt::sel(#str_ptr("requestCandidatesForSelectedRange:inString:types:options:inSpellDocumentWithTag:completionHandler:\0")), selected_range, bridge::nsstring(in_string), types, dict_options, in_spell_document_with_tag, bp);
+    }
+
     fn menu_for_result(this, result: *u8, string: str, options: string_map::StringMap[AnyObject], at_location: rt::Point, in_view: View) -> option::Option[Menu] {
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
@@ -59517,7 +60142,44 @@ impl DraggingInfo {
         return out;
     }
 
-    // SKIPPED `enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:`: block method with a built-collection param not modelled
+    fn enumerate_dragging_items_with_options(this, enum_opts: u64, for_view: View, classes: vec::Vec[AnyObject], search_options: string_map::StringMap[AnyObject], cb: fn(*u8, *u8, i64, *u8), ctx: *u8) {
+        var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+        var blk: DraggingInfo_enumerate_dragging_items_with_options_block = DraggingInfo_enumerate_dragging_items_with_options_block { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: DraggingInfo_enumerate_dragging_items_with_options_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: cb, ctx: ctx };
+        let bp: *u8 = { #addr_of(blk) as *u8 };
+        let arr_classes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_classes: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_classes: usize = classes.count();
+        var i_classes: usize = 0 as usize;
+        while i_classes < n_classes {
+            match classes.at_ptr(i_classes) {
+                option::Option[*AnyObject]::Some(e_classes) => { rt::msg_void_id(arr_classes, add_sel_classes, (*e_classes).raw()); }
+                option::Option[*AnyObject]::None => {}
+            }
+            i_classes = i_classes +% (1 as usize);
+        }
+        let dict_search_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_search_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_search_options: usize = search_options.slot_capacity();
+        var dsi_search_options: usize = 0 as usize;
+        while dsi_search_options < dcap_search_options {
+            match search_options.value_ptr_at_slot(dsi_search_options) {
+                option::Option[*AnyObject]::Some(dvp_search_options) => {
+                    match search_options.key_ptr_at_slot(dsi_search_options) {
+                        option::Option[*text::Text]::Some(dkp_search_options) => {
+                    let dval_search_options: *u8 = (*dvp_search_options).raw();
+                            rt::msg_void_id_id(dict_search_options, dset_search_options, dval_search_options, bridge::nsstring((*dkp_search_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_search_options = dsi_search_options +% (1 as usize);
+        }
+        objc_msg_void_u64_id_id_id_id(this._obj, rt::sel(#str_ptr("enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:\0")), enum_opts, for_view.raw(), arr_classes, dict_search_options, bp);
+        return;
+    }
+
     fn reset_spring_loading(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("resetSpringLoading\0")));
     }
