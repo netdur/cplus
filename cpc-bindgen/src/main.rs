@@ -35,6 +35,7 @@ fn main() {
     let mut prefix = String::new();
     let mut overrides_path: Option<String> = None;
     let mut framework: Option<String> = None;
+    let mut sdk_name: Option<String> = None;
     let mut merge = false;
     let mut out_dir: Option<String> = None;
     let mut header: Option<String> = None;
@@ -139,6 +140,18 @@ fn main() {
                 i += 1;
                 continue;
             }
+            // `--sdk NAME` selects a non-default SDK (iphoneos/appletvos/watchos) so
+            // its frameworks (UIKit, absent from the macOS SDK) can be bound.
+            if a == "--sdk" {
+                sdk_name = raw.get(i + 1).cloned();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--sdk=") {
+                sdk_name = Some(p.to_string());
+                i += 1;
+                continue;
+            }
             // `--merge` emits the whole framework as ONE C+ module (every wrapper
             // type co-resident -> full types, chaining, no cross-module stubs)
             // instead of one module per header.
@@ -175,6 +188,7 @@ fn main() {
             overrides_path.as_deref(),
             out_dir.as_deref(),
             merge,
+            sdk_name.as_deref(),
         ));
     }
 

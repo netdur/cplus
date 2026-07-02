@@ -17,8 +17,9 @@ pub fn generate(
     overrides_path: Option<&str>,
     out_dir: Option<&str>,
     merge: bool,
+    sdk_name: Option<&str>,
 ) -> i32 {
-    let sdk = match sdk_path() {
+    let sdk = match sdk_path(sdk_name) {
         Some(s) => s,
         None => {
             eprintln!("cpc-bindgen: could not resolve the SDK path (is `xcrun` available?)");
@@ -70,7 +71,7 @@ pub fn generate(
     // co-resident, so object returns/args resolve to FULL types (chaining works,
     // no method-less cross-module stubs) and there is no cyclic-import problem.
     if merge {
-        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg);
+        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg, sdk_name);
     }
 
     // One module per header. Detect Objective-C vs C per header (a header is
@@ -118,7 +119,7 @@ pub fn generate(
     std::fs::write(src.join(format!("{pkg}.cplus")), build_umbrella(name, &modules)).ok();
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(), modules.len(), any_objc, false),
+        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), modules.len(), any_objc, false, sdk_name),
     )
     .ok();
     if overrides_path.is_none() {
@@ -150,6 +151,7 @@ fn generate_merged(
     header_paths: &[PathBuf],
     sdk: &str,
     pkg: &str,
+    sdk_name: Option<&str>,
 ) -> i32 {
     // The umbrella (`Headers/<name>.h`) transitively imports every public header,
     // so one parse yields all framework types with their home-header locs intact.
@@ -234,7 +236,7 @@ fn generate_merged(
     }
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, pkg, prefix, overrides_path.is_some(), &sdk_version(), header_paths.len(), true, true),
+        cplus_toml(name, pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), header_paths.len(), true, true, sdk_name),
     )
     .ok();
     if overrides_path.is_none() {
@@ -320,8 +322,15 @@ fn header_is_objc(tu: &serde_json::Value, header_basename: &str) -> bool {
     false
 }
 
-fn sdk_path() -> Option<String> {
-    let out = Command::new("xcrun").arg("--show-sdk-path").output().ok()?;
+/// Resolve the SDK sysroot via `xcrun`. `sdk_name` (`--sdk iphoneos`) selects a
+/// non-default platform (iOS/tvOS/watchOS) so its frameworks — e.g. UIKit, which
+/// is absent from the macOS SDK — can be bound; None uses the default (macOS).
+fn sdk_path(sdk_name: Option<&str>) -> Option<String> {
+    let mut cmd = Command::new("xcrun");
+    if let Some(s) = sdk_name {
+        cmd.args(["--sdk", s]);
+    }
+    let out = cmd.arg("--show-sdk-path").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -466,6 +475,7 @@ fn cplus_toml(
     n_headers: usize,
     any_objc: bool,
     merge: bool,
+    sdk_name: Option<&str>,
 ) -> String {
     // A pure-C framework (Accelerate) needs no `objc` runtime dependency.
     let deps = if any_objc {
@@ -477,6 +487,9 @@ fn cplus_toml(
     let mut repro = format!("cpc-bindgen --framework {name}");
     if !prefix.is_empty() {
         repro.push_str(&format!(" --prefix {prefix}"));
+    }
+    if let Some(s) = sdk_name {
+        repro.push_str(&format!(" --sdk {s}"));
     }
     if merge {
         repro.push_str(" --merge");
@@ -503,9 +516,12 @@ fn cplus_toml(
     )
 }
 
-fn sdk_version() -> String {
-    Command::new("xcrun")
-        .args(["--show-sdk-version"])
+fn sdk_version(sdk_name: Option<&str>) -> String {
+    let mut cmd = Command::new("xcrun");
+    if let Some(s) = sdk_name {
+        cmd.args(["--sdk", s]);
+    }
+    cmd.arg("--show-sdk-version")
         .output()
         .ok()
         .filter(|o| o.status.success())

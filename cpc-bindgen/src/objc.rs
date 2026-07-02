@@ -414,6 +414,30 @@ impl ObjcEmitter {
                 ["a", "b", "c", "d", "tx", "ty"].iter().map(|f| (f.to_string(), "f64".to_string())).collect(),
             );
         }
+        // Same story for two more named CoreGraphics/CoreAnimation structs common in
+        // UIKit and never collected from the TU. `CGVector` is 2 CGFloat (16 bytes, an
+        // HFA passed in FP registers like CGPoint/CGSize); `CATransform3D` is 16 CGFloat
+        // (128 bytes, >4 members so passed INDIRECTLY, the same ABI class as the proven
+        // 48-byte CGAffineTransform). All-`f64` layouts, so ABI-safe through the generic
+        // module-local objc_msgSend shim.
+        if !self.value_structs.contains_key("CGVector") {
+            self.value_structs.insert(
+                "CGVector".to_string(),
+                ["dx", "dy"].iter().map(|f| (f.to_string(), "f64".to_string())).collect(),
+            );
+        }
+        if !self.value_structs.contains_key("CATransform3D") {
+            self.value_structs.insert(
+                "CATransform3D".to_string(),
+                [
+                    "m11", "m12", "m13", "m14", "m21", "m22", "m23", "m24", "m31", "m32", "m33", "m34",
+                    "m41", "m42", "m43", "m44",
+                ]
+                .iter()
+                .map(|f| (f.to_string(), "f64".to_string()))
+                .collect(),
+            );
+        }
         // Pass 1: typedefs (name -> underlying), NS_ENUMs, and by-value struct
         // layouts. clang emits the anonymous `RecordDecl` immediately before the
         // `TypedefDecl` that names it (`typedef struct { … } MTLSize;`).
@@ -2818,13 +2842,16 @@ impl ObjcEmitter {
             if c.ends_with('*') {
                 return Some(TdCanon::Ptr);
             }
-            // A bare or protocol-qualified `id` (`id`, `id<NSSecureCoding, NSObject>`)
-            // is an ObjC object pointer — ABI-identical to a raw pointer. Catches
-            // object typedefs like `NSAccessibilityLoadingToken`
-            // (`typedef id<NSSecureCoding, NSObject> NSAccessibilityLoadingToken;`)
-            // that never spell a trailing `*`, so they'd otherwise bottom out as
-            // unmapped.
-            if c == "id" || c.starts_with("id<") || c.starts_with("id <") {
+            // A bare or protocol-qualified `id` / `Class` (`id`, `id<NSSecureCoding,
+            // NSObject>`, `Class<UICGFloatTraitDefinition>`) is an ObjC object/class
+            // pointer — ABI-identical to a raw pointer. Catches object typedefs like
+            // `NSAccessibilityLoadingToken` (`typedef id<NSSecureCoding, NSObject> …`)
+            // and UIKit's trait typedefs (`typedef Class<UICGFloatTraitDefinition>
+            // UICGFloatTrait`) that never spell a trailing `*`, so they'd otherwise
+            // bottom out as unmapped.
+            if c == "id" || c.starts_with("id<") || c.starts_with("id <")
+                || c == "Class" || c.starts_with("Class<") || c.starts_with("Class <")
+            {
                 return Some(TdCanon::Ptr);
             }
             match self.typedefs.get(c) {
@@ -5159,6 +5186,52 @@ mod tests {
         assert!(out.contains("fn matrix(this) -> CGAffineTransform"), "by-value struct return:\n{out}");
         assert!(out.contains("CGAffineTransform(recv: *u8, sel: *u8) -> CGAffineTransform;"), "module-local struct-return shim:\n{out}");
         assert!(!out.contains("unmapped type `CGAffineTransform`"), "no unmapped skip:\n{out}");
+    }
+
+    #[test]
+    fn cg_vector_and_ca_transform3d_bind_as_by_value_structs() {
+        // CGVector (2 CGFloat, HFA) and CATransform3D (16 CGFloat, 128-byte indirect)
+        // are named CoreGraphics/CoreAnimation structs never collected from the TU;
+        // their layouts are seeded so UIKit methods using them bind by value (same
+        // path proven for CGAffineTransform), not skip as unmapped.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "UIThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "movementDirection", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "CGVector" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "setTransform3D:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "t", "type": { "qualType": "CATransform3D" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "UI", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct CGVector {") && out.contains("dx: f64,") && out.contains("dy: f64,"),
+            "CGVector 2-double struct:\n{out}");
+        assert!(out.contains("fn movement_direction(this) -> CGVector"), "CGVector by-value return:\n{out}");
+        assert!(out.contains("struct CATransform3D {") && out.contains("m44: f64,"), "CATransform3D 16-double struct:\n{out}");
+        assert!(out.contains("fn set_transform3_d(this, t: CATransform3D)"), "CATransform3D by-value param:\n{out}");
+        assert!(!out.contains("unmapped type `CGVector`") && !out.contains("unmapped type `CATransform3D`"),
+            "no unmapped skips:\n{out}");
+    }
+
+    #[test]
+    fn class_qualified_typedef_resolves_to_object_handle() {
+        // `typedef Class<UICGFloatTraitDefinition> UICGFloatTrait;` (UIKit's iOS-17
+        // trait family) is a class-object pointer; it resolves to a `*u8` handle
+        // (return + param), not a skip. Mirrors the `id<...>` typedef case — a
+        // protocol-qualified `Class` typedef never spells a trailing `*`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "TypedefDecl", "name": "UICGFloatTrait", "type": { "qualType": "Class<UICGFloatTraitDefinition>" } },
+                { "kind": "ObjCInterfaceDecl", "name": "UIThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "traitForToken:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "UICGFloatTrait _Nonnull" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "trait", "type": { "qualType": "UICGFloatTrait _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "UI", serde_json::json!({})).run(&tu);
+        assert!(!out.contains("unmapped type `UICGFloatTrait`"), "Class typedef no longer unmapped:\n{out}");
+        assert!(out.contains("fn trait_for_token(this, trait_: *u8) -> *u8"), "Class typedef -> *u8 param+return:\n{out}");
     }
 
     #[test]
