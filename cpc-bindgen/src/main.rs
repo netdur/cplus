@@ -18,6 +18,7 @@
 //   complex, etc.) are emitted with a `// SKIPPED: <reason>` comment.
 
 mod framework;
+mod gir;
 mod objc;
 mod swift;
 
@@ -27,6 +28,7 @@ fn main() {
     // Flags (`--objc`, `--prefix P`) precede the header; clang args follow `--`.
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut objc_mode = false;
+    let mut gobject_mode = false;
     let mut swift_mode = false;
     let mut bridge_mode = false;
     let mut bridge_spec_path: Option<String> = None;
@@ -52,6 +54,13 @@ fn main() {
             }
             if a == "--objc" {
                 objc_mode = true;
+                i += 1;
+                continue;
+            }
+            // `--gobject <Module.gir | Namespace>` binds a GObject-Introspection
+            // graph (GTK/GLib/Adwaita) — the Linux analog of --objc/--framework.
+            if a == "--gobject" {
+                gobject_mode = true;
                 i += 1;
                 continue;
             }
@@ -190,6 +199,27 @@ fn main() {
             merge,
             sdk_name.as_deref(),
         ));
+    }
+
+    // GObject mode: bind a GIR graph (no clang; GIR is the metadata source).
+    if gobject_mode {
+        let arg = match &header {
+            Some(h) => h.clone(),
+            None => {
+                eprintln!("cpc-bindgen --gobject: need a <Module.gir> path or a Namespace name (e.g. GLib, Gtk)");
+                std::process::exit(2);
+            }
+        };
+        match gir::generate(&arg) {
+            Ok(src) => {
+                print!("{src}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("cpc-bindgen --gobject: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 
     // Swift mode: bind a `swift symbolgraph-extract` JSON graph. Either a
