@@ -26,6 +26,10 @@ enum Status {
     // Arguments could not form a valid operation (e.g. an interior NUL where a
     // C string is required). No change.
     InvalidInput,
+    // The operation requires the sole reference to a shared resource
+    // (e.g. `Rc::with_mut` / `Arc::with_mut` on a handle whose strong count
+    // is above one). Other references exist; no change.
+    Shared,
 }
 
 impl Status {

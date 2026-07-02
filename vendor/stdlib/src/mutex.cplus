@@ -33,6 +33,8 @@
 
 import "./atomic" as atomic;
 import "./option" as option;
+import "./status" as status;
+import "./text" as text;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -174,6 +176,32 @@ impl MutexGuard[T: Copy] {
 }
 
 impl MutexGuard[T] {
+    // Scoped read access: call `f` with the guarded value. Works for any T
+    // (unlike `value()`, which is Copy-gated): the callback borrows its
+    // argument read-only and cannot keep it. The callback is a plain
+    // fn-pointer — no captures — so nothing else the guard protects is
+    // reachable inside it.
+    fn with(this, f: fn(T)) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        { f(*value_ptr); }
+        return;
+    }
+
+    // Scoped exclusive access: call `f` with the guarded value through a
+    // `ref` slot, so the callback mutates the value in place — fields of a
+    // non-Copy T included, which whole-value `set()` cannot express. The
+    // lock makes this the sole writer. No uniqueness gate is needed:
+    // reaching this same mutex through the payload and re-locking is a
+    // deadlock, which is the caller's liveness responsibility (see the
+    // header note), not a memory-safety hole.
+    fn with_mut(ref this, f: fn(ref T)) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        { f(*value_ptr); }
+        return;
+    }
+
     // Write inner T, dropping the value previously stored first (mirrors
     // `Vec::set`). The guard holds the lock, so this is the sole writer; the
     // inner T is always initialized (`new` moved it in), so the drop-then-store
@@ -238,6 +266,58 @@ fn mutex_lock_set_then_get() {
             assert g.value() == 999;
         }
         option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Callbacks for the `with`/`with_mut` tests — plain fns; a fn-pointer
+// callback has no captures, so these are the only shapes possible.
+fn expect_100(v: i32) { assert v == 100; return; }
+fn bump(ref v: i32) { v = v +% 1; return; }
+fn append_world(ref t: text::Text) {
+    let _st: status::Status = t.append(" world");
+    return;
+}
+fn expect_hello_world(t: text::Text) { assert t.equals("hello world"); return; }
+
+#[test]
+fn mutex_guard_with_reads_in_place() {
+    match new::[i32](100) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            let g: MutexGuard[i32] = m.lock();
+            g.with(expect_100);
+            assert g.value() == 100;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn mutex_guard_with_mut_mutates_in_place() {
+    match new::[i32](99) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            var g: MutexGuard[i32] = m.lock();
+            g.with_mut(bump);
+            assert g.value() == 100;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Non-Copy payload: `value()` is unavailable (T: Copy gate) and `set()`
+// can only replace wholesale — `with_mut` mutates the guarded Text in
+// place, and `with` reads it back, all under one lock.
+#[test]
+fn mutex_guard_with_mut_non_copy_in_place() {
+    match new::[text::Text](text::from_str("hello")) {
+        option::Option[Mutex[text::Text]]::Some(m) => {
+            var g: MutexGuard[text::Text] = m.lock();
+            g.with_mut(append_world);
+            g.with(expect_hello_world);
+        }
+        option::Option[Mutex[text::Text]]::None => { assert false; }
     }
     return;
 }

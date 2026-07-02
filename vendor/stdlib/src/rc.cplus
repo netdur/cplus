@@ -10,10 +10,15 @@
 // is rejected at sema time with E0502. Sharing a non-atomic refcount across
 // threads would race; use `Arc[T]` (which is `Send + Sync`) for that.
 //
-// Inherits the v0.0.4 stdlib limitations: no `make_mut`, inner T's
-// Drop on last reference is not invoked automatically.
+// Uniqueness: `is_unique()` reports whether this handle is the only
+// strong reference; `try_unwrap()` consumes the handle and recovers the
+// inner T when it is. That is the safe extraction path for non-Copy T
+// (shared `value()` stays `T: Copy`-gated). No `make_mut` — clone-on-write
+// needs a `T: Clone` story C+ does not have; use `try_unwrap` + `new`.
 
 import "./option" as option;
+import "./status" as status;
+import "./text" as text;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -73,8 +78,60 @@ impl Rc[T] {
         return { *refct };
     }
 
+    // True when this handle is the only strong reference (count == 1).
+    // Single-threaded, exact.
+    fn is_unique(this) -> bool {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let cur: u64 = { *refct };
+        return cur == (1 as u64);
+    }
+
+    // Scoped exclusive access: when this handle is the only strong
+    // reference, call `f` with the shared value through a `ref` slot (the
+    // callback mutates it in place) and return `Ok`. When other handles
+    // exist, return `Shared` without touching the value. The gate is what
+    // makes this sound: the callback is a plain fn-pointer — no captures —
+    // so the only route to a second handle is through the payload itself,
+    // and a payload containing a handle to this same block makes the count
+    // at least 2, which this gate refuses.
+    fn with_mut(ref this, f: fn(ref T)) -> status::Status {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let cur: u64 = { *refct };
+        if cur != (1 as u64) {
+            return status::Status::Shared;
+        }
+        let value_ptr: *T = { (this._ctrl + (8 as usize)) as *T };
+        { f(*value_ptr); }
+        return status::Status::Ok;
+    }
+
+    // Consume the handle; recover the inner T when this is the only
+    // strong reference. On success the block is freed here and the
+    // handle is disarmed (null `_ctrl`) so the function-exit Drop skips
+    // both inner Drop and free — the caller now owns the T. When other
+    // handles exist, returns `None`; the function-exit Drop then
+    // decrements the count like any normal handle drop.
+    fn try_unwrap(take this) -> option::Option[T] {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let cur: u64 = { *refct };
+        if cur != (1 as u64) {
+            return option::Option[T]::None;
+        }
+        let value_ptr: *T = { (this._ctrl + (8 as usize)) as *T };
+        let v: T = { *value_ptr };
+        let raw: *u8 = this._ctrl;
+        { this._ctrl = 0 as *u8; }
+        { free(raw); }
+        return option::Option[T]::Some(v);
+    }
+
     // Destructor: non-atomic decrement; free the block on the last ref.
+    // Short-circuits on null `_ctrl` — the `try_unwrap` success path
+    // nulls the handle after moving the value out, so this Drop must
+    // not touch the already-freed block.
     fn drop(ref this) {
+        let null_p: *u8 = { 0 as *u8 };
+        if this._ctrl == null_p { return; }
         let refct: *u64 = { this._ctrl as *u64 };
         let cur: u64 = { *refct };
         let new_count: u64 = cur -% (1 as u64);
@@ -111,6 +168,136 @@ fn rc_clone_bumps_strong_count() {
             assert r2.value() == 5;
         }
         option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_is_unique_tracks_clones() {
+    match new::[i32](7) {
+        option::Option[Rc[i32]]::Some(r) => {
+            assert r.is_unique();
+            let r2: Rc[i32] = r.clone();
+            assert !r.is_unique();
+            assert !r2.is_unique();
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_try_unwrap_sole_handle_recovers_value() {
+    match new::[i32](41) {
+        option::Option[Rc[i32]]::Some(r) => {
+            match r.try_unwrap() {
+                option::Option[i32]::Some(v) => { assert v == 41; }
+                option::Option[i32]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Shared handle refuses to unwrap; the refusal decrements like a normal
+// drop, storage stays intact for the survivor, which can then unwrap.
+#[test]
+fn rc_try_unwrap_shared_refuses_then_survivor_unwraps() {
+    match new::[i32](13) {
+        option::Option[Rc[i32]]::Some(r) => {
+            let r2: Rc[i32] = r.clone();
+            assert r2.strong_count() == (2 as u64);
+            match r.try_unwrap() {
+                option::Option[i32]::Some(_v) => { assert false; }
+                option::Option[i32]::None => { }
+            }
+            assert r2.strong_count() == (1 as u64);
+            assert r2.value() == 13;
+            match r2.try_unwrap() {
+                option::Option[i32]::Some(v) => { assert v == 13; }
+                option::Option[i32]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Callbacks for the `with_mut` tests — plain fns; a fn-pointer callback
+// has no captures, so nothing but its argument is reachable inside it.
+fn bump(ref n: i32) { n = n +% 1; return; }
+fn append_world(ref t: text::Text) {
+    let _st: status::Status = t.append(" world");
+    return;
+}
+
+#[test]
+fn rc_with_mut_unique_mutates_in_place() {
+    match new::[i32](41) {
+        option::Option[Rc[i32]]::Some(r) => {
+            var rr: Rc[i32] = r;
+            assert rr.with_mut(bump).is_ok();
+            assert rr.value() == 42;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// A shared handle refuses scoped mutation (`Shared`), leaving the value
+// untouched; once the extra handle is the only survivor it mutates fine.
+#[test]
+fn rc_with_mut_shared_refuses() {
+    match new::[i32](7) {
+        option::Option[Rc[i32]]::Some(r) => {
+            var rr: Rc[i32] = r;
+            let r2: Rc[i32] = rr.clone();
+            let st: status::Status = rr.with_mut(bump);
+            assert st.is_err();
+            assert st == status::Status::Shared;
+            assert r2.value() == 7;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// The flagship shape: in-place mutation of a non-Copy payload through a
+// shared handle — no copy out, no whole-value replace — then extraction.
+#[test]
+fn rc_with_mut_non_copy_payload_in_place() {
+    match new::[text::Text](text::from_str("hello")) {
+        option::Option[Rc[text::Text]]::Some(r) => {
+            var rr: Rc[text::Text] = r;
+            assert rr.with_mut(append_world).is_ok();
+            match rr.try_unwrap() {
+                option::Option[text::Text]::Some(t) => {
+                    assert t.equals("hello world");
+                }
+                option::Option[text::Text]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[text::Text]]::None => { assert false; }
+    }
+    return;
+}
+
+// Non-Copy Drop payload: `value()` is unavailable (T: Copy gate), so
+// `try_unwrap` is the extraction path. The recovered Text is owned by
+// the caller and drops exactly once at scope exit.
+#[test]
+fn rc_try_unwrap_non_copy_payload() {
+    match new::[text::Text](text::from_str("hello rc")) {
+        option::Option[Rc[text::Text]]::Some(r) => {
+            match r.try_unwrap() {
+                option::Option[text::Text]::Some(t) => {
+                    assert t.equals("hello rc");
+                }
+                option::Option[text::Text]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[text::Text]]::None => { assert false; }
     }
     return;
 }
