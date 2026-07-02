@@ -686,6 +686,37 @@ impl<'a> Emitter<'a> {
             self.emit_signal(&ty, s, &mut methods, &mut body);
         }
 
+        // Safe upcasts. C+ has no struct inheritance, so a subclass wrapper does
+        // not carry its parent's or interfaces' methods. But the handle *is* an
+        // instance of each (a GtkButton* IS-A GtkWidget*), so expose zero-cost
+        // `from_raw` views: `button.upcast().show()` reaches Widget's methods,
+        // `box.as_orientable().set_orientation(..)` reaches an interface's. Only
+        // in-namespace supertypes are bridged; a foreign parent (GObject.Object)
+        // is left to `.raw()`.
+        if let Some(parent) = c.attr("parent") {
+            if !parent.contains('.') && self.wrapper_types.contains(parent) && methods.insert("upcast".to_string()) {
+                let pty = ident_type(parent);
+                body.push_str(&format!(
+                    "    // upcast to parent `{parent}` (safe; the handle is-a {parent}).\n    fn upcast(this) -> {pty} {{ return {pty}::from_raw(this._raw); }}\n\n"
+                ));
+                self.emitted += 1;
+            }
+        }
+        for imp in c.children_named("implements") {
+            let iname = match imp.attr("name") {
+                Some(n) if !n.contains('.') && self.wrapper_types.contains(n) => n,
+                _ => continue,
+            };
+            let mname = ident(&format!("as_{}", snake(iname)));
+            if methods.insert(mname.clone()) {
+                let ity = ident_type(iname);
+                body.push_str(&format!(
+                    "    fn {mname}(this) -> {ity} {{ return {ity}::from_raw(this._raw); }}\n\n"
+                ));
+                self.emitted += 1;
+            }
+        }
+
         // struct + impl. Externs for this class were already pushed to self.out
         // by the emit_* calls above (module level, before the impl).
         self.out.push_str(&doc);
@@ -1148,6 +1179,7 @@ mod tests {
         <glib:signal name="destroy"><return-value><type name="none"/></return-value></glib:signal>
       </class>
       <class name="Button" c:type="GtkButton" parent="Widget" glib:type-name="GtkButton">
+        <implements name="Editable"/>
         <constructor name="new_with_label" c:identifier="gtk_button_new_with_label">
           <return-value transfer-ownership="none"><type name="Widget" c:type="GtkWidget*"/></return-value>
           <parameters><parameter name="label"><type name="utf8" c:type="const char*"/></parameter></parameters>
@@ -1214,6 +1246,17 @@ mod tests {
         let out = emit(CLASSES);
         assert!(out.contains("fn connect_clicked(this, handler: fn(*u8, *u8), user: *u8) -> u64 {"));
         assert!(out.contains("sig::connect(this._raw, #str_ptr(\"clicked\\0\"), handler, user)"));
+    }
+
+    #[test]
+    fn upcast_to_parent_and_interface_views() {
+        let out = emit(CLASSES);
+        // Button parent Widget -> upcast(); implements Editable -> as_editable()
+        assert!(out.contains("fn upcast(this) -> Widget { return Widget::from_raw(this._raw); }"));
+        assert!(out.contains("fn as_editable(this) -> Editable { return Editable::from_raw(this._raw); }"));
+        // Widget itself has no in-namespace parent, so no upcast on it
+        let widget_impl = out.split("impl Widget {").nth(1).unwrap().split("impl ").next().unwrap();
+        assert!(!widget_impl.contains("fn upcast("));
     }
 
     #[test]
