@@ -6300,6 +6300,8 @@ extern fn objc_msg_id_id_u64_i64(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i64)
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64_id_id_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: *u8, a3: *u8, a4: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_point_id_id_u64_i8_rect(recv: *u8, sel: *u8, a0: rt::Point, a1: *u8, a2: *u8, a3: u64, a4: i8, a5: rt::Rect) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_rect_i64_id_i64_i64(recv: *u8, sel: *u8, a0: rt::Rect, a1: i64, a2: *u8, a3: i64, a4: i64) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_rect_i8(recv: *u8, sel: *u8, a0: rt::Rect, a1: i8) -> *u8;
@@ -23382,7 +23384,30 @@ impl TextView {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("toggleQuickLookPreviewPanel:\0")), sender);
     }
 
-    // SKIPPED `quickLookPreviewableItemsInRanges:`: NSArray<id> param with a collection return not modelled
+    fn quick_look_previewable_items_in_ranges(this, ranges: vec::Vec[Value]) -> vec::Vec[QLPreviewItem] {
+        let arr_ranges: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_ranges: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_ranges: usize = ranges.count();
+        var i_ranges: usize = 0 as usize;
+        while i_ranges < n_ranges {
+            match ranges.at_ptr(i_ranges) {
+                option::Option[*Value]::Some(e_ranges) => { rt::msg_void_id(arr_ranges, add_sel_ranges, (*e_ranges).raw()); }
+                option::Option[*Value]::None => {}
+            }
+            i_ranges = i_ranges +% (1 as usize);
+        }
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("quickLookPreviewableItemsInRanges:\0")), arr_ranges);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[QLPreviewItem] = vec::Vec[QLPreviewItem]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(QLPreviewItem::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn update_quick_look_preview_panel(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("updateQuickLookPreviewPanel\0")));
     }
@@ -34279,7 +34304,31 @@ impl FontDescriptor {
         return FontDescriptor { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithFontAttributes:\0")), dict_attributes) };
     }
 
-    // SKIPPED `matchingFontDescriptorsWithMandatoryKeys:`: NSArray<id> param with a collection return not modelled
+    fn matching_font_descriptors_with_mandatory_keys(this, mandatory_keys: string_set::StringSet) -> vec::Vec[FontDescriptor] {
+        let arr_mandatory_keys: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let sadd_mandatory_keys: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let scap_mandatory_keys: usize = mandatory_keys.slot_capacity();
+        var ssi_mandatory_keys: usize = 0 as usize;
+        while ssi_mandatory_keys < scap_mandatory_keys {
+            match mandatory_keys.element_ptr_at_slot(ssi_mandatory_keys) {
+                option::Option[*text::Text]::Some(sep_mandatory_keys) => { rt::msg_void_id(arr_mandatory_keys, sadd_mandatory_keys, bridge::nsstring((*sep_mandatory_keys).view())); }
+                option::Option[*text::Text]::None => {}
+            }
+            ssi_mandatory_keys = ssi_mandatory_keys +% (1 as usize);
+        }
+        let set_mandatory_keys: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSSet\0")), rt::sel(#str_ptr("setWithArray:\0")), arr_mandatory_keys);
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingFontDescriptorsWithMandatoryKeys:\0")), set_mandatory_keys);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn matching_font_descriptor_with_mandatory_keys(this, mandatory_keys: string_set::StringSet) -> option::Option[FontDescriptor] {
         let arr_mandatory_keys: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
         let sadd_mandatory_keys: *u8 = rt::sel(#str_ptr("addObject:\0"));
@@ -34541,7 +34590,38 @@ impl FontCollection {
         return option::some(FontCollection { _obj: obj });
     }
 
-    // SKIPPED `matchingDescriptorsWithOptions:`: NSArray<id> param with a collection return not modelled
+    fn matching_descriptors_with_options(this, options: string_map::StringMap[f64]) -> vec::Vec[FontDescriptor] {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*f64]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithDouble:\0")), *dvp_options);
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*f64]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingDescriptorsWithOptions:\0")), dict_options);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn matching_descriptors_for_family(this, family: str) -> vec::Vec[FontDescriptor] {
         let arr: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("matchingDescriptorsForFamily:\0")), bridge::nsstring(family));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -34555,7 +34635,38 @@ impl FontCollection {
         return out;
     }
 
-    // SKIPPED `matchingDescriptorsForFamily:options:`: NSArray<id> param with a collection return not modelled
+    fn matching_descriptors_for_family_options(this, family: str, options: string_map::StringMap[f64]) -> vec::Vec[FontDescriptor] {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*f64]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithDouble:\0")), *dvp_options);
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*f64]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        let arr: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("matchingDescriptorsForFamily:options:\0")), bridge::nsstring(family), dict_options);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[FontDescriptor] = vec::Vec[FontDescriptor]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(FontDescriptor::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn font_collection_with_all_available_descriptors() -> FontCollection {
         return FontCollection { _obj: rt::msg_id(rt::get_class(#str_ptr("NSFontCollection\0")), rt::sel(#str_ptr("fontCollectionWithAllAvailableDescriptors\0"))) };
     }
@@ -34947,7 +35058,42 @@ impl FontManager {
         rt::msg_void_id_i8(this._obj, rt::sel(#str_ptr("setSelectedAttributes:isMultiple:\0")), dict_attributes, is_multiple as i8);
     }
 
-    // SKIPPED `convertAttributes:`: NSArray<id> param with a collection return not modelled
+    fn convert_attributes(this, attributes: string_map::StringMap[AnyObject]) -> string_map::StringMap[AnyObject] {
+        let dict_attributes: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_attributes: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_attributes: usize = attributes.slot_capacity();
+        var dsi_attributes: usize = 0 as usize;
+        while dsi_attributes < dcap_attributes {
+            match attributes.value_ptr_at_slot(dsi_attributes) {
+                option::Option[*AnyObject]::Some(dvp_attributes) => {
+                    match attributes.key_ptr_at_slot(dsi_attributes) {
+                        option::Option[*text::Text]::Some(dkp_attributes) => {
+                    let dval_attributes: *u8 = (*dvp_attributes).raw();
+                            rt::msg_void_id_id(dict_attributes, dset_attributes, dval_attributes, bridge::nsstring((*dkp_attributes).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_attributes = dsi_attributes +% (1 as usize);
+        }
+        let dict: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("convertAttributes:\0")), dict_attributes);
+        let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+        let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+        var out: string_map::StringMap[AnyObject] = string_map::new::[AnyObject]();
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        let obj_sel: *u8 = rt::sel(#str_ptr("objectForKey:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            let nskey: *u8 = rt::msg_id_u64(keys, at_sel, i);
+            let nsval: *u8 = rt::msg_id_id(dict, obj_sel, nskey);
+            out.insert(bridge::to_text(nskey), AnyObject::from_raw(nsval));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn available_font_names_matching_font_descriptor(this, descriptor: FontDescriptor) -> option::Option[Array] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("availableFontNamesMatchingFontDescriptor:\0")), descriptor.raw());
         if obj == { 0 as *u8 } {
@@ -40233,7 +40379,57 @@ impl LayoutConstraint {
 
     fn from_raw(ptr: *u8) -> LayoutConstraint { return LayoutConstraint { _obj: ptr }; }
 
-    // SKIPPED `constraintsWithVisualFormat:options:metrics:views:`: NSArray<id> param with a collection return not modelled
+    fn constraints_with_visual_format(format: str, options: u64, metrics: string_map::StringMap[AnyObject], views: string_map::StringMap[AnyObject]) -> vec::Vec[LayoutConstraint] {
+        let dict_metrics: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_metrics: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_metrics: usize = metrics.slot_capacity();
+        var dsi_metrics: usize = 0 as usize;
+        while dsi_metrics < dcap_metrics {
+            match metrics.value_ptr_at_slot(dsi_metrics) {
+                option::Option[*AnyObject]::Some(dvp_metrics) => {
+                    match metrics.key_ptr_at_slot(dsi_metrics) {
+                        option::Option[*text::Text]::Some(dkp_metrics) => {
+                    let dval_metrics: *u8 = (*dvp_metrics).raw();
+                            rt::msg_void_id_id(dict_metrics, dset_metrics, dval_metrics, bridge::nsstring((*dkp_metrics).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_metrics = dsi_metrics +% (1 as usize);
+        }
+        let dict_views: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_views: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_views: usize = views.slot_capacity();
+        var dsi_views: usize = 0 as usize;
+        while dsi_views < dcap_views {
+            match views.value_ptr_at_slot(dsi_views) {
+                option::Option[*AnyObject]::Some(dvp_views) => {
+                    match views.key_ptr_at_slot(dsi_views) {
+                        option::Option[*text::Text]::Some(dkp_views) => {
+                    let dval_views: *u8 = (*dvp_views).raw();
+                            rt::msg_void_id_id(dict_views, dset_views, dval_views, bridge::nsstring((*dkp_views).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_views = dsi_views +% (1 as usize);
+        }
+        let arr: *u8 = rt::msg_id_id_u64_id_id(rt::get_class(#str_ptr("NSLayoutConstraint\0")), rt::sel(#str_ptr("constraintsWithVisualFormat:options:metrics:views:\0")), bridge::nsstring(format), options, dict_metrics, dict_views);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[LayoutConstraint] = vec::Vec[LayoutConstraint]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(LayoutConstraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn constraint_with_item(view1: *u8, attribute: LayoutAttribute, related_by: LayoutRelation, to_item: *u8, attribute: LayoutAttribute, multiplier: f64, constant: f64) -> LayoutConstraint {
         return LayoutConstraint { _obj: rt::msg_id_id_i64_i64_id_i64_f64_f64(rt::get_class(#str_ptr("NSLayoutConstraint\0")), rt::sel(#str_ptr("constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:\0")), view1, layout_attribute_raw(attribute), layout_relation_raw(related_by), to_item, layout_attribute_raw(attribute), multiplier, constant) };
     }
@@ -55508,7 +55704,30 @@ impl TextSelectionNavigation {
         return option::some(TextSelection::from_raw(obj));
     }
 
-    // SKIPPED `textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:`: NSArray<id> param with a collection return not modelled
+    fn text_selections_interacting_at_point(this, point: rt::Point, in_container_at_location: TextLocation, anchors: vec::Vec[TextSelection], modifiers: u64, selecting: bool, bounds: rt::Rect) -> vec::Vec[TextSelection] {
+        let arr_anchors: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        let add_sel_anchors: *u8 = rt::sel(#str_ptr("addObject:\0"));
+        let n_anchors: usize = anchors.count();
+        var i_anchors: usize = 0 as usize;
+        while i_anchors < n_anchors {
+            match anchors.at_ptr(i_anchors) {
+                option::Option[*TextSelection]::Some(e_anchors) => { rt::msg_void_id(arr_anchors, add_sel_anchors, (*e_anchors).raw()); }
+                option::Option[*TextSelection]::None => {}
+            }
+            i_anchors = i_anchors +% (1 as usize);
+        }
+        let arr: *u8 = objc_msg_id_point_id_id_u64_i8_rect(this._obj, rt::sel(#str_ptr("textSelectionsInteractingAtPoint:inContainerAtLocation:anchors:modifiers:selecting:bounds:\0")), point, in_container_at_location.raw(), arr_anchors, modifiers, selecting as i8, bounds);
+        let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+        var out: vec::Vec[TextSelection] = vec::Vec[TextSelection]::with_capacity(n as usize);
+        let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
+        var i: u64 = 0 as u64;
+        while i < n {
+            out.append(TextSelection::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            i = i +% (1 as u64);
+        }
+        return out;
+    }
+
     fn text_selection_for_selection_granularity(this, selection_granularity: TextSelectionGranularity, enclosing_text_selection: TextSelection) -> TextSelection {
         return TextSelection::from_raw(rt::msg_id_i64_id(this._obj, rt::sel(#str_ptr("textSelectionForSelectionGranularity:enclosingTextSelection:\0")), text_selection_granularity_raw(selection_granularity), enclosing_text_selection.raw()));
     }
