@@ -13,7 +13,7 @@ edition = "2026"
 # / …) and `gtk/convert` for the str↔char* bridges.
 [dependencies]
 stdlib     = "*"
-gtk        = "*"
+gobject    = "*"
 agent_core = "*"
 
 # The same GTK 4 stack `vendor/gtk` links — agent_gtk calls `gtk_*` / `g_*`
