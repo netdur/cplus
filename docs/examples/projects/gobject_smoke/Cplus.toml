@@ -1,0 +1,15 @@
+[package]
+name    = "gobject_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "gobject_smoke"
+path = "src/main.cplus"
+# gtk-4 for gtk_application_new (links libgtk-4); gobject-2.0/glib-2.0 arrive
+# transitively from the `gobject` dependency's own `[link]`.
+libs = ["gtk-4"]
+
+[dependencies]
+gobject = "*"
+stdlib  = "*"

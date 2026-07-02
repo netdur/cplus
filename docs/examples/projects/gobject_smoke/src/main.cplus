@@ -1,0 +1,56 @@
+// Link + runtime smoke test for vendor/gobject against real libgtk-4.
+// Headless: constructs a GtkApplication and exercises the runtime surface
+// (signals, lifetime, type identity, per-instance data, string bridge) without
+// running the main loop, so it completes with no display.
+
+import "gobject/runtime" as g;
+import "gobject/signal" as sig;
+import "gobject/bridge" as bridge;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+
+extern fn gtk_application_new(app_id: *u8, flags: i32) -> *u8;
+extern fn g_strdup(s: *u8) -> *u8;
+
+fn on_activate(app: *u8, user: *u8) { return; }
+
+fn check(name: str, ok: bool) {
+    if ok { io::print("  PASS  "); } else { io::print("  FAIL  "); }
+    io::println(name);
+    return;
+}
+
+fn main() -> i32 {
+    io::println("vendor/gobject link + runtime smoke:");
+
+    // Real GTK object -> forces linking libgtk-4.
+    let app: *u8 = { gtk_application_new(#str_ptr("com.cplus.gobjsmoke\0"), 0 as i32) };
+    check("gtk_application_new -> non-null", app != { 0 as *u8 });
+
+    // Signal wiring through gobject/signal.
+    let hid: u64 = sig::connect(app, #str_ptr("activate\0"), on_activate, { 0 as *u8 });
+    check("g_signal_connect -> handler id", hid != (0 as u64));
+
+    // Type identity via gobject/runtime.
+    check("is_a GtkApplication", g::is_a(app, #str_ptr("GtkApplication\0")));
+    check("is_a GObject", g::is_a(app, #str_ptr("GObject\0")));
+    check("not is_a GtkButton", !g::is_a(app, #str_ptr("GtkButton\0")));
+
+    // GApplication is ref-counted, not floating (only GInitiallyUnowned floats).
+    check("GApplication not floating", !g::object_is_floating(app));
+
+    // Per-instance data round-trip.
+    g::set_data(app, #str_ptr("smoke\0"), { (42 as usize) as *u8 });
+    let back: usize = { g::get_data(app, #str_ptr("smoke\0")) as usize };
+    check("set_data/get_data round-trip", back == (42 as usize));
+
+    // Transfer-full string bridge: g_strdup allocates, bridge copies then g_free's it.
+    let dup: *u8 = { g_strdup(#str_ptr("hello from gobject bridge\0")) };
+    let t: text::Text = bridge::cstr_to_text_full(dup);
+    check("transfer-full bridge round-trip", t.equals("hello from gobject bridge"));
+
+    sig::disconnect(app, hid);
+    g::object_unref(app);
+    io::println("done.");
+    return 0;
+}
