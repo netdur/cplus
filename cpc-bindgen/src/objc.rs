@@ -40,6 +40,8 @@ pub struct ObjcEmitter {
     needs_string_set: bool,
     needs_any_object: bool,
     needs_synth: bool,
+    // Emitted the shared target/action helper block (one per module) yet?
+    emitted_action_target: bool,
     synth_key: u64,
     typedefs: HashMap<String, String>,
     enums: HashMap<String, EnumInfo>,
@@ -344,6 +346,7 @@ impl ObjcEmitter {
             needs_string_set: false,
             needs_any_object: false,
             needs_synth: false,
+            emitted_action_target: false,
             synth_key: 0x7000,
             typedefs: HashMap::new(),
             enums: HashMap::new(),
@@ -968,6 +971,85 @@ impl ObjcEmitter {
         self.wrapper_name_of(base_ty).filter(|n| self.known_types.contains(n))
     }
 
+    /// Shared target/action → typed `fn(*u8)` machinery, emitted once per module
+    /// the first time a class declares both `setTarget:` and `setAction:`. A
+    /// single synthesized `NSObject` subclass carries one action selector
+    /// (`cplusAction:`); its IMP recovers the C+ handler — stored on the target
+    /// as a bare fn-pointer through the associated-object slot (the v0.0.25
+    /// `FnPtr ↔ *u8` cast) — and invokes it with the sender control. The handler
+    /// is code (never freed), so an ASSIGN association is sound; the target
+    /// OBJECT is pinned on the control with a RETAINED association so it outlives
+    /// the control (AppKit's `target` is a weak/assign reference) with no leak.
+    fn emit_action_target_block(&mut self) {
+        let handler_key = self.synth_key;
+        self.synth_key += 1;
+        let pin_key = self.synth_key;
+        self.synth_key += 1;
+        self.needs_synth = true;
+        self.emitted_action_target = true;
+        self.body.push_str(&format!(
+            "// Target/action -> typed `fn(*u8)` callback (shared, one per module).\n\
+             #[link_name = \"class_addMethod\"]\n\
+             extern fn cplus_action_add_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;\n\n\
+             fn cplus_action_handler_key() -> *u8 {{ return {{ {handler_key} as *u8 }}; }}\n\
+             fn cplus_action_pin_key() -> *u8 {{ return {{ {pin_key} as *u8 }}; }}\n\n\
+             fn cplus_action_imp(self_obj: *u8, cmd: *u8, sender: *u8) {{\n\
+             \x20   let f: fn(*u8) = {{ synth::get_associated(self_obj, cplus_action_handler_key()) as fn(*u8) }};\n\
+             \x20   f(sender);\n\
+             \x20   return;\n\
+             }}\n\n\
+             fn cplus_make_action_target(handler: fn(*u8)) -> *u8 {{\n\
+             \x20   let name: *u8 = #str_ptr(\"Cplus_ActionTarget\\0\");\n\
+             \x20   var cls: *u8 = rt::get_class(name);\n\
+             \x20   if cls == {{ 0 as *u8 }} {{\n\
+             \x20       cls = synth::allocate_class_pair(rt::get_class(#str_ptr(\"NSObject\\0\")), name, 0 as usize);\n\
+             \x20       let added: i8 = cplus_action_add_method(cls, rt::sel(#str_ptr(\"cplusAction:\\0\")), cplus_action_imp, #str_ptr(\"v@:@\\0\"));\n\
+             \x20       synth::register_class_pair(cls);\n\
+             \x20   }}\n\
+             \x20   let t: *u8 = synth::alloc_init_class(cls);\n\
+             \x20   synth::set_associated(t, cplus_action_handler_key(), {{ handler as *u8 }});\n\
+             \x20   return t;\n\
+             }}\n\n"
+        ));
+    }
+
+    /// The per-control convenience method (inside a class's `impl`): route this
+    /// control's action to a C+ `fn(*u8)` handler that receives the sender.
+    /// Only emitted for classes that declare target/action; reuses the shared
+    /// block above. Subclasses that merely inherit target/action reach it via
+    /// `Control::from_raw(sub.raw()).set_on_action(..)`, the usual no-inheritance
+    /// round-trip.
+    fn emit_set_on_action(&mut self) {
+        self.body.push_str(
+            "    // Target/action convenience: route this control's action to a C+\n\
+             \x20   // `fn(*u8)` handler, which receives the sender (this control).\n\
+             \x20   fn set_on_action(this, handler: fn(*u8)) {\n\
+             \x20       let t: *u8 = cplus_make_action_target(handler);\n\
+             \x20       synth::retain_associated(this._obj, cplus_action_pin_key(), t);\n\
+             \x20       rt::msg_void_id(this._obj, rt::sel(#str_ptr(\"setTarget:\\0\")), t);\n\
+             \x20       rt::msg_void_id(this._obj, rt::sel(#str_ptr(\"setAction:\\0\")), rt::sel(#str_ptr(\"cplusAction:\\0\")));\n\
+             \x20       return;\n\
+             \x20   }\n\n",
+        );
+    }
+
+    /// Does this class declare BOTH `setTarget:` and `setAction:` in its own
+    /// interface (the target/action mechanism)? Inherited-only subclasses do not
+    /// redeclare them, so this is true on `NSControl`, `NSMenuItem`,
+    /// `NSGestureRecognizer`, `NSToolbarItem`, `NSCell`, the touch-bar items, etc.
+    fn declares_target_action(methods: &[serde_json::Value]) -> bool {
+        let mut has_target = false;
+        let mut has_action = false;
+        for m in methods {
+            match m.get("name").and_then(|v| v.as_str()) {
+                Some("setTarget:") => has_target = true,
+                Some("setAction:") => has_action = true,
+                _ => {}
+            }
+        }
+        has_target && has_action
+    }
+
     fn emit_interface(&mut self, itf: &serde_json::Value, categories: &[serde_json::Value]) {
         let objc_name = match itf.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
@@ -1004,6 +1086,15 @@ impl ObjcEmitter {
             "Non-owning handle (factory/singleton); `opaque`, no drop."
         };
         let field = if owned { "_obj: *u8" } else { "opaque _obj: *u8" };
+
+        // Target/action classes get a typed `set_on_action(fn(*u8))` convenience.
+        // Emit the shared synthesis block (once, at module scope) before this
+        // class's own `struct`/`impl` so its free functions resolve.
+        let has_action = Self::declares_target_action(&methods);
+        if has_action && !self.emitted_action_target {
+            self.emit_action_target_block();
+        }
+
         self.body.push_str(&format!("// `{objc_name}` (Foundation/ObjC). {note}\n"));
         self.body.push_str(&format!("struct {ty} {{\n    {field},\n}}\n\n"));
         self.body.push_str(&format!("impl {ty} {{\n"));
@@ -1040,6 +1131,9 @@ impl ObjcEmitter {
         // shares this impl's name scope but is NOT planned here: `raw`/`from_raw`,
         // `drop`, and every constructor name (`new` / `new_with_*`).
         let mut reserved = self.seen_methods.clone();
+        if has_action {
+            reserved.insert("set_on_action".to_string());
+        }
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if sel == "init" || sel.starts_with("initWith") {
@@ -1065,6 +1159,10 @@ impl ObjcEmitter {
                 None
             };
             self.emit_method(m, &objc_name, &ty, is_init, owned, ctor.as_deref());
+        }
+
+        if has_action {
+            self.emit_set_on_action();
         }
 
         if owned {
@@ -1512,6 +1610,64 @@ impl ObjcEmitter {
         })
     }
 
+    /// ARC method-family classification: does `sel` hand back a **+1** (already
+    /// owned, returned-retained) object? True for the `alloc` / `new` / `copy` /
+    /// `mutableCopy` / `init` families and for methods annotated
+    /// `ns_returns_retained`. Every other method returns a **+0** (autoreleased,
+    /// borrowed) object. Leading underscores are ignored, and a family word must
+    /// not be followed by a lowercase letter — so `newspaper` / `initialize` /
+    /// `copyright` are ordinary +0 accessors, per the Cocoa/ARC naming rule.
+    /// `m` (the method AST) is optional: the block-method path has only the
+    /// selector, which still catches the families (`newBuffer…` etc.).
+    fn returns_retained_plus_one(sel: &str, m: Option<&serde_json::Value>) -> bool {
+        if m.map(Self::method_has_ns_returns_retained).unwrap_or(false) {
+            return true;
+        }
+        let s = sel.trim_start_matches('_');
+        for fam in ["alloc", "mutableCopy", "copy", "new", "init"] {
+            if let Some(rest) = s.strip_prefix(fam) {
+                match rest.chars().next() {
+                    None => return true,                               // exactly the family word
+                    Some(c) if !c.is_ascii_lowercase() => return true, // next char not lowercase
+                    _ => {}                                            // `newspaper`, `initialize`, …
+                }
+            }
+        }
+        false
+    }
+
+    /// `NS_RETURNS_RETAINED` (or the CF equivalent) on the method — an explicit
+    /// +1 even when the selector is not in a retaining family.
+    fn method_has_ns_returns_retained(m: &serde_json::Value) -> bool {
+        m.get("inner")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter().any(|n| {
+                    n.get("kind")
+                        .and_then(|k| k.as_str())
+                        .map(|k| k.contains("ReturnsRetained"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Does an object return need a `retain` to balance the wrapper's releasing
+    /// `drop`? Only when the returned wrapper is an **owning** type (has `drop`)
+    /// AND the method hands back a **+0** object (not a +1 retaining-family /
+    /// `ns_returns_retained` return). A +1 return is already owned; a non-owning
+    /// wrapper has no `drop`; a raw `*u8` return is borrowed — none are retained.
+    /// This closes the +0-accessor over-release: `superview()` / `contentView()`
+    /// / … wrap a +0 pointer in an owning `View`, so without the retain the
+    /// wrapper's `drop` would `release` an object it never owned.
+    fn object_return_needs_retain(&self, ret: &Ret, sel: &str, m: Option<&serde_json::Value>) -> bool {
+        let n = match ret {
+            Ret::Object(Some(n)) | Ret::ObjectOption(Some(n)) => n,
+            _ => return false,
+        };
+        self.owning_types.contains(n) && !Self::returns_retained_plus_one(sel, m)
+    }
+
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
         let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let is_instance = m.get("instance").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1669,8 +1825,14 @@ impl ObjcEmitter {
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
             if let Some(send) = self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                // A factory returning Self hands back a +0 (autoreleased) object
+                // unless it is a +1 retaining-family / `ns_returns_retained`
+                // method (`+new`, `+copyFoo`, …). Retain a +0 so the wrapper owns
+                // the +1 its `drop` releases; leave a +1 alone (already owned) so
+                // we don't over-retain and leak.
+                let retain_self = owned && !Self::returns_retained_plus_one(&sel, Some(m));
                 if ret_nullable {
-                    let wrapped = if owned {
+                    let wrapped = if retain_self {
                         format!("{ty} {{ _obj: rt::retain(obj) }}")
                     } else {
                         format!("{ty} {{ _obj: obj }}")
@@ -1679,7 +1841,7 @@ impl ObjcEmitter {
                         "    fn {name}({sig_param}) -> option::Option[{ty}] {{\n        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{ty}]::None;\n        }}\n        return option::some({wrapped});\n    }}\n\n"
                     ));
                 } else {
-                    let handle = if owned { format!("rt::retain({send})") } else { send };
+                    let handle = if retain_self { format!("rt::retain({send})") } else { send };
                     self.body.push_str(&format!(
                         "    fn {name}({sig_param}) -> {ty} {{\n        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
                     ));
@@ -1953,6 +2115,17 @@ impl ObjcEmitter {
             }
         };
 
+        // Balance the releasing `drop` on an owning wrapper: a +0 object return
+        // (`superview`, `contentView`, a `-copy`-of-nothing accessor, …) must be
+        // retained so the wrapper owns a +1. Gated to owning returned types and
+        // +0 methods — a +1 return, a non-owning wrapper, and a raw `*u8` are all
+        // left borrowed/unretained.
+        let send = if self.object_return_needs_retain(&ret, &sel, Some(m)) {
+            format!("rt::retain({send})")
+        } else {
+            send
+        };
+
         let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
         let (ret_spelling, body_line) = self
             .return_spelling(&ret, &send)
@@ -2156,6 +2329,13 @@ impl ObjcEmitter {
         // return (completion-handler factories like newBufferWithBytesNoCopy:...
         // deallocator: -> Option[Buffer]) wraps via return_spelling. The block slot
         // `bp` is set up first, so `body_line`'s embedded send runs after it.
+        // Same +0-retain balancing as the plain path (selector-only classification
+        // here — no method AST — which still catches the `newBuffer…` +1 family).
+        let send = if self.object_return_needs_retain(&ret, sel, None) {
+            format!("rt::retain({send})")
+        } else {
+            send
+        };
         let (ret_spelling, body_line) = self
             .return_spelling(&ret, &send)
             .expect("block-method collection/unsupported returns handled above");
@@ -5259,6 +5439,80 @@ mod tests {
         assert!(out.contains("fn file_wrappers(this) -> string_map::StringMap[FileWrapper]"), "owning-wrapper dict return:\n{out}");
         assert!(out.contains("FileWrapper::from_raw(rt::retain(nsval))"), "retain-on-wrap for owning value:\n{out}");
         assert!(!out.contains("// SKIPPED `setOptions:`") && !out.contains("// SKIPPED `fileWrappers`"), "no skips:\n{out}");
+    }
+
+    #[test]
+    fn scalar_object_returns_retain_plus_zero_not_plus_one() {
+        // The +1/+0 ownership classifier for scalar object returns. `NSView` is an
+        // owning wrapper (has `initWithFrame:` -> `drop` releases), so a returned
+        // +0 (autoreleased/borrowed) `NSView *` must be RETAINED on wrap to own the
+        // +1 the drop releases; a +1 return (alloc/new/copy/mutableCopy family or
+        // ns_returns_retained) is already owned and wraps BARE. Covers the nullable
+        // and non-null accessor arms, a +1-family accessor, and both factory arms.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithFrame:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "frame", "type": { "qualType": "NSRect" } }] },
+                    // +0 nullable accessor -> Option[View], retain
+                    { "kind": "ObjCMethodDecl", "name": "superview", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSView * _Nullable" }, "inner": [] },
+                    // +0 non-null accessor -> View, retain
+                    { "kind": "ObjCMethodDecl", "name": "snapshotView", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSView * _Nonnull" }, "inner": [] },
+                    // +1 copy-family accessor -> View, BARE (already owned)
+                    { "kind": "ObjCMethodDecl", "name": "copyView", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSView * _Nonnull" }, "inner": [] },
+                    // +0 factory returning Self -> retain
+                    { "kind": "ObjCMethodDecl", "name": "standardView", "instance": false, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] },
+                    // +1 new-family factory returning Self -> BARE
+                    { "kind": "ObjCMethodDecl", "name": "newView", "instance": false, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // +0 nullable accessor: retain wraps the send (retaining nil is a safe no-op,
+        // so the null-check after still works).
+        assert!(out.contains("let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"superview\\0\"))))"),
+            "+0 nullable accessor retains:\n{out}");
+        // +0 non-null accessor: retain inside from_raw.
+        assert!(out.contains("return View::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"snapshotView\\0\")))))"),
+            "+0 non-null accessor retains:\n{out}");
+        // +1 copy-family accessor: BARE from_raw, no retain.
+        assert!(out.contains("return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr(\"copyView\\0\"))))"),
+            "+1 copy accessor wraps bare:\n{out}");
+        assert!(!out.contains("rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"copyView"),
+            "+1 copy accessor must NOT retain:\n{out}");
+        // +0 factory returning Self: retain.
+        assert!(out.contains("_obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr(\"NSView\\0\")), rt::sel(#str_ptr(\"standardView\\0\"))))"),
+            "+0 factory retains:\n{out}");
+        // +1 new-family factory: BARE.
+        assert!(!out.contains("rt::retain(rt::msg_id(rt::get_class(#str_ptr(\"NSView\\0\")), rt::sel(#str_ptr(\"newView"),
+            "+1 new factory must NOT retain:\n{out}");
+    }
+
+    #[test]
+    fn returns_retained_plus_one_family_rule() {
+        // The ARC naming rule: family word, not followed by a lowercase letter.
+        let none = None;
+        assert!(ObjcEmitter::returns_retained_plus_one("new", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("newBuffer", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("copy", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("mutableCopy", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("initWithFrame:", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("allocWithZone:", none));
+        assert!(ObjcEmitter::returns_retained_plus_one("_newThing", none)); // leading underscores ignored
+        // Not families: the family word is followed by a lowercase letter.
+        assert!(!ObjcEmitter::returns_retained_plus_one("newspaper", none));
+        assert!(!ObjcEmitter::returns_retained_plus_one("initialize", none));
+        assert!(!ObjcEmitter::returns_retained_plus_one("copyright", none));
+        assert!(!ObjcEmitter::returns_retained_plus_one("superview", none));
+        assert!(!ObjcEmitter::returns_retained_plus_one("contentView", none));
+        // ns_returns_retained attribute forces +1 regardless of selector.
+        let attr = serde_json::json!({ "inner": [{ "kind": "NSReturnsRetainedAttr" }] });
+        assert!(ObjcEmitter::returns_retained_plus_one("makeThing", Some(&attr)));
     }
 
     #[test]

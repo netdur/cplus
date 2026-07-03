@@ -7661,6 +7661,16 @@ struct FnState<'a> {
     /// The borrow checker proves these locals are disjoint by virtue of
     /// being separate allocas with single-ownership lifetimes.
     noalias_local_slots: Vec<String>,
+    /// v0.0.26: a stack of per-statement owned-temporary lists. When a statement
+    /// materialises an owned Drop rvalue that is only *borrowed* (a method
+    /// receiver or a non-`take` by-ptr arg, or a bare expression-statement
+    /// value), the temp's slot is registered here and dropped at the end of the
+    /// enclosing statement — matching Rust/C++ end-of-statement temporary
+    /// semantics. A stack (not one list) so nested statements / block-exprs /
+    /// loop bodies each drain their own temps at the right point. Only *borrowed*
+    /// temps are registered — a temp consumed by `take`/move is never entered, so
+    /// there is no disarm and no double-free path.
+    temp_scopes: Vec<Vec<(String, Ty)>>,
     tmp_counter: u32,
     block_counter: u32,
     terminated: bool,
@@ -7784,6 +7794,7 @@ impl<'a> FnState<'a> {
             mode,
             moved_bindings: std::collections::HashSet::new(),
             noalias_local_slots: Vec::new(),
+            temp_scopes: Vec::new(),
             tmp_counter: 0,
             block_counter: 0,
             terminated: false,
@@ -8024,6 +8035,57 @@ impl<'a> FnState<'a> {
             .last_mut()
             .unwrap()
             .insert(name.to_string(), (slot, ty));
+    }
+
+    // ---- v0.0.26 owned-temporary drop (end-of-statement) ----
+
+    /// Open a temporary scope for one statement. Pushed on `gen_stmt` entry.
+    fn open_temp_scope(&mut self) {
+        self.temp_scopes.push(Vec::new());
+    }
+
+    /// Register an owned Drop temporary (its slot + type) into the current
+    /// statement's scope, to be dropped when the statement ends. A no-op when no
+    /// scope is open (the temp then leaks — safe, never a double-free); only
+    /// *borrowed* temps are ever registered.
+    fn register_temp(&mut self, slot: String, ty: Ty) {
+        if let Some(top) = self.temp_scopes.last_mut() {
+            top.push((slot, ty));
+        }
+    }
+
+    /// Close the current statement's temporary scope, dropping each registered
+    /// temp in reverse (LIFO) order. On the terminated path (an early
+    /// `return`/`break`/`continue` already jumped away) the drops are skipped —
+    /// those statements' temps leak rather than risk a drop after the
+    /// terminator. Always pops so the stack stays balanced.
+    fn close_temp_scope(&mut self) {
+        let scope = self.temp_scopes.pop().unwrap_or_default();
+        if self.terminated {
+            return;
+        }
+        for (slot, ty) in scope.iter().rev() {
+            self.gen_drop_in_place(ty, slot);
+        }
+    }
+
+    /// A *place* expression — `gen_place` returns an address into existing
+    /// storage (a named local, a field/index projection, a raw-pointer deref),
+    /// NOT a freshly spilled temporary. Owned Drop values reached this way are
+    /// owned by their binding and must not be temp-dropped. Everything else (a
+    /// call, constructor, block, …) makes `gen_place` spill a fresh anonymous
+    /// temp that IS ours to drop.
+    fn is_place_expr(e: &Expr) -> bool {
+        matches!(
+            &e.kind,
+            ExprKind::Ident(_)
+                | ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        )
     }
 
     fn lookup(&self, name: &str) -> Option<&(String, Ty)> {
@@ -8622,6 +8684,17 @@ impl<'a> FnState<'a> {
     // ---- statements ----
 
     fn gen_stmt(&mut self, s: &Stmt) {
+        // v0.0.26: each statement gets a temporary scope. Owned Drop rvalues
+        // borrowed during this statement (a method receiver, a non-`take` arg,
+        // or a bare expression-statement value) register into it and drop when
+        // the statement ends. A stack, so nested statements / block-exprs / loop
+        // bodies each drain at the right point.
+        self.open_temp_scope();
+        self.gen_stmt_inner(s);
+        self.close_temp_scope();
+    }
+
+    fn gen_stmt_inner(&mut self, s: &Stmt) {
         // v0.0.8 bench-gap finding 1: statement boundaries are
         // cache-flush points. Any statement can mutate a local
         // (`let`, `=`, function call as `Expr` stmt, etc.) so the
@@ -9091,7 +9164,21 @@ impl<'a> FnState<'a> {
             } => self.gen_while(cond, body, attributes),
             StmtKind::For(fl, attributes) => self.gen_for(fl, attributes),
             StmtKind::Expr(e) => {
-                let _ = self.gen_expr(e);
+                let v = self.gen_expr(e);
+                // v0.0.26: a bare expression statement that yields an owned Drop
+                // *rvalue* (`Foo::make();`, `x.method_returning_owned();`) leaks
+                // it today — spill and drop at statement end. A place expression
+                // (`x;`, `p.field;`) aliases a binding that already owns the
+                // value, so it is left alone (dropping it would double-free).
+                if !Self::is_place_expr(e) {
+                    if let Some((val, ty)) = v {
+                        if self.needs_drop(&ty) {
+                            let slot = self.alloca_anon(ty.clone());
+                            self.emit(&format!("store {} {}, ptr {}", self.lty(&ty), val, slot));
+                            self.register_temp(slot, ty);
+                        }
+                    }
+                }
             }
             StmtKind::Defer(e) => {
                 // Lexical defer: register the expression to run at the
@@ -11982,6 +12069,37 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{r} = ptrtoint {from_t} {v} to {to_t}"));
                 return (r, to);
             }
+            // v0.0.25: fn-pointer ↔ pointer / integer. A `Ty::FnPtr` lowers to
+            // LLVM `ptr` (see `lty`), so these mirror the raw-pointer arms above
+            // exactly — the `void*`-callback idiom. Sema's `cast_allowed` gates
+            // which pairs reach here.
+            //
+            // fn-pointer ↔ raw pointer: both are `ptr`, so the SSA value is
+            // unchanged; just retag with the new Ty (like `RawPtr → RawPtr`).
+            (Ty::FnPtr { .. }, Ty::RawPtr(_)) | (Ty::RawPtr(_), Ty::FnPtr { .. }) => {
+                return (v, to);
+            }
+            // integer → fn-pointer: widen a sub-i64 source to pointer width,
+            // then `inttoptr` (identical to the `int → RawPtr` arm).
+            (a, Ty::FnPtr { .. }) if a.is_int() => {
+                let aw = ty_bit_width(a);
+                let widened: String = if aw < 64 {
+                    let w = self.next_tmp();
+                    let zext_inst = if a.is_signed_int() { "sext" } else { "zext" };
+                    self.emit(&format!("{w} = {zext_inst} {from_t} {v} to i64"));
+                    w
+                } else {
+                    v.clone()
+                };
+                self.emit(&format!("{r} = inttoptr i64 {widened} to {to_t}"));
+                return (r, to);
+            }
+            // fn-pointer → 64-bit integer: `ptrtoint` (identical to the
+            // `RawPtr → 64-bit int` arm; sema admits only usize/u64/isize/i64).
+            (Ty::FnPtr { .. }, b) if matches!(b, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
+                self.emit(&format!("{r} = ptrtoint {from_t} {v} to {to_t}"));
+                return (r, to);
+            }
             _ => unreachable!("sema rejects unsupported casts: {:?} → {:?}", from, to),
         };
         self.emit(&format!("{r} = {inst} {from_t} {v} to {to_t}"));
@@ -12359,6 +12477,13 @@ impl<'a> FnState<'a> {
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(sig.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
+                // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
+                // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
+                // so drop it at end of statement. A `take` arg (move_flag) is
+                // consumed by the callee; a place arg is owned by its binding.
+                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                    self.register_temp(addr.clone(), pty.clone());
+                }
                 let attrs =
                     param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 let ty_str = if attrs.is_empty() {
@@ -13702,6 +13827,17 @@ impl<'a> FnState<'a> {
             unreachable!("sema validated")
         };
         let rcv = info.receiver.expect("sema validated instance call");
+        // v0.0.26: an owned Drop *rvalue* receiver borrowed by a `this`/`ref this`
+        // (Read/Mut) method is a temporary — `gen_place` spilled it to a fresh
+        // slot above, so drop it at end of statement. A `take this` (Move) receiver
+        // is consumed by the callee (never registered); a place receiver (a named
+        // local/field) is owned by its binding, not by us.
+        if !matches!(rcv, Receiver::Move)
+            && !Self::is_place_expr(receiver)
+            && self.needs_drop(&recv_ty)
+        {
+            self.register_temp(recv_ptr.clone(), recv_ty.clone());
+        }
         let mangled = mangle(&struct_name, &name.name);
 
         // v0.0.8 fix D: cpc-side inlining for trivial method bodies.
@@ -13755,6 +13891,13 @@ impl<'a> FnState<'a> {
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
+                // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
+                // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
+                // so drop it at end of statement. A `take` arg (move_flag) is
+                // consumed by the callee; a place arg is owned by its binding.
+                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                    self.register_temp(addr.clone(), pty.clone());
+                }
                 let attrs =
                     param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {
@@ -13867,6 +14010,13 @@ impl<'a> FnState<'a> {
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
+                // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
+                // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
+                // so drop it at end of statement. A `take` arg (move_flag) is
+                // consumed by the callee; a place arg is owned by its binding.
+                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                    self.register_temp(addr.clone(), pty.clone());
+                }
                 let attrs =
                     param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {
@@ -14022,6 +14172,13 @@ impl<'a> FnState<'a> {
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
+                // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
+                // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
+                // so drop it at end of statement. A `take` arg (move_flag) is
+                // consumed by the callee; a place arg is owned by its binding.
+                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                    self.register_temp(addr.clone(), pty.clone());
+                }
                 let attrs =
                     param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {

@@ -144,6 +144,14 @@ fn set_associated(object: *u8, key: *u8, value: *u8) {
     { objc_setAssociatedObject(object, key, value, 0 as usize); };
 }
 
+// Retained association: the runtime retains `value` now and releases it when
+// `object` is deallocated. Used to pin a synthesized helper object (e.g. a
+// target/action target) to the control it serves so it lives exactly as long as
+// that control — no manual keep-alive, no leak. OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1.
+fn retain_associated(object: *u8, key: *u8, value: *u8) {
+    { objc_setAssociatedObject(object, key, value, 1 as usize); };
+}
+
 fn get_associated(object: *u8, key: *u8) -> *u8 {
     return { objc_getAssociatedObject(object, key) };
 }

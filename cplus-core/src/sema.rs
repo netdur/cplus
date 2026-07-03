@@ -15496,6 +15496,37 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) {
         return true;
     }
+    // v0.0.25: fn-pointer ↔ pointer-width integer / raw pointer. A `Ty::FnPtr`
+    // lowers to LLVM `ptr` exactly like `Ty::RawPtr`, so a code pointer and a
+    // data pointer are the same thing at the IR level. This admits the standard
+    // C `void*`-callback idiom (pthread arg, qsort, ObjC associated objects):
+    // round-trip a callback through an opaque pointer slot. Code pointers are
+    // never freed or data-aliased, so the borrow checker needs no new machinery
+    // here — the same reasoning as the raw-pointer arms above. The one added
+    // hazard, re-signing a fn-pointer materialised from an integer, is the same
+    // self-flagging `as` hazard as `int as *T` followed by a dereference.
+    //
+    // fn-pointer → 64-bit integer (LLVM `ptrtoint`). Narrow targets are
+    // rejected for the same truncation reason as `*T as u32`.
+    if matches!(from, Ty::FnPtr { .. }) && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64)
+    {
+        return true;
+    }
+    // integer → fn-pointer (LLVM `inttoptr`, with the same zext/sext widening
+    // as `int as *T`). Any integer width is accepted on the source side.
+    if from.is_int() && matches!(to, Ty::FnPtr { .. }) {
+        return true;
+    }
+    // fn-pointer → raw pointer and raw pointer → fn-pointer. Both ends are
+    // `ptr`, so the cast is a no-op at the IR level. This is the shape the
+    // `void*`-callback idiom actually needs (store `fn(...)` in a `*u8` slot,
+    // recover it on the way back) without a double hop through an integer.
+    if matches!(from, Ty::FnPtr { .. }) && matches!(to, Ty::RawPtr(_)) {
+        return true;
+    }
+    if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::FnPtr { .. }) {
+        return true;
+    }
     // Forbidden:
     //   - integer/float → bool (use `!= 0`)
     //   - bool → float

@@ -167,7 +167,7 @@ This is a real new language feature. Touch points:
 - `check_expr` for `Ident(name)`: when expected is `Some(Ty::FnPtr { .. })` and the name resolves to a fn whose signature matches, return the fn pointer type instead of triggering "unknown variable" or "fn used as value." When expected is None and the name is a fn, today's behavior (function call) should still apply — this only kicks in when expected pulls toward FnPtr.
 - New error code: **E0820** — "function `X` has signature `fn(A) -> B`; cannot coerce to expected type `fn(C) -> D`" (signature mismatch).
 - New error code: **E0821** — "cannot take address of generic function `X` without specifying type parameters" (until turbofish-on-fn-ref lands).
-- Cast support: `cast_allowed` extends to admit `fn(...) -> R as fn(...) -> R'` only when signatures are equal (no implicit re-signing). Integer-to-FnPtr cast in `unsafe` (same gate as data-pointer null).
+- Cast support: `cast_allowed` extends to admit `fn(...) -> R as fn(...) -> R'` only when signatures are equal (no implicit re-signing). A fn-pointer also casts to/from a pointer-width integer (`usize`/`u64`/`isize`/`i64`) and to/from a raw pointer (`*T`), for the C `void*`-callback idiom. Like every pointer/integer cast in C+, this is a bare, self-flagging `as` expression — there is no `unsafe` wrapper (the keyword was removed from the language); the `as` itself marks the reinterpretation, exactly as `int as *T` and `*T as usize` do.
 
 ### Codegen
 - New `Ty::FnPtr` lowers to LLVM `ptr`.

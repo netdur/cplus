@@ -81,6 +81,61 @@ fn loop_body_locals_drop_each_iteration() {
     );
 }
 
+// v0.0.26: owned Drop *temporaries* (an unbound expression-statement value, a
+// borrowing method's rvalue receiver, a non-`take` by-value arg) are dropped at
+// the end of their enclosing statement — previously they leaked (only named
+// bindings dropped). Guards the dangerous edges together: a `take` arg is
+// consumed by the callee (dropped once, never double), a named-local borrow is
+// NOT temp-dropped, and a loop-body temp drops each iteration. The static count
+// is returned as the exit code.
+#[test]
+fn owned_temporaries_drop_at_end_of_statement() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("tempdrop.cplus");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct R { id: i32 }\n\
+         impl R {\n\
+             fn from_raw(v: i32) -> R { return R { id: v }; }\n\
+             fn use_it(this) -> i32 { return this.id; }\n\
+             fn drop(ref this) { { DROPS = DROPS + 1; } return; }\n\
+         }\n\
+         fn lend(r: R) -> i32 { return r.id; }\n\
+         fn consume(take r: R) -> i32 { let n: i32 = r.id; return n; }\n\
+         fn work() {\n\
+             R::from_raw(1);                        // (a) bare expr-stmt temp -> 1\n\
+             let a: i32 = R::from_raw(2).use_it();  // (b) temp receiver (borrow) -> 1\n\
+             let b: i32 = lend(R::from_raw(3));     // (c) temp borrow arg -> 1\n\
+             let c: i32 = consume(R::from_raw(4));  // (d) temp take arg: callee drops once -> 1\n\
+             var n: R = R::from_raw(5);             // named local\n\
+             let d: i32 = lend(n);                  // named-local borrow: NOT temp-dropped\n\
+             var i: i32 = 0;\n\
+             while i < 3 { let t: i32 = lend(R::from_raw(9)); i = i + 1; } // loop temp -> 3\n\
+             return;                                // named local n drops at scope end -> 1\n\
+         }\n\
+         fn main() -> i32 { work(); return { DROPS }; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("tempdrop");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "temp-drop program must compile");
+    let run = Command::new(&bin).status().expect("run tempdrop");
+    // a=1, b=1, c=1, d=1, loop=3, named-local n=1  ⇒  8 drops total, each exactly once.
+    assert_eq!(
+        run.code(),
+        Some(8),
+        "owned temporaries must drop exactly once at end of statement; got {:?}",
+        run.code()
+    );
+}
+
 // v0.0.19: a narrowing-literal cast (`<numeric literal> as T`) is accepted in
 // `static` initializer position and produces the same value the runtime cast
 // would. Compile a program whose statics use the cast form, then read them back
