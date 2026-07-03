@@ -833,14 +833,32 @@ fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
     }
 
     let dotted = format!(".{suffix}");
+    // Prefer an EXACT name match over a suffix (`ends_with`) match. The mono
+    // suffix is the exact name sema mangled the type argument to — SHORT for a
+    // root-module type, fully-qualified for an imported one. When two packages
+    // define the same short-named type (NSLayoutManager and CALayoutManager
+    // both strip to `LayoutManager`), the exact match is the one sema intended;
+    // the `ends_with` fallback would otherwise pick whichever qualified type
+    // happens to come first in `struct_defs`, diverging from sema and producing
+    // a wrong-instantiation miscompile. The fallback still resolves a short
+    // suffix that only exists in qualified form.
     for (idx, d) in types.struct_defs.iter().enumerate() {
-        if d.name == suffix || d.name.ends_with(&dotted) {
+        if d.name == suffix {
             return Ty::Struct(StructId(idx as u32));
         }
     }
-
     for (name, id) in &types.enum_by_name {
-        if name == suffix || name.ends_with(&dotted) {
+        if name == suffix {
+            return Ty::Enum(*id);
+        }
+    }
+    for (idx, d) in types.struct_defs.iter().enumerate() {
+        if d.name.ends_with(&dotted) {
+            return Ty::Struct(StructId(idx as u32));
+        }
+    }
+    for (name, id) in &types.enum_by_name {
+        if name.ends_with(&dotted) {
             return Ty::Enum(*id);
         }
     }

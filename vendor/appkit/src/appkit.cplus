@@ -10,6 +10,7 @@ import "stdlib/string_map" as string_map;
 import "stdlib/string_set" as string_set;
 import "stdlib/status" as status;
 import "objc/synthesis" as synth;
+import "quartzcore/quartzcore" as quartzcore;
 
 // `NSItemProviderRepresentationVisibility` (NS_ENUM)
 enum ItemProviderRepresentationVisibility {
@@ -12398,8 +12399,8 @@ impl View {
         return rt::msg_i8_id(this._obj, rt::sel(#str_ptr("shouldDelayWindowOrderingForEvent:\0")), event.raw()) != (0 as i8);
     }
 
-    fn make_backing_layer(this) -> CALayer {
-        return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("makeBackingLayer\0"))));
+    fn make_backing_layer(this) -> quartzcore::Layer {
+        return quartzcore::Layer::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("makeBackingLayer\0")))));
     }
 
     fn update_layer(this) {
@@ -12702,11 +12703,11 @@ impl View {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setWantsLayer:\0")), wants_layer as i8);
     }
 
-    fn layer(this) -> CALayer {
-        return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
+    fn layer(this) -> quartzcore::Layer {
+        return quartzcore::Layer::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0")))));
     }
 
-    fn set_layer(this, layer: CALayer) {
+    fn set_layer(this, layer: quartzcore::Layer) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLayer:\0")), layer.raw());
     }
 
@@ -13299,8 +13300,8 @@ impl View {
         return out;
     }
 
-    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
-        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> quartzcore::DisplayLink {
+        return quartzcore::DisplayLink::from_raw(rt::retain(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector)));
     }
 
     fn drag_image(this, image: Image, at: rt::Point, offset: rt::Size, event: Event, pasteboard: Pasteboard, source: *u8, slide_back: bool) {
@@ -15072,8 +15073,8 @@ impl Window {
         rt::msg_void(this._obj, rt::sel(#str_ptr("unregisterDraggedTypes\0")));
     }
 
-    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
-        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> quartzcore::DisplayLink {
+        return quartzcore::DisplayLink::from_raw(rt::retain(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector)));
     }
 
     fn cache_image_in_rect(this, rect: rt::Rect) {
@@ -16876,8 +16877,8 @@ impl Screen {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("lastDisplayUpdateTimestamp\0")));
     }
 
-    fn display_link_with_target(this, target: *u8, selector: *u8) -> CADisplayLink {
-        return CADisplayLink::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector));
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> quartzcore::DisplayLink {
+        return quartzcore::DisplayLink::from_raw(rt::retain(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector)));
     }
 
     fn user_space_scale_factor(this) -> f64 {
@@ -20293,30 +20294,6 @@ impl WritingToolsCoordinator {
     fn drop(ref this) {
         rt::release(this._obj);
     }
-}
-
-// `CADisplayLink` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CADisplayLink {
-    opaque _obj: *u8,
-}
-
-impl CADisplayLink {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CADisplayLink { return CADisplayLink { _obj: ptr }; }
-
-}
-
-// `CALayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CALayer {
-    opaque _obj: *u8,
-}
-
-impl CALayer {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CALayer { return CALayer { _obj: ptr }; }
-
 }
 
 // `CIFilter` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -29665,18 +29642,6 @@ impl Alert {
 
 }
 
-// `CAMediaTimingFunction` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CAMediaTimingFunction {
-    opaque _obj: *u8,
-}
-
-impl CAMediaTimingFunction {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CAMediaTimingFunction { return CAMediaTimingFunction { _obj: ptr }; }
-
-}
-
 // `NSAnimationContext` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
 struct AnimationContext {
     opaque _obj: *u8,
@@ -29716,11 +29681,11 @@ impl AnimationContext {
         rt::msg_void_f64(this._obj, rt::sel(#str_ptr("setDuration:\0")), duration);
     }
 
-    fn timing_function(this) -> CAMediaTimingFunction {
-        return CAMediaTimingFunction::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0"))));
+    fn timing_function(this) -> quartzcore::MediaTimingFunction {
+        return quartzcore::MediaTimingFunction::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0")))));
     }
 
-    fn set_timing_function(this, timing_function: CAMediaTimingFunction) {
+    fn set_timing_function(this, timing_function: quartzcore::MediaTimingFunction) {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTimingFunction:\0")), timing_function.raw());
     }
 

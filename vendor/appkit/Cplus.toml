@@ -4,7 +4,7 @@
 # sdk       = "26.5"
 # generator = "cpc-bindgen 0.0.26"
 # headers   = 279
-# reproduce = "cpc-bindgen --framework AppKit --prefix NS --merge --overrides overrides.json"
+# reproduce = "cpc-bindgen --framework AppKit --prefix NS --merge --use quartzcore=CA --overrides overrides.json"
 
 [package]
 name    = "appkit"
@@ -14,6 +14,7 @@ edition = "2026"
 [dependencies]
 stdlib = "*"
 objc   = "*"
+quartzcore = "*"
 
 [link]
 frameworks = ["AppKit"]
