@@ -10931,6 +10931,26 @@ impl<'a> FnState<'a> {
     /// the slot is the local's alloca. For a Field chain we GEP through.
     /// For arbitrary value-producing expressions, materialize into a temp
     /// alloca so we can address it.
+    /// Materialize a by-ptr call argument into a place. Handles the
+    /// `str`-literal → `Text` (`#[lang("string")]`) coercion in ARGUMENT
+    /// position: a bare literal passed to a `Text` parameter must heap-allocate
+    /// an owned `Text` (exactly like the return / `let` coercion sites), not be
+    /// spilled as a static-backed `str`. Without this the argument slot holds a
+    /// 2-field `str` whose pointer is the static `@.str` global; the by-value
+    /// param's drop then `free()`s static memory → double-free abort. Everything
+    /// else defers to `gen_place`.
+    fn gen_arg_place(&mut self, a: &Expr, pty: &Ty) -> (String, Ty) {
+        if let ExprKind::StrLit(s) = &a.kind {
+            if self.is_lang_string_ty(pty) {
+                let v = self.gen_strlit_as_lang_string(s, pty);
+                let slot = self.alloca_anon(pty.clone());
+                self.gen_store(pty, &v, &slot);
+                return (slot, pty.clone());
+            }
+        }
+        self.gen_place(a)
+    }
+
     fn gen_place(&mut self, e: &Expr) -> (String, Ty) {
         match &e.kind {
             ExprKind::Ident(name) => {
@@ -12511,7 +12531,7 @@ impl<'a> FnState<'a> {
         // matches the IR shape clang produces.
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(sig.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
-                let (addr, _) = self.gen_place(a);
+                let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
@@ -13925,7 +13945,7 @@ impl<'a> FnState<'a> {
         let mut arg_parts: Vec<String> = vec![recv_arg];
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
-                let (addr, _) = self.gen_place(a);
+                let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
@@ -14044,7 +14064,7 @@ impl<'a> FnState<'a> {
         let mut arg_parts: Vec<String> = vec![recv_arg];
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
-                let (addr, _) = self.gen_place(a);
+                let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
@@ -14206,7 +14226,7 @@ impl<'a> FnState<'a> {
         let mut arg_parts: Vec<String> = Vec::new();
         for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
-                let (addr, _) = self.gen_place(a);
+                let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
@@ -16494,6 +16514,29 @@ mod tests {
         let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
         assert!(diags.is_empty(), "sema errors: {diags:#?}");
         generate(&prog, mode)
+    }
+
+    // A `str` literal passed DIRECTLY as a by-value `#[lang("string")]` argument
+    // must heap-allocate an owned copy (like the return / `let` coercion sites),
+    // not be spilled as a static-backed `str`. Otherwise the by-value param's drop
+    // `free()`s the static `@.str` global → double-free abort. Regression for the
+    // literal-as-Text-arg crash surfaced by end-of-statement temp/param drop.
+    #[test]
+    fn str_literal_as_lang_string_arg_heap_allocates() {
+        let src = "\
+            extern fn free(p: *u8);\n\
+            #[lang(\"string\")]\n\
+            struct MyText { ptr: *u8, len: usize, cap: usize }\n\
+            impl MyText { fn drop(ref this) { { free(this.ptr); } return; } }\n\
+            fn take_text(t: MyText) { return; }\n\
+            fn main() -> i32 { take_text(\"hi\"); return 0; }\n";
+        let ir = gen_src_with(src, BuildMode::Debug);
+        // The 2-byte literal is copied onto the heap before the call, so the arg
+        // is an owned 24-byte MyText, not a static-backed 16-byte `str`.
+        assert!(
+            ir.contains("call ptr @malloc(i64 2)") && ir.contains("@memcpy"),
+            "literal Text arg must be heap-allocated (malloc+memcpy):\n{ir}"
+        );
     }
 
     // A program that references `objc_msgSend` only through `#[link_name]` shims
