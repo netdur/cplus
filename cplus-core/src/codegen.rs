@@ -14944,7 +14944,28 @@ impl<'a> FnState<'a> {
                 return Ty::Enum(*id);
             }
         }
-        Ty::Enum(EnumId(0))
+        // Name-mangling can diverge for cross-package element types (a foreign
+        // wrapper mangles with its full package path in one pass and not the
+        // other), so the string lookup above can miss even though the
+        // instantiation exists. Fall back to a STRUCTURAL match: the `Option__*`
+        // enum whose `Some` payload is exactly `inner`. Robust to how the
+        // instantiation happened to be named.
+        for (name, id) in &self.types.enum_by_name {
+            if name.contains("Option__")
+                && self.types.enum_defs[id.0 as usize]
+                    .variant_payloads
+                    .first()
+                    .map(|p| p.as_slice())
+                    == Some(std::slice::from_ref(inner))
+            {
+                return Ty::Enum(*id);
+            }
+        }
+        // Genuinely not instantiated — an upstream bug. Fail loud rather than
+        // silently returning `EnumId(0)`, whose variants are unrelated (that
+        // produced a wrong-variant-table miscompile once a foreign package with
+        // its own enums was imported).
+        panic!("codegen: no `Option` instantiation found for iterator element {inner:?}");
     }
 
     fn is_blessed_hash_receiver_codegen(ty: &Ty) -> bool {
