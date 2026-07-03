@@ -1,0 +1,58 @@
+// hello_win32 — the Windows counterpart to `hello_appkit`.
+//
+// A native Win32 window with a label and a Close button, built on the
+// `vendor/win32` bindings (direct user32/gdi32 calls — nothing to install).
+// The button posts WM_CLOSE, which routes through the window procedure to
+// DestroyWindow → WM_DESTROY → quit.
+//
+// Look & feel: controls are given the modern Segoe UI font below. For fully
+// *themed* controls (the rounded, hover-highlighting v6 button instead of the
+// classic gray one), place `hello_win32.exe.manifest` next to the built
+// executable — Windows only loads ComCtl32 v6 when the app declares it.
+
+import "win32/win32" as win32;
+import "win32/controls" as controls;
+import "win32/core" as core;
+
+// gdi32: build a font handle. `win32` already links gdi32.
+extern fn CreateFontA(
+    h: i32, w: i32, esc: i32, orient: i32, weight: i32,
+    italic: u32, underline: u32, strike: u32, charset: u32,
+    out_prec: u32, clip_prec: u32, quality: u32, pitch: u32, face: *u8) -> *u8;
+
+fn wm_setfont() -> u32 { return 0x0030 as u32; }
+
+// Segoe UI ~11pt: height -15 at 96 DPI, normal weight, ClearType quality.
+fn ui_font() -> *u8 {
+    return { CreateFontA(
+        (0 as i32) -% (15 as i32), 0 as i32, 0 as i32, 0 as i32, 400 as i32,
+        0 as u32, 0 as u32, 0 as u32, 1 as u32,
+        0 as u32, 0 as u32, 5 as u32, 0 as u32, #str_ptr("Segoe UI\0")) };
+}
+
+fn set_font(hwnd: *u8, font: *u8) {
+    { core::send(hwnd, wm_setfont(), font as u64, 1 as i64); }
+    return;
+}
+
+// Button handler: `user` is the window HWND — post WM_CLOSE to close it.
+fn on_close_click(sender: *u8, user: *u8) {
+    { core::send(user, core::wm_close(), 0 as u64, 0 as i64); }
+    return;
+}
+
+fn main() -> i32 {
+    let font: *u8 = ui_font();
+    let win: win32::Window = win32::Window::new(
+        #str_ptr("Hello from C+ on Win32\0"), 360 as i32, 200 as i32);
+    let lbl: controls::Label = controls::Label::new(win.raw(),
+        #str_ptr("Hello from C+ on native Win32\0"),
+        20 as i32, 28 as i32, 320 as i32, 24 as i32);
+    let btn: controls::Button = controls::Button::new(win.raw(),
+        #str_ptr("Close\0"), 130 as i32, 110 as i32, 100 as i32, 34 as i32);
+    set_font(lbl.raw(), font);
+    set_font(btn.raw(), font);
+    btn.on_click(on_close_click, win.raw());
+    win.show();
+    return win32::run();       // pump messages until the window closes
+}

@@ -1,0 +1,12 @@
+[package]
+name    = "hello_win32"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "hello_win32"
+path = "src/main.cplus"
+
+[dependencies]
+win32  = "*"
+stdlib = "*"
