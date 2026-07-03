@@ -1226,7 +1226,24 @@ fn generate_inner(
     // declarations don't double-emit. Always emitted when ANY selector is
     // present (the `#msg_send` declare costs nothing if unused — LLVM
     // strips unused declares).
-    if !selectors_set.is_empty() {
+    // Emit the canonical declares whenever the program references objc_msgSend —
+    // either via a `#selector`/`#msg_send` intrinsic (root-module `selectors_set`)
+    // OR through a `#[link_name = "objc_msgSend"]` typed-shim extern (how the ObjC
+    // bindings call it). A CONSUMER whose root module only *calls* library methods
+    // has no selectors of its own but still links objc_msgSend transitively; it
+    // must get this canonical NON-sret 2-arg declare + the pre-seed. Otherwise the
+    // extern path below emits whichever `objc_msgSend`-linked extern comes first —
+    // e.g. a 48-byte-struct-returning variant with `ptr sret(...)` on arg 0 — and
+    // every void/non-sret call then inherits that sret calling convention (recv
+    // shifted off x0), producing a garbage receiver and an immediate crash.
+    let uses_objc_msgsend = !selectors_set.is_empty()
+        || program.items.iter().any(|item| {
+            matches!(&item.kind, ItemKind::Function(f)
+                if f.is_extern
+                    && sigs.get(&f.name.name).and_then(|s| s.link_name.as_deref())
+                        == Some("objc_msgSend"))
+        });
+    if uses_objc_msgsend {
         out.push_str("declare ptr @sel_registerName(ptr)\n");
         // CRITICAL: NOT variadic. On aarch64-apple-darwin, the ObjC
         // ABI requires `objc_msgSend` to be called with the exact
@@ -16477,6 +16494,37 @@ mod tests {
         let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
         assert!(diags.is_empty(), "sema errors: {diags:#?}");
         generate(&prog, mode)
+    }
+
+    // A program that references `objc_msgSend` only through `#[link_name]` shims
+    // (no `#selector`/`#msg_send` of its own — the shape of a CONSUMER of the ObjC
+    // bindings) must still get the canonical NON-sret 2-arg declare. Otherwise the
+    // extern path emits whichever `objc_msgSend`-linked extern comes first, and a
+    // struct-returning (`ptr sret(...)`) variant's declare then applies the sret
+    // calling convention to every void call — shifting the receiver off x0 and
+    // crashing. Regression for the cross-package non-Copy-arg segfault.
+    #[test]
+    fn objc_msgsend_declared_non_sret_without_root_selectors() {
+        let src = "\
+            struct Big { a: f64, b: f64, c: f64 }\n\
+            #[link_name = \"objc_msgSend\"]\n\
+            extern fn msg_big(recv: *u8, sel: *u8) -> Big;\n\
+            #[link_name = \"objc_msgSend\"]\n\
+            extern fn msg_void(recv: *u8, sel: *u8, a: *u8);\n\
+            fn go(r: *u8, s: *u8, x: *u8) {\n\
+                msg_void(r, s, x);\n\
+                let b: Big = { msg_big(r, s) };\n\
+            }\n\
+            fn main() -> i32 { return 0; }\n";
+        let ir = gen_src_with(src, BuildMode::Debug);
+        assert!(
+            ir.contains("declare ptr @objc_msgSend(ptr, ptr)"),
+            "canonical non-sret objc_msgSend declare must be present:\n{ir}"
+        );
+        assert!(
+            !ir.contains("declare void @objc_msgSend(ptr sret"),
+            "objc_msgSend must NOT be declared with sret (poisons void calls):\n{ir}"
+        );
     }
 
     /// The `llvm.coro.end` declare + calls follow the probed return-type form
