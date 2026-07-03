@@ -1167,7 +1167,20 @@ impl ObjcEmitter {
         self.body.push_str(&format!("struct {ty} {{\n    {field},\n}}\n\n"));
         self.body.push_str(&format!("impl {ty} {{\n"));
         self.body.push_str("    fn raw(this) -> *u8 { return this._obj; }\n\n");
-        self.body.push_str(&format!("    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _obj: ptr }}; }}\n\n"));
+        // `from_raw` on an OWNING wrapper (releasing `drop`) RETAINS: it wraps a
+        // borrowed/external pointer and takes shared ownership, so the wrapper's
+        // `drop` balances. Without the retain, a `from_raw` temporary — pervasive
+        // in idiomatic code (`View::from_raw(v).set_frame(r)`) — over-releases the
+        // pointer when it drops, freeing an object it never owned. A non-owning
+        // wrapper has no `drop`, so it wraps bare (a plain borrowed handle). The
+        // internal +1 returns (init / copy / new) take ownership via a DIRECT
+        // construct, never through `from_raw`, so they don't double-retain.
+        let from_raw_wrap = if owned {
+            "rt::retain(ptr)"
+        } else {
+            "ptr"
+        };
+        self.body.push_str(&format!("    fn from_raw(ptr: *u8) -> {ty} {{ return {ty} {{ _obj: {from_raw_wrap} }}; }}\n\n"));
 
         // Fresh method-name scope per impl; `raw`/`from_raw` are always emitted
         // above, `drop` below (owned), so reserve them so a selector can't collide.
@@ -1720,24 +1733,21 @@ impl ObjcEmitter {
             .unwrap_or(false)
     }
 
-    /// Does an object return need a `retain` to balance the wrapper's releasing
-    /// `drop`? Only when the returned wrapper is an **owning** type (has `drop`)
-    /// AND the method hands back a **+0** object (not a +1 retaining-family /
-    /// `ns_returns_retained` return). A +1 return is already owned; a non-owning
-    /// wrapper has no `drop`; a raw `*u8` return is borrowed — none are retained.
-    /// This closes the +0-accessor over-release: `superview()` / `contentView()`
-    /// / … wrap a +0 pointer in an owning `View`, so without the retain the
-    /// wrapper's `drop` would `release` an object it never owned.
-    fn object_return_needs_retain(&self, ret: &Ret, sel: &str, m: Option<&serde_json::Value>) -> bool {
+    /// An OWNING object return that is already **+1** (init / copy / new family
+    /// or `ns_returns_retained`). Such a result is taken by a DIRECT construct
+    /// (`{n} {{ _obj: send }}`) rather than `from_raw` — because `from_raw` now
+    /// RETAINS for owning wrappers, wrapping a +1 through it would double-retain
+    /// and leak. A **+0** owning return goes through `from_raw`, which supplies
+    /// the balancing +1; a non-owning wrapper (no `drop`) and a raw `*u8` are
+    /// borrowed and wrap bare through `from_raw` (no retain) either way.
+    /// A foreign-package wrapper (`quartzcore::Layer`) is treated as owning.
+    fn object_return_is_owned_plus_one(&self, ret: &Ret, sel: &str, m: Option<&serde_json::Value>) -> bool {
         let n = match ret {
             Ret::Object(Some(n)) | Ret::ObjectOption(Some(n)) => n,
             _ => return false,
         };
-        // A foreign-package wrapper (`quartzcore::Layer`) is assumed owning (it
-        // carries a releasing `drop`), so a +0 return of one must retain exactly
-        // like a local owning wrapper — else it over-releases when it drops.
         let owning = self.owning_types.contains(n) || n.contains("::");
-        owning && !Self::returns_retained_plus_one(sel, m)
+        owning && Self::returns_retained_plus_one(sel, m)
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -2061,11 +2071,9 @@ impl ObjcEmitter {
             // Array elements come back +0 (the array owns them). An owning wrapper's
             // `drop` releases, so retain each on wrap to balance it; a non-owning
             // wrapper has no `drop`, so wrap the +0 borrow directly.
-            let elem_handle = if self.owning_types.contains(elem_ty) {
-                "rt::retain(rt::msg_id_u64(arr, at_sel, i))".to_string()
-            } else {
-                "rt::msg_id_u64(arr, at_sel, i)".to_string()
-            };
+            // `from_raw` retains for an owning wrapper (and wraps a non-owning +0
+            // borrow bare), so the element handle is the plain +0 access either way.
+            let elem_handle = "rt::msg_id_u64(arr, at_sel, i)".to_string();
             self.body.push_str(&format!(
                 "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n{coll_prologue}\
                  \x20       let arr: *u8 = {array_call};\n\
@@ -2094,11 +2102,9 @@ impl ObjcEmitter {
             let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
             // Lossy on set-ness: `-allObjects` snapshots the set as an NSArray, then the
             // same +0 elements are wrapped (retain-on-wrap for an owning W) as ObjectArray.
-            let elem_handle = if self.owning_types.contains(elem_ty) {
-                "rt::retain(rt::msg_id_u64(arr, at_sel, i))".to_string()
-            } else {
-                "rt::msg_id_u64(arr, at_sel, i)".to_string()
-            };
+            // `from_raw` retains for an owning wrapper (and wraps a non-owning +0
+            // borrow bare), so the element handle is the plain +0 access either way.
+            let elem_handle = "rt::msg_id_u64(arr, at_sel, i)".to_string();
             self.body.push_str(&format!(
                 "    fn {name}({receiver}{sep}{sig_param}) -> vec::Vec[{elem_ty}] {{\n{coll_prologue}\
                  \x20       let set: *u8 = {set_call};\n\
@@ -2135,11 +2141,11 @@ impl ObjcEmitter {
                     String::new(),
                     "rt::msg_f64(nsval, rt::sel(#str_ptr(\"doubleValue\\0\")))".to_string(),
                 ),
-                // Wrapper value: wrap the +0 dict element via from_raw. An owning
-                // wrapper's `drop` releases, so retain each on wrap to balance it.
+                // Wrapper value: wrap the +0 dict element via from_raw, which
+                // retains for an owning wrapper (balancing its `drop`) and wraps a
+                // non-owning +0 borrow bare.
                 MapVal::Object(w) => {
-                    let handle = if self.owning_types.contains(w.as_str()) { "rt::retain(nsval)" } else { "nsval" };
-                    (w.clone(), String::new(), format!("{w}::from_raw({handle})"))
+                    (w.clone(), String::new(), format!("{w}::from_raw(nsval)"))
                 }
                 // NSArray value: build an inner Vec[W] from it (non-owning elems, +0).
                 MapVal::ObjectArray(w) => {
@@ -2189,20 +2195,16 @@ impl ObjcEmitter {
             }
         };
 
-        // Balance the releasing `drop` on an owning wrapper: a +0 object return
-        // (`superview`, `contentView`, a `-copy`-of-nothing accessor, …) must be
-        // retained so the wrapper owns a +1. Gated to owning returned types and
-        // +0 methods — a +1 return, a non-owning wrapper, and a raw `*u8` are all
-        // left borrowed/unretained.
-        let send = if self.object_return_needs_retain(&ret, &sel, Some(m)) {
-            format!("rt::retain({send})")
-        } else {
-            send
-        };
+        // Ownership balance: `from_raw` retains for owning wrappers, so a +0
+        // object return (`superview`, `contentView`, …) is balanced by wrapping
+        // through it — no extra retain here. An OWNING +1 return (copy/new/init
+        // family) already holds its +1, so it takes ownership via a direct
+        // construct instead (else `from_raw` would double-retain).
+        let owned_plus_one = self.object_return_is_owned_plus_one(&ret, &sel, Some(m));
 
         let sep = if receiver.is_empty() || sig_param.is_empty() { "" } else { ", " };
         let (ret_spelling, body_line) = self
-            .return_spelling(&ret, &send)
+            .return_spelling(&ret, &send, owned_plus_one)
             .expect("collection/unsupported returns are handled earlier in emit_method");
 
         // Prologue: build an NSMutableArray from each Vec[P] param (the send call
@@ -2219,7 +2221,20 @@ impl ObjcEmitter {
     /// collection returns (ValueArray/TextArray/ObjectArray/TextMap) and Unsupported,
     /// which callers handle (or skip) separately. Shared by emit_method and
     /// emit_block_method so a block method's non-void return wraps identically.
-    fn return_spelling(&self, ret: &Ret, send: &str) -> Option<(String, String)> {
+    /// `owned_plus_one`: the object return is an OWNING wrapper already holding a
+    /// +1 (init/copy/new family). Such returns take ownership via a DIRECT
+    /// construct; every other object return wraps through `from_raw` (which
+    /// retains iff the wrapper is owning). See `object_return_is_owned_plus_one`.
+    fn return_spelling(&self, ret: &Ret, send: &str, owned_plus_one: bool) -> Option<(String, String)> {
+        // For an OWNING +1 result, take the retain the callee already gave us via
+        // a direct construct (`from_raw` would retain a second time and leak).
+        let wrap = |n: &str, e: &str| {
+            if owned_plus_one {
+                format!("{n} {{ _obj: {e} }}")
+            } else {
+                format!("{n}::from_raw({e})")
+            }
+        };
         Some(match ret {
             Ret::Void => (String::new(), format!("        {send};\n")),
             Ret::Struct(n) => (format!(" -> {n}"), format!("        return {send};\n")),
@@ -2227,7 +2242,7 @@ impl ObjcEmitter {
             Ret::Object(None) => (" -> *u8".into(), format!("        return {send};\n")),
             Ret::Object(Some(n)) => (
                 format!(" -> {n}"),
-                format!("        return {n}::from_raw({send});\n"),
+                format!("        return {};\n", wrap(n, send)),
             ),
             Ret::ObjectOption(None) => (
                 " -> option::Option[*u8]".into(),
@@ -2235,7 +2250,7 @@ impl ObjcEmitter {
             ),
             Ret::ObjectOption(Some(n)) => (
                 format!(" -> option::Option[{n}]"),
-                format!("        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{n}]::None;\n        }}\n        return option::some({n}::from_raw(obj));\n"),
+                format!("        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{n}]::None;\n        }}\n        return option::some({});\n", wrap(n, "obj")),
             ),
             Ret::ScalarI64 => (" -> i64".into(), format!("        return {send};\n")),
             Ret::ScalarU64 => (" -> u64".into(), format!("        return {send};\n")),
@@ -2403,15 +2418,11 @@ impl ObjcEmitter {
         // return (completion-handler factories like newBufferWithBytesNoCopy:...
         // deallocator: -> Option[Buffer]) wraps via return_spelling. The block slot
         // `bp` is set up first, so `body_line`'s embedded send runs after it.
-        // Same +0-retain balancing as the plain path (selector-only classification
+        // Same ownership routing as the plain path (selector-only classification
         // here — no method AST — which still catches the `newBuffer…` +1 family).
-        let send = if self.object_return_needs_retain(&ret, sel, None) {
-            format!("rt::retain({send})")
-        } else {
-            send
-        };
+        let owned_plus_one = self.object_return_is_owned_plus_one(&ret, sel, None);
         let (ret_spelling, body_line) = self
-            .return_spelling(&ret, &send)
+            .return_spelling(&ret, &send, owned_plus_one)
             .expect("block-method collection/unsupported returns handled above");
         let body_line = if matches!(ret, Ret::Void) {
             format!("{body_line}        return;\n")
@@ -3777,13 +3788,10 @@ fn render_darg_bridge(name: &str, br: &ArgBridge) -> String {
             "f64".to_string(),
             "out.append(rt::msg_f64(rt::msg_id_u64(arr, at_sel, i), dv_sel));".to_string(),
         ),
-        ArgBridge::ArrayObject { w, owning } | ArgBridge::SetObject { w, owning } => {
-            let handle = if *owning {
-                "rt::retain(rt::msg_id_u64(arr, at_sel, i))"
-            } else {
-                "rt::msg_id_u64(arr, at_sel, i)"
-            };
-            (w.clone(), format!("out.append({w}::from_raw({handle}));"))
+        ArgBridge::ArrayObject { w, owning: _ } | ArgBridge::SetObject { w, owning: _ } => {
+            // `from_raw` retains for an owning wrapper (and wraps a non-owning +0
+            // borrow bare), so wrap the plain +0 element either way.
+            (w.clone(), format!("out.append({w}::from_raw(rt::msg_id_u64(arr, at_sel, i)));"))
         }
     };
     // A set has no index; snapshot it as an NSArray via -allObjects first.
@@ -5530,7 +5538,10 @@ mod tests {
         assert!(out.contains("numberWithDouble:"), "box f64 -> NSNumber:\n{out}");
         // Owning-wrapper value return -> StringMap[FileWrapper], retained on wrap.
         assert!(out.contains("fn file_wrappers(this) -> string_map::StringMap[FileWrapper]"), "owning-wrapper dict return:\n{out}");
-        assert!(out.contains("FileWrapper::from_raw(rt::retain(nsval))"), "retain-on-wrap for owning value:\n{out}");
+        // from_raw retains for the owning wrapper, so the element wraps bare.
+        assert!(out.contains("FileWrapper::from_raw(nsval)"), "owning value wraps via from_raw:\n{out}");
+        assert!(out.contains("fn from_raw(ptr: *u8) -> FileWrapper { return FileWrapper { _obj: rt::retain(ptr) }; }"),
+            "owning from_raw retains:\n{out}");
         assert!(!out.contains("// SKIPPED `setOptions:`") && !out.contains("// SKIPPED `fileWrappers`"), "no skips:\n{out}");
     }
 
@@ -5559,9 +5570,11 @@ mod tests {
             "layer() returns the cross-package type:\n{out}");
         assert!(out.contains("import \"quartzcore/quartzcore\" as quartzcore;"),
             "foreign import emitted:\n{out}");
-        assert!(!out.contains("struct CALayer"), "no local CALayer stub:\n{out}");
-        // +0 accessor of a foreign (owning) wrapper retains to balance its drop.
-        assert!(out.contains("let obj: *u8 = rt::retain("), "+0 foreign accessor retains:\n{out}");
+        assert!(out.contains("struct CALayer") == false, "no local CALayer stub:\n{out}");
+        // The +0 foreign accessor wraps through the foreign package's `from_raw`
+        // (which retains on quartzcore's side) — no explicit retain at this site.
+        assert!(out.contains("return option::some(quartzcore::Layer::from_raw(obj));"),
+            "+0 foreign accessor wraps via foreign from_raw:\n{out}");
     }
 
     #[test]
@@ -5649,22 +5662,25 @@ mod tests {
             ]
         });
         let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
-        // +0 nullable accessor: retain wraps the send (retaining nil is a safe no-op,
-        // so the null-check after still works).
-        assert!(out.contains("let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"superview\\0\"))))"),
-            "+0 nullable accessor retains:\n{out}");
-        // +0 non-null accessor: retain inside from_raw.
-        assert!(out.contains("return View::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"snapshotView\\0\")))))"),
-            "+0 non-null accessor retains:\n{out}");
-        // +1 copy-family accessor: BARE from_raw, no retain.
-        assert!(out.contains("return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr(\"copyView\\0\"))))"),
-            "+1 copy accessor wraps bare:\n{out}");
-        assert!(!out.contains("rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr(\"copyView"),
-            "+1 copy accessor must NOT retain:\n{out}");
-        // +0 factory returning Self: retain.
+        // `from_raw` retains for the owning wrapper — that is where the +0 balance
+        // now lives (not an explicit retain at each accessor call site).
+        assert!(out.contains("fn from_raw(ptr: *u8) -> View { return View { _obj: rt::retain(ptr) }; }"),
+            "owning from_raw retains:\n{out}");
+        // +0 nullable accessor: bare send (no call-site retain), null-checked,
+        // wrapped through from_raw (which retains).
+        assert!(out.contains("let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr(\"superview\\0\")));")
+            && out.contains("return option::some(View::from_raw(obj));"),
+            "+0 nullable accessor bare send + from_raw:\n{out}");
+        // +0 non-null accessor: from_raw (retains), bare send.
+        assert!(out.contains("return View::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr(\"snapshotView\\0\"))));"),
+            "+0 non-null accessor via from_raw:\n{out}");
+        // +1 copy-family accessor: DIRECT construct (from_raw would double-retain).
+        assert!(out.contains("return View { _obj: rt::msg_id(this._obj, rt::sel(#str_ptr(\"copyView\\0\"))) };"),
+            "+1 copy accessor direct-constructs:\n{out}");
+        // +0 factory returning Self: direct-construct with retain (unchanged).
         assert!(out.contains("_obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr(\"NSView\\0\")), rt::sel(#str_ptr(\"standardView\\0\"))))"),
             "+0 factory retains:\n{out}");
-        // +1 new-family factory: BARE.
+        // +1 new-family factory: direct-construct, BARE.
         assert!(!out.contains("rt::retain(rt::msg_id(rt::get_class(#str_ptr(\"NSView\\0\")), rt::sel(#str_ptr(\"newView"),
             "+1 new factory must NOT retain:\n{out}");
     }
@@ -5723,7 +5739,10 @@ mod tests {
         assert!(out.contains("out.append(Screen::from_raw(rt::msg_id_u64("), "non-owning wrap, no retain:\n{out}");
         // Owning class: Vec[Window] return, each element retained on wrap.
         assert!(out.contains("fn windows(this) -> vec::Vec[Window]"), "owning-class array return binds:\n{out}");
-        assert!(out.contains("out.append(Window::from_raw(rt::retain(rt::msg_id_u64("), "owning wrap retains:\n{out}");
+        // from_raw retains for the owning Window, so the element wraps bare.
+        assert!(out.contains("out.append(Window::from_raw(rt::msg_id_u64("), "owning element wraps via from_raw:\n{out}");
+        assert!(out.contains("fn from_raw(ptr: *u8) -> Window { return Window { _obj: rt::retain(ptr) }; }"),
+            "owning Window from_raw retains:\n{out}");
         // Owning array PARAM now binds too: the prologue borrow-reads each element's
         // handle via `at_ptr` (no move/drop — cpc's borrowck proves it), so the caller's
         // Vec keeps ownership while `addObject:` takes its own retain. (The *return*

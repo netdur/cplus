@@ -707,7 +707,7 @@ struct CIVector {
 impl CIVector {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIVector { return CIVector { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIVector { return CIVector { _obj: rt::retain(ptr) }; }
 
     fn vector_with_values(values: *u8, count: u64) -> CIVector {
         return CIVector { _obj: rt::retain(rt::msg_id_id_u64(rt::get_class(#str_ptr("CIVector\0")), rt::sel(#str_ptr("vectorWithValues:count:\0")), values, count)) };
@@ -853,7 +853,7 @@ struct CIColor {
 impl CIColor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIColor { return CIColor { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIColor { return CIColor { _obj: rt::retain(ptr) }; }
 
     fn color_with_c_g_color(color: *u8) -> CIColor {
         return CIColor { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CIColor\0")), rt::sel(#str_ptr("colorWithCGColor:\0")), color)) };
@@ -1000,7 +1000,7 @@ struct CIContext {
 impl CIContext {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIContext { return CIContext { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIContext { return CIContext { _obj: rt::retain(ptr) }; }
 
     fn context_with_c_g_l_context_pixel_format(cglctx: *u8, pixel_format: *u8, color_space: *u8, options: string_map::StringMap[AnyObject]) -> CIContext {
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
@@ -1022,7 +1022,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:colorSpace:options:\0")), cglctx, pixel_format, color_space, dict_options)));
+        return CIContext::from_raw(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:colorSpace:options:\0")), cglctx, pixel_format, color_space, dict_options));
     }
 
     fn context_with_c_g_l_context(cglctx: *u8, pixel_format: *u8, options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1045,7 +1045,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:options:\0")), cglctx, pixel_format, dict_options)));
+        return CIContext::from_raw(rt::msg_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:options:\0")), cglctx, pixel_format, dict_options));
     }
 
     fn context_with_c_g_context(cgctx: *u8, options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1068,7 +1068,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGContext:options:\0")), cgctx, dict_options)));
+        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGContext:options:\0")), cgctx, dict_options));
     }
 
     fn context_with_options(options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1091,7 +1091,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithOptions:\0")), dict_options)));
+        return CIContext::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithOptions:\0")), dict_options));
     }
 
     fn context() -> CIContext {
@@ -1153,7 +1153,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLDevice:options:\0")), device.raw(), dict_options)));
+        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLDevice:options:\0")), device.raw(), dict_options));
     }
 
     fn context_with_m_t_l_command_queue(command_queue: MTLCommandQueue) -> CIContext {
@@ -1180,7 +1180,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLCommandQueue:options:\0")), command_queue.raw(), dict_options)));
+        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLCommandQueue:options:\0")), command_queue.raw(), dict_options));
     }
 
     fn draw_image(this, image: CIImage, at_point: rt::Point, from_rect: rt::Rect) {
@@ -1270,7 +1270,7 @@ impl CIContext {
     }
 
     fn calculate_h_d_r_stats_for_image(this, image: CIImage) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("calculateHDRStatsForImage:\0")), image.raw()));
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("calculateHDRStatsForImage:\0")), image.raw());
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -1309,7 +1309,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(objc_msg_id_u32_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextForOfflineGPUAtIndex:colorSpace:options:sharedContext:\0")), index, color_space, dict_options, shared_context));
+        let obj: *u8 = objc_msg_id_u32_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextForOfflineGPUAtIndex:colorSpace:options:sharedContext:\0")), index, color_space, dict_options, shared_context);
         if obj == { 0 as *u8 } {
             return option::Option[CIContext]::None;
         }
@@ -1669,7 +1669,7 @@ struct CIFilterShape {
 impl CIFilterShape {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIFilterShape { return CIFilterShape { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIFilterShape { return CIFilterShape { _obj: rt::retain(ptr) }; }
 
     fn shape_with_rect(r: rt::Rect) -> CIFilterShape {
         return CIFilterShape { _obj: rt::retain(rt::msg_id_rect(rt::get_class(#str_ptr("CIFilterShape\0")), rt::sel(#str_ptr("shapeWithRect:\0")), r)) };
@@ -1682,27 +1682,27 @@ impl CIFilterShape {
     }
 
     fn transform_by(this, m: CGAffineTransform, interior: bool) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(objc_msg_id_CGAffineTransform_i8(this._obj, rt::sel(#str_ptr("transformBy:interior:\0")), m, interior as i8)));
+        return CIFilterShape::from_raw(objc_msg_id_CGAffineTransform_i8(this._obj, rt::sel(#str_ptr("transformBy:interior:\0")), m, interior as i8));
     }
 
     fn inset_by_x(this, dx: i32, y: i32) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(objc_msg_id_i32_i32(this._obj, rt::sel(#str_ptr("insetByX:Y:\0")), dx, y)));
+        return CIFilterShape::from_raw(objc_msg_id_i32_i32(this._obj, rt::sel(#str_ptr("insetByX:Y:\0")), dx, y));
     }
 
     fn union_with(this, s2: CIFilterShape) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("unionWith:\0")), s2.raw())));
+        return CIFilterShape::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("unionWith:\0")), s2.raw()));
     }
 
     fn union_with_rect(this, r: rt::Rect) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("unionWithRect:\0")), r)));
+        return CIFilterShape::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("unionWithRect:\0")), r));
     }
 
     fn intersect_with(this, s2: CIFilterShape) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("intersectWith:\0")), s2.raw())));
+        return CIFilterShape::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("intersectWith:\0")), s2.raw()));
     }
 
     fn intersect_with_rect(this, r: rt::Rect) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("intersectWithRect:\0")), r)));
+        return CIFilterShape::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("intersectWithRect:\0")), r));
     }
 
     fn extent(this) -> rt::Rect {
@@ -1757,7 +1757,7 @@ impl CIFilter {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("apply:arguments:options:\0")), k.raw(), args.raw(), dict_options));
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("apply:arguments:options:\0")), k.raw(), args.raw(), dict_options);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -1765,7 +1765,7 @@ impl CIFilter {
     }
 
     fn apply(this, k: CIKernel) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("apply:\0")), k.raw()));
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("apply:\0")), k.raw());
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2024,7 +2024,7 @@ struct CIImage {
 impl CIImage {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIImage { return CIImage { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIImage { return CIImage { _obj: rt::retain(ptr) }; }
 
     fn image_with_c_g_image(image: *u8) -> CIImage {
         return CIImage { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImage:\0")), image)) };
@@ -2050,7 +2050,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImage:options:\0")), image, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImage:options:\0")), image, dict_options));
     }
 
     fn image_with_c_g_image_source(source: *u8, index: u64, options: string_map::StringMap[AnyObject]) -> CIImage {
@@ -2073,7 +2073,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_u64_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImageSource:index:options:\0")), source, index, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_u64_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImageSource:index:options:\0")), source, index, dict_options));
     }
 
     fn image_with_c_g_layer(layer: *u8) -> CIImage {
@@ -2100,7 +2100,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGLayer:options:\0")), layer, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGLayer:options:\0")), layer, dict_options));
     }
 
     fn image_with_bitmap_data(data: NSData, bytes_per_row: u64, size: rt::Size, format: i32, color_space: *u8) -> CIImage {
@@ -2131,7 +2131,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(objc_msg_id_u32_size_i8_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithTexture:size:flipped:options:\0")), name, size, flipped as i8, dict_options)));
+        return CIImage::from_raw(objc_msg_id_u32_size_i8_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithTexture:size:flipped:options:\0")), name, size, flipped as i8, dict_options));
     }
 
     fn image_with_m_t_l_texture(texture: MTLTexture, options: string_map::StringMap[AnyObject]) -> option::Option[CIImage] {
@@ -2154,7 +2154,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithMTLTexture:options:\0")), texture.raw(), dict_options));
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithMTLTexture:options:\0")), texture.raw(), dict_options);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2189,7 +2189,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithContentsOfURL:options:\0")), url.raw(), dict_options));
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithContentsOfURL:options:\0")), url.raw(), dict_options);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2224,7 +2224,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithData:options:\0")), data.raw(), dict_options));
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithData:options:\0")), data.raw(), dict_options);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2255,7 +2255,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVImageBuffer:options:\0")), image_buffer, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVImageBuffer:options:\0")), image_buffer, dict_options));
     }
 
     fn image_with_c_v_pixel_buffer(pixel_buffer: *u8) -> CIImage {
@@ -2282,7 +2282,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVPixelBuffer:options:\0")), pixel_buffer, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVPixelBuffer:options:\0")), pixel_buffer, dict_options));
     }
 
     fn image_with_i_o_surface(surface: *u8) -> CIImage {
@@ -2309,7 +2309,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithIOSurface:options:\0")), surface, dict_options)));
+        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithIOSurface:options:\0")), surface, dict_options));
     }
 
     fn image_with_color(color: CIColor) -> CIImage {
@@ -2656,15 +2656,15 @@ impl CIImage {
     }
 
     fn image_by_applying_transform(this, matrix: CGAffineTransform) -> CIImage {
-        return CIImage::from_raw(rt::retain(objc_msg_id_CGAffineTransform(this._obj, rt::sel(#str_ptr("imageByApplyingTransform:\0")), matrix)));
+        return CIImage::from_raw(objc_msg_id_CGAffineTransform(this._obj, rt::sel(#str_ptr("imageByApplyingTransform:\0")), matrix));
     }
 
     fn image_by_applying_transform_high_quality_downsample(this, matrix: CGAffineTransform, high_quality_downsample: bool) -> CIImage {
-        return CIImage::from_raw(rt::retain(objc_msg_id_CGAffineTransform_i8(this._obj, rt::sel(#str_ptr("imageByApplyingTransform:highQualityDownsample:\0")), matrix, high_quality_downsample as i8)));
+        return CIImage::from_raw(objc_msg_id_CGAffineTransform_i8(this._obj, rt::sel(#str_ptr("imageByApplyingTransform:highQualityDownsample:\0")), matrix, high_quality_downsample as i8));
     }
 
     fn image_by_applying_orientation(this, orientation: i32) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_i32(this._obj, rt::sel(#str_ptr("imageByApplyingOrientation:\0")), orientation)));
+        return CIImage::from_raw(rt::msg_id_i32(this._obj, rt::sel(#str_ptr("imageByApplyingOrientation:\0")), orientation));
     }
 
     fn image_transform_for_orientation(this, orientation: i32) -> CGAffineTransform {
@@ -2672,7 +2672,7 @@ impl CIImage {
     }
 
     fn image_by_applying_c_g_orientation(this, orientation: CGImagePropertyOrientation) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageByApplyingCGOrientation:\0")), c_g_image_property_orientation_raw(orientation))));
+        return CIImage::from_raw(rt::msg_id_i64(this._obj, rt::sel(#str_ptr("imageByApplyingCGOrientation:\0")), c_g_image_property_orientation_raw(orientation)));
     }
 
     fn image_transform_for_c_g_orientation(this, orientation: CGImagePropertyOrientation) -> CGAffineTransform {
@@ -2680,19 +2680,19 @@ impl CIImage {
     }
 
     fn image_by_compositing_over_image(this, dest: CIImage) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByCompositingOverImage:\0")), dest.raw())));
+        return CIImage::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByCompositingOverImage:\0")), dest.raw()));
     }
 
     fn image_by_cropping_to_rect(this, rect: rt::Rect) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageByCroppingToRect:\0")), rect)));
+        return CIImage::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageByCroppingToRect:\0")), rect));
     }
 
     fn image_by_clamping_to_extent(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByClampingToExtent\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByClampingToExtent\0"))));
     }
 
     fn image_by_clamping_to_rect(this, rect: rt::Rect) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageByClampingToRect:\0")), rect)));
+        return CIImage::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageByClampingToRect:\0")), rect));
     }
 
     fn image_by_applying_filter_with_input_parameters(this, filter_name: str, params: string_map::StringMap[AnyObject]) -> CIImage {
@@ -2715,15 +2715,15 @@ impl CIImage {
             }
             dsi_params = dsi_params +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingFilter:withInputParameters:\0")), bridge::nsstring(filter_name), dict_params)));
+        return CIImage::from_raw(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingFilter:withInputParameters:\0")), bridge::nsstring(filter_name), dict_params));
     }
 
     fn image_by_applying_filter(this, filter_name: str) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingFilter:\0")), bridge::nsstring(filter_name))));
+        return CIImage::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingFilter:\0")), bridge::nsstring(filter_name)));
     }
 
     fn image_by_color_matching_color_space_to_working_space(this, color_space: *u8) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByColorMatchingColorSpaceToWorkingSpace:\0")), color_space));
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByColorMatchingColorSpaceToWorkingSpace:\0")), color_space);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2731,7 +2731,7 @@ impl CIImage {
     }
 
     fn image_by_color_matching_working_space_to_color_space(this, color_space: *u8) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByColorMatchingWorkingSpaceToColorSpace:\0")), color_space));
+        let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByColorMatchingWorkingSpaceToColorSpace:\0")), color_space);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -2739,56 +2739,56 @@ impl CIImage {
     }
 
     fn image_by_premultiplying_alpha(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByPremultiplyingAlpha\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByPremultiplyingAlpha\0"))));
     }
 
     fn image_by_unpremultiplying_alpha(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByUnpremultiplyingAlpha\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByUnpremultiplyingAlpha\0"))));
     }
 
     fn image_by_setting_alpha_one_in_extent(this, extent: rt::Rect) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageBySettingAlphaOneInExtent:\0")), extent)));
+        return CIImage::from_raw(rt::msg_id_rect(this._obj, rt::sel(#str_ptr("imageBySettingAlphaOneInExtent:\0")), extent));
     }
 
     fn image_by_applying_gaussian_blur_with_sigma(this, sigma: f64) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("imageByApplyingGaussianBlurWithSigma:\0")), sigma)));
+        return CIImage::from_raw(rt::msg_id_f64(this._obj, rt::sel(#str_ptr("imageByApplyingGaussianBlurWithSigma:\0")), sigma));
     }
 
     fn image_by_setting_properties(this, properties: NSDictionary) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageBySettingProperties:\0")), properties.raw())));
+        return CIImage::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageBySettingProperties:\0")), properties.raw()));
     }
 
     fn image_by_sampling_linear(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageBySamplingLinear\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageBySamplingLinear\0"))));
     }
 
     fn image_by_sampling_nearest(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageBySamplingNearest\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageBySamplingNearest\0"))));
     }
 
     fn image_by_inserting_intermediate(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByInsertingIntermediate\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByInsertingIntermediate\0"))));
     }
 
     // SKIPPED `imageByInsertingIntermediate:`: method `image_by_inserting_intermediate` already defined
     fn image_by_inserting_tiled_intermediate(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByInsertingTiledIntermediate\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByInsertingTiledIntermediate\0"))));
     }
 
     fn image_by_applying_gain_map(this, gainmap: CIImage) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingGainMap:\0")), gainmap.raw())));
+        return CIImage::from_raw(rt::msg_id_id(this._obj, rt::sel(#str_ptr("imageByApplyingGainMap:\0")), gainmap.raw()));
     }
 
     fn image_by_applying_gain_map_headroom(this, gainmap: CIImage, headroom: f32) -> CIImage {
-        return CIImage::from_raw(rt::retain(objc_msg_id_id_f32(this._obj, rt::sel(#str_ptr("imageByApplyingGainMap:headroom:\0")), gainmap.raw(), headroom)));
+        return CIImage::from_raw(objc_msg_id_id_f32(this._obj, rt::sel(#str_ptr("imageByApplyingGainMap:headroom:\0")), gainmap.raw(), headroom));
     }
 
     fn image_by_setting_content_headroom(this, headroom: f32) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_f32(this._obj, rt::sel(#str_ptr("imageBySettingContentHeadroom:\0")), headroom)));
+        return CIImage::from_raw(rt::msg_id_f32(this._obj, rt::sel(#str_ptr("imageBySettingContentHeadroom:\0")), headroom));
     }
 
     fn image_by_setting_content_average_light_level(this, average: f32) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id_f32(this._obj, rt::sel(#str_ptr("imageBySettingContentAverageLightLevel:\0")), average)));
+        return CIImage::from_raw(rt::msg_id_f32(this._obj, rt::sel(#str_ptr("imageBySettingContentAverageLightLevel:\0")), average));
     }
 
     fn region_of_interest_for_image(this, image: CIImage, in_rect: rt::Rect) -> rt::Rect {
@@ -2913,11 +2913,11 @@ impl CIImage {
     }
 
     fn image_by_converting_working_space_to_lab(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByConvertingWorkingSpaceToLab\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByConvertingWorkingSpaceToLab\0"))));
     }
 
     fn image_by_converting_lab_to_working_space(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByConvertingLabToWorkingSpace\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("imageByConvertingLabToWorkingSpace\0"))));
     }
 
     fn new_with_depth_data_options(data: AVDepthData, options: string_map::StringMap[AnyObject]) -> CIImage {
@@ -3138,7 +3138,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::retain(objc_msg_id_id_u64_u64_i32_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithImageProvider:size::format:colorSpace:options:\0")), provider, size, height, format, color_space, dict_options)));
+        return CIImage::from_raw(objc_msg_id_id_u64_u64_i32_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithImageProvider:size::format:colorSpace:options:\0")), provider, size, height, format, color_space, dict_options));
     }
 
     fn new_with_image_provider_size_format_color_space_options(provider: *u8, width: u64, height: u64, format: i32, color_space: *u8, options: string_map::StringMap[AnyObject]) -> CIImage {
@@ -3286,7 +3286,7 @@ impl CIColorKernel {
             }
             i_arguments = i_arguments +% (1 as usize);
         }
-        let obj: *u8 = rt::retain(rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("applyWithExtent:arguments:\0")), extent, arr_arguments));
+        let obj: *u8 = rt::msg_id_rect_id(this._obj, rt::sel(#str_ptr("applyWithExtent:arguments:\0")), extent, arr_arguments);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -3335,7 +3335,7 @@ impl CIBlendKernel {
     }
 
     fn apply_with_foreground(this, foreground: CIImage, background: CIImage) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("applyWithForeground:background:\0")), foreground.raw(), background.raw()));
+        let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("applyWithForeground:background:\0")), foreground.raw(), background.raw());
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -3343,7 +3343,7 @@ impl CIBlendKernel {
     }
 
     fn apply_with_foreground_background(this, foreground: CIImage, background: CIImage, color_space: *u8) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("applyWithForeground:background:colorSpace:\0")), foreground.raw(), background.raw(), color_space));
+        let obj: *u8 = rt::msg_id_id_id_id(this._obj, rt::sel(#str_ptr("applyWithForeground:background:colorSpace:\0")), foreground.raw(), background.raw(), color_space);
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -3524,7 +3524,7 @@ struct CIImageAccumulator {
 impl CIImageAccumulator {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIImageAccumulator { return CIImageAccumulator { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIImageAccumulator { return CIImageAccumulator { _obj: rt::retain(ptr) }; }
 
     fn image_accumulator_with_extent(extent: rt::Rect, format: i32) -> option::Option[CIImageAccumulator] {
         let obj: *u8 = objc_msg_id_rect_i32(rt::get_class(#str_ptr("CIImageAccumulator\0")), rt::sel(#str_ptr("imageAccumulatorWithExtent:format:\0")), extent, format);
@@ -3555,7 +3555,7 @@ impl CIImageAccumulator {
     }
 
     fn image(this) -> CIImage {
-        return CIImage::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0")))));
+        return CIImage::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("image\0"))));
     }
 
     fn set_image(this, image: CIImage) {
@@ -3591,7 +3591,7 @@ struct CISampler {
 impl CISampler {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CISampler { return CISampler { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CISampler { return CISampler { _obj: rt::retain(ptr) }; }
 
     fn sampler_with_image(im: CIImage) -> CISampler {
         return CISampler { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CISampler\0")), rt::sel(#str_ptr("samplerWithImage:\0")), im.raw())) };
@@ -3624,7 +3624,7 @@ impl CISampler {
     }
 
     fn definition(this) -> CIFilterShape {
-        return CIFilterShape::from_raw(rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("definition\0")))));
+        return CIFilterShape::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("definition\0"))));
     }
 
     fn extent(this) -> rt::Rect {
@@ -3984,7 +3984,7 @@ impl CIRAWFilter {
     }
 
     fn preview_image(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("previewImage\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("previewImage\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -3992,7 +3992,7 @@ impl CIRAWFilter {
     }
 
     fn portrait_effects_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("portraitEffectsMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("portraitEffectsMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4000,7 +4000,7 @@ impl CIRAWFilter {
     }
 
     fn semantic_segmentation_skin_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationSkinMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationSkinMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4008,7 +4008,7 @@ impl CIRAWFilter {
     }
 
     fn semantic_segmentation_hair_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationHairMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationHairMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4016,7 +4016,7 @@ impl CIRAWFilter {
     }
 
     fn semantic_segmentation_glasses_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationGlassesMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationGlassesMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4024,7 +4024,7 @@ impl CIRAWFilter {
     }
 
     fn semantic_segmentation_sky_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationSkyMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationSkyMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4032,7 +4032,7 @@ impl CIRAWFilter {
     }
 
     fn semantic_segmentation_teeth_matte(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationTeethMatte\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationTeethMatte\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
@@ -4049,7 +4049,7 @@ struct CIFilterGenerator {
 impl CIFilterGenerator {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CIFilterGenerator { return CIFilterGenerator { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CIFilterGenerator { return CIFilterGenerator { _obj: rt::retain(ptr) }; }
 
     fn filter_generator() -> CIFilterGenerator {
         return CIFilterGenerator { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("CIFilterGenerator\0")), rt::sel(#str_ptr("filterGenerator\0")))) };
@@ -4198,7 +4198,7 @@ impl Animation {
     }
 
     fn timing_function(this) -> option::Option[MediaTimingFunction] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("timingFunction\0")));
         if obj == { 0 as *u8 } {
             return option::Option[MediaTimingFunction]::None;
         }
@@ -4256,7 +4256,7 @@ struct Layer {
 impl Layer {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> Layer { return Layer { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> Layer { return Layer { _obj: rt::retain(ptr) }; }
 
     fn layer() -> Layer {
         return Layer { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("CALayer\0")), rt::sel(#str_ptr("layer\0")))) };
@@ -4356,7 +4356,7 @@ impl Layer {
     }
 
     fn hit_test(this, p: rt::Point) -> option::Option[Layer] {
-        let obj: *u8 = rt::retain(rt::msg_id_point(this._obj, rt::sel(#str_ptr("hitTest:\0")), p));
+        let obj: *u8 = rt::msg_id_point(this._obj, rt::sel(#str_ptr("hitTest:\0")), p);
         if obj == { 0 as *u8 } {
             return option::Option[Layer]::None;
         }
@@ -4558,7 +4558,7 @@ impl Layer {
     }
 
     fn superlayer(this) -> option::Option[Layer] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("superlayer\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("superlayer\0")));
         if obj == { 0 as *u8 } {
             return option::Option[Layer]::None;
         }
@@ -4572,7 +4572,7 @@ impl Layer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Layer::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(Layer::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
@@ -4602,7 +4602,7 @@ impl Layer {
     }
 
     fn mask(this) -> option::Option[Layer] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("mask\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("mask\0")));
         if obj == { 0 as *u8 } {
             return option::Option[Layer]::None;
         }
@@ -5035,7 +5035,7 @@ impl Layer {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(Constraint::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(Constraint::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
@@ -5097,7 +5097,7 @@ struct MediaTimingFunction {
 impl MediaTimingFunction {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> MediaTimingFunction { return MediaTimingFunction { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> MediaTimingFunction { return MediaTimingFunction { _obj: rt::retain(ptr) }; }
 
     fn function_with_name(name: str) -> MediaTimingFunction {
         return MediaTimingFunction { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CAMediaTimingFunction\0")), rt::sel(#str_ptr("functionWithName:\0")), bridge::nsstring(name))) };
@@ -5309,7 +5309,7 @@ impl KeyframeAnimation {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(MediaTimingFunction::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(MediaTimingFunction::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
@@ -5454,7 +5454,7 @@ struct SpringAnimation {
 impl SpringAnimation {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> SpringAnimation { return SpringAnimation { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> SpringAnimation { return SpringAnimation { _obj: rt::retain(ptr) }; }
 
     fn new(perceptual_duration: f64, bounce: f64) -> SpringAnimation {
         let cls: *u8 = rt::get_class(#str_ptr("CASpringAnimation\0"));
@@ -5621,7 +5621,7 @@ struct Constraint {
 impl Constraint {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> Constraint { return Constraint { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> Constraint { return Constraint { _obj: rt::retain(ptr) }; }
 
     fn constraint_with_attribute_relative_to_attribute(attr: ConstraintAttribute, src_id: str, src_attr: ConstraintAttribute, scale: f64, offset: f64) -> Constraint {
         return Constraint { _obj: rt::retain(objc_msg_id_i64_id_i64_f64_f64(rt::get_class(#str_ptr("CAConstraint\0")), rt::sel(#str_ptr("constraintWithAttribute:relativeTo:attribute:scale:offset:\0")), constraint_attribute_raw(attr), bridge::nsstring(src_id), constraint_attribute_raw(src_attr), scale, offset)) };
@@ -5775,7 +5775,7 @@ struct EDRMetadata {
 impl EDRMetadata {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> EDRMetadata { return EDRMetadata { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> EDRMetadata { return EDRMetadata { _obj: rt::retain(ptr) }; }
 
     fn new() -> EDRMetadata {
         return EDRMetadata { _obj: rt::msg_id(rt::get_class(#str_ptr("CAEDRMetadata\0")), rt::sel(#str_ptr("new\0"))) };
@@ -5899,7 +5899,7 @@ impl MetalLayer {
     }
 
     fn e_d_r_metadata(this) -> option::Option[EDRMetadata] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("EDRMetadata\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("EDRMetadata\0")));
         if obj == { 0 as *u8 } {
             return option::Option[EDRMetadata]::None;
         }
@@ -5948,7 +5948,7 @@ struct MetalDisplayLink {
 impl MetalDisplayLink {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> MetalDisplayLink { return MetalDisplayLink { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> MetalDisplayLink { return MetalDisplayLink { _obj: rt::retain(ptr) }; }
 
     fn new(layer: MetalLayer) -> MetalDisplayLink {
         let cls: *u8 = rt::get_class(#str_ptr("CAMetalDisplayLink\0"));
@@ -6669,7 +6669,7 @@ struct RemoteLayerClient {
 impl RemoteLayerClient {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> RemoteLayerClient { return RemoteLayerClient { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> RemoteLayerClient { return RemoteLayerClient { _obj: rt::retain(ptr) }; }
 
     fn new(port: u32) -> RemoteLayerClient {
         let cls: *u8 = rt::get_class(#str_ptr("CARemoteLayerClient\0"));
@@ -6686,7 +6686,7 @@ impl RemoteLayerClient {
     }
 
     fn layer(this) -> option::Option[Layer] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0")));
         if obj == { 0 as *u8 } {
             return option::Option[Layer]::None;
         }
@@ -6769,7 +6769,7 @@ impl Renderer {
     }
 
     fn layer(this) -> option::Option[Layer] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0")));
         if obj == { 0 as *u8 } {
             return option::Option[Layer]::None;
         }
@@ -7202,7 +7202,7 @@ impl Transaction {
     }
 
     fn animation_timing_function() -> option::Option[MediaTimingFunction] {
-        let obj: *u8 = rt::retain(rt::msg_id(rt::get_class(#str_ptr("CATransaction\0")), rt::sel(#str_ptr("animationTimingFunction\0"))));
+        let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("CATransaction\0")), rt::sel(#str_ptr("animationTimingFunction\0")));
         if obj == { 0 as *u8 } {
             return option::Option[MediaTimingFunction]::None;
         }
@@ -7353,7 +7353,7 @@ impl CIFilterProtocol {
     }
 
     fn output_image(this) -> option::Option[CIImage] {
-        let obj: *u8 = rt::retain(rt::msg_id(this._obj, rt::sel(#str_ptr("outputImage\0"))));
+        let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("outputImage\0")));
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }

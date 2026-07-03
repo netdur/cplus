@@ -4204,7 +4204,7 @@ struct TensorExtents {
 impl TensorExtents {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> TensorExtents { return TensorExtents { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> TensorExtents { return TensorExtents { _obj: rt::retain(ptr) }; }
 
     fn new(rank: u64, values: *u8) -> TensorExtents {
         let cls: *u8 = rt::get_class(#str_ptr("MTLTensorExtents\0"));
@@ -6197,7 +6197,7 @@ struct RasterizationRateLayerDescriptor {
 impl RasterizationRateLayerDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> RasterizationRateLayerDescriptor { return RasterizationRateLayerDescriptor { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> RasterizationRateLayerDescriptor { return RasterizationRateLayerDescriptor { _obj: rt::retain(ptr) }; }
 
     fn new() -> RasterizationRateLayerDescriptor {
         let cls: *u8 = rt::get_class(#str_ptr("MTLRasterizationRateLayerDescriptor\0"));
@@ -8184,7 +8184,7 @@ impl StitchedLibraryDescriptor {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingGraph::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(FunctionStitchingGraph::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
@@ -11420,7 +11420,7 @@ struct SharedEventListener {
 impl SharedEventListener {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> SharedEventListener { return SharedEventListener { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> SharedEventListener { return SharedEventListener { _obj: rt::retain(ptr) }; }
 
     fn new() -> SharedEventListener {
         let cls: *u8 = rt::get_class(#str_ptr("MTLSharedEventListener\0"));
@@ -11513,7 +11513,7 @@ struct CaptureManager {
 impl CaptureManager {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> CaptureManager { return CaptureManager { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> CaptureManager { return CaptureManager { _obj: rt::retain(ptr) }; }
 
     fn shared_capture_manager() -> CaptureManager {
         return CaptureManager { _obj: rt::retain(rt::msg_id(rt::get_class(#str_ptr("MTLCaptureManager\0")), rt::sel(#str_ptr("sharedCaptureManager\0")))) };
@@ -11706,7 +11706,7 @@ struct FunctionStitchingInputNode {
 impl FunctionStitchingInputNode {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> FunctionStitchingInputNode { return FunctionStitchingInputNode { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> FunctionStitchingInputNode { return FunctionStitchingInputNode { _obj: rt::retain(ptr) }; }
 
     fn new(argument: u64) -> FunctionStitchingInputNode {
         let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingInputNode\0"));
@@ -11735,7 +11735,7 @@ struct FunctionStitchingFunctionNode {
 impl FunctionStitchingFunctionNode {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> FunctionStitchingFunctionNode { return FunctionStitchingFunctionNode { _obj: rt::retain(ptr) }; }
 
     fn new(name: str, arguments: vec::Vec[FunctionStitchingNode], control_dependencies: vec::Vec[FunctionStitchingFunctionNode]) -> FunctionStitchingFunctionNode {
         let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingFunctionNode\0"));
@@ -11809,7 +11809,7 @@ impl FunctionStitchingFunctionNode {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingFunctionNode::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
@@ -11843,7 +11843,7 @@ struct FunctionStitchingGraph {
 impl FunctionStitchingGraph {
     fn raw(this) -> *u8 { return this._obj; }
 
-    fn from_raw(ptr: *u8) -> FunctionStitchingGraph { return FunctionStitchingGraph { _obj: ptr }; }
+    fn from_raw(ptr: *u8) -> FunctionStitchingGraph { return FunctionStitchingGraph { _obj: rt::retain(ptr) }; }
 
     fn new(function_name: str, nodes: vec::Vec[FunctionStitchingFunctionNode], output_node: FunctionStitchingFunctionNode, attributes: vec::Vec[FunctionStitchingAttribute]) -> FunctionStitchingGraph {
         let cls: *u8 = rt::get_class(#str_ptr("MTLFunctionStitchingGraph\0"));
@@ -11889,7 +11889,7 @@ impl FunctionStitchingGraph {
         let at_sel: *u8 = rt::sel(#str_ptr("objectAtIndex:\0"));
         var i: u64 = 0 as u64;
         while i < n {
-            out.append(FunctionStitchingFunctionNode::from_raw(rt::retain(rt::msg_id_u64(arr, at_sel, i))));
+            out.append(FunctionStitchingFunctionNode::from_raw(rt::msg_id_u64(arr, at_sel, i)));
             i = i +% (1 as u64);
         }
         return out;
