@@ -626,7 +626,7 @@ fn action_name_is_valid(action_name: str) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `action_parse_detailed_name`: out parameter `action_name` — only scalar out-params are bound
+// SKIPPED fn `action_parse_detailed_name`: out parameter `target_value` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_action_print_detailed_name"]
 extern fn __c_g_action_print_detailed_name(action_name: *u8, target_value: *u8) -> *u8;
 fn action_print_detailed_name(action_name: str, target_value: glib::Variant) -> text::Text {
@@ -913,8 +913,8 @@ fn dbus_address_get_for_bus_sync(bus_type: i32, cancellable: Cancellable) -> tex
 }
 
 // SKIPPED fn `dbus_address_get_stream`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED fn `dbus_address_get_stream_finish`: out parameter `out_guid` — only scalar out-params are bound
-// SKIPPED fn `dbus_address_get_stream_sync`: out parameter `out_guid` — only scalar out-params are bound
+// SKIPPED fn `dbus_address_get_stream_finish`: string/object out-param alongside a value return — cannot fold
+// SKIPPED fn `dbus_address_get_stream_sync`: string/object out-param alongside a value return — cannot fold
 // SKIPPED fn `dbus_annotation_info_lookup`: param `annotations` — no <type> (array, callback, or varargs)
 #[link_name = "g_dbus_error_encode_gerror"]
 extern fn __c_g_dbus_error_encode_gerror(error: *u8) -> *u8;
@@ -1006,7 +1006,7 @@ fn dbus_gvalue_to_gvariant(gvalue: gobject_gir::Value, type_: glib::VariantType)
     return glib::Variant::from_raw(__r);
 }
 
-// SKIPPED fn `dbus_gvariant_to_gvalue`: out parameter `out_gvalue` — only scalar out-params are bound
+// SKIPPED fn `dbus_gvariant_to_gvalue`: out parameter `out_gvalue` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_dbus_is_address"]
 extern fn __c_g_dbus_is_address(string: *u8) -> i32;
 fn dbus_is_address(string: str) -> bool {
@@ -1133,7 +1133,7 @@ fn file_new_for_uri(uri: str) -> File {
     return File::from_raw(__r);
 }
 
-// SKIPPED fn `file_new_tmp`: out parameter `iostream` — only scalar out-params are bound
+// SKIPPED fn `file_new_tmp`: string/object out-param alongside a value return — cannot fold
 // SKIPPED fn `file_new_tmp_async`: param `callback` — unmapped type `AsyncReadyCallback`
 // SKIPPED fn `file_new_tmp_dir_async`: param `callback` — unmapped type `AsyncReadyCallback`
 #[link_name = "g_file_new_tmp_dir_finish"]
@@ -1143,7 +1143,7 @@ fn file_new_tmp_dir_finish(result: AsyncResult) -> File {
     return File::from_raw(__r);
 }
 
-// SKIPPED fn `file_new_tmp_finish`: out parameter `iostream` — only scalar out-params are bound
+// SKIPPED fn `file_new_tmp_finish`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_file_parse_name"]
 extern fn __c_g_file_parse_name(parse_name: *u8) -> *u8;
 fn file_parse_name(parse_name: str) -> File {
@@ -1704,7 +1704,7 @@ extern fn __c_g_action_group_get_action_state_type(__recv: *u8, action_name: *u8
 #[link_name = "g_action_group_has_action"]
 extern fn __c_g_action_group_has_action(__recv: *u8, action_name: *u8) -> i32;
 // SKIPPED method `ActionGroup::list_actions`: return type — no <type> (array, callback, or varargs)
-// SKIPPED method `ActionGroup::query_action`: out parameter `enabled` — only scalar out-params are bound
+// SKIPPED method `ActionGroup::query_action`: out parameter `enabled` — non-foldable out (bool out-param)
 #[link_name = "g_signal_connect_data"]
 extern fn __sigc_p_v(instance: *u8, detailed: *u8, handler: fn(*u8, *u8, *u8), data: *u8, destroy: *u8, flags: i32) -> u64;
 #[link_name = "g_signal_connect_data"]
@@ -2832,9 +2832,9 @@ extern fn __c_g_file_has_uri_scheme(__recv: *u8, uri_scheme: *u8) -> i32;
 extern fn __c_g_file_hash(__recv: *u8) -> u32;
 #[link_name = "g_file_is_native"]
 extern fn __c_g_file_is_native(__recv: *u8) -> i32;
-// SKIPPED method `File::load_bytes`: out parameter `etag_out` — only scalar out-params are bound
+// SKIPPED method `File::load_bytes`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `File::load_bytes_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `File::load_bytes_finish`: out parameter `etag_out` — only scalar out-params are bound
+// SKIPPED method `File::load_bytes_finish`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `File::load_contents`: param `contents` — no <type> (array, callback, or varargs)
 // SKIPPED method `File::load_contents_async`: param `callback` — unmapped type `AsyncReadyCallback`
 // SKIPPED method `File::load_contents_finish`: param `contents` — no <type> (array, callback, or varargs)
@@ -2916,7 +2916,8 @@ extern fn __c_g_file_replace(__recv: *u8, etag: *u8, make_backup: i32, flags: u3
 // SKIPPED method `File::replace_contents`: param `contents` — no <type> (array, callback, or varargs)
 // SKIPPED method `File::replace_contents_async`: param `contents` — no <type> (array, callback, or varargs)
 // SKIPPED method `File::replace_contents_bytes_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `File::replace_contents_finish`: out parameter `new_etag` — only scalar out-params are bound
+#[link_name = "g_file_replace_contents_finish"]
+extern fn __c_g_file_replace_contents_finish(__recv: *u8, res: *u8, new_etag: **u8) -> i32;
 #[link_name = "g_file_replace_finish"]
 extern fn __c_g_file_replace_finish(__recv: *u8, res: *u8) -> *u8;
 #[link_name = "g_file_replace_readwrite"]
@@ -2941,7 +2942,8 @@ extern fn __c_g_file_set_attribute_uint32(__recv: *u8, attribute: *u8, value: u3
 #[link_name = "g_file_set_attribute_uint64"]
 extern fn __c_g_file_set_attribute_uint64(__recv: *u8, attribute: *u8, value: u64, flags: u32, cancellable: *u8) -> i32;
 // SKIPPED method `File::set_attributes_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `File::set_attributes_finish`: out parameter `info` — only scalar out-params are bound
+#[link_name = "g_file_set_attributes_finish"]
+extern fn __c_g_file_set_attributes_finish(__recv: *u8, result: *u8, info: **u8) -> i32;
 #[link_name = "g_file_set_attributes_from_info"]
 extern fn __c_g_file_set_attributes_from_info(__recv: *u8, info: *u8, flags: u32, cancellable: *u8) -> i32;
 #[link_name = "g_file_set_display_name"]
@@ -3309,6 +3311,13 @@ impl File {
         return FileOutputStream::from_raw(__r);
     }
 
+    fn replace_contents_finish(this, res: AsyncResult) -> option::Option[text::Text] {
+        let __out: *u8 = { 0 as *u8 };
+        { __c_g_file_replace_contents_finish(this._raw, res.raw(), ({ #addr_of(__out) as **u8 })) };
+        if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+        return option::some(bridge::cstr_to_text_full(__out));
+    }
+
     fn replace_finish(this, res: AsyncResult) -> FileOutputStream {
         let __r: *u8 = { __c_g_file_replace_finish(this._raw, res.raw()) };
         return FileOutputStream::from_raw(__r);
@@ -3384,6 +3393,13 @@ impl File {
         let __r: i32 = { __c_g_file_set_attribute_uint64(this._raw, __cs_attribute, value, flags, cancellable.raw()) };
         bridge::free_cstring(__cs_attribute);
         return __r != (0 as i32);
+    }
+
+    fn set_attributes_finish(this, result: AsyncResult) -> option::Option[FileInfo] {
+        let __out: *u8 = { 0 as *u8 };
+        { __c_g_file_set_attributes_finish(this._raw, result.raw(), ({ #addr_of(__out) as **u8 })) };
+        if __out == { 0 as *u8 } { return option::Option[FileInfo]::None; }
+        return option::some(FileInfo::from_raw(__out));
     }
 
     fn set_attributes_from_info(this, info: FileInfo, flags: u32, cancellable: Cancellable) -> bool {
@@ -3570,9 +3586,9 @@ impl ListModel {
 
 }
 
-// SKIPPED method `LoadableIcon::load`: out parameter `type` — only scalar out-params are bound
+// SKIPPED method `LoadableIcon::load`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `LoadableIcon::load_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `LoadableIcon::load_finish`: out parameter `type` — only scalar out-params are bound
+// SKIPPED method `LoadableIcon::load_finish`: string/object out-param alongside a value return — cannot fold
 // `LoadableIcon` — GObject wrapper (non-owning handle).
 struct LoadableIcon {
     opaque _raw: *u8,
@@ -6231,8 +6247,8 @@ extern fn __c_g_dbus_connection_call_finish(__recv: *u8, res: *u8) -> *u8;
 #[link_name = "g_dbus_connection_call_sync"]
 extern fn __c_g_dbus_connection_call_sync(__recv: *u8, bus_name: *u8, object_path: *u8, interface_name: *u8, method_name: *u8, parameters: *u8, reply_type: *u8, flags: u32, timeout_msec: i32, cancellable: *u8) -> *u8;
 // SKIPPED method `DBusConnection::call_with_unix_fd_list`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `DBusConnection::call_with_unix_fd_list_finish`: out parameter `out_fd_list` — only scalar out-params are bound
-// SKIPPED method `DBusConnection::call_with_unix_fd_list_sync`: out parameter `out_fd_list` — only scalar out-params are bound
+// SKIPPED method `DBusConnection::call_with_unix_fd_list_finish`: string/object out-param alongside a value return — cannot fold
+// SKIPPED method `DBusConnection::call_with_unix_fd_list_sync`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `DBusConnection::close`: param `callback` — unmapped type `AsyncReadyCallback`
 #[link_name = "g_dbus_connection_close_finish"]
 extern fn __c_g_dbus_connection_close_finish(__recv: *u8, res: *u8) -> i32;
@@ -7386,8 +7402,8 @@ extern fn __c_g_dbus_proxy_call_finish(__recv: *u8, res: *u8) -> *u8;
 #[link_name = "g_dbus_proxy_call_sync"]
 extern fn __c_g_dbus_proxy_call_sync(__recv: *u8, method_name: *u8, parameters: *u8, flags: u32, timeout_msec: i32, cancellable: *u8) -> *u8;
 // SKIPPED method `DBusProxy::call_with_unix_fd_list`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `DBusProxy::call_with_unix_fd_list_finish`: out parameter `out_fd_list` — only scalar out-params are bound
-// SKIPPED method `DBusProxy::call_with_unix_fd_list_sync`: out parameter `out_fd_list` — only scalar out-params are bound
+// SKIPPED method `DBusProxy::call_with_unix_fd_list_finish`: string/object out-param alongside a value return — cannot fold
+// SKIPPED method `DBusProxy::call_with_unix_fd_list_sync`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_dbus_proxy_get_cached_property"]
 extern fn __c_g_dbus_proxy_get_cached_property(__recv: *u8, property_name: *u8) -> *u8;
 // SKIPPED method `DBusProxy::get_cached_property_names`: return type — no <type> (array, callback, or varargs)
@@ -8167,7 +8183,7 @@ extern fn __c_g_file_enumerator_get_container(__recv: *u8) -> *u8;
 extern fn __c_g_file_enumerator_has_pending(__recv: *u8) -> i32;
 #[link_name = "g_file_enumerator_is_closed"]
 extern fn __c_g_file_enumerator_is_closed(__recv: *u8) -> i32;
-// SKIPPED method `FileEnumerator::iterate`: out parameter `out_info` — only scalar out-params are bound
+// SKIPPED method `FileEnumerator::iterate`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "g_file_enumerator_next_file"]
 extern fn __c_g_file_enumerator_next_file(__recv: *u8, cancellable: *u8) -> *u8;
 // SKIPPED method `FileEnumerator::next_files_async`: param `callback` — unmapped type `AsyncReadyCallback`
@@ -8318,7 +8334,7 @@ extern fn __c_g_file_info_get_attribute_as_string(__recv: *u8, attribute: *u8) -
 extern fn __c_g_file_info_get_attribute_boolean(__recv: *u8, attribute: *u8) -> i32;
 #[link_name = "g_file_info_get_attribute_byte_string"]
 extern fn __c_g_file_info_get_attribute_byte_string(__recv: *u8, attribute: *u8) -> *u8;
-// SKIPPED method `FileInfo::get_attribute_data`: out parameter `value_pp` — only scalar out-params are bound
+// SKIPPED method `FileInfo::get_attribute_data`: out parameter `value_pp` — non-foldable out (raw-pointer out-param)
 #[link_name = "g_file_info_get_attribute_file_path"]
 extern fn __c_g_file_info_get_attribute_file_path(__recv: *u8, attribute: *u8) -> *u8;
 #[link_name = "g_file_info_get_attribute_int32"]
@@ -9906,7 +9922,7 @@ impl Menu {
 
 #[link_name = "g_menu_attribute_iter_get_name"]
 extern fn __c_g_menu_attribute_iter_get_name(__recv: *u8) -> *u8;
-// SKIPPED method `MenuAttributeIter::get_next`: out parameter `out_name` — only scalar out-params are bound
+// SKIPPED method `MenuAttributeIter::get_next`: out parameter `value` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_menu_attribute_iter_get_value"]
 extern fn __c_g_menu_attribute_iter_get_value(__recv: *u8) -> *u8;
 #[link_name = "g_menu_attribute_iter_next"]
@@ -10081,7 +10097,7 @@ impl MenuItem {
 
 #[link_name = "g_menu_link_iter_get_name"]
 extern fn __c_g_menu_link_iter_get_name(__recv: *u8) -> *u8;
-// SKIPPED method `MenuLinkIter::get_next`: out parameter `out_link` — only scalar out-params are bound
+// SKIPPED method `MenuLinkIter::get_next`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "g_menu_link_iter_get_value"]
 extern fn __c_g_menu_link_iter_get_value(__recv: *u8) -> *u8;
 #[link_name = "g_menu_link_iter_next"]
@@ -11882,9 +11898,9 @@ extern fn __c_g_socket_listen(__recv: *u8) -> i32;
 // SKIPPED method `Socket::receive`: param `buffer` — no <type> (array, callback, or varargs)
 #[link_name = "g_socket_receive_bytes"]
 extern fn __c_g_socket_receive_bytes(__recv: *u8, size: usize, timeout_us: i64, cancellable: *u8) -> *u8;
-// SKIPPED method `Socket::receive_bytes_from`: out parameter `address` — only scalar out-params are bound
-// SKIPPED method `Socket::receive_from`: out parameter `address` — only scalar out-params are bound
-// SKIPPED method `Socket::receive_message`: out parameter `address` — only scalar out-params are bound
+// SKIPPED method `Socket::receive_bytes_from`: string/object out-param alongside a value return — cannot fold
+// SKIPPED method `Socket::receive_from`: param `buffer` — no <type> (array, callback, or varargs)
+// SKIPPED method `Socket::receive_message`: param `vectors` — no <type> (array, callback, or varargs)
 // SKIPPED method `Socket::receive_messages`: param `messages` — no <type> (array, callback, or varargs)
 // SKIPPED method `Socket::receive_with_blocking`: param `buffer` — no <type> (array, callback, or varargs)
 // SKIPPED method `Socket::send`: param `buffer` — no <type> (array, callback, or varargs)
@@ -12588,13 +12604,14 @@ impl SocketControlMessage {
 
 #[link_name = "g_socket_listener_new"]
 extern fn __c_g_socket_listener_new() -> *u8;
-// SKIPPED method `SocketListener::accept`: out parameter `source_object` — only scalar out-params are bound
+// SKIPPED method `SocketListener::accept`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `SocketListener::accept_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `SocketListener::accept_finish`: out parameter `source_object` — only scalar out-params are bound
-// SKIPPED method `SocketListener::accept_socket`: out parameter `source_object` — only scalar out-params are bound
+// SKIPPED method `SocketListener::accept_finish`: string/object out-param alongside a value return — cannot fold
+// SKIPPED method `SocketListener::accept_socket`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `SocketListener::accept_socket_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `SocketListener::accept_socket_finish`: out parameter `source_object` — only scalar out-params are bound
-// SKIPPED method `SocketListener::add_address`: out parameter `effective_address` — only scalar out-params are bound
+// SKIPPED method `SocketListener::accept_socket_finish`: string/object out-param alongside a value return — cannot fold
+#[link_name = "g_socket_listener_add_address"]
+extern fn __c_g_socket_listener_add_address(__recv: *u8, address: *u8, type_: i32, protocol: i32, source_object: *u8, effective_address: **u8) -> i32;
 #[link_name = "g_socket_listener_add_any_inet_port"]
 extern fn __c_g_socket_listener_add_any_inet_port(__recv: *u8, source_object: *u8) -> u16;
 #[link_name = "g_socket_listener_add_inet_port"]
@@ -12619,6 +12636,13 @@ impl SocketListener {
     fn new() -> SocketListener {
         let __r: *u8 = { __c_g_socket_listener_new() };
         return SocketListener::from_raw(__r);
+    }
+
+    fn add_address(this, address: SocketAddress, type_: i32, protocol: i32, source_object: gobject_gir::Object) -> option::Option[SocketAddress] {
+        let __out: *u8 = { 0 as *u8 };
+        { __c_g_socket_listener_add_address(this._raw, address.raw(), type_, protocol, source_object.raw(), ({ #addr_of(__out) as **u8 })) };
+        if __out == { 0 as *u8 } { return option::Option[SocketAddress]::None; }
+        return option::some(SocketAddress::from_raw(__out));
     }
 
     fn add_any_inet_port(this, source_object: gobject_gir::Object) -> u16 {
@@ -12703,12 +12727,12 @@ impl SocketService {
 
 // SKIPPED ctor `Subprocess::new`: variadic
 // SKIPPED ctor `Subprocess::newv`: param `argv` — no <type> (array, callback, or varargs)
-// SKIPPED method `Subprocess::communicate`: out parameter `stdout_buf` — only scalar out-params are bound
+// SKIPPED method `Subprocess::communicate`: out parameter `stdout_buf` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Subprocess::communicate_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `Subprocess::communicate_finish`: out parameter `stdout_buf` — only scalar out-params are bound
-// SKIPPED method `Subprocess::communicate_utf8`: out parameter `stdout_buf` — only scalar out-params are bound
+// SKIPPED method `Subprocess::communicate_finish`: out parameter `stdout_buf` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Subprocess::communicate_utf8`: multiple string/object out-params — only a single out folds into the return
 // SKIPPED method `Subprocess::communicate_utf8_async`: param `callback` — unmapped type `AsyncReadyCallback`
-// SKIPPED method `Subprocess::communicate_utf8_finish`: out parameter `stdout_buf` — only scalar out-params are bound
+// SKIPPED method `Subprocess::communicate_utf8_finish`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "g_subprocess_force_exit"]
 extern fn __c_g_subprocess_force_exit(__recv: *u8);
 #[link_name = "g_subprocess_get_exit_status"]
@@ -13006,7 +13030,7 @@ extern fn __c_g_task_propagate_boolean(__recv: *u8) -> i32;
 extern fn __c_g_task_propagate_int(__recv: *u8) -> isize;
 #[link_name = "g_task_propagate_pointer"]
 extern fn __c_g_task_propagate_pointer(__recv: *u8) -> *u8;
-// SKIPPED method `Task::propagate_value`: out parameter `value` — only scalar out-params are bound
+// SKIPPED method `Task::propagate_value`: out parameter `value` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_task_return_boolean"]
 extern fn __c_g_task_return_boolean(__recv: *u8, result: i32);
 #[link_name = "g_task_return_error"]
@@ -14479,4 +14503,4 @@ impl ZlibDecompressor {
 }
 
 
-// cpc-bindgen --gobject: 2094 items emitted, 387 SKIPPED.
+// cpc-bindgen --gobject: 2097 items emitted, 384 SKIPPED.

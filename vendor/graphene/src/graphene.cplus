@@ -250,20 +250,20 @@ extern fn __c_graphene_box_contains_box(__recv: *u8, b: *u8) -> i32;
 extern fn __c_graphene_box_contains_point(__recv: *u8, point: *u8) -> i32;
 #[link_name = "graphene_box_equal"]
 extern fn __c_graphene_box_equal(__recv: *u8, b: *u8) -> i32;
-// SKIPPED method `Box::expand`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Box::expand_scalar`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Box::expand_vec3`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Box::expand`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::expand_scalar`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::expand_vec3`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_box_free"]
 extern fn __c_graphene_box_free(__recv: *u8);
-// SKIPPED method `Box::get_bounding_sphere`: out parameter `sphere` — only scalar out-params are bound
-// SKIPPED method `Box::get_center`: out parameter `center` — only scalar out-params are bound
+// SKIPPED method `Box::get_bounding_sphere`: out parameter `sphere` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::get_center`: out parameter `center` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_box_get_depth"]
 extern fn __c_graphene_box_get_depth(__recv: *u8) -> f32;
 #[link_name = "graphene_box_get_height"]
 extern fn __c_graphene_box_get_height(__recv: *u8) -> f32;
-// SKIPPED method `Box::get_max`: out parameter `max` — only scalar out-params are bound
-// SKIPPED method `Box::get_min`: out parameter `min` — only scalar out-params are bound
-// SKIPPED method `Box::get_size`: out parameter `size` — only scalar out-params are bound
+// SKIPPED method `Box::get_max`: out parameter `max` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::get_min`: out parameter `min` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::get_size`: out parameter `size` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Box::get_vertices`: param `vertices` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_box_get_width"]
 extern fn __c_graphene_box_get_width(__recv: *u8) -> f32;
@@ -275,8 +275,8 @@ extern fn __c_graphene_box_init_from_box(__recv: *u8, src: *u8) -> *u8;
 #[link_name = "graphene_box_init_from_vec3"]
 extern fn __c_graphene_box_init_from_vec3(__recv: *u8, min: *u8, max: *u8) -> *u8;
 // SKIPPED method `Box::init_from_vectors`: param `vectors` — no <type> (array, callback, or varargs)
-// SKIPPED method `Box::intersection`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Box::union`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Box::intersection`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Box::union`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Box` — boxed record (non-owning handle).
 struct Box {
     opaque _raw: *u8,
@@ -377,10 +377,10 @@ extern fn __c_graphene_euler_init_from_radians(__recv: *u8, x: f32, y: f32, z: f
 extern fn __c_graphene_euler_init_from_vec3(__recv: *u8, v: *u8, order: i32) -> *u8;
 #[link_name = "graphene_euler_init_with_order"]
 extern fn __c_graphene_euler_init_with_order(__recv: *u8, x: f32, y: f32, z: f32, order: i32) -> *u8;
-// SKIPPED method `Euler::reorder`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Euler::to_matrix`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Euler::to_quaternion`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Euler::to_vec3`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Euler::reorder`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Euler::to_matrix`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Euler::to_quaternion`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Euler::to_vec3`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Euler` — boxed record (non-owning handle).
 struct Euler {
     opaque _raw: *u8,
@@ -554,7 +554,7 @@ impl Frustum {
 
 #[link_name = "graphene_matrix_alloc"]
 extern fn __c_graphene_matrix_alloc() -> *u8;
-// SKIPPED method `Matrix::decompose`: out parameter `translate` — only scalar out-params are bound
+// SKIPPED method `Matrix::decompose`: out parameter `translate` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_determinant"]
 extern fn __c_graphene_matrix_determinant(__recv: *u8) -> f32;
 #[link_name = "graphene_matrix_equal"]
@@ -563,7 +563,7 @@ extern fn __c_graphene_matrix_equal(__recv: *u8, b: *u8) -> i32;
 extern fn __c_graphene_matrix_equal_fast(__recv: *u8, b: *u8) -> i32;
 #[link_name = "graphene_matrix_free"]
 extern fn __c_graphene_matrix_free(__recv: *u8);
-// SKIPPED method `Matrix::get_row`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::get_row`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_get_value"]
 extern fn __c_graphene_matrix_get_value(__recv: *u8, row: u32, col: u32) -> f32;
 #[link_name = "graphene_matrix_get_x_scale"]
@@ -603,8 +603,8 @@ extern fn __c_graphene_matrix_init_scale(__recv: *u8, x: f32, y: f32, z: f32) ->
 extern fn __c_graphene_matrix_init_skew(__recv: *u8, x_skew: f32, y_skew: f32) -> *u8;
 #[link_name = "graphene_matrix_init_translate"]
 extern fn __c_graphene_matrix_init_translate(__recv: *u8, p: *u8) -> *u8;
-// SKIPPED method `Matrix::interpolate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::inverse`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::inverse`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_is_2d"]
 extern fn __c_graphene_matrix_is_2d(__recv: *u8) -> i32;
 #[link_name = "graphene_matrix_is_backface_visible"]
@@ -613,16 +613,16 @@ extern fn __c_graphene_matrix_is_backface_visible(__recv: *u8) -> i32;
 extern fn __c_graphene_matrix_is_identity(__recv: *u8) -> i32;
 #[link_name = "graphene_matrix_is_singular"]
 extern fn __c_graphene_matrix_is_singular(__recv: *u8) -> i32;
-// SKIPPED method `Matrix::multiply`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::multiply`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_near"]
 extern fn __c_graphene_matrix_near(__recv: *u8, b: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Matrix::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::perspective`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::perspective`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_print"]
 extern fn __c_graphene_matrix_print(__recv: *u8);
-// SKIPPED method `Matrix::project_point`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::project_rect`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::project_rect_bounds`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::project_point`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::project_rect`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::project_rect_bounds`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_rotate"]
 extern fn __c_graphene_matrix_rotate(__recv: *u8, angle: f32, axis: *u8);
 #[link_name = "graphene_matrix_rotate_euler"]
@@ -646,21 +646,21 @@ extern fn __c_graphene_matrix_skew_yz(__recv: *u8, factor: f32);
 #[link_name = "graphene_matrix_to_2d"]
 extern fn __c_graphene_matrix_to_2d(__recv: *u8, xx: *f64, yx: *f64, xy: *f64, yy: *f64, x_0: *f64, y_0: *f64) -> i32;
 // SKIPPED method `Matrix::to_float`: param `v` — no <type> (array, callback, or varargs)
-// SKIPPED method `Matrix::transform_bounds`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_box`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_point`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_point3d`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_ray`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_rect`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_sphere`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_vec3`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::transform_vec4`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::transform_bounds`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_box`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_point`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_point3d`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_ray`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_rect`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_sphere`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_vec3`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::transform_vec4`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_matrix_translate"]
 extern fn __c_graphene_matrix_translate(__recv: *u8, pos: *u8);
-// SKIPPED method `Matrix::transpose`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::unproject_point3d`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::untransform_bounds`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Matrix::untransform_point`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Matrix::transpose`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::unproject_point3d`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::untransform_bounds`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Matrix::untransform_point`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Matrix` — boxed record (non-owning handle).
 struct Matrix {
     opaque _raw: *u8,
@@ -892,7 +892,7 @@ extern fn __c_graphene_plane_equal(__recv: *u8, b: *u8) -> i32;
 extern fn __c_graphene_plane_free(__recv: *u8);
 #[link_name = "graphene_plane_get_constant"]
 extern fn __c_graphene_plane_get_constant(__recv: *u8) -> f32;
-// SKIPPED method `Plane::get_normal`: out parameter `normal` — only scalar out-params are bound
+// SKIPPED method `Plane::get_normal`: out parameter `normal` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_plane_init"]
 extern fn __c_graphene_plane_init(__recv: *u8, normal: *u8, constant: f32) -> *u8;
 #[link_name = "graphene_plane_init_from_plane"]
@@ -903,9 +903,9 @@ extern fn __c_graphene_plane_init_from_point(__recv: *u8, normal: *u8, point: *u
 extern fn __c_graphene_plane_init_from_points(__recv: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
 #[link_name = "graphene_plane_init_from_vec4"]
 extern fn __c_graphene_plane_init_from_vec4(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Plane::negate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Plane::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Plane::transform`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Plane::negate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Plane::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Plane::transform`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Plane` — boxed record (non-owning handle).
 struct Plane {
     opaque _raw: *u8,
@@ -981,10 +981,10 @@ extern fn __c_graphene_point_init(__recv: *u8, x: f32, y: f32) -> *u8;
 extern fn __c_graphene_point_init_from_point(__recv: *u8, src: *u8) -> *u8;
 #[link_name = "graphene_point_init_from_vec2"]
 extern fn __c_graphene_point_init_from_vec2(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Point::interpolate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Point::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_point_near"]
 extern fn __c_graphene_point_near(__recv: *u8, b: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Point::to_vec2`: out parameter `v` — only scalar out-params are bound
+// SKIPPED method `Point::to_vec2`: out parameter `v` — non-foldable out (value-struct/record out-param)
 // `Point` — boxed record (non-owning handle).
 struct Point {
     opaque _raw: *u8,
@@ -1038,8 +1038,8 @@ impl Point {
 
 #[link_name = "graphene_point3d_alloc"]
 extern fn __c_graphene_point3d_alloc() -> *u8;
-// SKIPPED method `Point3D::cross`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Point3D::distance`: out parameter `delta` — only scalar out-params are bound
+// SKIPPED method `Point3D::cross`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Point3D::distance`: out parameter `delta` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_point3d_dot"]
 extern fn __c_graphene_point3d_dot(__recv: *u8, b: *u8) -> f32;
 #[link_name = "graphene_point3d_equal"]
@@ -1052,15 +1052,15 @@ extern fn __c_graphene_point3d_init(__recv: *u8, x: f32, y: f32, z: f32) -> *u8;
 extern fn __c_graphene_point3d_init_from_point(__recv: *u8, src: *u8) -> *u8;
 #[link_name = "graphene_point3d_init_from_vec3"]
 extern fn __c_graphene_point3d_init_from_vec3(__recv: *u8, v: *u8) -> *u8;
-// SKIPPED method `Point3D::interpolate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Point3D::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_point3d_length"]
 extern fn __c_graphene_point3d_length(__recv: *u8) -> f32;
 #[link_name = "graphene_point3d_near"]
 extern fn __c_graphene_point3d_near(__recv: *u8, b: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Point3D::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Point3D::normalize_viewport`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Point3D::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Point3D::to_vec3`: out parameter `v` — only scalar out-params are bound
+// SKIPPED method `Point3D::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Point3D::normalize_viewport`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Point3D::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Point3D::to_vec3`: out parameter `v` — non-foldable out (value-struct/record out-param)
 // `Point3D` — boxed record (non-owning handle).
 struct Point3D {
     opaque _raw: *u8,
@@ -1119,7 +1119,7 @@ impl Point3D {
 
 #[link_name = "graphene_quad_alloc"]
 extern fn __c_graphene_quad_alloc() -> *u8;
-// SKIPPED method `Quad::bounds`: out parameter `r` — only scalar out-params are bound
+// SKIPPED method `Quad::bounds`: out parameter `r` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_quad_contains"]
 extern fn __c_graphene_quad_contains(__recv: *u8, p: *u8) -> i32;
 #[link_name = "graphene_quad_free"]
@@ -1174,7 +1174,7 @@ impl Quad {
 
 #[link_name = "graphene_quaternion_alloc"]
 extern fn __c_graphene_quaternion_alloc() -> *u8;
-// SKIPPED method `Quaternion::add`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Quaternion::add`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_quaternion_dot"]
 extern fn __c_graphene_quaternion_dot(__recv: *u8, b: *u8) -> f32;
 #[link_name = "graphene_quaternion_equal"]
@@ -1199,18 +1199,18 @@ extern fn __c_graphene_quaternion_init_from_radians(__recv: *u8, rad_x: f32, rad
 extern fn __c_graphene_quaternion_init_from_vec4(__recv: *u8, src: *u8) -> *u8;
 #[link_name = "graphene_quaternion_init_identity"]
 extern fn __c_graphene_quaternion_init_identity(__recv: *u8) -> *u8;
-// SKIPPED method `Quaternion::invert`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Quaternion::multiply`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Quaternion::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Quaternion::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Quaternion::slerp`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Quaternion::to_angle_vec3`: out parameter `axis` — only scalar out-params are bound
+// SKIPPED method `Quaternion::invert`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Quaternion::multiply`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Quaternion::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Quaternion::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Quaternion::slerp`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Quaternion::to_angle_vec3`: out parameter `axis` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_quaternion_to_angles"]
 extern fn __c_graphene_quaternion_to_angles(__recv: *u8, deg_x: *f32, deg_y: *f32, deg_z: *f32);
-// SKIPPED method `Quaternion::to_matrix`: out parameter `m` — only scalar out-params are bound
+// SKIPPED method `Quaternion::to_matrix`: out parameter `m` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_quaternion_to_radians"]
 extern fn __c_graphene_quaternion_to_radians(__recv: *u8, rad_x: *f32, rad_y: *f32, rad_z: *f32);
-// SKIPPED method `Quaternion::to_vec4`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Quaternion::to_vec4`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Quaternion` — boxed record (non-owning handle).
 struct Quaternion {
     opaque _raw: *u8,
@@ -1303,14 +1303,14 @@ extern fn __c_graphene_ray_alloc() -> *u8;
 extern fn __c_graphene_ray_equal(__recv: *u8, b: *u8) -> i32;
 #[link_name = "graphene_ray_free"]
 extern fn __c_graphene_ray_free(__recv: *u8);
-// SKIPPED method `Ray::get_closest_point_to_point`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Ray::get_direction`: out parameter `direction` — only scalar out-params are bound
+// SKIPPED method `Ray::get_closest_point_to_point`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Ray::get_direction`: out parameter `direction` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_ray_get_distance_to_plane"]
 extern fn __c_graphene_ray_get_distance_to_plane(__recv: *u8, p: *u8) -> f32;
 #[link_name = "graphene_ray_get_distance_to_point"]
 extern fn __c_graphene_ray_get_distance_to_point(__recv: *u8, p: *u8) -> f32;
-// SKIPPED method `Ray::get_origin`: out parameter `origin` — only scalar out-params are bound
-// SKIPPED method `Ray::get_position_at`: out parameter `position` — only scalar out-params are bound
+// SKIPPED method `Ray::get_origin`: out parameter `origin` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Ray::get_position_at`: out parameter `position` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_ray_init"]
 extern fn __c_graphene_ray_init(__recv: *u8, origin: *u8, direction: *u8) -> *u8;
 #[link_name = "graphene_ray_init_from_ray"]
@@ -1416,18 +1416,18 @@ extern fn __c_graphene_rect_contains_point(__recv: *u8, p: *u8) -> i32;
 extern fn __c_graphene_rect_contains_rect(__recv: *u8, b: *u8) -> i32;
 #[link_name = "graphene_rect_equal"]
 extern fn __c_graphene_rect_equal(__recv: *u8, b: *u8) -> i32;
-// SKIPPED method `Rect::expand`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Rect::expand`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_rect_free"]
 extern fn __c_graphene_rect_free(__recv: *u8);
 #[link_name = "graphene_rect_get_area"]
 extern fn __c_graphene_rect_get_area(__recv: *u8) -> f32;
-// SKIPPED method `Rect::get_bottom_left`: out parameter `p` — only scalar out-params are bound
-// SKIPPED method `Rect::get_bottom_right`: out parameter `p` — only scalar out-params are bound
-// SKIPPED method `Rect::get_center`: out parameter `p` — only scalar out-params are bound
+// SKIPPED method `Rect::get_bottom_left`: out parameter `p` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::get_bottom_right`: out parameter `p` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::get_center`: out parameter `p` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_rect_get_height"]
 extern fn __c_graphene_rect_get_height(__recv: *u8) -> f32;
-// SKIPPED method `Rect::get_top_left`: out parameter `p` — only scalar out-params are bound
-// SKIPPED method `Rect::get_top_right`: out parameter `p` — only scalar out-params are bound
+// SKIPPED method `Rect::get_top_left`: out parameter `p` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::get_top_right`: out parameter `p` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Rect::get_vertices`: param `vertices` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_rect_get_width"]
 extern fn __c_graphene_rect_get_width(__recv: *u8) -> f32;
@@ -1441,21 +1441,21 @@ extern fn __c_graphene_rect_init(__recv: *u8, x: f32, y: f32, width: f32, height
 extern fn __c_graphene_rect_init_from_rect(__recv: *u8, src: *u8) -> *u8;
 #[link_name = "graphene_rect_inset"]
 extern fn __c_graphene_rect_inset(__recv: *u8, d_x: f32, d_y: f32) -> *u8;
-// SKIPPED method `Rect::inset_r`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Rect::interpolate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Rect::intersection`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Rect::inset_r`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::intersection`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_rect_normalize"]
 extern fn __c_graphene_rect_normalize(__recv: *u8) -> *u8;
-// SKIPPED method `Rect::normalize_r`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Rect::normalize_r`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_rect_offset"]
 extern fn __c_graphene_rect_offset(__recv: *u8, d_x: f32, d_y: f32) -> *u8;
-// SKIPPED method `Rect::offset_r`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Rect::round`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Rect::round_extents`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Rect::offset_r`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::round`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::round_extents`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_rect_round_to_pixel"]
 extern fn __c_graphene_rect_round_to_pixel(__recv: *u8) -> *u8;
-// SKIPPED method `Rect::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Rect::union`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Rect::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rect::union`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Rect` — boxed record (non-owning handle).
 struct Rect {
     opaque _raw: *u8,
@@ -1552,8 +1552,8 @@ extern fn __c_graphene_size_free(__recv: *u8);
 extern fn __c_graphene_size_init(__recv: *u8, width: f32, height: f32) -> *u8;
 #[link_name = "graphene_size_init_from_size"]
 extern fn __c_graphene_size_init_from_size(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Size::interpolate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Size::scale`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Size::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Size::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Size` — boxed record (non-owning handle).
 struct Size {
     opaque _raw: *u8,
@@ -1600,8 +1600,8 @@ extern fn __c_graphene_sphere_distance(__recv: *u8, point: *u8) -> f32;
 extern fn __c_graphene_sphere_equal(__recv: *u8, b: *u8) -> i32;
 #[link_name = "graphene_sphere_free"]
 extern fn __c_graphene_sphere_free(__recv: *u8);
-// SKIPPED method `Sphere::get_bounding_box`: out parameter `box` — only scalar out-params are bound
-// SKIPPED method `Sphere::get_center`: out parameter `center` — only scalar out-params are bound
+// SKIPPED method `Sphere::get_bounding_box`: out parameter `box` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Sphere::get_center`: out parameter `center` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_sphere_get_radius"]
 extern fn __c_graphene_sphere_get_radius(__recv: *u8) -> f32;
 #[link_name = "graphene_sphere_init"]
@@ -1610,7 +1610,7 @@ extern fn __c_graphene_sphere_init(__recv: *u8, center: *u8, radius: f32) -> *u8
 // SKIPPED method `Sphere::init_from_vectors`: param `vectors` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_sphere_is_empty"]
 extern fn __c_graphene_sphere_is_empty(__recv: *u8) -> i32;
-// SKIPPED method `Sphere::translate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Sphere::translate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // `Sphere` — boxed record (non-owning handle).
 struct Sphere {
     opaque _raw: *u8,
@@ -1672,14 +1672,14 @@ extern fn __c_graphene_triangle_equal(__recv: *u8, b: *u8) -> i32;
 extern fn __c_graphene_triangle_free(__recv: *u8);
 #[link_name = "graphene_triangle_get_area"]
 extern fn __c_graphene_triangle_get_area(__recv: *u8) -> f32;
-// SKIPPED method `Triangle::get_barycoords`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_bounding_box`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_midpoint`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_normal`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_plane`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_points`: out parameter `a` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_uv`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Triangle::get_vertices`: out parameter `a` — only scalar out-params are bound
+// SKIPPED method `Triangle::get_barycoords`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_bounding_box`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_midpoint`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_normal`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_plane`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_points`: out parameter `a` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_uv`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Triangle::get_vertices`: out parameter `a` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Triangle::init_from_float`: param `a` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_triangle_init_from_point3d"]
 extern fn __c_graphene_triangle_init_from_point3d(__recv: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
@@ -1733,8 +1733,8 @@ impl Triangle {
 
 #[link_name = "graphene_vec2_alloc"]
 extern fn __c_graphene_vec2_alloc() -> *u8;
-// SKIPPED method `Vec2::add`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::divide`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec2::add`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::divide`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec2_dot"]
 extern fn __c_graphene_vec2_dot(__recv: *u8, b: *u8) -> f32;
 #[link_name = "graphene_vec2_equal"]
@@ -1750,18 +1750,18 @@ extern fn __c_graphene_vec2_init(__recv: *u8, x: f32, y: f32) -> *u8;
 // SKIPPED method `Vec2::init_from_float`: param `src` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_vec2_init_from_vec2"]
 extern fn __c_graphene_vec2_init_from_vec2(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Vec2::interpolate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec2::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec2_length"]
 extern fn __c_graphene_vec2_length(__recv: *u8) -> f32;
-// SKIPPED method `Vec2::max`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::min`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::multiply`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec2::max`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::min`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::multiply`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec2_near"]
 extern fn __c_graphene_vec2_near(__recv: *u8, v2: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Vec2::negate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec2::subtract`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec2::negate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec2::subtract`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Vec2::to_float`: param `dest` — no <type> (array, callback, or varargs)
 // `Vec2` — boxed record (non-owning handle).
 struct Vec2 {
@@ -1826,9 +1826,9 @@ impl Vec2 {
 
 #[link_name = "graphene_vec3_alloc"]
 extern fn __c_graphene_vec3_alloc() -> *u8;
-// SKIPPED method `Vec3::add`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::cross`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::divide`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec3::add`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::cross`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::divide`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec3_dot"]
 extern fn __c_graphene_vec3_dot(__recv: *u8, b: *u8) -> f32;
 #[link_name = "graphene_vec3_equal"]
@@ -1837,11 +1837,11 @@ extern fn __c_graphene_vec3_equal(__recv: *u8, v2: *u8) -> i32;
 extern fn __c_graphene_vec3_free(__recv: *u8);
 #[link_name = "graphene_vec3_get_x"]
 extern fn __c_graphene_vec3_get_x(__recv: *u8) -> f32;
-// SKIPPED method `Vec3::get_xy`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::get_xy0`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::get_xyz0`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::get_xyz1`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::get_xyzw`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec3::get_xy`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::get_xy0`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::get_xyz0`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::get_xyz1`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::get_xyzw`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec3_get_y"]
 extern fn __c_graphene_vec3_get_y(__recv: *u8) -> f32;
 #[link_name = "graphene_vec3_get_z"]
@@ -1851,18 +1851,18 @@ extern fn __c_graphene_vec3_init(__recv: *u8, x: f32, y: f32, z: f32) -> *u8;
 // SKIPPED method `Vec3::init_from_float`: param `src` — no <type> (array, callback, or varargs)
 #[link_name = "graphene_vec3_init_from_vec3"]
 extern fn __c_graphene_vec3_init_from_vec3(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Vec3::interpolate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec3::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec3_length"]
 extern fn __c_graphene_vec3_length(__recv: *u8) -> f32;
-// SKIPPED method `Vec3::max`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::min`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::multiply`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec3::max`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::min`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::multiply`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec3_near"]
 extern fn __c_graphene_vec3_near(__recv: *u8, v2: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Vec3::negate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec3::subtract`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec3::negate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec3::subtract`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Vec3::to_float`: param `dest` — no <type> (array, callback, or varargs)
 // `Vec3` — boxed record (non-owning handle).
 struct Vec3 {
@@ -1932,8 +1932,8 @@ impl Vec3 {
 
 #[link_name = "graphene_vec4_alloc"]
 extern fn __c_graphene_vec4_alloc() -> *u8;
-// SKIPPED method `Vec4::add`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::divide`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec4::add`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::divide`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec4_dot"]
 extern fn __c_graphene_vec4_dot(__recv: *u8, b: *u8) -> f32;
 #[link_name = "graphene_vec4_equal"]
@@ -1944,8 +1944,8 @@ extern fn __c_graphene_vec4_free(__recv: *u8);
 extern fn __c_graphene_vec4_get_w(__recv: *u8) -> f32;
 #[link_name = "graphene_vec4_get_x"]
 extern fn __c_graphene_vec4_get_x(__recv: *u8) -> f32;
-// SKIPPED method `Vec4::get_xy`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::get_xyz`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec4::get_xy`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::get_xyz`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec4_get_y"]
 extern fn __c_graphene_vec4_get_y(__recv: *u8) -> f32;
 #[link_name = "graphene_vec4_get_z"]
@@ -1959,18 +1959,18 @@ extern fn __c_graphene_vec4_init_from_vec2(__recv: *u8, src: *u8, z: f32, w: f32
 extern fn __c_graphene_vec4_init_from_vec3(__recv: *u8, src: *u8, w: f32) -> *u8;
 #[link_name = "graphene_vec4_init_from_vec4"]
 extern fn __c_graphene_vec4_init_from_vec4(__recv: *u8, src: *u8) -> *u8;
-// SKIPPED method `Vec4::interpolate`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec4::interpolate`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec4_length"]
 extern fn __c_graphene_vec4_length(__recv: *u8) -> f32;
-// SKIPPED method `Vec4::max`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::min`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::multiply`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec4::max`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::min`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::multiply`: out parameter `res` — non-foldable out (value-struct/record out-param)
 #[link_name = "graphene_vec4_near"]
 extern fn __c_graphene_vec4_near(__recv: *u8, v2: *u8, epsilon: f32) -> i32;
-// SKIPPED method `Vec4::negate`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::normalize`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::scale`: out parameter `res` — only scalar out-params are bound
-// SKIPPED method `Vec4::subtract`: out parameter `res` — only scalar out-params are bound
+// SKIPPED method `Vec4::negate`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::normalize`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::scale`: out parameter `res` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Vec4::subtract`: out parameter `res` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Vec4::to_float`: param `dest` — no <type> (array, callback, or varargs)
 // `Vec4` — boxed record (non-owning handle).
 struct Vec4 {

@@ -16,14 +16,12 @@ gdk         = "*"
 gdkpixbuf   = "*"
 gio         = "*"
 glib        = "*"
-gmodule     = "*"
 gobject_gir = "*"
 graphene    = "*"
 gsk         = "*"
 gtk4        = "*"
 harfbuzz    = "*"
 pango       = "*"
-pangocairo  = "*"
 
 [link]
 libs = ["adwaita-1"]

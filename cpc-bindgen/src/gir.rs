@@ -313,6 +313,11 @@ struct Foreign {
     classes: HashSet<String>,
     enums: HashMap<String, String>,
     records: HashSet<String>,
+    /// Namespace `<alias>` typedefs that resolve to a plain scalar (e.g.
+    /// `GLib.Quark` -> u32, `Pango.Glyph` -> u32). Only scalar targets are kept —
+    /// an alias to a string/array/object (`GLib.Strv` is `gchar**`, not a string)
+    /// would mis-bind, so those stay foreign SKIPs.
+    aliases: HashMap<String, Mapped>,
 }
 
 /// Load the `--use NS=pkg` foreign registries by parsing each named GIR and
@@ -363,7 +368,17 @@ fn load_foreign(uses: &[(String, String)]) -> HashMap<String, Foreign> {
                 }
             }
         }
-        map.insert(ns_name, Foreign { alias: pkg.clone(), classes, enums, records });
+        let mut aliases = HashMap::new();
+        for a in ns.children_named("alias") {
+            if let (Some(n), Some(ty)) = (a.attr("name"), a.child_named("type")) {
+                if let Some(m) = map_type(ty) {
+                    if matches!(m.cat, Cat::Scalar) {
+                        aliases.insert(n.to_string(), m);
+                    }
+                }
+            }
+        }
+        map.insert(ns_name, Foreign { alias: pkg.clone(), classes, enums, records, aliases });
     }
     map
 }
@@ -495,6 +510,10 @@ struct Emitter<'a> {
     /// Module-local `g_signal_connect_data` alias names already emitted (one per
     /// distinct arg-carrying handler shape), so they aren't re-declared.
     sig_shapes: HashSet<String>,
+    /// In-namespace `<alias>` typedefs -> their inner `<type>` node. Resolved
+    /// lazily (and transitively) in `map`, gated to scalar targets so a `bool_t`/
+    /// `codepoint_t`/`Quark`-style typedef binds as its underlying integer.
+    aliases: HashMap<String, &'a Node>,
 }
 
 impl<'a> Emitter<'a> {
@@ -544,6 +563,12 @@ impl<'a> Emitter<'a> {
                 }
             }
         }
+        let mut aliases = HashMap::new();
+        for a in ns.children_named("alias") {
+            if let (Some(n), Some(ty)) = (a.attr("name"), a.child_named("type")) {
+                aliases.insert(n.to_string(), ty);
+            }
+        }
         Emitter {
             ns,
             out,
@@ -557,6 +582,7 @@ impl<'a> Emitter<'a> {
             record_types,
             imported: Vec::new(),
             sig_shapes: HashSet::new(),
+            aliases,
         }
     }
 
@@ -618,6 +644,21 @@ impl<'a> Emitter<'a> {
             return Some(m);
         }
         let name = t.attr("name")?;
+        // Typedef aliases -> their underlying type, gated to scalars (an alias to
+        // a string/array/object would mis-bind). In-namespace names resolve
+        // (transitively) through the local `<alias>` table; a foreign `Ns.Local`
+        // name resolves through that package's pre-computed scalar aliases.
+        if let Some((ns, local)) = name.split_once('.') {
+            if let Some(m) = self.foreign.get(ns).and_then(|f| f.aliases.get(local)) {
+                return Some(m.clone());
+            }
+        } else if let Some(inner) = self.aliases.get(name) {
+            if let Some(m) = self.map(inner) {
+                if matches!(m.cat, Cat::Scalar) {
+                    return Some(m);
+                }
+            }
+        }
         // A few foreign scalar typedefs used pervasively across the stack.
         let foreign_scalar = match name {
             "GLib.Quark" => Some("u32"),
@@ -625,23 +666,23 @@ impl<'a> Emitter<'a> {
             _ => None,
         };
         if let Some(s) = foreign_scalar {
-            return Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None });
+            return Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None, record: false });
         }
         // Enum/bitfield (in-namespace or foreign) -> its ABI integer. Callers pass
         // the emitted constant fns (e.g. `orientation_horizontal()`).
         if let Some(repr) = self.enum_repr_of(name) {
-            return Some(Mapped { cat: Cat::Scalar, extern_ty: repr, obj: None });
+            return Some(Mapped { cat: Cat::Scalar, extern_ty: repr, obj: None, record: false });
         }
         // Class/interface (in-namespace or foreign via --use) -> wrapper struct.
         if let Some(wt) = self.wrapper_type_of(name) {
-            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(wt) });
+            return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(wt), record: false });
         }
         // Boxed record (in-namespace or foreign) -> opaque handle, but ONLY where
         // the ABI passes it by pointer. A by-value value-struct can't be a handle,
         // so it stays a SKIP.
         if ctype_is_pointer(t) {
             if let Some(rt) = self.record_type_of(name) {
-                return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(rt) });
+                return Some(Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(rt), record: true });
             }
         }
         None
@@ -773,6 +814,9 @@ impl<'a> Emitter<'a> {
             Some(p) => p,
             None => return,
         };
+        if !self.fold_gate("fn", name, &params, &ret) {
+            return;
+        }
 
         // C+ free functions share one global name space; a wrapper whose bare
         // name is already taken (a sibling function or a reserved import symbol)
@@ -824,12 +868,22 @@ impl<'a> Emitter<'a> {
             ext_params.join(", ")
         );
 
+        // A single string/class-object out-param folds into the wrapper's return
+        // (`fold_gate` guarantees at most one, and a void/gboolean callable
+        // return). The out is dropped from the signature; its filled `T*`/`char*`
+        // becomes `Option[T]`, `None` iff the callee left the slot NULL.
+        let fold = params.iter().position(|p| p.out && is_foldable_out(&p.m));
+        let fold_out = fold.map(|i| &params[i]);
+
         // --- wrapper signature (ergonomic types) ---
         let mut wrap_params: Vec<String> = Vec::new();
         if recv.is_some() {
             wrap_params.push("this".to_string());
         }
-        for p in params {
+        for (i, p) in params.iter().enumerate() {
+            if Some(i) == fold {
+                continue; // folded into the return
+            }
             // Out scalar -> `ref name: T` (C+ `ref` is a mutable write-back
             // borrow, exactly an out-param). Others take the wrapper/scalar by
             // value (object wrappers are non-owning handles, so the move is safe).
@@ -839,9 +893,32 @@ impl<'a> Emitter<'a> {
                 wrap_params.push(format!("{}: {}", p.name, p.m.wrap_param_ty()));
             }
         }
-        let wrap_ret = ret.wrap_ret_ty(ret_nullable);
+        // Return signature: a folded out overrides the callable's own return.
+        let (fold_ret_ty, fold_none, fold_conv) = match fold_out {
+            Some(p) => {
+                let (t, conv) = match p.m.cat {
+                    Cat::Str => {
+                        let c = if p.full { "bridge::cstr_to_text_full(__out)" } else { "bridge::cstr_to_text(__out)" };
+                        ("text::Text".to_string(), c.to_string())
+                    }
+                    _ => {
+                        let o = p.m.obj.clone().unwrap();
+                        (o.clone(), format!("{o}::from_raw(__out)"))
+                    }
+                };
+                (Some(format!("option::Option[{t}]")), format!("option::Option[{t}]::None"), conv)
+            }
+            None => (None, String::new(), String::new()),
+        };
+        let wrap_ret = match &fold_ret_ty {
+            Some(t) => t.clone(),
+            None => ret.wrap_ret_ty(ret_nullable),
+        };
         let wrap_ret_sig = if wrap_ret == "()" { String::new() } else { format!(" -> {wrap_ret}") };
         let mut w = format!("    fn {wname}({}){wrap_ret_sig} {{\n", wrap_params.join(", "));
+        if fold.is_some() {
+            w.push_str("        let __out: *u8 = { 0 as *u8 };\n");
+        }
 
         // --- marshal params in ---
         let mut call_args: Vec<String> = Vec::new();
@@ -849,12 +926,13 @@ impl<'a> Emitter<'a> {
             call_args.push(r.to_string());
         }
         let mut frees: Vec<String> = Vec::new();
-        for p in params {
+        for (i, p) in params.iter().enumerate() {
             let n = &p.name;
             if p.out {
-                // Pass the address of the caller's `ref` place; the callee writes
-                // through it.
-                call_args.push(format!("({{ #addr_of({n}) as *{} }})", p.m.extern_ty));
+                // Pass the address of the write-back slot — the folded out's local
+                // `__out`, or the caller's `ref` place for a scalar out.
+                let place = if Some(i) == fold { "__out" } else { n.as_str() };
+                call_args.push(format!("({{ #addr_of({place}) as *{} }})", p.m.extern_ty));
                 continue;
             }
             match p.m.cat {
@@ -875,6 +953,23 @@ impl<'a> Emitter<'a> {
                 out.push_str(&format!("        bridge::free_cstring({fr});\n"));
             }
         };
+
+        // --- folded out-param: convert `__out` into the wrapper's Option[T] ---
+        if fold.is_some() {
+            // The callable's own return (void, or a gboolean) is discarded;
+            // presence is inferred from whether the callee filled the slot. The
+            // slot starts NULL, so a function that leaves its out untouched on
+            // failure yields `None`, while one that always writes it (e.g.
+            // `g_get_charset`, whose gboolean reports "is UTF-8", not success)
+            // yields `Some`. Gating on the gboolean instead would wrongly drop
+            // that second class of result.
+            w.push_str(&format!("        {call};\n"));
+            emit_frees(&mut w);
+            w.push_str(&format!("        if __out == {{ 0 as *u8 }} {{ return {fold_none}; }}\n"));
+            w.push_str(&format!("        return option::some({fold_conv});\n"));
+            w.push_str("    }\n\n");
+            return (ext, w);
+        }
 
         // --- invoke + convert the return ---
         match ret.cat {
@@ -1061,7 +1156,10 @@ impl<'a> Emitter<'a> {
             .and_then(|r| r.attr("nullable"))
             .map(|v| v == "1")
             .unwrap_or(false);
-        let ret = Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ty.to_string()) };
+        let ret = Mapped { cat: Cat::Obj, extern_ty: "*u8".to_string(), obj: Some(ty.to_string()), record: false };
+        if !self.fold_gate("ctor", &format!("{ty}::{name}"), &params, &ret) {
+            return;
+        }
         let (ext, wrap) = self.render(&wname, cid, None, &ret, false, nullable, &params);
         self.out.push_str(&ext);
         body.push_str(&wrap);
@@ -1099,6 +1197,9 @@ impl<'a> Emitter<'a> {
             Some(p) => p,
             None => return,
         };
+        if !self.fold_gate("method", &label, &params, &ret) {
+            return;
+        }
         let wname = ident(name);
         if !methods.insert(wname.clone()) {
             self.skip("method", &label, &format!("method name `{wname}` already defined"));
@@ -1135,18 +1236,45 @@ impl<'a> Emitter<'a> {
                         return None;
                     }
                 };
-                // Out params are bound only for plain scalars (`ref x: T` write-
-                // back). An out string/object/bool/record needs alloc/convert we
-                // don't model yet, so skip the whole callable.
-                if is_out && m.cat != Cat::Scalar {
-                    self.skip(kind, label, &format!("out parameter `{}` — only scalar out-params are bound", p.attr("name").unwrap_or("?")));
+                // Out params: a plain scalar becomes `ref x: T` (write-back). A
+                // string or class-object out (ABI `char**` / `T**`) is *foldable*
+                // — the render pass turns a single such out into the wrapper's
+                // `Option[T]` return (gated by `fold_gate`). Everything else (bool,
+                // gpointer, or a boxed/value-struct record out — often a caller-
+                // allocated `T*` we can't safely fill) skips the whole callable.
+                if is_out && !is_foldable_out(&m) && m.cat != Cat::Scalar {
+                    self.skip(kind, label, &format!("out parameter `{}` — non-foldable out ({})", p.attr("name").unwrap_or("?"), out_reason(&m)));
                     return None;
                 }
                 let pname = ident(p.attr("name").unwrap_or("arg"));
-                params.push(Param { name: pname, m, out: is_out });
+                let full = matches!(p.attr("transfer-ownership"), Some("full"));
+                params.push(Param { name: pname, m, out: is_out, full });
             }
         }
         Some(params)
+    }
+
+    /// After both the return type and params are mapped, decide whether a
+    /// callable carrying foldable out-param(s) can be emitted. A single foldable
+    /// out folds into the wrapper's `Option[T]` return, but only when the callable
+    /// has no competing real return value (void or a gboolean success flag). More
+    /// than one foldable out, or one alongside a value return, is beyond what a
+    /// single `Option[T]` can carry, so the callable is skipped. Returns true when
+    /// OK to emit (emitting a SKIP itself when not).
+    fn fold_gate(&mut self, kind: &str, label: &str, params: &[Param], ret: &Mapped) -> bool {
+        let folds = params.iter().filter(|p| p.out && is_foldable_out(&p.m)).count();
+        if folds == 0 {
+            return true;
+        }
+        if folds > 1 {
+            self.skip(kind, label, "multiple string/object out-params — only a single out folds into the return");
+            return false;
+        }
+        if !matches!(ret.cat, Cat::Void | Cat::Bool) {
+            self.skip(kind, label, "string/object out-param alongside a value return — cannot fold");
+            return false;
+        }
+        true
     }
 
     /// Bind a signal as `connect_<name>`. Slice 2 handles the two handler shapes
@@ -1267,8 +1395,9 @@ fn sig_shape_key(args: &[String], ret: &str) -> String {
 // Type mapping
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 enum Cat {
+    #[default]
     Void,
     Scalar,
     Bool,
@@ -1277,13 +1406,19 @@ enum Cat {
     Obj,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Mapped {
     cat: Cat,
     extern_ty: String,
     /// For `Cat::Obj`: the wrapper struct name (a class/interface in this
     /// namespace). None otherwise.
     obj: Option<String>,
+    /// For `Cat::Obj`: true when the wrapper is a boxed `<record>` (opaque
+    /// handle over a value-struct) rather than a `<class>`/`<interface>`. A
+    /// class-object out-param is a real `T**` and can be folded into the return;
+    /// a record out-param is often a caller-allocated value-struct (`T*`), so it
+    /// must not be folded.
+    record: bool,
 }
 
 /// One bound parameter: its name, mapped type, and whether it is an out
@@ -1293,6 +1428,9 @@ struct Param {
     name: String,
     m: Mapped,
     out: bool,
+    /// Out param with `transfer-ownership="full"` — a folded string out then
+    /// takes ownership of the returned buffer (`cstr_to_text_full`).
+    full: bool,
 }
 
 impl Mapped {
@@ -1339,12 +1477,12 @@ impl Mapped {
 /// class set.
 fn map_type(t: &Node) -> Option<Mapped> {
     let name = t.attr("name")?;
-    let scalar = |s: &str| Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None });
+    let scalar = |s: &str| Some(Mapped { cat: Cat::Scalar, extern_ty: s.to_string(), obj: None, record: false });
     match name {
-        "none" => Some(Mapped { cat: Cat::Void, extern_ty: "()".to_string(), obj: None }),
-        "gboolean" => Some(Mapped { cat: Cat::Bool, extern_ty: "i32".to_string(), obj: None }),
-        "utf8" | "filename" => Some(Mapped { cat: Cat::Str, extern_ty: "*u8".to_string(), obj: None }),
-        "gpointer" => Some(Mapped { cat: Cat::Ptr, extern_ty: "*u8".to_string(), obj: None }),
+        "none" => Some(Mapped { cat: Cat::Void, extern_ty: "()".to_string(), obj: None, record: false }),
+        "gboolean" => Some(Mapped { cat: Cat::Bool, extern_ty: "i32".to_string(), obj: None, record: false }),
+        "utf8" | "filename" => Some(Mapped { cat: Cat::Str, extern_ty: "*u8".to_string(), obj: None, record: false }),
+        "gpointer" => Some(Mapped { cat: Cat::Ptr, extern_ty: "*u8".to_string(), obj: None, record: false }),
         "gint" | "gint32" => scalar("i32"),
         "guint" | "guint32" => scalar("u32"),
         "gint8" | "gchar" => scalar("i8"),
@@ -1355,6 +1493,8 @@ fn map_type(t: &Node) -> Option<Mapped> {
         "guint64" | "gulong" => scalar("u64"),
         "gsize" => scalar("usize"),
         "gssize" => scalar("isize"),
+        "guintptr" => scalar("usize"),
+        "gintptr" => scalar("isize"),
         "gfloat" => scalar("f32"),
         "gdouble" => scalar("f64"),
         "gunichar" => scalar("u32"),
@@ -1376,6 +1516,24 @@ fn ctype_is_pointer(t: &Node) -> bool {
             c.ends_with('*') || c == "gpointer" || c == "gconstpointer"
         }
         None => false,
+    }
+}
+
+/// True if an out-param can be folded into the wrapper's return value: a string
+/// (`char**`) or a real class/interface object (`T**`). A boxed/value-struct
+/// record out is excluded — it is frequently a caller-allocated `T*` we cannot
+/// fill through an 8-byte slot without corrupting the stack.
+fn is_foldable_out(m: &Mapped) -> bool {
+    matches!(m.cat, Cat::Str) || (matches!(m.cat, Cat::Obj) && !m.record)
+}
+
+/// Reason a non-scalar, non-foldable out-param can't be bound.
+fn out_reason(m: &Mapped) -> &'static str {
+    match m.cat {
+        Cat::Obj => "value-struct/record out-param",
+        Cat::Bool => "bool out-param",
+        Cat::Ptr => "raw-pointer out-param",
+        _ => "unsupported out-param",
     }
 }
 
@@ -1731,6 +1889,7 @@ mod tests {
                 classes: HashSet::new(),
                 enums: HashMap::new(),
                 records: ["Rectangle".to_string()].into_iter().collect(),
+                aliases: HashMap::new(),
             },
         );
         let src = r#"<repository><namespace name="Gtk">
@@ -1775,9 +1934,59 @@ mod tests {
         assert!(out.contains("fn get_size_request(this, ref width: i32, ref height: i32) {"));
         assert!(out.contains("extern fn __c_gtk_widget_get_size_request(__recv: *u8, width: *i32, height: *i32)"));
         assert!(out.contains("#addr_of(width) as *i32"));
-        // out string is not modelled -> the whole method is skipped
-        assert!(out.contains("// SKIPPED method `Widget::get_name`"));
-        assert!(!out.contains("fn get_name("));
+        // a single string out folds into the return: `-> Option[Text]`, the out
+        // drops from the signature, and a NULL slot yields None.
+        assert!(out.contains("fn get_name(this) -> option::Option[text::Text] {"));
+        assert!(out.contains("extern fn __c_gtk_widget_get_name_out(__recv: *u8, name: **u8)"));
+        assert!(out.contains("let __out: *u8 = { 0 as *u8 };"));
+        assert!(out.contains("if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }"));
+    }
+
+    #[test]
+    fn scalar_alias_resolves_to_underlying_type() {
+        // A namespace `<alias>` to a fundamental scalar (`hb_codepoint_t` ->
+        // guint32) resolves so params/returns of the alias type bind. An alias to
+        // a non-scalar (a string) must NOT resolve (it would mis-bind).
+        let src = r#"<repository><namespace name="HarfBuzz">
+          <alias name="codepoint_t" c:type="hb_codepoint_t"><type name="guint32" c:type="uint32_t"/></alias>
+          <alias name="strv_t" c:type="hb_strv_t"><type name="utf8" c:type="char**"/></alias>
+          <function name="glyph_id" c:identifier="hb_glyph_id">
+            <return-value><type name="codepoint_t" c:type="hb_codepoint_t"/></return-value>
+            <parameters><parameter name="cp"><type name="codepoint_t" c:type="hb_codepoint_t"/></parameter></parameters>
+          </function>
+          <function name="wants_strv" c:identifier="hb_wants_strv">
+            <return-value><type name="none"/></return-value>
+            <parameters><parameter name="s"><type name="strv_t" c:type="hb_strv_t"/></parameter></parameters>
+          </function>
+        </namespace></repository>"#;
+        let out = emit(src);
+        // scalar alias -> u32 on both sides
+        assert!(out.contains("fn glyph_id(cp: u32) -> u32 {"));
+        // non-scalar alias stays unmapped -> the callable is skipped
+        assert!(out.contains("// SKIPPED fn `wants_strv`"));
+        assert!(!out.contains("fn wants_strv("));
+    }
+
+    #[test]
+    fn record_out_param_is_not_folded() {
+        // A record (value-struct) out-param must never fold — it is frequently a
+        // caller-allocated `T*`, not a `T**`, so filling an 8-byte slot would
+        // corrupt the stack. The whole callable stays skipped.
+        let src = r#"<repository><namespace name="Gtk">
+          <record name="TextIter" glib:type-name="GtkTextIter"/>
+          <class name="TextBuffer" c:type="GtkTextBuffer" glib:type-name="GtkTextBuffer">
+            <method name="get_start_iter" c:identifier="gtk_text_buffer_get_start_iter">
+              <return-value><type name="none"/></return-value>
+              <parameters>
+                <instance-parameter name="b"><type name="TextBuffer"/></instance-parameter>
+                <parameter name="iter" direction="out"><type name="TextIter" c:type="GtkTextIter*"/></parameter>
+              </parameters>
+            </method>
+          </class></namespace></repository>"#;
+        let out = emit(src);
+        assert!(out.contains("// SKIPPED method `TextBuffer::get_start_iter`"));
+        assert!(out.contains("value-struct/record out-param"));
+        assert!(!out.contains("fn get_start_iter("));
     }
 
     #[test]

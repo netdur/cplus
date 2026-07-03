@@ -11,8 +11,6 @@ edition = "2026"
 [dependencies]
 gobject = "*"
 stdlib  = "*"
-glib        = "*"
-gobject_gir = "*"
 
 [link]
 libs = ["cairo-gobject"]

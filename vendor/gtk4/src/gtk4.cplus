@@ -1081,9 +1081,9 @@ fn accessible_state_init_value(state: i32, value: gobject_gir::Value) {
     return;
 }
 
-// SKIPPED fn `bitset_iter_init_at`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED fn `bitset_iter_init_first`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED fn `bitset_iter_init_last`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED fn `bitset_iter_init_at`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `bitset_iter_init_first`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `bitset_iter_init_last`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_builder_error_quark"]
 extern fn __c_gtk_builder_error_quark() -> u32;
 fn builder_error_quark() -> u32 {
@@ -1492,7 +1492,7 @@ fn tree_create_row_drag_content(tree_model: TreeModel, path: TreePath) -> gdk::C
     return gdk::ContentProvider::from_raw(__r);
 }
 
-// SKIPPED fn `tree_get_row_drag_data`: out parameter `tree_model` — only scalar out-params are bound
+// SKIPPED fn `tree_get_row_drag_data`: out parameter `path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_row_reference_deleted"]
 extern fn __c_gtk_tree_row_reference_deleted(proxy: *u8, path: *u8);
 fn tree_row_reference_deleted(proxy: gobject_gir::Object, path: TreePath) {
@@ -1920,7 +1920,7 @@ impl CellLayout {
 }
 
 // SKIPPED method `ColorChooser::add_palette`: param `colors` — no <type> (array, callback, or varargs)
-// SKIPPED method `ColorChooser::get_rgba`: out parameter `color` — only scalar out-params are bound
+// SKIPPED method `ColorChooser::get_rgba`: out parameter `color` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_color_chooser_get_use_alpha"]
 extern fn __c_gtk_color_chooser_get_use_alpha(__recv: *u8) -> i32;
 #[link_name = "gtk_color_chooser_set_rgba"]
@@ -2655,7 +2655,7 @@ impl Root {
 
 }
 
-// SKIPPED method `Scrollable::get_border`: out parameter `border` — only scalar out-params are bound
+// SKIPPED method `Scrollable::get_border`: out parameter `border` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_scrollable_get_hadjustment"]
 extern fn __c_gtk_scrollable_get_hadjustment(__recv: *u8) -> *u8;
 #[link_name = "gtk_scrollable_get_hscroll_policy"]
@@ -2952,9 +2952,9 @@ extern fn __c_gtk_tree_model_filter_new(__recv: *u8, root: *u8) -> *u8;
 extern fn __c_gtk_tree_model_get_column_type(__recv: *u8, index_: i32) -> usize;
 #[link_name = "gtk_tree_model_get_flags"]
 extern fn __c_gtk_tree_model_get_flags(__recv: *u8) -> u32;
-// SKIPPED method `TreeModel::get_iter`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeModel::get_iter_first`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeModel::get_iter_from_string`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeModel::get_iter`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeModel::get_iter_first`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeModel::get_iter_from_string`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_get_n_columns"]
 extern fn __c_gtk_tree_model_get_n_columns(__recv: *u8) -> i32;
 #[link_name = "gtk_tree_model_get_path"]
@@ -2962,16 +2962,16 @@ extern fn __c_gtk_tree_model_get_path(__recv: *u8, iter: *u8) -> *u8;
 #[link_name = "gtk_tree_model_get_string_from_iter"]
 extern fn __c_gtk_tree_model_get_string_from_iter(__recv: *u8, iter: *u8) -> *u8;
 // SKIPPED method `TreeModel::get_valist`: param `var_args` — unmapped type `va_list`
-// SKIPPED method `TreeModel::get_value`: out parameter `value` — only scalar out-params are bound
-// SKIPPED method `TreeModel::iter_children`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeModel::get_value`: out parameter `value` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeModel::iter_children`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_iter_has_child"]
 extern fn __c_gtk_tree_model_iter_has_child(__recv: *u8, iter: *u8) -> i32;
 #[link_name = "gtk_tree_model_iter_n_children"]
 extern fn __c_gtk_tree_model_iter_n_children(__recv: *u8, iter: *u8) -> i32;
 #[link_name = "gtk_tree_model_iter_next"]
 extern fn __c_gtk_tree_model_iter_next(__recv: *u8, iter: *u8) -> i32;
-// SKIPPED method `TreeModel::iter_nth_child`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeModel::iter_parent`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeModel::iter_nth_child`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeModel::iter_parent`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_iter_previous"]
 extern fn __c_gtk_tree_model_iter_previous(__recv: *u8, iter: *u8) -> i32;
 #[link_name = "gtk_tree_model_ref_node"]
@@ -3772,7 +3772,7 @@ extern fn __c_gtk_recent_info_exists(__recv: *u8) -> i32;
 extern fn __c_gtk_recent_info_get_added(__recv: *u8) -> *u8;
 #[link_name = "gtk_recent_info_get_age"]
 extern fn __c_gtk_recent_info_get_age(__recv: *u8) -> i32;
-// SKIPPED method `RecentInfo::get_application_info`: out parameter `app_exec` — only scalar out-params are bound
+// SKIPPED method `RecentInfo::get_application_info`: out parameter `stamp` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `RecentInfo::get_applications`: return type — no <type> (array, callback, or varargs)
 #[link_name = "gtk_recent_info_get_description"]
 extern fn __c_gtk_recent_info_get_description(__recv: *u8) -> *u8;
@@ -4041,7 +4041,7 @@ extern fn __c_gtk_text_iter_backward_cursor_positions(__recv: *u8, count: i32) -
 extern fn __c_gtk_text_iter_backward_line(__recv: *u8) -> i32;
 #[link_name = "gtk_text_iter_backward_lines"]
 extern fn __c_gtk_text_iter_backward_lines(__recv: *u8, count: i32) -> i32;
-// SKIPPED method `TextIter::backward_search`: out parameter `match_start` — only scalar out-params are bound
+// SKIPPED method `TextIter::backward_search`: out parameter `match_start` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_iter_backward_sentence_start"]
 extern fn __c_gtk_text_iter_backward_sentence_start(__recv: *u8) -> i32;
 #[link_name = "gtk_text_iter_backward_sentence_starts"]
@@ -4095,7 +4095,7 @@ extern fn __c_gtk_text_iter_forward_cursor_positions(__recv: *u8, count: i32) ->
 extern fn __c_gtk_text_iter_forward_line(__recv: *u8) -> i32;
 #[link_name = "gtk_text_iter_forward_lines"]
 extern fn __c_gtk_text_iter_forward_lines(__recv: *u8, count: i32) -> i32;
-// SKIPPED method `TextIter::forward_search`: out parameter `match_start` — only scalar out-params are bound
+// SKIPPED method `TextIter::forward_search`: out parameter `match_start` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_iter_forward_sentence_end"]
 extern fn __c_gtk_text_iter_forward_sentence_end(__recv: *u8) -> i32;
 #[link_name = "gtk_text_iter_forward_sentence_ends"]
@@ -6768,8 +6768,8 @@ extern fn __c_gtk_builder_set_current_object(__recv: *u8, current_object: *u8);
 extern fn __c_gtk_builder_set_scope(__recv: *u8, scope: *u8);
 #[link_name = "gtk_builder_set_translation_domain"]
 extern fn __c_gtk_builder_set_translation_domain(__recv: *u8, domain: *u8);
-// SKIPPED method `Builder::value_from_string`: out parameter `value` — only scalar out-params are bound
-// SKIPPED method `Builder::value_from_string_type`: out parameter `value` — only scalar out-params are bound
+// SKIPPED method `Builder::value_from_string`: out parameter `value` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Builder::value_from_string_type`: out parameter `value` — non-foldable out (value-struct/record out-param)
 // `Builder` — GObject wrapper (non-owning handle); parent `GObject.Object`.
 struct Builder {
     opaque _raw: *u8,
@@ -7374,8 +7374,8 @@ extern fn __c_gtk_cell_area_event(__recv: *u8, context: *u8, widget: *u8, event:
 extern fn __c_gtk_cell_area_focus(__recv: *u8, direction: i32) -> i32;
 // SKIPPED method `CellArea::foreach`: param `callback` — unmapped type `CellCallback`
 // SKIPPED method `CellArea::foreach_alloc`: param `callback` — unmapped type `CellAllocCallback`
-// SKIPPED method `CellArea::get_cell_allocation`: out parameter `allocation` — only scalar out-params are bound
-// SKIPPED method `CellArea::get_cell_at_position`: out parameter `alloc_area` — only scalar out-params are bound
+// SKIPPED method `CellArea::get_cell_allocation`: out parameter `allocation` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `CellArea::get_cell_at_position`: out parameter `alloc_area` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_cell_area_get_current_path_string"]
 extern fn __c_gtk_cell_area_get_current_path_string(__recv: *u8) -> *u8;
 #[link_name = "gtk_cell_area_get_edit_widget"]
@@ -7399,7 +7399,7 @@ extern fn __c_gtk_cell_area_get_preferred_width_for_height(__recv: *u8, context:
 extern fn __c_gtk_cell_area_get_request_mode(__recv: *u8) -> i32;
 #[link_name = "gtk_cell_area_has_renderer"]
 extern fn __c_gtk_cell_area_has_renderer(__recv: *u8, renderer: *u8) -> i32;
-// SKIPPED method `CellArea::inner_cell_area`: out parameter `inner_area` — only scalar out-params are bound
+// SKIPPED method `CellArea::inner_cell_area`: out parameter `inner_area` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_cell_area_is_activatable"]
 extern fn __c_gtk_cell_area_is_activatable(__recv: *u8) -> i32;
 #[link_name = "gtk_cell_area_is_focus_sibling"]
@@ -7764,7 +7764,7 @@ impl CellAreaContext {
 
 #[link_name = "gtk_cell_renderer_activate"]
 extern fn __c_gtk_cell_renderer_activate(__recv: *u8, event: *u8, widget: *u8, path: *u8, background_area: *u8, cell_area: *u8, flags: u32) -> i32;
-// SKIPPED method `CellRenderer::get_aligned_area`: out parameter `aligned_area` — only scalar out-params are bound
+// SKIPPED method `CellRenderer::get_aligned_area`: out parameter `aligned_area` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_cell_renderer_get_alignment"]
 extern fn __c_gtk_cell_renderer_get_alignment(__recv: *u8, xalign: *f32, yalign: *f32);
 #[link_name = "gtk_cell_renderer_get_fixed_size"]
@@ -7779,7 +7779,7 @@ extern fn __c_gtk_cell_renderer_get_padding(__recv: *u8, xpad: *i32, ypad: *i32)
 extern fn __c_gtk_cell_renderer_get_preferred_height(__recv: *u8, widget: *u8, minimum_size: *i32, natural_size: *i32);
 #[link_name = "gtk_cell_renderer_get_preferred_height_for_width"]
 extern fn __c_gtk_cell_renderer_get_preferred_height_for_width(__recv: *u8, widget: *u8, width: i32, minimum_height: *i32, natural_height: *i32);
-// SKIPPED method `CellRenderer::get_preferred_size`: out parameter `minimum_size` — only scalar out-params are bound
+// SKIPPED method `CellRenderer::get_preferred_size`: out parameter `minimum_size` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_cell_renderer_get_preferred_width"]
 extern fn __c_gtk_cell_renderer_get_preferred_width(__recv: *u8, widget: *u8, minimum_size: *i32, natural_size: *i32);
 #[link_name = "gtk_cell_renderer_get_preferred_width_for_height"]
@@ -9571,7 +9571,7 @@ extern fn __c_gtk_combo_box_new_with_model_and_entry(model: *u8) -> *u8;
 extern fn __c_gtk_combo_box_get_active(__recv: *u8) -> i32;
 #[link_name = "gtk_combo_box_get_active_id"]
 extern fn __c_gtk_combo_box_get_active_id(__recv: *u8) -> *u8;
-// SKIPPED method `ComboBox::get_active_iter`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `ComboBox::get_active_iter`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_combo_box_get_button_sensitivity"]
 extern fn __c_gtk_combo_box_get_button_sensitivity(__recv: *u8) -> i32;
 #[link_name = "gtk_combo_box_get_child"]
@@ -11302,7 +11302,7 @@ extern fn __c_gtk_entry_get_extra_menu(__recv: *u8) -> *u8;
 extern fn __c_gtk_entry_get_has_frame(__recv: *u8) -> i32;
 #[link_name = "gtk_entry_get_icon_activatable"]
 extern fn __c_gtk_entry_get_icon_activatable(__recv: *u8, icon_pos: i32) -> i32;
-// SKIPPED method `Entry::get_icon_area`: out parameter `icon_area` — only scalar out-params are bound
+// SKIPPED method `Entry::get_icon_area`: out parameter `icon_area` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_entry_get_icon_at_pos"]
 extern fn __c_gtk_entry_get_icon_at_pos(__recv: *u8, x: i32, y: i32) -> i32;
 #[link_name = "gtk_entry_get_icon_gicon"]
@@ -13964,7 +13964,7 @@ extern fn __c_gtk_font_dialog_choose_face_finish(__recv: *u8, result: *u8) -> *u
 extern fn __c_gtk_font_dialog_choose_family_finish(__recv: *u8, result: *u8) -> *u8;
 // SKIPPED method `FontDialog::choose_font`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 // SKIPPED method `FontDialog::choose_font_and_features`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
-// SKIPPED method `FontDialog::choose_font_and_features_finish`: out parameter `font_desc` — only scalar out-params are bound
+// SKIPPED method `FontDialog::choose_font_and_features_finish`: out parameter `font_desc` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_font_dialog_choose_font_finish"]
 extern fn __c_gtk_font_dialog_choose_font_finish(__recv: *u8, result: *u8) -> *u8;
 #[link_name = "gtk_font_dialog_get_filter"]
@@ -14480,7 +14480,7 @@ impl GLArea {
 
 }
 
-// SKIPPED method `Gesture::get_bounding_box`: out parameter `rect` — only scalar out-params are bound
+// SKIPPED method `Gesture::get_bounding_box`: out parameter `rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_gesture_get_bounding_box_center"]
 extern fn __c_gtk_gesture_get_bounding_box_center(__recv: *u8, x: *f64, y: *f64) -> i32;
 #[link_name = "gtk_gesture_get_device"]
@@ -15670,9 +15670,11 @@ extern fn __c_gtk_im_context_filter_keypress(__recv: *u8, event: *u8) -> i32;
 extern fn __c_gtk_im_context_focus_in(__recv: *u8);
 #[link_name = "gtk_im_context_focus_out"]
 extern fn __c_gtk_im_context_focus_out(__recv: *u8);
-// SKIPPED method `IMContext::get_preedit_string`: out parameter `str` — only scalar out-params are bound
-// SKIPPED method `IMContext::get_surrounding`: out parameter `text` — only scalar out-params are bound
-// SKIPPED method `IMContext::get_surrounding_with_selection`: out parameter `text` — only scalar out-params are bound
+// SKIPPED method `IMContext::get_preedit_string`: out parameter `attrs` — non-foldable out (value-struct/record out-param)
+#[link_name = "gtk_im_context_get_surrounding"]
+extern fn __c_gtk_im_context_get_surrounding(__recv: *u8, text: **u8, cursor_index: *i32) -> i32;
+#[link_name = "gtk_im_context_get_surrounding_with_selection"]
+extern fn __c_gtk_im_context_get_surrounding_with_selection(__recv: *u8, text: **u8, cursor_index: *i32, anchor_index: *i32) -> i32;
 #[link_name = "gtk_im_context_reset"]
 extern fn __c_gtk_im_context_reset(__recv: *u8);
 #[link_name = "gtk_im_context_set_client_widget"]
@@ -15724,6 +15726,20 @@ impl IMContext {
     fn focus_out(this) {
         { __c_gtk_im_context_focus_out(this._raw) };
         return;
+    }
+
+    fn get_surrounding(this, ref cursor_index: i32) -> option::Option[text::Text] {
+        let __out: *u8 = { 0 as *u8 };
+        { __c_gtk_im_context_get_surrounding(this._raw, ({ #addr_of(__out) as **u8 }), ({ #addr_of(cursor_index) as *i32 })) };
+        if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+        return option::some(bridge::cstr_to_text_full(__out));
+    }
+
+    fn get_surrounding_with_selection(this, ref cursor_index: i32, ref anchor_index: i32) -> option::Option[text::Text] {
+        let __out: *u8 = { 0 as *u8 };
+        { __c_gtk_im_context_get_surrounding_with_selection(this._raw, ({ #addr_of(__out) as **u8 }), ({ #addr_of(cursor_index) as *i32 }), ({ #addr_of(anchor_index) as *i32 })) };
+        if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+        return option::some(bridge::cstr_to_text_full(__out));
     }
 
     fn reset(this) {
@@ -16016,15 +16032,15 @@ extern fn __c_gtk_icon_view_enable_model_drag_dest(__recv: *u8, formats: *u8, ac
 extern fn __c_gtk_icon_view_enable_model_drag_source(__recv: *u8, start_button_mask: u32, formats: *u8, actions: u32);
 #[link_name = "gtk_icon_view_get_activate_on_single_click"]
 extern fn __c_gtk_icon_view_get_activate_on_single_click(__recv: *u8) -> i32;
-// SKIPPED method `IconView::get_cell_rect`: out parameter `rect` — only scalar out-params are bound
+// SKIPPED method `IconView::get_cell_rect`: out parameter `rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_icon_view_get_column_spacing"]
 extern fn __c_gtk_icon_view_get_column_spacing(__recv: *u8) -> i32;
 #[link_name = "gtk_icon_view_get_columns"]
 extern fn __c_gtk_icon_view_get_columns(__recv: *u8) -> i32;
-// SKIPPED method `IconView::get_cursor`: out parameter `path` — only scalar out-params are bound
-// SKIPPED method `IconView::get_dest_item_at_pos`: out parameter `path` — only scalar out-params are bound
-// SKIPPED method `IconView::get_drag_dest_item`: out parameter `path` — only scalar out-params are bound
-// SKIPPED method `IconView::get_item_at_pos`: out parameter `path` — only scalar out-params are bound
+// SKIPPED method `IconView::get_cursor`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `IconView::get_dest_item_at_pos`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `IconView::get_drag_dest_item`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `IconView::get_item_at_pos`: out parameter `path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_icon_view_get_item_column"]
 extern fn __c_gtk_icon_view_get_item_column(__recv: *u8, path: *u8) -> i32;
 #[link_name = "gtk_icon_view_get_item_orientation"]
@@ -16058,8 +16074,8 @@ extern fn __c_gtk_icon_view_get_spacing(__recv: *u8) -> i32;
 extern fn __c_gtk_icon_view_get_text_column(__recv: *u8) -> i32;
 #[link_name = "gtk_icon_view_get_tooltip_column"]
 extern fn __c_gtk_icon_view_get_tooltip_column(__recv: *u8) -> i32;
-// SKIPPED method `IconView::get_tooltip_context`: out parameter `model` — only scalar out-params are bound
-// SKIPPED method `IconView::get_visible_range`: out parameter `start_path` — only scalar out-params are bound
+// SKIPPED method `IconView::get_tooltip_context`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `IconView::get_visible_range`: out parameter `start_path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_icon_view_item_activated"]
 extern fn __c_gtk_icon_view_item_activated(__recv: *u8, path: *u8);
 #[link_name = "gtk_icon_view_path_is_selected"]
@@ -18294,21 +18310,21 @@ impl ListItemFactory {
 
 // SKIPPED ctor `ListStore::new`: variadic
 // SKIPPED ctor `ListStore::newv`: param `types` — no <type> (array, callback, or varargs)
-// SKIPPED method `ListStore::append`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `ListStore::append`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_list_store_clear"]
 extern fn __c_gtk_list_store_clear(__recv: *u8);
-// SKIPPED method `ListStore::insert`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `ListStore::insert_after`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `ListStore::insert_before`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `ListStore::insert_with_values`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `ListStore::insert_with_valuesv`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `ListStore::insert`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `ListStore::insert_after`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `ListStore::insert_before`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `ListStore::insert_with_values`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `ListStore::insert_with_valuesv`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_list_store_iter_is_valid"]
 extern fn __c_gtk_list_store_iter_is_valid(__recv: *u8, iter: *u8) -> i32;
 #[link_name = "gtk_list_store_move_after"]
 extern fn __c_gtk_list_store_move_after(__recv: *u8, iter: *u8, position: *u8);
 #[link_name = "gtk_list_store_move_before"]
 extern fn __c_gtk_list_store_move_before(__recv: *u8, iter: *u8, position: *u8);
-// SKIPPED method `ListStore::prepend`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `ListStore::prepend`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_list_store_remove"]
 extern fn __c_gtk_list_store_remove(__recv: *u8, iter: *u8) -> i32;
 // SKIPPED method `ListStore::reorder`: param `new_order` — no <type> (array, callback, or varargs)
@@ -21088,7 +21104,7 @@ extern fn __c_gtk_popover_get_has_arrow(__recv: *u8) -> i32;
 extern fn __c_gtk_popover_get_mnemonics_visible(__recv: *u8) -> i32;
 #[link_name = "gtk_popover_get_offset"]
 extern fn __c_gtk_popover_get_offset(__recv: *u8, x_offset: *i32, y_offset: *i32);
-// SKIPPED method `Popover::get_pointing_to`: out parameter `rect` — only scalar out-params are bound
+// SKIPPED method `Popover::get_pointing_to`: out parameter `rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_popover_get_position"]
 extern fn __c_gtk_popover_get_position(__recv: *u8) -> i32;
 #[link_name = "gtk_popover_popdown"]
@@ -23187,7 +23203,7 @@ extern fn __c_gtk_range_get_fill_level(__recv: *u8) -> f64;
 extern fn __c_gtk_range_get_flippable(__recv: *u8) -> i32;
 #[link_name = "gtk_range_get_inverted"]
 extern fn __c_gtk_range_get_inverted(__recv: *u8) -> i32;
-// SKIPPED method `Range::get_range_rect`: out parameter `range_rect` — only scalar out-params are bound
+// SKIPPED method `Range::get_range_rect`: out parameter `range_rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_range_get_restrict_to_fill_level"]
 extern fn __c_gtk_range_get_restrict_to_fill_level(__recv: *u8) -> i32;
 #[link_name = "gtk_range_get_round_digits"]
@@ -26593,19 +26609,19 @@ impl StringSorter {
 extern fn __c_gtk_style_context_add_class(__recv: *u8, class_name: *u8);
 #[link_name = "gtk_style_context_add_provider"]
 extern fn __c_gtk_style_context_add_provider(__recv: *u8, provider: *u8, priority: u32);
-// SKIPPED method `StyleContext::get_border`: out parameter `border` — only scalar out-params are bound
-// SKIPPED method `StyleContext::get_color`: out parameter `color` — only scalar out-params are bound
+// SKIPPED method `StyleContext::get_border`: out parameter `border` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `StyleContext::get_color`: out parameter `color` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_style_context_get_display"]
 extern fn __c_gtk_style_context_get_display(__recv: *u8) -> *u8;
-// SKIPPED method `StyleContext::get_margin`: out parameter `margin` — only scalar out-params are bound
-// SKIPPED method `StyleContext::get_padding`: out parameter `padding` — only scalar out-params are bound
+// SKIPPED method `StyleContext::get_margin`: out parameter `margin` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `StyleContext::get_padding`: out parameter `padding` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_style_context_get_scale"]
 extern fn __c_gtk_style_context_get_scale(__recv: *u8) -> i32;
 #[link_name = "gtk_style_context_get_state"]
 extern fn __c_gtk_style_context_get_state(__recv: *u8) -> u32;
 #[link_name = "gtk_style_context_has_class"]
 extern fn __c_gtk_style_context_has_class(__recv: *u8, class_name: *u8) -> i32;
-// SKIPPED method `StyleContext::lookup_color`: out parameter `color` — only scalar out-params are bound
+// SKIPPED method `StyleContext::lookup_color`: out parameter `color` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_style_context_remove_class"]
 extern fn __c_gtk_style_context_remove_class(__recv: *u8, class_name: *u8);
 #[link_name = "gtk_style_context_remove_provider"]
@@ -26781,7 +26797,7 @@ impl Switch {
 extern fn __c_gtk_text_new() -> *u8;
 #[link_name = "gtk_text_new_with_buffer"]
 extern fn __c_gtk_text_new_with_buffer(buffer: *u8) -> *u8;
-// SKIPPED method `Text::compute_cursor_extents`: out parameter `strong` — only scalar out-params are bound
+// SKIPPED method `Text::compute_cursor_extents`: out parameter `strong` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_get_activates_default"]
 extern fn __c_gtk_text_get_activates_default(__recv: *u8) -> i32;
 #[link_name = "gtk_text_get_attributes"]
@@ -27136,7 +27152,7 @@ extern fn __c_gtk_text_buffer_delete_selection(__recv: *u8, interactive: i32, de
 extern fn __c_gtk_text_buffer_end_irreversible_action(__recv: *u8);
 #[link_name = "gtk_text_buffer_end_user_action"]
 extern fn __c_gtk_text_buffer_end_user_action(__recv: *u8);
-// SKIPPED method `TextBuffer::get_bounds`: out parameter `start` — only scalar out-params are bound
+// SKIPPED method `TextBuffer::get_bounds`: out parameter `start` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_buffer_get_can_redo"]
 extern fn __c_gtk_text_buffer_get_can_redo(__recv: *u8) -> i32;
 #[link_name = "gtk_text_buffer_get_can_undo"]
@@ -27145,17 +27161,17 @@ extern fn __c_gtk_text_buffer_get_can_undo(__recv: *u8) -> i32;
 extern fn __c_gtk_text_buffer_get_char_count(__recv: *u8) -> i32;
 #[link_name = "gtk_text_buffer_get_enable_undo"]
 extern fn __c_gtk_text_buffer_get_enable_undo(__recv: *u8) -> i32;
-// SKIPPED method `TextBuffer::get_end_iter`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TextBuffer::get_end_iter`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_buffer_get_has_selection"]
 extern fn __c_gtk_text_buffer_get_has_selection(__recv: *u8) -> i32;
 #[link_name = "gtk_text_buffer_get_insert"]
 extern fn __c_gtk_text_buffer_get_insert(__recv: *u8) -> *u8;
-// SKIPPED method `TextBuffer::get_iter_at_child_anchor`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextBuffer::get_iter_at_line`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextBuffer::get_iter_at_line_index`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextBuffer::get_iter_at_line_offset`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextBuffer::get_iter_at_mark`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextBuffer::get_iter_at_offset`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TextBuffer::get_iter_at_child_anchor`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextBuffer::get_iter_at_line`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextBuffer::get_iter_at_line_index`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextBuffer::get_iter_at_line_offset`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextBuffer::get_iter_at_mark`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextBuffer::get_iter_at_offset`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_buffer_get_line_count"]
 extern fn __c_gtk_text_buffer_get_line_count(__recv: *u8) -> i32;
 #[link_name = "gtk_text_buffer_get_mark"]
@@ -27166,12 +27182,12 @@ extern fn __c_gtk_text_buffer_get_max_undo_levels(__recv: *u8) -> u32;
 extern fn __c_gtk_text_buffer_get_modified(__recv: *u8) -> i32;
 #[link_name = "gtk_text_buffer_get_selection_bound"]
 extern fn __c_gtk_text_buffer_get_selection_bound(__recv: *u8) -> *u8;
-// SKIPPED method `TextBuffer::get_selection_bounds`: out parameter `start` — only scalar out-params are bound
+// SKIPPED method `TextBuffer::get_selection_bounds`: out parameter `start` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_buffer_get_selection_content"]
 extern fn __c_gtk_text_buffer_get_selection_content(__recv: *u8) -> *u8;
 #[link_name = "gtk_text_buffer_get_slice"]
 extern fn __c_gtk_text_buffer_get_slice(__recv: *u8, start: *u8, end: *u8, include_hidden_chars: i32) -> *u8;
-// SKIPPED method `TextBuffer::get_start_iter`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TextBuffer::get_start_iter`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_buffer_get_tag_table"]
 extern fn __c_gtk_text_buffer_get_tag_table(__recv: *u8) -> *u8;
 #[link_name = "gtk_text_buffer_get_text"]
@@ -27834,7 +27850,7 @@ extern fn __c_gtk_text_view_get_accepts_tab(__recv: *u8) -> i32;
 extern fn __c_gtk_text_view_get_bottom_margin(__recv: *u8) -> i32;
 #[link_name = "gtk_text_view_get_buffer"]
 extern fn __c_gtk_text_view_get_buffer(__recv: *u8) -> *u8;
-// SKIPPED method `TextView::get_cursor_locations`: out parameter `strong` — only scalar out-params are bound
+// SKIPPED method `TextView::get_cursor_locations`: out parameter `strong` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_view_get_cursor_visible"]
 extern fn __c_gtk_text_view_get_cursor_visible(__recv: *u8) -> i32;
 #[link_name = "gtk_text_view_get_editable"]
@@ -27849,14 +27865,14 @@ extern fn __c_gtk_text_view_get_indent(__recv: *u8) -> i32;
 extern fn __c_gtk_text_view_get_input_hints(__recv: *u8) -> u32;
 #[link_name = "gtk_text_view_get_input_purpose"]
 extern fn __c_gtk_text_view_get_input_purpose(__recv: *u8) -> i32;
-// SKIPPED method `TextView::get_iter_at_location`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextView::get_iter_at_position`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TextView::get_iter_location`: out parameter `location` — only scalar out-params are bound
+// SKIPPED method `TextView::get_iter_at_location`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextView::get_iter_at_position`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TextView::get_iter_location`: out parameter `location` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_view_get_justification"]
 extern fn __c_gtk_text_view_get_justification(__recv: *u8) -> i32;
 #[link_name = "gtk_text_view_get_left_margin"]
 extern fn __c_gtk_text_view_get_left_margin(__recv: *u8) -> i32;
-// SKIPPED method `TextView::get_line_at_y`: out parameter `target_iter` — only scalar out-params are bound
+// SKIPPED method `TextView::get_line_at_y`: out parameter `target_iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_view_get_line_yrange"]
 extern fn __c_gtk_text_view_get_line_yrange(__recv: *u8, iter: *u8, y: *i32, height: *i32);
 #[link_name = "gtk_text_view_get_ltr_context"]
@@ -27879,7 +27895,7 @@ extern fn __c_gtk_text_view_get_rtl_context(__recv: *u8) -> *u8;
 extern fn __c_gtk_text_view_get_tabs(__recv: *u8) -> *u8;
 #[link_name = "gtk_text_view_get_top_margin"]
 extern fn __c_gtk_text_view_get_top_margin(__recv: *u8) -> i32;
-// SKIPPED method `TextView::get_visible_rect`: out parameter `visible_rect` — only scalar out-params are bound
+// SKIPPED method `TextView::get_visible_rect`: out parameter `visible_rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_text_view_get_wrap_mode"]
 extern fn __c_gtk_text_view_get_wrap_mode(__recv: *u8) -> i32;
 #[link_name = "gtk_text_view_im_context_filter_keypress"]
@@ -28803,10 +28819,10 @@ impl TreeListRowSorter {
 
 #[link_name = "gtk_tree_model_filter_clear_cache"]
 extern fn __c_gtk_tree_model_filter_clear_cache(__recv: *u8);
-// SKIPPED method `TreeModelFilter::convert_child_iter_to_iter`: out parameter `filter_iter` — only scalar out-params are bound
+// SKIPPED method `TreeModelFilter::convert_child_iter_to_iter`: out parameter `filter_iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_filter_convert_child_path_to_path"]
 extern fn __c_gtk_tree_model_filter_convert_child_path_to_path(__recv: *u8, child_path: *u8) -> *u8;
-// SKIPPED method `TreeModelFilter::convert_iter_to_child_iter`: out parameter `child_iter` — only scalar out-params are bound
+// SKIPPED method `TreeModelFilter::convert_iter_to_child_iter`: out parameter `child_iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_filter_convert_path_to_child_path"]
 extern fn __c_gtk_tree_model_filter_convert_path_to_child_path(__recv: *u8, filter_path: *u8) -> *u8;
 #[link_name = "gtk_tree_model_filter_get_model"]
@@ -28871,10 +28887,10 @@ impl TreeModelFilter {
 extern fn __c_gtk_tree_model_sort_new_with_model(child_model: *u8) -> *u8;
 #[link_name = "gtk_tree_model_sort_clear_cache"]
 extern fn __c_gtk_tree_model_sort_clear_cache(__recv: *u8);
-// SKIPPED method `TreeModelSort::convert_child_iter_to_iter`: out parameter `sort_iter` — only scalar out-params are bound
+// SKIPPED method `TreeModelSort::convert_child_iter_to_iter`: out parameter `sort_iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_sort_convert_child_path_to_path"]
 extern fn __c_gtk_tree_model_sort_convert_child_path_to_path(__recv: *u8, child_path: *u8) -> *u8;
-// SKIPPED method `TreeModelSort::convert_iter_to_child_iter`: out parameter `child_iter` — only scalar out-params are bound
+// SKIPPED method `TreeModelSort::convert_iter_to_child_iter`: out parameter `child_iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_model_sort_convert_path_to_child_path"]
 extern fn __c_gtk_tree_model_sort_convert_path_to_child_path(__recv: *u8, sorted_path: *u8) -> *u8;
 #[link_name = "gtk_tree_model_sort_get_model"]
@@ -28945,7 +28961,7 @@ extern fn __c_gtk_tree_selection_count_selected_rows(__recv: *u8) -> i32;
 #[link_name = "gtk_tree_selection_get_mode"]
 extern fn __c_gtk_tree_selection_get_mode(__recv: *u8) -> i32;
 // SKIPPED method `TreeSelection::get_select_function`: return type — unmapped type `TreeSelectionFunc`
-// SKIPPED method `TreeSelection::get_selected`: out parameter `model` — only scalar out-params are bound
+// SKIPPED method `TreeSelection::get_selected`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `TreeSelection::get_selected_rows`: return type — unmapped type `GLib.List`
 #[link_name = "gtk_tree_selection_get_tree_view"]
 extern fn __c_gtk_tree_selection_get_tree_view(__recv: *u8) -> *u8;
@@ -29070,14 +29086,14 @@ impl TreeSelection {
 
 // SKIPPED ctor `TreeStore::new`: variadic
 // SKIPPED ctor `TreeStore::newv`: param `types` — no <type> (array, callback, or varargs)
-// SKIPPED method `TreeStore::append`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeStore::append`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_store_clear"]
 extern fn __c_gtk_tree_store_clear(__recv: *u8);
-// SKIPPED method `TreeStore::insert`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeStore::insert_after`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeStore::insert_before`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeStore::insert_with_values`: out parameter `iter` — only scalar out-params are bound
-// SKIPPED method `TreeStore::insert_with_valuesv`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeStore::insert`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeStore::insert_after`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeStore::insert_before`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeStore::insert_with_values`: out parameter `iter` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeStore::insert_with_valuesv`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_store_is_ancestor"]
 extern fn __c_gtk_tree_store_is_ancestor(__recv: *u8, iter: *u8, descendant: *u8) -> i32;
 #[link_name = "gtk_tree_store_iter_depth"]
@@ -29088,7 +29104,7 @@ extern fn __c_gtk_tree_store_iter_is_valid(__recv: *u8, iter: *u8) -> i32;
 extern fn __c_gtk_tree_store_move_after(__recv: *u8, iter: *u8, position: *u8);
 #[link_name = "gtk_tree_store_move_before"]
 extern fn __c_gtk_tree_store_move_before(__recv: *u8, iter: *u8, position: *u8);
-// SKIPPED method `TreeStore::prepend`: out parameter `iter` — only scalar out-params are bound
+// SKIPPED method `TreeStore::prepend`: out parameter `iter` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_store_remove"]
 extern fn __c_gtk_tree_store_remove(__recv: *u8, iter: *u8) -> i32;
 // SKIPPED method `TreeStore::reorder`: param `new_order` — no <type> (array, callback, or varargs)
@@ -29207,14 +29223,14 @@ extern fn __c_gtk_tree_view_expand_row(__recv: *u8, path: *u8, open_all: i32) ->
 extern fn __c_gtk_tree_view_expand_to_path(__recv: *u8, path: *u8);
 #[link_name = "gtk_tree_view_get_activate_on_single_click"]
 extern fn __c_gtk_tree_view_get_activate_on_single_click(__recv: *u8) -> i32;
-// SKIPPED method `TreeView::get_background_area`: out parameter `rect` — only scalar out-params are bound
-// SKIPPED method `TreeView::get_cell_area`: out parameter `rect` — only scalar out-params are bound
+// SKIPPED method `TreeView::get_background_area`: out parameter `rect` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeView::get_cell_area`: out parameter `rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_view_get_column"]
 extern fn __c_gtk_tree_view_get_column(__recv: *u8, n: i32) -> *u8;
 // SKIPPED method `TreeView::get_columns`: return type — unmapped type `GLib.List`
-// SKIPPED method `TreeView::get_cursor`: out parameter `path` — only scalar out-params are bound
-// SKIPPED method `TreeView::get_dest_row_at_pos`: out parameter `path` — only scalar out-params are bound
-// SKIPPED method `TreeView::get_drag_dest_row`: out parameter `path` — only scalar out-params are bound
+// SKIPPED method `TreeView::get_cursor`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeView::get_dest_row_at_pos`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeView::get_drag_dest_row`: out parameter `path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_view_get_enable_search"]
 extern fn __c_gtk_tree_view_get_enable_search(__recv: *u8) -> i32;
 #[link_name = "gtk_tree_view_get_enable_tree_lines"]
@@ -29239,7 +29255,7 @@ extern fn __c_gtk_tree_view_get_level_indentation(__recv: *u8) -> i32;
 extern fn __c_gtk_tree_view_get_model(__recv: *u8) -> *u8;
 #[link_name = "gtk_tree_view_get_n_columns"]
 extern fn __c_gtk_tree_view_get_n_columns(__recv: *u8) -> u32;
-// SKIPPED method `TreeView::get_path_at_pos`: out parameter `path` — only scalar out-params are bound
+// SKIPPED method `TreeView::get_path_at_pos`: out parameter `path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_view_get_reorderable"]
 extern fn __c_gtk_tree_view_get_reorderable(__recv: *u8) -> i32;
 // SKIPPED method `TreeView::get_row_separator_func`: return type — unmapped type `TreeViewRowSeparatorFunc`
@@ -29256,14 +29272,14 @@ extern fn __c_gtk_tree_view_get_selection(__recv: *u8) -> *u8;
 extern fn __c_gtk_tree_view_get_show_expanders(__recv: *u8) -> i32;
 #[link_name = "gtk_tree_view_get_tooltip_column"]
 extern fn __c_gtk_tree_view_get_tooltip_column(__recv: *u8) -> i32;
-// SKIPPED method `TreeView::get_tooltip_context`: out parameter `model` — only scalar out-params are bound
-// SKIPPED method `TreeView::get_visible_range`: out parameter `start_path` — only scalar out-params are bound
-// SKIPPED method `TreeView::get_visible_rect`: out parameter `visible_rect` — only scalar out-params are bound
+// SKIPPED method `TreeView::get_tooltip_context`: out parameter `path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeView::get_visible_range`: out parameter `start_path` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `TreeView::get_visible_rect`: out parameter `visible_rect` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_view_insert_column"]
 extern fn __c_gtk_tree_view_insert_column(__recv: *u8, column: *u8, position: i32) -> i32;
 // SKIPPED method `TreeView::insert_column_with_attributes`: variadic
 // SKIPPED method `TreeView::insert_column_with_data_func`: param `func` — unmapped type `TreeCellDataFunc`
-// SKIPPED method `TreeView::is_blank_at_pos`: out parameter `path` — only scalar out-params are bound
+// SKIPPED method `TreeView::is_blank_at_pos`: out parameter `path` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_tree_view_is_rubber_banding_active"]
 extern fn __c_gtk_tree_view_is_rubber_banding_active(__recv: *u8) -> i32;
 // SKIPPED method `TreeView::map_expanded_rows`: param `func` — unmapped type `TreeViewMappingFunc`
@@ -30460,11 +30476,11 @@ extern fn __c_gtk_widget_add_mnemonic_label(__recv: *u8, label: *u8);
 extern fn __c_gtk_widget_allocate(__recv: *u8, width: i32, height: i32, baseline: i32, transform: *u8);
 #[link_name = "gtk_widget_child_focus"]
 extern fn __c_gtk_widget_child_focus(__recv: *u8, direction: i32) -> i32;
-// SKIPPED method `Widget::compute_bounds`: out parameter `out_bounds` — only scalar out-params are bound
+// SKIPPED method `Widget::compute_bounds`: out parameter `out_bounds` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_widget_compute_expand"]
 extern fn __c_gtk_widget_compute_expand(__recv: *u8, orientation: i32) -> i32;
-// SKIPPED method `Widget::compute_point`: out parameter `out_point` — only scalar out-params are bound
-// SKIPPED method `Widget::compute_transform`: out parameter `out_transform` — only scalar out-params are bound
+// SKIPPED method `Widget::compute_point`: out parameter `out_point` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Widget::compute_transform`: out parameter `out_transform` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_widget_contains"]
 extern fn __c_gtk_widget_contains(__recv: *u8, x: f64, y: f64) -> i32;
 #[link_name = "gtk_widget_create_pango_context"]
@@ -30496,7 +30512,7 @@ extern fn __c_gtk_widget_get_can_target(__recv: *u8) -> i32;
 extern fn __c_gtk_widget_get_child_visible(__recv: *u8) -> i32;
 #[link_name = "gtk_widget_get_clipboard"]
 extern fn __c_gtk_widget_get_clipboard(__recv: *u8) -> *u8;
-// SKIPPED method `Widget::get_color`: out parameter `color` — only scalar out-params are bound
+// SKIPPED method `Widget::get_color`: out parameter `color` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Widget::get_css_classes`: return type — no <type> (array, callback, or varargs)
 #[link_name = "gtk_widget_get_css_name"]
 extern fn __c_gtk_widget_get_css_name(__recv: *u8) -> *u8;
@@ -30558,7 +30574,7 @@ extern fn __c_gtk_widget_get_overflow(__recv: *u8) -> i32;
 extern fn __c_gtk_widget_get_pango_context(__recv: *u8) -> *u8;
 #[link_name = "gtk_widget_get_parent"]
 extern fn __c_gtk_widget_get_parent(__recv: *u8) -> *u8;
-// SKIPPED method `Widget::get_preferred_size`: out parameter `minimum_size` — only scalar out-params are bound
+// SKIPPED method `Widget::get_preferred_size`: out parameter `minimum_size` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_widget_get_prev_sibling"]
 extern fn __c_gtk_widget_get_prev_sibling(__recv: *u8) -> *u8;
 #[link_name = "gtk_widget_get_primary_clipboard"]
@@ -32251,4 +32267,4 @@ impl WindowHandle {
 }
 
 
-// cpc-bindgen --gobject: 5148 items emitted, 363 SKIPPED.
+// cpc-bindgen --gobject: 5150 items emitted, 361 SKIPPED.

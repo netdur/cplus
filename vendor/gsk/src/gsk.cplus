@@ -173,7 +173,7 @@ fn stroke_equal(stroke1: *u8, stroke2: *u8) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `transform_parse`: out parameter `out_transform` — only scalar out-params are bound
+// SKIPPED fn `transform_parse`: out parameter `out_transform` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_value_dup_render_node"]
 extern fn __c_gsk_value_dup_render_node(value: *u8) -> *u8;
 fn value_dup_render_node(value: gobject_gir::Value) -> option::Option[RenderNode] {
@@ -211,11 +211,11 @@ fn value_take_render_node(value: gobject_gir::Value, node: RenderNode) {
 // === Boxed records ===
 
 // SKIPPED method `Path::foreach`: param `func` — unmapped type `PathForeachFunc`
-// SKIPPED method `Path::get_bounds`: out parameter `bounds` — only scalar out-params are bound
-// SKIPPED method `Path::get_closest_point`: out parameter `result` — only scalar out-params are bound
-// SKIPPED method `Path::get_end_point`: out parameter `result` — only scalar out-params are bound
-// SKIPPED method `Path::get_start_point`: out parameter `result` — only scalar out-params are bound
-// SKIPPED method `Path::get_stroke_bounds`: out parameter `bounds` — only scalar out-params are bound
+// SKIPPED method `Path::get_bounds`: out parameter `bounds` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Path::get_closest_point`: out parameter `result` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Path::get_end_point`: out parameter `result` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Path::get_start_point`: out parameter `result` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Path::get_stroke_bounds`: out parameter `bounds` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_path_in_fill"]
 extern fn __c_gsk_path_in_fill(__recv: *u8, point: *u8, fill_rule: i32) -> i32;
 #[link_name = "gsk_path_is_closed"]
@@ -507,7 +507,7 @@ extern fn __c_gsk_path_measure_new_with_tolerance(path: *u8, tolerance: f32) -> 
 extern fn __c_gsk_path_measure_get_length(__recv: *u8) -> f32;
 #[link_name = "gsk_path_measure_get_path"]
 extern fn __c_gsk_path_measure_get_path(__recv: *u8) -> *u8;
-// SKIPPED method `PathMeasure::get_point`: out parameter `result` — only scalar out-params are bound
+// SKIPPED method `PathMeasure::get_point`: out parameter `result` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_path_measure_get_tolerance"]
 extern fn __c_gsk_path_measure_get_tolerance(__recv: *u8) -> f32;
 #[link_name = "gsk_path_measure_ref"]
@@ -568,13 +568,13 @@ extern fn __c_gsk_path_point_copy(__recv: *u8) -> *u8;
 extern fn __c_gsk_path_point_equal(__recv: *u8, point2: *u8) -> i32;
 #[link_name = "gsk_path_point_free"]
 extern fn __c_gsk_path_point_free(__recv: *u8);
-// SKIPPED method `PathPoint::get_curvature`: out parameter `center` — only scalar out-params are bound
+// SKIPPED method `PathPoint::get_curvature`: out parameter `center` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_path_point_get_distance"]
 extern fn __c_gsk_path_point_get_distance(__recv: *u8, measure: *u8) -> f32;
-// SKIPPED method `PathPoint::get_position`: out parameter `position` — only scalar out-params are bound
+// SKIPPED method `PathPoint::get_position`: out parameter `position` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_path_point_get_rotation"]
 extern fn __c_gsk_path_point_get_rotation(__recv: *u8, path: *u8, direction: i32) -> f32;
-// SKIPPED method `PathPoint::get_tangent`: out parameter `tangent` — only scalar out-params are bound
+// SKIPPED method `PathPoint::get_tangent`: out parameter `tangent` — non-foldable out (value-struct/record out-param)
 // `PathPoint` — boxed record (non-owning handle).
 struct PathPoint {
     opaque _raw: *u8,
@@ -854,15 +854,15 @@ extern fn __c_gsk_transform_to_2d(__recv: *u8, out_xx: *f32, out_yx: *f32, out_x
 extern fn __c_gsk_transform_to_2d_components(__recv: *u8, out_skew_x: *f32, out_skew_y: *f32, out_scale_x: *f32, out_scale_y: *f32, out_angle: *f32, out_dx: *f32, out_dy: *f32);
 #[link_name = "gsk_transform_to_affine"]
 extern fn __c_gsk_transform_to_affine(__recv: *u8, out_scale_x: *f32, out_scale_y: *f32, out_dx: *f32, out_dy: *f32);
-// SKIPPED method `Transform::to_matrix`: out parameter `out_matrix` — only scalar out-params are bound
+// SKIPPED method `Transform::to_matrix`: out parameter `out_matrix` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_transform_to_string"]
 extern fn __c_gsk_transform_to_string(__recv: *u8) -> *u8;
 #[link_name = "gsk_transform_to_translate"]
 extern fn __c_gsk_transform_to_translate(__recv: *u8, out_dx: *f32, out_dy: *f32);
 #[link_name = "gsk_transform_transform"]
 extern fn __c_gsk_transform_transform(__recv: *u8, other: *u8) -> *u8;
-// SKIPPED method `Transform::transform_bounds`: out parameter `out_rect` — only scalar out-params are bound
-// SKIPPED method `Transform::transform_point`: out parameter `out_point` — only scalar out-params are bound
+// SKIPPED method `Transform::transform_bounds`: out parameter `out_rect` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Transform::transform_point`: out parameter `out_point` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_transform_translate"]
 extern fn __c_gsk_transform_translate(__recv: *u8, point: *u8) -> *u8;
 #[link_name = "gsk_transform_translate_3d"]
@@ -1995,7 +1995,7 @@ impl RadialGradientNode {
 
 #[link_name = "gsk_render_node_draw"]
 extern fn __c_gsk_render_node_draw(__recv: *u8, cr: *u8);
-// SKIPPED method `RenderNode::get_bounds`: out parameter `bounds` — only scalar out-params are bound
+// SKIPPED method `RenderNode::get_bounds`: out parameter `bounds` — non-foldable out (value-struct/record out-param)
 #[link_name = "gsk_render_node_get_node_type"]
 extern fn __c_gsk_render_node_get_node_type(__recv: *u8) -> i32;
 #[link_name = "gsk_render_node_ref"]

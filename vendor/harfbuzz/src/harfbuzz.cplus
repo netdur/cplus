@@ -838,12 +838,36 @@ fn ot_var_axis_flags_t_hidden() -> u32 { return 1 as u32; }
 
 // === Free functions ===
 
-// SKIPPED fn `aat_layout_feature_type_get_name_id`: return type — unmapped type `ot_name_id_t`
+#[link_name = "hb_aat_layout_feature_type_get_name_id"]
+extern fn __c_hb_aat_layout_feature_type_get_name_id(face: *u8, feature_type: i32) -> u32;
+fn aat_layout_feature_type_get_name_id(face: face_t, feature_type: i32) -> u32 {
+    let __r: u32 = { __c_hb_aat_layout_feature_type_get_name_id(face.raw(), feature_type) };
+    return __r;
+}
+
 // SKIPPED fn `aat_layout_feature_type_get_selector_infos`: param `selectors` — no <type> (array, callback, or varargs)
 // SKIPPED fn `aat_layout_get_feature_types`: param `features` — no <type> (array, callback, or varargs)
-// SKIPPED fn `aat_layout_has_positioning`: return type — unmapped type `bool_t`
-// SKIPPED fn `aat_layout_has_substitution`: return type — unmapped type `bool_t`
-// SKIPPED fn `aat_layout_has_tracking`: return type — unmapped type `bool_t`
+#[link_name = "hb_aat_layout_has_positioning"]
+extern fn __c_hb_aat_layout_has_positioning(face: *u8) -> i32;
+fn aat_layout_has_positioning(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_aat_layout_has_positioning(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_aat_layout_has_substitution"]
+extern fn __c_hb_aat_layout_has_substitution(face: *u8) -> i32;
+fn aat_layout_has_substitution(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_aat_layout_has_substitution(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_aat_layout_has_tracking"]
+extern fn __c_hb_aat_layout_has_tracking(face: *u8) -> i32;
+fn aat_layout_has_tracking(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_aat_layout_has_tracking(face.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_blob_copy_writable_or_fail"]
 extern fn __c_hb_blob_copy_writable_or_fail(blob: *u8) -> *u8;
 fn blob_copy_writable_or_fail(blob: blob_t) -> blob_t {
@@ -908,7 +932,13 @@ fn blob_get_user_data(blob: blob_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `blob_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_blob_is_immutable"]
+extern fn __c_hb_blob_is_immutable(blob: *u8) -> i32;
+fn blob_is_immutable(blob: blob_t) -> i32 {
+    let __r: i32 = { __c_hb_blob_is_immutable(blob.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_blob_make_immutable"]
 extern fn __c_hb_blob_make_immutable(blob: *u8);
 fn blob_make_immutable(blob: blob_t) {
@@ -923,14 +953,26 @@ fn blob_reference(blob: blob_t) -> blob_t {
     return blob_t::from_raw(__r);
 }
 
-// SKIPPED fn `blob_set_user_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `buffer_add`: param `codepoint` — unmapped type `codepoint_t`
+// SKIPPED fn `blob_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
+#[link_name = "hb_buffer_add"]
+extern fn __c_hb_buffer_add(buffer: *u8, codepoint: u32, cluster: u32);
+fn buffer_add(buffer: buffer_t, codepoint: u32, cluster: u32) {
+    { __c_hb_buffer_add(buffer.raw(), codepoint, cluster) };
+    return;
+}
+
 // SKIPPED fn `buffer_add_codepoints`: param `text` — no <type> (array, callback, or varargs)
 // SKIPPED fn `buffer_add_latin1`: param `text` — no <type> (array, callback, or varargs)
 // SKIPPED fn `buffer_add_utf16`: param `text` — no <type> (array, callback, or varargs)
 // SKIPPED fn `buffer_add_utf32`: param `text` — no <type> (array, callback, or varargs)
 // SKIPPED fn `buffer_add_utf8`: param `text` — no <type> (array, callback, or varargs)
-// SKIPPED fn `buffer_allocation_successful`: return type — unmapped type `bool_t`
+#[link_name = "hb_buffer_allocation_successful"]
+extern fn __c_hb_buffer_allocation_successful(buffer: *u8) -> i32;
+fn buffer_allocation_successful(buffer: buffer_t) -> i32 {
+    let __r: i32 = { __c_hb_buffer_allocation_successful(buffer.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_buffer_append"]
 extern fn __c_hb_buffer_append(buffer: *u8, source: *u8, start: u32, end: u32);
 fn buffer_append(buffer: buffer_t, source: buffer_t, start: u32, end: u32) {
@@ -959,8 +1001,8 @@ fn buffer_create_similar(src: buffer_t) -> buffer_t {
     return buffer_t::from_raw(__r);
 }
 
-// SKIPPED fn `buffer_deserialize_glyphs`: return type — unmapped type `bool_t`
-// SKIPPED fn `buffer_deserialize_unicode`: return type — unmapped type `bool_t`
+// SKIPPED fn `buffer_deserialize_glyphs`: param `buf` — no <type> (array, callback, or varargs)
+// SKIPPED fn `buffer_deserialize_unicode`: param `buf` — no <type> (array, callback, or varargs)
 #[link_name = "hb_buffer_destroy"]
 extern fn __c_hb_buffer_destroy(buffer: *u8);
 fn buffer_destroy(buffer: buffer_t) {
@@ -968,7 +1010,13 @@ fn buffer_destroy(buffer: buffer_t) {
     return;
 }
 
-// SKIPPED fn `buffer_diff`: param `dottedcircle_glyph` — unmapped type `codepoint_t`
+#[link_name = "hb_buffer_diff"]
+extern fn __c_hb_buffer_diff(buffer: *u8, reference: *u8, dottedcircle_glyph: u32, position_fuzz: u32) -> u32;
+fn buffer_diff(buffer: buffer_t, reference: buffer_t, dottedcircle_glyph: u32, position_fuzz: u32) -> u32 {
+    let __r: u32 = { __c_hb_buffer_diff(buffer.raw(), reference.raw(), dottedcircle_glyph, position_fuzz) };
+    return __r;
+}
+
 #[link_name = "hb_buffer_get_cluster_level"]
 extern fn __c_hb_buffer_get_cluster_level(buffer: *u8) -> i32;
 fn buffer_get_cluster_level(buffer: buffer_t) -> i32 {
@@ -1006,7 +1054,13 @@ fn buffer_get_flags(buffer: buffer_t) -> u32 {
 
 // SKIPPED fn `buffer_get_glyph_infos`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `buffer_get_glyph_positions`: return type — no <type> (array, callback, or varargs)
-// SKIPPED fn `buffer_get_invisible_glyph`: return type — unmapped type `codepoint_t`
+#[link_name = "hb_buffer_get_invisible_glyph"]
+extern fn __c_hb_buffer_get_invisible_glyph(buffer: *u8) -> u32;
+fn buffer_get_invisible_glyph(buffer: buffer_t) -> u32 {
+    let __r: u32 = { __c_hb_buffer_get_invisible_glyph(buffer.raw()) };
+    return __r;
+}
+
 // SKIPPED fn `buffer_get_language`: return type — unmapped type `language_t`
 #[link_name = "hb_buffer_get_length"]
 extern fn __c_hb_buffer_get_length(buffer: *u8) -> u32;
@@ -1015,8 +1069,20 @@ fn buffer_get_length(buffer: buffer_t) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `buffer_get_not_found_glyph`: return type — unmapped type `codepoint_t`
-// SKIPPED fn `buffer_get_replacement_codepoint`: return type — unmapped type `codepoint_t`
+#[link_name = "hb_buffer_get_not_found_glyph"]
+extern fn __c_hb_buffer_get_not_found_glyph(buffer: *u8) -> u32;
+fn buffer_get_not_found_glyph(buffer: buffer_t) -> u32 {
+    let __r: u32 = { __c_hb_buffer_get_not_found_glyph(buffer.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_buffer_get_replacement_codepoint"]
+extern fn __c_hb_buffer_get_replacement_codepoint(buffer: *u8) -> u32;
+fn buffer_get_replacement_codepoint(buffer: buffer_t) -> u32 {
+    let __r: u32 = { __c_hb_buffer_get_replacement_codepoint(buffer.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_buffer_get_script"]
 extern fn __c_hb_buffer_get_script(buffer: *u8) -> i32;
 fn buffer_get_script(buffer: buffer_t) -> i32 {
@@ -1024,7 +1090,7 @@ fn buffer_get_script(buffer: buffer_t) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `buffer_get_segment_properties`: out parameter `props` — only scalar out-params are bound
+// SKIPPED fn `buffer_get_segment_properties`: out parameter `props` — non-foldable out (value-struct/record out-param)
 #[link_name = "hb_buffer_get_unicode_funcs"]
 extern fn __c_hb_buffer_get_unicode_funcs(buffer: *u8) -> *u8;
 fn buffer_get_unicode_funcs(buffer: buffer_t) -> unicode_funcs_t {
@@ -1046,7 +1112,13 @@ fn buffer_guess_segment_properties(buffer: buffer_t) {
     return;
 }
 
-// SKIPPED fn `buffer_has_positions`: return type — unmapped type `bool_t`
+#[link_name = "hb_buffer_has_positions"]
+extern fn __c_hb_buffer_has_positions(buffer: *u8) -> i32;
+fn buffer_has_positions(buffer: buffer_t) -> i32 {
+    let __r: i32 = { __c_hb_buffer_has_positions(buffer.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_buffer_normalize_glyphs"]
 extern fn __c_hb_buffer_normalize_glyphs(buffer: *u8);
 fn buffer_normalize_glyphs(buffer: buffer_t) {
@@ -1054,7 +1126,13 @@ fn buffer_normalize_glyphs(buffer: buffer_t) {
     return;
 }
 
-// SKIPPED fn `buffer_pre_allocate`: return type — unmapped type `bool_t`
+#[link_name = "hb_buffer_pre_allocate"]
+extern fn __c_hb_buffer_pre_allocate(buffer: *u8, size: u32) -> i32;
+fn buffer_pre_allocate(buffer: buffer_t, size: u32) -> i32 {
+    let __r: i32 = { __c_hb_buffer_pre_allocate(buffer.raw(), size) };
+    return __r;
+}
+
 #[link_name = "hb_buffer_reference"]
 extern fn __c_hb_buffer_reference(buffer: *u8) -> *u8;
 fn buffer_reference(buffer: buffer_t) -> buffer_t {
@@ -1130,12 +1208,36 @@ fn buffer_set_flags(buffer: buffer_t, flags: u32) {
     return;
 }
 
-// SKIPPED fn `buffer_set_invisible_glyph`: param `invisible` — unmapped type `codepoint_t`
+#[link_name = "hb_buffer_set_invisible_glyph"]
+extern fn __c_hb_buffer_set_invisible_glyph(buffer: *u8, invisible: u32);
+fn buffer_set_invisible_glyph(buffer: buffer_t, invisible: u32) {
+    { __c_hb_buffer_set_invisible_glyph(buffer.raw(), invisible) };
+    return;
+}
+
 // SKIPPED fn `buffer_set_language`: param `language` — unmapped type `language_t`
-// SKIPPED fn `buffer_set_length`: return type — unmapped type `bool_t`
+#[link_name = "hb_buffer_set_length"]
+extern fn __c_hb_buffer_set_length(buffer: *u8, length: u32) -> i32;
+fn buffer_set_length(buffer: buffer_t, length: u32) -> i32 {
+    let __r: i32 = { __c_hb_buffer_set_length(buffer.raw(), length) };
+    return __r;
+}
+
 // SKIPPED fn `buffer_set_message_func`: param `func` — unmapped type `buffer_message_func_t`
-// SKIPPED fn `buffer_set_not_found_glyph`: param `not_found` — unmapped type `codepoint_t`
-// SKIPPED fn `buffer_set_replacement_codepoint`: param `replacement` — unmapped type `codepoint_t`
+#[link_name = "hb_buffer_set_not_found_glyph"]
+extern fn __c_hb_buffer_set_not_found_glyph(buffer: *u8, not_found: u32);
+fn buffer_set_not_found_glyph(buffer: buffer_t, not_found: u32) {
+    { __c_hb_buffer_set_not_found_glyph(buffer.raw(), not_found) };
+    return;
+}
+
+#[link_name = "hb_buffer_set_replacement_codepoint"]
+extern fn __c_hb_buffer_set_replacement_codepoint(buffer: *u8, replacement: u32);
+fn buffer_set_replacement_codepoint(buffer: buffer_t, replacement: u32) {
+    { __c_hb_buffer_set_replacement_codepoint(buffer.raw(), replacement) };
+    return;
+}
+
 #[link_name = "hb_buffer_set_script"]
 extern fn __c_hb_buffer_set_script(buffer: *u8, script: i32);
 fn buffer_set_script(buffer: buffer_t, script: i32) {
@@ -1157,11 +1259,35 @@ fn buffer_set_unicode_funcs(buffer: buffer_t, unicode_funcs: unicode_funcs_t) {
     return;
 }
 
-// SKIPPED fn `buffer_set_user_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `color_get_alpha`: param `color` — unmapped type `color_t`
-// SKIPPED fn `color_get_blue`: param `color` — unmapped type `color_t`
-// SKIPPED fn `color_get_green`: param `color` — unmapped type `color_t`
-// SKIPPED fn `color_get_red`: param `color` — unmapped type `color_t`
+// SKIPPED fn `buffer_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
+#[link_name = "hb_color_get_alpha"]
+extern fn __c_hb_color_get_alpha(color: u32) -> u8;
+fn color_get_alpha(color: u32) -> u8 {
+    let __r: u8 = { __c_hb_color_get_alpha(color) };
+    return __r;
+}
+
+#[link_name = "hb_color_get_blue"]
+extern fn __c_hb_color_get_blue(color: u32) -> u8;
+fn color_get_blue(color: u32) -> u8 {
+    let __r: u8 = { __c_hb_color_get_blue(color) };
+    return __r;
+}
+
+#[link_name = "hb_color_get_green"]
+extern fn __c_hb_color_get_green(color: u32) -> u8;
+fn color_get_green(color: u32) -> u8 {
+    let __r: u8 = { __c_hb_color_get_green(color) };
+    return __r;
+}
+
+#[link_name = "hb_color_get_red"]
+extern fn __c_hb_color_get_red(color: u32) -> u8;
+fn color_get_red(color: u32) -> u8 {
+    let __r: u8 = { __c_hb_color_get_red(color) };
+    return __r;
+}
+
 // SKIPPED fn `color_line_get_color_stops`: param `color_stops` — no <type> (array, callback, or varargs)
 #[link_name = "hb_color_line_get_extend"]
 extern fn __c_hb_color_line_get_extend(color_line: *u8) -> i32;
@@ -1220,7 +1346,13 @@ fn draw_funcs_get_user_data(dfuncs: draw_funcs_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `draw_funcs_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_draw_funcs_is_immutable"]
+extern fn __c_hb_draw_funcs_is_immutable(dfuncs: *u8) -> i32;
+fn draw_funcs_is_immutable(dfuncs: draw_funcs_t) -> i32 {
+    let __r: i32 = { __c_hb_draw_funcs_is_immutable(dfuncs.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_draw_funcs_make_immutable"]
 extern fn __c_hb_draw_funcs_make_immutable(dfuncs: *u8);
 fn draw_funcs_make_immutable(dfuncs: draw_funcs_t) {
@@ -1240,7 +1372,7 @@ fn draw_funcs_reference(dfuncs: draw_funcs_t) -> draw_funcs_t {
 // SKIPPED fn `draw_funcs_set_line_to_func`: param `func` — unmapped type `draw_line_to_func_t`
 // SKIPPED fn `draw_funcs_set_move_to_func`: param `func` — unmapped type `draw_move_to_func_t`
 // SKIPPED fn `draw_funcs_set_quadratic_to_func`: param `func` — unmapped type `draw_quadratic_to_func_t`
-// SKIPPED fn `draw_funcs_set_user_data`: return type — unmapped type `bool_t`
+// SKIPPED fn `draw_funcs_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 #[link_name = "hb_draw_line_to"]
 extern fn __c_hb_draw_line_to(dfuncs: *u8, draw_data: *u8, st: *u8, to_x: f32, to_y: f32);
 fn draw_line_to(dfuncs: draw_funcs_t, draw_data: *u8, st: draw_state_t, to_x: f32, to_y: f32) {
@@ -1262,7 +1394,13 @@ fn draw_quadratic_to(dfuncs: draw_funcs_t, draw_data: *u8, st: draw_state_t, con
     return;
 }
 
-// SKIPPED fn `face_builder_add_table`: return type — unmapped type `bool_t`
+#[link_name = "hb_face_builder_add_table"]
+extern fn __c_hb_face_builder_add_table(face: *u8, tag: u32, blob: *u8) -> i32;
+fn face_builder_add_table(face: face_t, tag: u32, blob: blob_t) -> i32 {
+    let __r: i32 = { __c_hb_face_builder_add_table(face.raw(), tag, blob.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_face_builder_create"]
 extern fn __c_hb_face_builder_create() -> *u8;
 fn face_builder_create() -> face_t {
@@ -1271,10 +1409,10 @@ fn face_builder_create() -> face_t {
 }
 
 // SKIPPED fn `face_builder_sort_tables`: param `tags` — no <type> (array, callback, or varargs)
-// SKIPPED fn `face_collect_nominal_glyph_mapping`: out parameter `mapping` — only scalar out-params are bound
-// SKIPPED fn `face_collect_unicodes`: out parameter `out` — only scalar out-params are bound
-// SKIPPED fn `face_collect_variation_selectors`: out parameter `out` — only scalar out-params are bound
-// SKIPPED fn `face_collect_variation_unicodes`: param `variation_selector` — unmapped type `codepoint_t`
+// SKIPPED fn `face_collect_nominal_glyph_mapping`: out parameter `mapping` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `face_collect_unicodes`: out parameter `out` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `face_collect_variation_selectors`: out parameter `out` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `face_collect_variation_unicodes`: out parameter `out` — non-foldable out (value-struct/record out-param)
 #[link_name = "hb_face_count"]
 extern fn __c_hb_face_count(blob: *u8) -> u32;
 fn face_count(blob: blob_t) -> u32 {
@@ -1333,7 +1471,13 @@ fn face_get_user_data(face: face_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `face_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_face_is_immutable"]
+extern fn __c_hb_face_is_immutable(face: *u8) -> i32;
+fn face_is_immutable(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_face_is_immutable(face.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_face_make_immutable"]
 extern fn __c_hb_face_make_immutable(face: *u8);
 fn face_make_immutable(face: face_t) {
@@ -1355,7 +1499,13 @@ fn face_reference_blob(face: face_t) -> blob_t {
     return blob_t::from_raw(__r);
 }
 
-// SKIPPED fn `face_reference_table`: param `tag` — unmapped type `tag_t`
+#[link_name = "hb_face_reference_table"]
+extern fn __c_hb_face_reference_table(face: *u8, tag: u32) -> *u8;
+fn face_reference_table(face: face_t, tag: u32) -> blob_t {
+    let __r: *u8 = { __c_hb_face_reference_table(face.raw(), tag) };
+    return blob_t::from_raw(__r);
+}
+
 #[link_name = "hb_face_set_glyph_count"]
 extern fn __c_hb_face_set_glyph_count(face: *u8, glyph_count: u32);
 fn face_set_glyph_count(face: face_t, glyph_count: u32) {
@@ -1377,10 +1527,10 @@ fn face_set_upem(face: face_t, upem: u32) {
     return;
 }
 
-// SKIPPED fn `face_set_user_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `feature_from_string`: return type — unmapped type `bool_t`
+// SKIPPED fn `face_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
+// SKIPPED fn `feature_from_string`: param `str` — no <type> (array, callback, or varargs)
 // SKIPPED fn `feature_to_string`: param `buf` — no <type> (array, callback, or varargs)
-// SKIPPED fn `font_add_glyph_origin_for_direction`: param `glyph` — unmapped type `codepoint_t`
+// SKIPPED fn `font_add_glyph_origin_for_direction`: inout parameter
 #[link_name = "hb_font_changed"]
 extern fn __c_hb_font_changed(font: *u8);
 fn font_changed(font: font_t) {
@@ -1409,7 +1559,13 @@ fn font_destroy(font: font_t) {
     return;
 }
 
-// SKIPPED fn `font_draw_glyph`: param `glyph` — unmapped type `codepoint_t`
+#[link_name = "hb_font_draw_glyph"]
+extern fn __c_hb_font_draw_glyph(font: *u8, glyph: u32, dfuncs: *u8, draw_data: *u8);
+fn font_draw_glyph(font: font_t, glyph: u32, dfuncs: draw_funcs_t, draw_data: *u8) {
+    { __c_hb_font_draw_glyph(font.raw(), glyph, dfuncs.raw(), draw_data) };
+    return;
+}
+
 #[link_name = "hb_font_funcs_create"]
 extern fn __c_hb_font_funcs_create() -> *u8;
 fn font_funcs_create() -> font_funcs_t {
@@ -1438,7 +1594,13 @@ fn font_funcs_get_user_data(ffuncs: font_funcs_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `font_funcs_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_font_funcs_is_immutable"]
+extern fn __c_hb_font_funcs_is_immutable(ffuncs: *u8) -> i32;
+fn font_funcs_is_immutable(ffuncs: font_funcs_t) -> i32 {
+    let __r: i32 = { __c_hb_font_funcs_is_immutable(ffuncs.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_font_funcs_make_immutable"]
 extern fn __c_hb_font_funcs_make_immutable(ffuncs: *u8);
 fn font_funcs_make_immutable(ffuncs: font_funcs_t) {
@@ -1473,7 +1635,7 @@ fn font_funcs_reference(ffuncs: font_funcs_t) -> font_funcs_t {
 // SKIPPED fn `font_funcs_set_nominal_glyph_func`: param `func` — unmapped type `font_get_nominal_glyph_func_t`
 // SKIPPED fn `font_funcs_set_nominal_glyphs_func`: param `func` — unmapped type `font_get_nominal_glyphs_func_t`
 // SKIPPED fn `font_funcs_set_paint_glyph_func`: param `func` — unmapped type `font_paint_glyph_func_t`
-// SKIPPED fn `font_funcs_set_user_data`: return type — unmapped type `bool_t`
+// SKIPPED fn `font_funcs_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 // SKIPPED fn `font_funcs_set_variation_glyph_func`: param `func` — unmapped type `font_get_variation_glyph_func_t`
 #[link_name = "hb_font_get_empty"]
 extern fn __c_hb_font_get_empty() -> *u8;
@@ -1490,29 +1652,137 @@ fn font_get_face(font: font_t) -> face_t {
     return face_t::from_raw(__r);
 }
 
-// SKIPPED fn `font_get_glyph`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_advance_for_direction`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_advances_for_direction`: param `first_glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_contour_point`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_contour_point_for_origin`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_extents`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_extents_for_origin`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_from_name`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_h_advance`: return type — unmapped type `position_t`
-// SKIPPED fn `font_get_glyph_h_advances`: param `first_glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_h_kerning`: return type — unmapped type `position_t`
-// SKIPPED fn `font_get_glyph_h_origin`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_kerning_for_direction`: param `first_glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_name`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_glyph_origin_for_direction`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_shape`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_v_advance`: return type — unmapped type `position_t`
-// SKIPPED fn `font_get_glyph_v_advances`: param `first_glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_get_glyph_v_kerning`: return type — unmapped type `position_t`
-// SKIPPED fn `font_get_glyph_v_origin`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_h_extents`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_nominal_glyph`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_get_nominal_glyphs`: param `first_unicode` — unmapped type `codepoint_t`
+#[link_name = "hb_font_get_glyph"]
+extern fn __c_hb_font_get_glyph(font: *u8, unicode: u32, variation_selector: u32, glyph: *u32) -> i32;
+fn font_get_glyph(font: font_t, unicode: u32, variation_selector: u32, ref glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph(font.raw(), unicode, variation_selector, ({ #addr_of(glyph) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_advance_for_direction"]
+extern fn __c_hb_font_get_glyph_advance_for_direction(font: *u8, glyph: u32, direction: i32, x: *i32, y: *i32);
+fn font_get_glyph_advance_for_direction(font: font_t, glyph: u32, direction: i32, ref x: i32, ref y: i32) {
+    { __c_hb_font_get_glyph_advance_for_direction(font.raw(), glyph, direction, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_advances_for_direction"]
+extern fn __c_hb_font_get_glyph_advances_for_direction(font: *u8, direction: i32, count: u32, first_glyph: u32, glyph_stride: u32, first_advance: *i32, advance_stride: *u32);
+fn font_get_glyph_advances_for_direction(font: font_t, direction: i32, count: u32, first_glyph: u32, glyph_stride: u32, ref first_advance: i32, ref advance_stride: u32) {
+    { __c_hb_font_get_glyph_advances_for_direction(font.raw(), direction, count, first_glyph, glyph_stride, ({ #addr_of(first_advance) as *i32 }), ({ #addr_of(advance_stride) as *u32 })) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_contour_point"]
+extern fn __c_hb_font_get_glyph_contour_point(font: *u8, glyph: u32, point_index: u32, x: *i32, y: *i32) -> i32;
+fn font_get_glyph_contour_point(font: font_t, glyph: u32, point_index: u32, ref x: i32, ref y: i32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_contour_point(font.raw(), glyph, point_index, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_contour_point_for_origin"]
+extern fn __c_hb_font_get_glyph_contour_point_for_origin(font: *u8, glyph: u32, point_index: u32, direction: i32, x: *i32, y: *i32) -> i32;
+fn font_get_glyph_contour_point_for_origin(font: font_t, glyph: u32, point_index: u32, direction: i32, ref x: i32, ref y: i32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_contour_point_for_origin(font.raw(), glyph, point_index, direction, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return __r;
+}
+
+// SKIPPED fn `font_get_glyph_extents`: param `extents` — unmapped type `glyph_extents_t`
+// SKIPPED fn `font_get_glyph_extents_for_origin`: param `extents` — unmapped type `glyph_extents_t`
+// SKIPPED fn `font_get_glyph_from_name`: param `name` — no <type> (array, callback, or varargs)
+#[link_name = "hb_font_get_glyph_h_advance"]
+extern fn __c_hb_font_get_glyph_h_advance(font: *u8, glyph: u32) -> i32;
+fn font_get_glyph_h_advance(font: font_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_h_advance(font.raw(), glyph) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_h_advances"]
+extern fn __c_hb_font_get_glyph_h_advances(font: *u8, count: u32, first_glyph: u32, glyph_stride: u32, first_advance: *i32, advance_stride: u32);
+fn font_get_glyph_h_advances(font: font_t, count: u32, first_glyph: u32, glyph_stride: u32, ref first_advance: i32, advance_stride: u32) {
+    { __c_hb_font_get_glyph_h_advances(font.raw(), count, first_glyph, glyph_stride, ({ #addr_of(first_advance) as *i32 }), advance_stride) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_h_kerning"]
+extern fn __c_hb_font_get_glyph_h_kerning(font: *u8, left_glyph: u32, right_glyph: u32) -> i32;
+fn font_get_glyph_h_kerning(font: font_t, left_glyph: u32, right_glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_h_kerning(font.raw(), left_glyph, right_glyph) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_h_origin"]
+extern fn __c_hb_font_get_glyph_h_origin(font: *u8, glyph: u32, x: *i32, y: *i32) -> i32;
+fn font_get_glyph_h_origin(font: font_t, glyph: u32, ref x: i32, ref y: i32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_h_origin(font.raw(), glyph, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_kerning_for_direction"]
+extern fn __c_hb_font_get_glyph_kerning_for_direction(font: *u8, first_glyph: u32, second_glyph: u32, direction: i32, x: *i32, y: *i32);
+fn font_get_glyph_kerning_for_direction(font: font_t, first_glyph: u32, second_glyph: u32, direction: i32, ref x: i32, ref y: i32) {
+    { __c_hb_font_get_glyph_kerning_for_direction(font.raw(), first_glyph, second_glyph, direction, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return;
+}
+
+// SKIPPED fn `font_get_glyph_name`: param `name` — no <type> (array, callback, or varargs)
+#[link_name = "hb_font_get_glyph_origin_for_direction"]
+extern fn __c_hb_font_get_glyph_origin_for_direction(font: *u8, glyph: u32, direction: i32, x: *i32, y: *i32);
+fn font_get_glyph_origin_for_direction(font: font_t, glyph: u32, direction: i32, ref x: i32, ref y: i32) {
+    { __c_hb_font_get_glyph_origin_for_direction(font.raw(), glyph, direction, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_shape"]
+extern fn __c_hb_font_get_glyph_shape(font: *u8, glyph: u32, dfuncs: *u8, draw_data: *u8);
+fn font_get_glyph_shape(font: font_t, glyph: u32, dfuncs: draw_funcs_t, draw_data: *u8) {
+    { __c_hb_font_get_glyph_shape(font.raw(), glyph, dfuncs.raw(), draw_data) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_v_advance"]
+extern fn __c_hb_font_get_glyph_v_advance(font: *u8, glyph: u32) -> i32;
+fn font_get_glyph_v_advance(font: font_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_v_advance(font.raw(), glyph) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_v_advances"]
+extern fn __c_hb_font_get_glyph_v_advances(font: *u8, count: u32, first_glyph: u32, glyph_stride: u32, first_advance: *i32, advance_stride: *u32);
+fn font_get_glyph_v_advances(font: font_t, count: u32, first_glyph: u32, glyph_stride: u32, ref first_advance: i32, ref advance_stride: u32) {
+    { __c_hb_font_get_glyph_v_advances(font.raw(), count, first_glyph, glyph_stride, ({ #addr_of(first_advance) as *i32 }), ({ #addr_of(advance_stride) as *u32 })) };
+    return;
+}
+
+#[link_name = "hb_font_get_glyph_v_kerning"]
+extern fn __c_hb_font_get_glyph_v_kerning(font: *u8, top_glyph: u32, bottom_glyph: u32) -> i32;
+fn font_get_glyph_v_kerning(font: font_t, top_glyph: u32, bottom_glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_v_kerning(font.raw(), top_glyph, bottom_glyph) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_glyph_v_origin"]
+extern fn __c_hb_font_get_glyph_v_origin(font: *u8, glyph: u32, x: *i32, y: *i32) -> i32;
+fn font_get_glyph_v_origin(font: font_t, glyph: u32, ref x: i32, ref y: i32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_glyph_v_origin(font.raw(), glyph, ({ #addr_of(x) as *i32 }), ({ #addr_of(y) as *i32 })) };
+    return __r;
+}
+
+// SKIPPED fn `font_get_h_extents`: param `extents` — unmapped type `font_extents_t`
+#[link_name = "hb_font_get_nominal_glyph"]
+extern fn __c_hb_font_get_nominal_glyph(font: *u8, unicode: u32, glyph: *u32) -> i32;
+fn font_get_nominal_glyph(font: font_t, unicode: u32, ref glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_nominal_glyph(font.raw(), unicode, ({ #addr_of(glyph) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_font_get_nominal_glyphs"]
+extern fn __c_hb_font_get_nominal_glyphs(font: *u8, count: u32, first_unicode: u32, unicode_stride: u32, first_glyph: *u32, glyph_stride: u32) -> u32;
+fn font_get_nominal_glyphs(font: font_t, count: u32, first_unicode: u32, unicode_stride: u32, ref first_glyph: u32, glyph_stride: u32) -> u32 {
+    let __r: u32 = { __c_hb_font_get_nominal_glyphs(font.raw(), count, first_unicode, unicode_stride, ({ #addr_of(first_glyph) as *u32 }), glyph_stride) };
+    return __r;
+}
+
 #[link_name = "hb_font_get_parent"]
 extern fn __c_hb_font_get_parent(font: *u8) -> *u8;
 fn font_get_parent(font: font_t) -> font_t {
@@ -1548,7 +1818,13 @@ fn font_get_serial(font: font_t) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `font_get_synthetic_bold`: param `in_place` — unmapped type `bool_t`
+#[link_name = "hb_font_get_synthetic_bold"]
+extern fn __c_hb_font_get_synthetic_bold(font: *u8, x_embolden: *f32, y_embolden: *f32, in_place: *i32);
+fn font_get_synthetic_bold(font: font_t, ref x_embolden: f32, ref y_embolden: f32, ref in_place: i32) {
+    { __c_hb_font_get_synthetic_bold(font.raw(), ({ #addr_of(x_embolden) as *f32 }), ({ #addr_of(y_embolden) as *f32 }), ({ #addr_of(in_place) as *i32 })) };
+    return;
+}
+
 #[link_name = "hb_font_get_synthetic_slant"]
 extern fn __c_hb_font_get_synthetic_slant(font: *u8) -> f32;
 fn font_get_synthetic_slant(font: font_t) -> f32 {
@@ -1563,7 +1839,7 @@ fn font_get_user_data(font: font_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `font_get_v_extents`: return type — unmapped type `bool_t`
+// SKIPPED fn `font_get_v_extents`: param `extents` — unmapped type `font_extents_t`
 #[link_name = "hb_font_get_var_coords_design"]
 extern fn __c_hb_font_get_var_coords_design(font: *u8, length: *u32) -> f32;
 fn font_get_var_coords_design(font: font_t, ref length: u32) -> f32 {
@@ -1585,10 +1861,22 @@ fn font_get_var_named_instance(font: font_t) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `font_get_variation_glyph`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_glyph_from_string`: return type — unmapped type `bool_t`
-// SKIPPED fn `font_glyph_to_string`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `font_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_font_get_variation_glyph"]
+extern fn __c_hb_font_get_variation_glyph(font: *u8, unicode: u32, variation_selector: u32, glyph: *u32) -> i32;
+fn font_get_variation_glyph(font: font_t, unicode: u32, variation_selector: u32, ref glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_font_get_variation_glyph(font.raw(), unicode, variation_selector, ({ #addr_of(glyph) as *u32 })) };
+    return __r;
+}
+
+// SKIPPED fn `font_glyph_from_string`: param `s` — no <type> (array, callback, or varargs)
+// SKIPPED fn `font_glyph_to_string`: param `s` — no <type> (array, callback, or varargs)
+#[link_name = "hb_font_is_immutable"]
+extern fn __c_hb_font_is_immutable(font: *u8) -> i32;
+fn font_is_immutable(font: font_t) -> i32 {
+    let __r: i32 = { __c_hb_font_is_immutable(font.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_font_make_immutable"]
 extern fn __c_hb_font_make_immutable(font: *u8);
 fn font_make_immutable(font: font_t) {
@@ -1596,7 +1884,13 @@ fn font_make_immutable(font: font_t) {
     return;
 }
 
-// SKIPPED fn `font_paint_glyph`: param `glyph` — unmapped type `codepoint_t`
+#[link_name = "hb_font_paint_glyph"]
+extern fn __c_hb_font_paint_glyph(font: *u8, glyph: u32, pfuncs: *u8, paint_data: *u8, palette_index: u32, foreground: u32);
+fn font_paint_glyph(font: font_t, glyph: u32, pfuncs: paint_funcs_t, paint_data: *u8, palette_index: u32, foreground: u32) {
+    { __c_hb_font_paint_glyph(font.raw(), glyph, pfuncs.raw(), paint_data, palette_index, foreground) };
+    return;
+}
+
 #[link_name = "hb_font_reference"]
 extern fn __c_hb_font_reference(font: *u8) -> *u8;
 fn font_reference(font: font_t) -> font_t {
@@ -1641,7 +1935,13 @@ fn font_set_scale(font: font_t, x_scale: i32, y_scale: i32) {
     return;
 }
 
-// SKIPPED fn `font_set_synthetic_bold`: param `in_place` — unmapped type `bool_t`
+#[link_name = "hb_font_set_synthetic_bold"]
+extern fn __c_hb_font_set_synthetic_bold(font: *u8, x_embolden: f32, y_embolden: f32, in_place: i32);
+fn font_set_synthetic_bold(font: font_t, x_embolden: f32, y_embolden: f32, in_place: i32) {
+    { __c_hb_font_set_synthetic_bold(font.raw(), x_embolden, y_embolden, in_place) };
+    return;
+}
+
 #[link_name = "hb_font_set_synthetic_slant"]
 extern fn __c_hb_font_set_synthetic_slant(font: *u8, slant: f32);
 fn font_set_synthetic_slant(font: font_t, slant: f32) {
@@ -1649,7 +1949,7 @@ fn font_set_synthetic_slant(font: font_t, slant: f32) {
     return;
 }
 
-// SKIPPED fn `font_set_user_data`: return type — unmapped type `bool_t`
+// SKIPPED fn `font_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 // SKIPPED fn `font_set_var_coords_design`: param `coords` — no <type> (array, callback, or varargs)
 // SKIPPED fn `font_set_var_coords_normalized`: param `coords` — no <type> (array, callback, or varargs)
 #[link_name = "hb_font_set_var_named_instance"]
@@ -1659,9 +1959,15 @@ fn font_set_var_named_instance(font: font_t, instance_index: u32) {
     return;
 }
 
-// SKIPPED fn `font_set_variation`: param `tag` — unmapped type `tag_t`
+#[link_name = "hb_font_set_variation"]
+extern fn __c_hb_font_set_variation(font: *u8, tag: u32, value: f32);
+fn font_set_variation(font: font_t, tag: u32, value: f32) {
+    { __c_hb_font_set_variation(font.raw(), tag, value) };
+    return;
+}
+
 // SKIPPED fn `font_set_variations`: param `variations` — no <type> (array, callback, or varargs)
-// SKIPPED fn `font_subtract_glyph_origin_for_direction`: param `glyph` — unmapped type `codepoint_t`
+// SKIPPED fn `font_subtract_glyph_origin_for_direction`: inout parameter
 // SKIPPED fn `ft_face_create`: param `ft_face` — unmapped type `freetype2.Face`
 // SKIPPED fn `ft_face_create_cached`: param `ft_face` — unmapped type `freetype2.Face`
 // SKIPPED fn `ft_face_create_referenced`: param `ft_face` — unmapped type `freetype2.Face`
@@ -1704,7 +2010,13 @@ fn ft_font_unlock_face(font: font_t) {
     return;
 }
 
-// SKIPPED fn `ft_hb_font_changed`: return type — unmapped type `bool_t`
+#[link_name = "hb_ft_hb_font_changed"]
+extern fn __c_hb_ft_hb_font_changed(font: *u8) -> i32;
+fn ft_hb_font_changed(font: font_t) -> i32 {
+    let __r: i32 = { __c_hb_ft_hb_font_changed(font.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_glib_blob_create"]
 extern fn __c_hb_glib_blob_create(gbytes: *u8) -> *u8;
 fn glib_blob_create(gbytes: glib::Bytes) -> blob_t {
@@ -1742,9 +2054,15 @@ fn glyph_info_get_glyph_flags(info: glyph_info_t) -> u32 {
 
 // SKIPPED fn `language_from_string`: return type — unmapped type `language_t`
 // SKIPPED fn `language_get_default`: return type — unmapped type `language_t`
-// SKIPPED fn `language_matches`: return type — unmapped type `bool_t`
+// SKIPPED fn `language_matches`: param `language` — unmapped type `language_t`
 // SKIPPED fn `language_to_string`: param `language` — unmapped type `language_t`
-// SKIPPED fn `map_allocation_successful`: return type — unmapped type `bool_t`
+#[link_name = "hb_map_allocation_successful"]
+extern fn __c_hb_map_allocation_successful(map: *u8) -> i32;
+fn map_allocation_successful(map: map_t) -> i32 {
+    let __r: i32 = { __c_hb_map_allocation_successful(map.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_map_clear"]
 extern fn __c_hb_map_clear(map: *u8);
 fn map_clear(map: map_t) {
@@ -1766,7 +2084,13 @@ fn map_create() -> map_t {
     return map_t::from_raw(__r);
 }
 
-// SKIPPED fn `map_del`: param `key` — unmapped type `codepoint_t`
+#[link_name = "hb_map_del"]
+extern fn __c_hb_map_del(map: *u8, key: u32);
+fn map_del(map: map_t, key: u32) {
+    { __c_hb_map_del(map.raw(), key) };
+    return;
+}
+
 #[link_name = "hb_map_destroy"]
 extern fn __c_hb_map_destroy(map: *u8);
 fn map_destroy(map: map_t) {
@@ -1774,7 +2098,13 @@ fn map_destroy(map: map_t) {
     return;
 }
 
-// SKIPPED fn `map_get`: return type — unmapped type `codepoint_t`
+#[link_name = "hb_map_get"]
+extern fn __c_hb_map_get(map: *u8, key: u32) -> u32;
+fn map_get(map: map_t, key: u32) -> u32 {
+    let __r: u32 = { __c_hb_map_get(map.raw(), key) };
+    return __r;
+}
+
 #[link_name = "hb_map_get_empty"]
 extern fn __c_hb_map_get_empty() -> *u8;
 fn map_get_empty() -> map_t {
@@ -1796,7 +2126,13 @@ fn map_get_user_data(map: map_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `map_has`: return type — unmapped type `bool_t`
+#[link_name = "hb_map_has"]
+extern fn __c_hb_map_has(map: *u8, key: u32) -> i32;
+fn map_has(map: map_t, key: u32) -> i32 {
+    let __r: i32 = { __c_hb_map_has(map.raw(), key) };
+    return __r;
+}
+
 #[link_name = "hb_map_hash"]
 extern fn __c_hb_map_hash(map: *u8) -> u32;
 fn map_hash(map: map_t) -> u32 {
@@ -1804,8 +2140,20 @@ fn map_hash(map: map_t) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `map_is_empty`: return type — unmapped type `bool_t`
-// SKIPPED fn `map_is_equal`: return type — unmapped type `bool_t`
+#[link_name = "hb_map_is_empty"]
+extern fn __c_hb_map_is_empty(map: *u8) -> i32;
+fn map_is_empty(map: map_t) -> i32 {
+    let __r: i32 = { __c_hb_map_is_empty(map.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_map_is_equal"]
+extern fn __c_hb_map_is_equal(map: *u8, other: *u8) -> i32;
+fn map_is_equal(map: map_t, other: map_t) -> i32 {
+    let __r: i32 = { __c_hb_map_is_equal(map.raw(), other.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_map_keys"]
 extern fn __c_hb_map_keys(map: *u8, keys: *u8);
 fn map_keys(map: map_t, keys: set_t) {
@@ -1813,7 +2161,7 @@ fn map_keys(map: map_t, keys: set_t) {
     return;
 }
 
-// SKIPPED fn `map_next`: return type — unmapped type `bool_t`
+// SKIPPED fn `map_next`: inout parameter
 #[link_name = "hb_map_reference"]
 extern fn __c_hb_map_reference(map: *u8) -> *u8;
 fn map_reference(map: map_t) -> map_t {
@@ -1821,8 +2169,14 @@ fn map_reference(map: map_t) -> map_t {
     return map_t::from_raw(__r);
 }
 
-// SKIPPED fn `map_set`: param `key` — unmapped type `codepoint_t`
-// SKIPPED fn `map_set_user_data`: return type — unmapped type `bool_t`
+#[link_name = "hb_map_set"]
+extern fn __c_hb_map_set(map: *u8, key: u32, value: u32);
+fn map_set(map: map_t, key: u32, value: u32) {
+    { __c_hb_map_set(map.raw(), key, value) };
+    return;
+}
+
+// SKIPPED fn `map_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 #[link_name = "hb_map_update"]
 extern fn __c_hb_map_update(map: *u8, other: *u8);
 fn map_update(map: map_t, other: map_t) {
@@ -1837,16 +2191,70 @@ fn map_values(map: map_t, values: set_t) {
     return;
 }
 
-// SKIPPED fn `ot_color_glyph_get_layers`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_color_glyph_has_paint`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_glyph_reference_png`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_color_glyph_reference_svg`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_color_has_layers`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_has_paint`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_has_palettes`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_has_png`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_has_svg`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_color_palette_color_get_name_id`: return type — unmapped type `ot_name_id_t`
+// SKIPPED fn `ot_color_glyph_get_layers`: param `layers` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_color_glyph_has_paint"]
+extern fn __c_hb_ot_color_glyph_has_paint(face: *u8, glyph: u32) -> i32;
+fn ot_color_glyph_has_paint(face: face_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_glyph_has_paint(face.raw(), glyph) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_glyph_reference_png"]
+extern fn __c_hb_ot_color_glyph_reference_png(font: *u8, glyph: u32) -> *u8;
+fn ot_color_glyph_reference_png(font: font_t, glyph: u32) -> blob_t {
+    let __r: *u8 = { __c_hb_ot_color_glyph_reference_png(font.raw(), glyph) };
+    return blob_t::from_raw(__r);
+}
+
+#[link_name = "hb_ot_color_glyph_reference_svg"]
+extern fn __c_hb_ot_color_glyph_reference_svg(face: *u8, glyph: u32) -> *u8;
+fn ot_color_glyph_reference_svg(face: face_t, glyph: u32) -> blob_t {
+    let __r: *u8 = { __c_hb_ot_color_glyph_reference_svg(face.raw(), glyph) };
+    return blob_t::from_raw(__r);
+}
+
+#[link_name = "hb_ot_color_has_layers"]
+extern fn __c_hb_ot_color_has_layers(face: *u8) -> i32;
+fn ot_color_has_layers(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_has_layers(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_has_paint"]
+extern fn __c_hb_ot_color_has_paint(face: *u8) -> i32;
+fn ot_color_has_paint(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_has_paint(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_has_palettes"]
+extern fn __c_hb_ot_color_has_palettes(face: *u8) -> i32;
+fn ot_color_has_palettes(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_has_palettes(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_has_png"]
+extern fn __c_hb_ot_color_has_png(face: *u8) -> i32;
+fn ot_color_has_png(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_has_png(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_has_svg"]
+extern fn __c_hb_ot_color_has_svg(face: *u8) -> i32;
+fn ot_color_has_svg(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_color_has_svg(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_color_palette_color_get_name_id"]
+extern fn __c_hb_ot_color_palette_color_get_name_id(face: *u8, color_index: u32) -> u32;
+fn ot_color_palette_color_get_name_id(face: face_t, color_index: u32) -> u32 {
+    let __r: u32 = { __c_hb_ot_color_palette_color_get_name_id(face.raw(), color_index) };
+    return __r;
+}
+
 // SKIPPED fn `ot_color_palette_get_colors`: param `colors` — no <type> (array, callback, or varargs)
 #[link_name = "hb_ot_color_palette_get_count"]
 extern fn __c_hb_ot_color_palette_get_count(face: *u8) -> u32;
@@ -1862,7 +2270,13 @@ fn ot_color_palette_get_flags(face: face_t, palette_index: u32) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `ot_color_palette_get_name_id`: return type — unmapped type `ot_name_id_t`
+#[link_name = "hb_ot_color_palette_get_name_id"]
+extern fn __c_hb_ot_color_palette_get_name_id(face: *u8, palette_index: u32) -> u32;
+fn ot_color_palette_get_name_id(face: face_t, palette_index: u32) -> u32 {
+    let __r: u32 = { __c_hb_ot_color_palette_get_name_id(face.raw(), palette_index) };
+    return __r;
+}
+
 #[link_name = "hb_ot_font_set_funcs"]
 extern fn __c_hb_ot_font_set_funcs(font: *u8);
 fn ot_font_set_funcs(font: font_t) {
@@ -1870,22 +2284,46 @@ fn ot_font_set_funcs(font: font_t) {
     return;
 }
 
-// SKIPPED fn `ot_layout_collect_features`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_collect_features_map`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_collect_lookups`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_feature_get_characters`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_feature_get_lookups`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_feature_get_name_ids`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_feature_with_variations_get_lookups`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_get_attach_points`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_layout_get_baseline`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_get_baseline2`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_get_baseline_with_fallback`: param `script_tag` — unmapped type `tag_t`
+// SKIPPED fn `ot_layout_collect_features`: param `scripts` — no <type> (array, callback, or varargs)
+// SKIPPED fn `ot_layout_collect_features_map`: out parameter `feature_map` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `ot_layout_collect_lookups`: param `scripts` — no <type> (array, callback, or varargs)
+// SKIPPED fn `ot_layout_feature_get_characters`: param `characters` — no <type> (array, callback, or varargs)
+// SKIPPED fn `ot_layout_feature_get_lookups`: param `lookup_indexes` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_feature_get_name_ids"]
+extern fn __c_hb_ot_layout_feature_get_name_ids(face: *u8, table_tag: u32, feature_index: u32, label_id: *u32, tooltip_id: *u32, sample_id: *u32, num_named_parameters: *u32, first_param_id: *u32) -> i32;
+fn ot_layout_feature_get_name_ids(face: face_t, table_tag: u32, feature_index: u32, ref label_id: u32, ref tooltip_id: u32, ref sample_id: u32, ref num_named_parameters: u32, ref first_param_id: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_feature_get_name_ids(face.raw(), table_tag, feature_index, ({ #addr_of(label_id) as *u32 }), ({ #addr_of(tooltip_id) as *u32 }), ({ #addr_of(sample_id) as *u32 }), ({ #addr_of(num_named_parameters) as *u32 }), ({ #addr_of(first_param_id) as *u32 })) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_feature_with_variations_get_lookups`: param `lookup_indexes` — no <type> (array, callback, or varargs)
+// SKIPPED fn `ot_layout_get_attach_points`: param `point_array` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_get_baseline"]
+extern fn __c_hb_ot_layout_get_baseline(font: *u8, baseline_tag: i32, direction: i32, script_tag: u32, language_tag: u32, coord: *i32) -> i32;
+fn ot_layout_get_baseline(font: font_t, baseline_tag: i32, direction: i32, script_tag: u32, language_tag: u32, ref coord: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_get_baseline(font.raw(), baseline_tag, direction, script_tag, language_tag, ({ #addr_of(coord) as *i32 })) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_get_baseline2`: param `language` — unmapped type `language_t`
+#[link_name = "hb_ot_layout_get_baseline_with_fallback"]
+extern fn __c_hb_ot_layout_get_baseline_with_fallback(font: *u8, baseline_tag: i32, direction: i32, script_tag: u32, language_tag: u32, coord: *i32);
+fn ot_layout_get_baseline_with_fallback(font: font_t, baseline_tag: i32, direction: i32, script_tag: u32, language_tag: u32, ref coord: i32) {
+    { __c_hb_ot_layout_get_baseline_with_fallback(font.raw(), baseline_tag, direction, script_tag, language_tag, ({ #addr_of(coord) as *i32 })) };
+    return;
+}
+
 // SKIPPED fn `ot_layout_get_baseline_with_fallback2`: param `language` — unmapped type `language_t`
-// SKIPPED fn `ot_layout_get_font_extents`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_get_font_extents2`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_get_glyph_class`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_layout_get_glyphs_in_class`: out parameter `glyphs` — only scalar out-params are bound
+// SKIPPED fn `ot_layout_get_font_extents`: param `extents` — unmapped type `font_extents_t`
+// SKIPPED fn `ot_layout_get_font_extents2`: param `language` — unmapped type `language_t`
+#[link_name = "hb_ot_layout_get_glyph_class"]
+extern fn __c_hb_ot_layout_get_glyph_class(face: *u8, glyph: u32) -> i32;
+fn ot_layout_get_glyph_class(face: face_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_get_glyph_class(face.raw(), glyph) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_get_glyphs_in_class`: out parameter `glyphs` — non-foldable out (value-struct/record out-param)
 #[link_name = "hb_ot_layout_get_horizontal_baseline_tag_for_script"]
 extern fn __c_hb_ot_layout_get_horizontal_baseline_tag_for_script(script: i32) -> i32;
 fn ot_layout_get_horizontal_baseline_tag_for_script(script: i32) -> i32 {
@@ -1893,43 +2331,187 @@ fn ot_layout_get_horizontal_baseline_tag_for_script(script: i32) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `ot_layout_get_ligature_carets`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_layout_get_size_params`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_has_glyph_classes`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_has_positioning`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_has_substitution`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_language_find_feature`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_language_get_feature_indexes`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_language_get_feature_tags`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_language_get_required_feature`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_language_get_required_feature_index`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_lookup_collect_glyphs`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_lookup_get_glyph_alternates`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_layout_lookup_get_optical_bound`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_layout_lookup_substitute_closure`: out parameter `glyphs` — only scalar out-params are bound
-// SKIPPED fn `ot_layout_lookup_would_substitute`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_lookups_substitute_closure`: out parameter `glyphs` — only scalar out-params are bound
-// SKIPPED fn `ot_layout_script_find_language`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_script_get_language_tags`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_script_select_language`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_script_select_language2`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_table_choose_script`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_table_find_feature_variations`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_table_find_script`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_layout_table_get_feature_tags`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_table_get_lookup_count`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_table_get_script_tags`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_layout_table_select_script`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_math_get_constant`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_math_get_glyph_assembly`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_math_get_glyph_italics_correction`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_math_get_glyph_kerning`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_math_get_glyph_kernings`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_math_get_glyph_top_accent_attachment`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_math_get_glyph_variants`: param `glyph` — unmapped type `codepoint_t`
-// SKIPPED fn `ot_math_get_min_connector_overlap`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_math_has_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_math_is_glyph_extended_shape`: return type — unmapped type `bool_t`
+// SKIPPED fn `ot_layout_get_ligature_carets`: param `caret_array` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_get_size_params"]
+extern fn __c_hb_ot_layout_get_size_params(face: *u8, design_size: *u32, subfamily_id: *u32, subfamily_name_id: *u32, range_start: *u32, range_end: *u32) -> i32;
+fn ot_layout_get_size_params(face: face_t, ref design_size: u32, ref subfamily_id: u32, ref subfamily_name_id: u32, ref range_start: u32, ref range_end: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_get_size_params(face.raw(), ({ #addr_of(design_size) as *u32 }), ({ #addr_of(subfamily_id) as *u32 }), ({ #addr_of(subfamily_name_id) as *u32 }), ({ #addr_of(range_start) as *u32 }), ({ #addr_of(range_end) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_has_glyph_classes"]
+extern fn __c_hb_ot_layout_has_glyph_classes(face: *u8) -> i32;
+fn ot_layout_has_glyph_classes(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_has_glyph_classes(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_has_positioning"]
+extern fn __c_hb_ot_layout_has_positioning(face: *u8) -> i32;
+fn ot_layout_has_positioning(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_has_positioning(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_has_substitution"]
+extern fn __c_hb_ot_layout_has_substitution(face: *u8) -> i32;
+fn ot_layout_has_substitution(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_has_substitution(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_language_find_feature"]
+extern fn __c_hb_ot_layout_language_find_feature(face: *u8, table_tag: u32, script_index: u32, language_index: u32, feature_tag: u32, feature_index: *u32) -> i32;
+fn ot_layout_language_find_feature(face: face_t, table_tag: u32, script_index: u32, language_index: u32, feature_tag: u32, ref feature_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_language_find_feature(face.raw(), table_tag, script_index, language_index, feature_tag, ({ #addr_of(feature_index) as *u32 })) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_language_get_feature_indexes`: param `feature_indexes` — no <type> (array, callback, or varargs)
+// SKIPPED fn `ot_layout_language_get_feature_tags`: param `feature_tags` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_language_get_required_feature"]
+extern fn __c_hb_ot_layout_language_get_required_feature(face: *u8, table_tag: u32, script_index: u32, language_index: u32, feature_index: *u32, feature_tag: *u32) -> i32;
+fn ot_layout_language_get_required_feature(face: face_t, table_tag: u32, script_index: u32, language_index: u32, ref feature_index: u32, ref feature_tag: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_language_get_required_feature(face.raw(), table_tag, script_index, language_index, ({ #addr_of(feature_index) as *u32 }), ({ #addr_of(feature_tag) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_language_get_required_feature_index"]
+extern fn __c_hb_ot_layout_language_get_required_feature_index(face: *u8, table_tag: u32, script_index: u32, language_index: u32, feature_index: *u32) -> i32;
+fn ot_layout_language_get_required_feature_index(face: face_t, table_tag: u32, script_index: u32, language_index: u32, ref feature_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_language_get_required_feature_index(face.raw(), table_tag, script_index, language_index, ({ #addr_of(feature_index) as *u32 })) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_lookup_collect_glyphs`: out parameter `glyphs_before` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `ot_layout_lookup_get_glyph_alternates`: param `alternate_glyphs` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_lookup_get_optical_bound"]
+extern fn __c_hb_ot_layout_lookup_get_optical_bound(font: *u8, lookup_index: u32, direction: i32, glyph: u32) -> i32;
+fn ot_layout_lookup_get_optical_bound(font: font_t, lookup_index: u32, direction: i32, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_lookup_get_optical_bound(font.raw(), lookup_index, direction, glyph) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_lookup_substitute_closure`: out parameter `glyphs` — non-foldable out (value-struct/record out-param)
+#[link_name = "hb_ot_layout_lookup_would_substitute"]
+extern fn __c_hb_ot_layout_lookup_would_substitute(face: *u8, lookup_index: u32, glyphs: u32, glyphs_length: u32, zero_context: i32) -> i32;
+fn ot_layout_lookup_would_substitute(face: face_t, lookup_index: u32, glyphs: u32, glyphs_length: u32, zero_context: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_lookup_would_substitute(face.raw(), lookup_index, glyphs, glyphs_length, zero_context) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_lookups_substitute_closure`: out parameter `glyphs` — non-foldable out (value-struct/record out-param)
+#[link_name = "hb_ot_layout_script_find_language"]
+extern fn __c_hb_ot_layout_script_find_language(face: *u8, table_tag: u32, script_index: u32, language_tag: u32, language_index: u32) -> i32;
+fn ot_layout_script_find_language(face: face_t, table_tag: u32, script_index: u32, language_tag: u32, language_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_script_find_language(face.raw(), table_tag, script_index, language_tag, language_index) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_script_get_language_tags`: param `language_tags` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_script_select_language"]
+extern fn __c_hb_ot_layout_script_select_language(face: *u8, table_tag: u32, script_index: u32, language_count: u32, language_tags: u32, language_index: *u32) -> i32;
+fn ot_layout_script_select_language(face: face_t, table_tag: u32, script_index: u32, language_count: u32, language_tags: u32, ref language_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_script_select_language(face.raw(), table_tag, script_index, language_count, language_tags, ({ #addr_of(language_index) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_script_select_language2"]
+extern fn __c_hb_ot_layout_script_select_language2(face: *u8, table_tag: u32, script_index: u32, language_count: u32, language_tags: u32, language_index: *u32, chosen_language: *u32) -> i32;
+fn ot_layout_script_select_language2(face: face_t, table_tag: u32, script_index: u32, language_count: u32, language_tags: u32, ref language_index: u32, ref chosen_language: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_script_select_language2(face.raw(), table_tag, script_index, language_count, language_tags, ({ #addr_of(language_index) as *u32 }), ({ #addr_of(chosen_language) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_table_choose_script"]
+extern fn __c_hb_ot_layout_table_choose_script(face: *u8, table_tag: u32, script_tags: u32, script_index: *u32, chosen_script: *u32) -> i32;
+fn ot_layout_table_choose_script(face: face_t, table_tag: u32, script_tags: u32, ref script_index: u32, ref chosen_script: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_table_choose_script(face.raw(), table_tag, script_tags, ({ #addr_of(script_index) as *u32 }), ({ #addr_of(chosen_script) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_table_find_feature_variations"]
+extern fn __c_hb_ot_layout_table_find_feature_variations(face: *u8, table_tag: u32, coords: i32, num_coords: u32, variations_index: *u32) -> i32;
+fn ot_layout_table_find_feature_variations(face: face_t, table_tag: u32, coords: i32, num_coords: u32, ref variations_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_table_find_feature_variations(face.raw(), table_tag, coords, num_coords, ({ #addr_of(variations_index) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_layout_table_find_script"]
+extern fn __c_hb_ot_layout_table_find_script(face: *u8, table_tag: u32, script_tag: u32, script_index: *u32) -> i32;
+fn ot_layout_table_find_script(face: face_t, table_tag: u32, script_tag: u32, ref script_index: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_table_find_script(face.raw(), table_tag, script_tag, ({ #addr_of(script_index) as *u32 })) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_table_get_feature_tags`: param `feature_tags` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_table_get_lookup_count"]
+extern fn __c_hb_ot_layout_table_get_lookup_count(face: *u8, table_tag: u32) -> u32;
+fn ot_layout_table_get_lookup_count(face: face_t, table_tag: u32) -> u32 {
+    let __r: u32 = { __c_hb_ot_layout_table_get_lookup_count(face.raw(), table_tag) };
+    return __r;
+}
+
+// SKIPPED fn `ot_layout_table_get_script_tags`: param `script_tags` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_layout_table_select_script"]
+extern fn __c_hb_ot_layout_table_select_script(face: *u8, table_tag: u32, script_count: u32, script_tags: u32, script_index: *u32, chosen_script: *u32) -> i32;
+fn ot_layout_table_select_script(face: face_t, table_tag: u32, script_count: u32, script_tags: u32, ref script_index: u32, ref chosen_script: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_layout_table_select_script(face.raw(), table_tag, script_count, script_tags, ({ #addr_of(script_index) as *u32 }), ({ #addr_of(chosen_script) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_math_get_constant"]
+extern fn __c_hb_ot_math_get_constant(font: *u8, constant: i32) -> i32;
+fn ot_math_get_constant(font: font_t, constant: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_get_constant(font.raw(), constant) };
+    return __r;
+}
+
+// SKIPPED fn `ot_math_get_glyph_assembly`: param `parts` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_math_get_glyph_italics_correction"]
+extern fn __c_hb_ot_math_get_glyph_italics_correction(font: *u8, glyph: u32) -> i32;
+fn ot_math_get_glyph_italics_correction(font: font_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_get_glyph_italics_correction(font.raw(), glyph) };
+    return __r;
+}
+
+#[link_name = "hb_ot_math_get_glyph_kerning"]
+extern fn __c_hb_ot_math_get_glyph_kerning(font: *u8, glyph: u32, kern: i32, correction_height: i32) -> i32;
+fn ot_math_get_glyph_kerning(font: font_t, glyph: u32, kern: i32, correction_height: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_get_glyph_kerning(font.raw(), glyph, kern, correction_height) };
+    return __r;
+}
+
+// SKIPPED fn `ot_math_get_glyph_kernings`: param `kern_entries` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_math_get_glyph_top_accent_attachment"]
+extern fn __c_hb_ot_math_get_glyph_top_accent_attachment(font: *u8, glyph: u32) -> i32;
+fn ot_math_get_glyph_top_accent_attachment(font: font_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_get_glyph_top_accent_attachment(font.raw(), glyph) };
+    return __r;
+}
+
+// SKIPPED fn `ot_math_get_glyph_variants`: param `variants` — no <type> (array, callback, or varargs)
+#[link_name = "hb_ot_math_get_min_connector_overlap"]
+extern fn __c_hb_ot_math_get_min_connector_overlap(font: *u8, direction: i32) -> i32;
+fn ot_math_get_min_connector_overlap(font: font_t, direction: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_get_min_connector_overlap(font.raw(), direction) };
+    return __r;
+}
+
+#[link_name = "hb_ot_math_has_data"]
+extern fn __c_hb_ot_math_has_data(face: *u8) -> i32;
+fn ot_math_has_data(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_has_data(face.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_ot_math_is_glyph_extended_shape"]
+extern fn __c_hb_ot_math_is_glyph_extended_shape(face: *u8, glyph: u32) -> i32;
+fn ot_math_is_glyph_extended_shape(face: face_t, glyph: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_math_is_glyph_extended_shape(face.raw(), glyph) };
+    return __r;
+}
+
 // SKIPPED fn `ot_meta_get_entry_tags`: param `entries` — no <type> (array, callback, or varargs)
 #[link_name = "hb_ot_meta_reference_entry"]
 extern fn __c_hb_ot_meta_reference_entry(face: *u8, meta_tag: i32) -> *u8;
@@ -1938,8 +2520,20 @@ fn ot_meta_reference_entry(face: face_t, meta_tag: i32) -> blob_t {
     return blob_t::from_raw(__r);
 }
 
-// SKIPPED fn `ot_metrics_get_position`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_metrics_get_position_with_fallback`: param `position` — unmapped type `position_t`
+#[link_name = "hb_ot_metrics_get_position"]
+extern fn __c_hb_ot_metrics_get_position(font: *u8, metrics_tag: i32, position: *i32) -> i32;
+fn ot_metrics_get_position(font: font_t, metrics_tag: i32, ref position: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_metrics_get_position(font.raw(), metrics_tag, ({ #addr_of(position) as *i32 })) };
+    return __r;
+}
+
+#[link_name = "hb_ot_metrics_get_position_with_fallback"]
+extern fn __c_hb_ot_metrics_get_position_with_fallback(font: *u8, metrics_tag: i32, position: *i32);
+fn ot_metrics_get_position_with_fallback(font: font_t, metrics_tag: i32, ref position: i32) {
+    { __c_hb_ot_metrics_get_position_with_fallback(font.raw(), metrics_tag, ({ #addr_of(position) as *i32 })) };
+    return;
+}
+
 #[link_name = "hb_ot_metrics_get_variation"]
 extern fn __c_hb_ot_metrics_get_variation(font: *u8, metrics_tag: i32) -> f32;
 fn ot_metrics_get_variation(font: font_t, metrics_tag: i32) -> f32 {
@@ -1947,22 +2541,46 @@ fn ot_metrics_get_variation(font: font_t, metrics_tag: i32) -> f32 {
     return __r;
 }
 
-// SKIPPED fn `ot_metrics_get_x_variation`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_metrics_get_y_variation`: return type — unmapped type `position_t`
-// SKIPPED fn `ot_name_get_utf16`: param `name_id` — unmapped type `ot_name_id_t`
-// SKIPPED fn `ot_name_get_utf32`: param `name_id` — unmapped type `ot_name_id_t`
-// SKIPPED fn `ot_name_get_utf8`: param `name_id` — unmapped type `ot_name_id_t`
+#[link_name = "hb_ot_metrics_get_x_variation"]
+extern fn __c_hb_ot_metrics_get_x_variation(font: *u8, metrics_tag: i32) -> i32;
+fn ot_metrics_get_x_variation(font: font_t, metrics_tag: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_metrics_get_x_variation(font.raw(), metrics_tag) };
+    return __r;
+}
+
+#[link_name = "hb_ot_metrics_get_y_variation"]
+extern fn __c_hb_ot_metrics_get_y_variation(font: *u8, metrics_tag: i32) -> i32;
+fn ot_metrics_get_y_variation(font: font_t, metrics_tag: i32) -> i32 {
+    let __r: i32 = { __c_hb_ot_metrics_get_y_variation(font.raw(), metrics_tag) };
+    return __r;
+}
+
+// SKIPPED fn `ot_name_get_utf16`: param `language` — unmapped type `language_t`
+// SKIPPED fn `ot_name_get_utf32`: param `language` — unmapped type `language_t`
+// SKIPPED fn `ot_name_get_utf8`: param `language` — unmapped type `language_t`
 // SKIPPED fn `ot_name_list_names`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `ot_shape_glyphs_closure`: param `features` — no <type> (array, callback, or varargs)
-// SKIPPED fn `ot_shape_plan_collect_lookups`: param `table_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_tag_from_language`: return type — unmapped type `tag_t`
+// SKIPPED fn `ot_shape_plan_collect_lookups`: out parameter `lookup_indexes` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `ot_tag_from_language`: param `language` — unmapped type `language_t`
 // SKIPPED fn `ot_tag_to_language`: return type — unmapped type `language_t`
-// SKIPPED fn `ot_tag_to_script`: param `tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_tags_from_script`: param `script_tag_1` — unmapped type `tag_t`
+#[link_name = "hb_ot_tag_to_script"]
+extern fn __c_hb_ot_tag_to_script(tag: u32) -> i32;
+fn ot_tag_to_script(tag: u32) -> i32 {
+    let __r: i32 = { __c_hb_ot_tag_to_script(tag) };
+    return __r;
+}
+
+#[link_name = "hb_ot_tags_from_script"]
+extern fn __c_hb_ot_tags_from_script(script: i32, script_tag_1: *u32, script_tag_2: *u32);
+fn ot_tags_from_script(script: i32, ref script_tag_1: u32, ref script_tag_2: u32) {
+    { __c_hb_ot_tags_from_script(script, ({ #addr_of(script_tag_1) as *u32 }), ({ #addr_of(script_tag_2) as *u32 })) };
+    return;
+}
+
 // SKIPPED fn `ot_tags_from_script_and_language`: param `language` — unmapped type `language_t`
-// SKIPPED fn `ot_tags_to_script_and_language`: param `script_tag` — unmapped type `tag_t`
-// SKIPPED fn `ot_var_find_axis`: return type — unmapped type `bool_t`
-// SKIPPED fn `ot_var_find_axis_info`: return type — unmapped type `bool_t`
+// SKIPPED fn `ot_tags_to_script_and_language`: param `language` — unmapped type `language_t`
+// SKIPPED fn `ot_var_find_axis`: param `axis_info` — unmapped type `ot_var_axis_t`
+// SKIPPED fn `ot_var_find_axis_info`: out parameter `axis_info` — non-foldable out (value-struct/record out-param)
 // SKIPPED fn `ot_var_get_axes`: param `axes_array` — no <type> (array, callback, or varargs)
 #[link_name = "hb_ot_var_get_axis_count"]
 extern fn __c_hb_ot_var_get_axis_count(face: *u8) -> u32;
@@ -1979,10 +2597,28 @@ fn ot_var_get_named_instance_count(face: face_t) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `ot_var_has_data`: return type — unmapped type `bool_t`
+#[link_name = "hb_ot_var_has_data"]
+extern fn __c_hb_ot_var_has_data(face: *u8) -> i32;
+fn ot_var_has_data(face: face_t) -> i32 {
+    let __r: i32 = { __c_hb_ot_var_has_data(face.raw()) };
+    return __r;
+}
+
 // SKIPPED fn `ot_var_named_instance_get_design_coords`: param `coords` — no <type> (array, callback, or varargs)
-// SKIPPED fn `ot_var_named_instance_get_postscript_name_id`: return type — unmapped type `ot_name_id_t`
-// SKIPPED fn `ot_var_named_instance_get_subfamily_name_id`: return type — unmapped type `ot_name_id_t`
+#[link_name = "hb_ot_var_named_instance_get_postscript_name_id"]
+extern fn __c_hb_ot_var_named_instance_get_postscript_name_id(face: *u8, instance_index: u32) -> u32;
+fn ot_var_named_instance_get_postscript_name_id(face: face_t, instance_index: u32) -> u32 {
+    let __r: u32 = { __c_hb_ot_var_named_instance_get_postscript_name_id(face.raw(), instance_index) };
+    return __r;
+}
+
+#[link_name = "hb_ot_var_named_instance_get_subfamily_name_id"]
+extern fn __c_hb_ot_var_named_instance_get_subfamily_name_id(face: *u8, instance_index: u32) -> u32;
+fn ot_var_named_instance_get_subfamily_name_id(face: face_t, instance_index: u32) -> u32 {
+    let __r: u32 = { __c_hb_ot_var_named_instance_get_subfamily_name_id(face.raw(), instance_index) };
+    return __r;
+}
+
 #[link_name = "hb_ot_var_normalize_coords"]
 extern fn __c_hb_ot_var_normalize_coords(face: *u8, coords_length: u32, design_coords: f32, normalized_coords: *i32);
 fn ot_var_normalize_coords(face: face_t, coords_length: u32, design_coords: f32, ref normalized_coords: i32) {
@@ -1991,9 +2627,27 @@ fn ot_var_normalize_coords(face: face_t, coords_length: u32, design_coords: f32,
 }
 
 // SKIPPED fn `ot_var_normalize_variations`: param `variations` — unmapped type `variation_t`
-// SKIPPED fn `paint_color`: param `is_foreground` — unmapped type `bool_t`
-// SKIPPED fn `paint_color_glyph`: return type — unmapped type `bool_t`
-// SKIPPED fn `paint_custom_palette_color`: return type — unmapped type `bool_t`
+#[link_name = "hb_paint_color"]
+extern fn __c_hb_paint_color(funcs: *u8, paint_data: *u8, is_foreground: i32, color: u32);
+fn paint_color(funcs: paint_funcs_t, paint_data: *u8, is_foreground: i32, color: u32) {
+    { __c_hb_paint_color(funcs.raw(), paint_data, is_foreground, color) };
+    return;
+}
+
+#[link_name = "hb_paint_color_glyph"]
+extern fn __c_hb_paint_color_glyph(funcs: *u8, paint_data: *u8, glyph: u32, font: *u8) -> i32;
+fn paint_color_glyph(funcs: paint_funcs_t, paint_data: *u8, glyph: u32, font: font_t) -> i32 {
+    let __r: i32 = { __c_hb_paint_color_glyph(funcs.raw(), paint_data, glyph, font.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_paint_custom_palette_color"]
+extern fn __c_hb_paint_custom_palette_color(funcs: *u8, paint_data: *u8, color_index: u32, color: *u32) -> i32;
+fn paint_custom_palette_color(funcs: paint_funcs_t, paint_data: *u8, color_index: u32, ref color: u32) -> i32 {
+    let __r: i32 = { __c_hb_paint_custom_palette_color(funcs.raw(), paint_data, color_index, ({ #addr_of(color) as *u32 })) };
+    return __r;
+}
+
 #[link_name = "hb_paint_funcs_create"]
 extern fn __c_hb_paint_funcs_create() -> *u8;
 fn paint_funcs_create() -> paint_funcs_t {
@@ -2022,7 +2676,13 @@ fn paint_funcs_get_user_data(funcs: paint_funcs_t, key: user_data_key_t) -> *u8 
     return __r;
 }
 
-// SKIPPED fn `paint_funcs_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_paint_funcs_is_immutable"]
+extern fn __c_hb_paint_funcs_is_immutable(funcs: *u8) -> i32;
+fn paint_funcs_is_immutable(funcs: paint_funcs_t) -> i32 {
+    let __r: i32 = { __c_hb_paint_funcs_is_immutable(funcs.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_paint_funcs_make_immutable"]
 extern fn __c_hb_paint_funcs_make_immutable(funcs: *u8);
 fn paint_funcs_make_immutable(funcs: paint_funcs_t) {
@@ -2051,8 +2711,8 @@ fn paint_funcs_reference(funcs: paint_funcs_t) -> paint_funcs_t {
 // SKIPPED fn `paint_funcs_set_push_transform_func`: param `func` — unmapped type `paint_push_transform_func_t`
 // SKIPPED fn `paint_funcs_set_radial_gradient_func`: param `func` — unmapped type `paint_radial_gradient_func_t`
 // SKIPPED fn `paint_funcs_set_sweep_gradient_func`: param `func` — unmapped type `paint_sweep_gradient_func_t`
-// SKIPPED fn `paint_funcs_set_user_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `paint_image`: param `format` — unmapped type `tag_t`
+// SKIPPED fn `paint_funcs_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
+// SKIPPED fn `paint_image`: param `extents` — unmapped type `glyph_extents_t`
 #[link_name = "hb_paint_linear_gradient"]
 extern fn __c_hb_paint_linear_gradient(funcs: *u8, paint_data: *u8, color_line: *u8, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32);
 fn paint_linear_gradient(funcs: paint_funcs_t, paint_data: *u8, color_line: color_line_t, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) {
@@ -2081,7 +2741,13 @@ fn paint_pop_transform(funcs: paint_funcs_t, paint_data: *u8) {
     return;
 }
 
-// SKIPPED fn `paint_push_clip_glyph`: param `glyph` — unmapped type `codepoint_t`
+#[link_name = "hb_paint_push_clip_glyph"]
+extern fn __c_hb_paint_push_clip_glyph(funcs: *u8, paint_data: *u8, glyph: u32, font: *u8);
+fn paint_push_clip_glyph(funcs: paint_funcs_t, paint_data: *u8, glyph: u32, font: font_t) {
+    { __c_hb_paint_push_clip_glyph(funcs.raw(), paint_data, glyph, font.raw()) };
+    return;
+}
+
 #[link_name = "hb_paint_push_clip_rectangle"]
 extern fn __c_hb_paint_push_clip_rectangle(funcs: *u8, paint_data: *u8, xmin: f32, ymin: f32, xmax: f32, ymax: f32);
 fn paint_push_clip_rectangle(funcs: paint_funcs_t, paint_data: *u8, xmin: f32, ymin: f32, xmax: f32, ymax: f32) {
@@ -2117,7 +2783,13 @@ fn paint_sweep_gradient(funcs: paint_funcs_t, paint_data: *u8, color_line: color
     return;
 }
 
-// SKIPPED fn `script_from_iso15924_tag`: param `tag` — unmapped type `tag_t`
+#[link_name = "hb_script_from_iso15924_tag"]
+extern fn __c_hb_script_from_iso15924_tag(tag: u32) -> i32;
+fn script_from_iso15924_tag(tag: u32) -> i32 {
+    let __r: i32 = { __c_hb_script_from_iso15924_tag(tag) };
+    return __r;
+}
+
 // SKIPPED fn `script_from_string`: param `str` — no <type> (array, callback, or varargs)
 #[link_name = "hb_script_get_horizontal_direction"]
 extern fn __c_hb_script_get_horizontal_direction(script: i32) -> i32;
@@ -2126,8 +2798,20 @@ fn script_get_horizontal_direction(script: i32) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `script_to_iso15924_tag`: return type — unmapped type `tag_t`
-// SKIPPED fn `segment_properties_equal`: return type — unmapped type `bool_t`
+#[link_name = "hb_script_to_iso15924_tag"]
+extern fn __c_hb_script_to_iso15924_tag(script: i32) -> u32;
+fn script_to_iso15924_tag(script: i32) -> u32 {
+    let __r: u32 = { __c_hb_script_to_iso15924_tag(script) };
+    return __r;
+}
+
+#[link_name = "hb_segment_properties_equal"]
+extern fn __c_hb_segment_properties_equal(a: *u8, b: *u8) -> i32;
+fn segment_properties_equal(a: segment_properties_t, b: segment_properties_t) -> i32 {
+    let __r: i32 = { __c_hb_segment_properties_equal(a.raw(), b.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_segment_properties_hash"]
 extern fn __c_hb_segment_properties_hash(p: *u8) -> u32;
 fn segment_properties_hash(p: segment_properties_t) -> u32 {
@@ -2142,10 +2826,28 @@ fn segment_properties_overlay(p: segment_properties_t, src: segment_properties_t
     return;
 }
 
-// SKIPPED fn `set_add`: param `codepoint` — unmapped type `codepoint_t`
-// SKIPPED fn `set_add_range`: param `first` — unmapped type `codepoint_t`
+#[link_name = "hb_set_add"]
+extern fn __c_hb_set_add(set: *u8, codepoint: u32);
+fn set_add(set: set_t, codepoint: u32) {
+    { __c_hb_set_add(set.raw(), codepoint) };
+    return;
+}
+
+#[link_name = "hb_set_add_range"]
+extern fn __c_hb_set_add_range(set: *u8, first: u32, last: u32);
+fn set_add_range(set: set_t, first: u32, last: u32) {
+    { __c_hb_set_add_range(set.raw(), first, last) };
+    return;
+}
+
 // SKIPPED fn `set_add_sorted_array`: param `sorted_codepoints` — no <type> (array, callback, or varargs)
-// SKIPPED fn `set_allocation_successful`: return type — unmapped type `bool_t`
+#[link_name = "hb_set_allocation_successful"]
+extern fn __c_hb_set_allocation_successful(set: *u8) -> i32;
+fn set_allocation_successful(set: set_t) -> i32 {
+    let __r: i32 = { __c_hb_set_allocation_successful(set.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_set_clear"]
 extern fn __c_hb_set_clear(set: *u8);
 fn set_clear(set: set_t) {
@@ -2167,8 +2869,20 @@ fn set_create() -> set_t {
     return set_t::from_raw(__r);
 }
 
-// SKIPPED fn `set_del`: param `codepoint` — unmapped type `codepoint_t`
-// SKIPPED fn `set_del_range`: param `first` — unmapped type `codepoint_t`
+#[link_name = "hb_set_del"]
+extern fn __c_hb_set_del(set: *u8, codepoint: u32);
+fn set_del(set: set_t, codepoint: u32) {
+    { __c_hb_set_del(set.raw(), codepoint) };
+    return;
+}
+
+#[link_name = "hb_set_del_range"]
+extern fn __c_hb_set_del_range(set: *u8, first: u32, last: u32);
+fn set_del_range(set: set_t, first: u32, last: u32) {
+    { __c_hb_set_del_range(set.raw(), first, last) };
+    return;
+}
+
 #[link_name = "hb_set_destroy"]
 extern fn __c_hb_set_destroy(set: *u8);
 fn set_destroy(set: set_t) {
@@ -2183,8 +2897,20 @@ fn set_get_empty() -> set_t {
     return set_t::from_raw(__r);
 }
 
-// SKIPPED fn `set_get_max`: return type — unmapped type `codepoint_t`
-// SKIPPED fn `set_get_min`: return type — unmapped type `codepoint_t`
+#[link_name = "hb_set_get_max"]
+extern fn __c_hb_set_get_max(set: *u8) -> u32;
+fn set_get_max(set: set_t) -> u32 {
+    let __r: u32 = { __c_hb_set_get_max(set.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_set_get_min"]
+extern fn __c_hb_set_get_min(set: *u8) -> u32;
+fn set_get_min(set: set_t) -> u32 {
+    let __r: u32 = { __c_hb_set_get_min(set.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_set_get_population"]
 extern fn __c_hb_set_get_population(set: *u8) -> u32;
 fn set_get_population(set: set_t) -> u32 {
@@ -2199,7 +2925,13 @@ fn set_get_user_data(set: set_t, key: user_data_key_t) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `set_has`: return type — unmapped type `bool_t`
+#[link_name = "hb_set_has"]
+extern fn __c_hb_set_has(set: *u8, codepoint: u32) -> i32;
+fn set_has(set: set_t, codepoint: u32) -> i32 {
+    let __r: i32 = { __c_hb_set_has(set.raw(), codepoint) };
+    return __r;
+}
+
 #[link_name = "hb_set_hash"]
 extern fn __c_hb_set_hash(set: *u8) -> u32;
 fn set_hash(set: set_t) -> u32 {
@@ -2221,15 +2953,39 @@ fn set_invert(set: set_t) {
     return;
 }
 
-// SKIPPED fn `set_is_empty`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_is_equal`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_is_inverted`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_is_subset`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_next`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_next_many`: param `codepoint` — unmapped type `codepoint_t`
-// SKIPPED fn `set_next_range`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_previous`: return type — unmapped type `bool_t`
-// SKIPPED fn `set_previous_range`: return type — unmapped type `bool_t`
+#[link_name = "hb_set_is_empty"]
+extern fn __c_hb_set_is_empty(set: *u8) -> i32;
+fn set_is_empty(set: set_t) -> i32 {
+    let __r: i32 = { __c_hb_set_is_empty(set.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_set_is_equal"]
+extern fn __c_hb_set_is_equal(set: *u8, other: *u8) -> i32;
+fn set_is_equal(set: set_t, other: set_t) -> i32 {
+    let __r: i32 = { __c_hb_set_is_equal(set.raw(), other.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_set_is_inverted"]
+extern fn __c_hb_set_is_inverted(set: *u8) -> i32;
+fn set_is_inverted(set: set_t) -> i32 {
+    let __r: i32 = { __c_hb_set_is_inverted(set.raw()) };
+    return __r;
+}
+
+#[link_name = "hb_set_is_subset"]
+extern fn __c_hb_set_is_subset(set: *u8, larger_set: *u8) -> i32;
+fn set_is_subset(set: set_t, larger_set: set_t) -> i32 {
+    let __r: i32 = { __c_hb_set_is_subset(set.raw(), larger_set.raw()) };
+    return __r;
+}
+
+// SKIPPED fn `set_next`: inout parameter
+// SKIPPED fn `set_next_many`: param `out` — no <type> (array, callback, or varargs)
+// SKIPPED fn `set_next_range`: inout parameter
+// SKIPPED fn `set_previous`: inout parameter
+// SKIPPED fn `set_previous_range`: inout parameter
 #[link_name = "hb_set_reference"]
 extern fn __c_hb_set_reference(set: *u8) -> *u8;
 fn set_reference(set: set_t) -> set_t {
@@ -2244,7 +3000,7 @@ fn set_set(set: set_t, other: set_t) {
     return;
 }
 
-// SKIPPED fn `set_set_user_data`: return type — unmapped type `bool_t`
+// SKIPPED fn `set_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 #[link_name = "hb_set_subtract"]
 extern fn __c_hb_set_subtract(set: *u8, other: *u8);
 fn set_subtract(set: set_t, other: set_t) {
@@ -2267,8 +3023,8 @@ fn set_union(set: set_t, other: set_t) {
 }
 
 // SKIPPED fn `shape`: param `features` — no <type> (array, callback, or varargs)
-// SKIPPED fn `shape_full`: return type — unmapped type `bool_t`
-// SKIPPED fn `shape_justify`: return type — unmapped type `bool_t`
+// SKIPPED fn `shape_full`: param `features` — no <type> (array, callback, or varargs)
+// SKIPPED fn `shape_justify`: param `features` — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_list_shapers`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_plan_create`: param `user_features` — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_plan_create2`: param `user_features` — no <type> (array, callback, or varargs)
@@ -2281,7 +3037,7 @@ fn shape_plan_destroy(shape_plan: shape_plan_t) {
     return;
 }
 
-// SKIPPED fn `shape_plan_execute`: return type — unmapped type `bool_t`
+// SKIPPED fn `shape_plan_execute`: param `features` — no <type> (array, callback, or varargs)
 #[link_name = "hb_shape_plan_get_empty"]
 extern fn __c_hb_shape_plan_get_empty() -> *u8;
 fn shape_plan_get_empty() -> shape_plan_t {
@@ -2310,7 +3066,7 @@ fn shape_plan_reference(shape_plan: shape_plan_t) -> shape_plan_t {
     return shape_plan_t::from_raw(__r);
 }
 
-// SKIPPED fn `shape_plan_set_user_data`: return type — unmapped type `bool_t`
+// SKIPPED fn `shape_plan_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
 #[link_name = "hb_style_get_value"]
 extern fn __c_hb_style_get_value(font: *u8, style_tag: i32) -> f32;
 fn style_get_value(font: font_t, style_tag: i32) -> f32 {
@@ -2318,13 +3074,43 @@ fn style_get_value(font: font_t, style_tag: i32) -> f32 {
     return __r;
 }
 
-// SKIPPED fn `tag_from_string`: return type — unmapped type `tag_t`
-// SKIPPED fn `tag_to_string`: param `tag` — unmapped type `tag_t`
-// SKIPPED fn `unicode_combining_class`: param `unicode` — unmapped type `codepoint_t`
-// SKIPPED fn `unicode_compose`: return type — unmapped type `bool_t`
-// SKIPPED fn `unicode_decompose`: return type — unmapped type `bool_t`
-// SKIPPED fn `unicode_decompose_compatibility`: param `u` — unmapped type `codepoint_t`
-// SKIPPED fn `unicode_eastasian_width`: param `unicode` — unmapped type `codepoint_t`
+// SKIPPED fn `tag_from_string`: param `str` — no <type> (array, callback, or varargs)
+// SKIPPED fn `tag_to_string`: param `buf` — no <type> (array, callback, or varargs)
+#[link_name = "hb_unicode_combining_class"]
+extern fn __c_hb_unicode_combining_class(ufuncs: *u8, unicode: u32) -> i32;
+fn unicode_combining_class(ufuncs: unicode_funcs_t, unicode: u32) -> i32 {
+    let __r: i32 = { __c_hb_unicode_combining_class(ufuncs.raw(), unicode) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_compose"]
+extern fn __c_hb_unicode_compose(ufuncs: *u8, a: u32, b: u32, ab: *u32) -> i32;
+fn unicode_compose(ufuncs: unicode_funcs_t, a: u32, b: u32, ref ab: u32) -> i32 {
+    let __r: i32 = { __c_hb_unicode_compose(ufuncs.raw(), a, b, ({ #addr_of(ab) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_decompose"]
+extern fn __c_hb_unicode_decompose(ufuncs: *u8, ab: u32, a: *u32, b: *u32) -> i32;
+fn unicode_decompose(ufuncs: unicode_funcs_t, ab: u32, ref a: u32, ref b: u32) -> i32 {
+    let __r: i32 = { __c_hb_unicode_decompose(ufuncs.raw(), ab, ({ #addr_of(a) as *u32 }), ({ #addr_of(b) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_decompose_compatibility"]
+extern fn __c_hb_unicode_decompose_compatibility(ufuncs: *u8, u: u32, decomposed: *u32) -> u32;
+fn unicode_decompose_compatibility(ufuncs: unicode_funcs_t, u: u32, ref decomposed: u32) -> u32 {
+    let __r: u32 = { __c_hb_unicode_decompose_compatibility(ufuncs.raw(), u, ({ #addr_of(decomposed) as *u32 })) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_eastasian_width"]
+extern fn __c_hb_unicode_eastasian_width(ufuncs: *u8, unicode: u32) -> u32;
+fn unicode_eastasian_width(ufuncs: unicode_funcs_t, unicode: u32) -> u32 {
+    let __r: u32 = { __c_hb_unicode_eastasian_width(ufuncs.raw(), unicode) };
+    return __r;
+}
+
 #[link_name = "hb_unicode_funcs_create"]
 extern fn __c_hb_unicode_funcs_create(parent: *u8) -> *u8;
 fn unicode_funcs_create(parent: unicode_funcs_t) -> unicode_funcs_t {
@@ -2367,7 +3153,13 @@ fn unicode_funcs_get_user_data(ufuncs: unicode_funcs_t, key: user_data_key_t) ->
     return __r;
 }
 
-// SKIPPED fn `unicode_funcs_is_immutable`: return type — unmapped type `bool_t`
+#[link_name = "hb_unicode_funcs_is_immutable"]
+extern fn __c_hb_unicode_funcs_is_immutable(ufuncs: *u8) -> i32;
+fn unicode_funcs_is_immutable(ufuncs: unicode_funcs_t) -> i32 {
+    let __r: i32 = { __c_hb_unicode_funcs_is_immutable(ufuncs.raw()) };
+    return __r;
+}
+
 #[link_name = "hb_unicode_funcs_make_immutable"]
 extern fn __c_hb_unicode_funcs_make_immutable(ufuncs: *u8);
 fn unicode_funcs_make_immutable(ufuncs: unicode_funcs_t) {
@@ -2390,11 +3182,29 @@ fn unicode_funcs_reference(ufuncs: unicode_funcs_t) -> unicode_funcs_t {
 // SKIPPED fn `unicode_funcs_set_general_category_func`: param `func` — unmapped type `unicode_general_category_func_t`
 // SKIPPED fn `unicode_funcs_set_mirroring_func`: param `func` — unmapped type `unicode_mirroring_func_t`
 // SKIPPED fn `unicode_funcs_set_script_func`: param `func` — unmapped type `unicode_script_func_t`
-// SKIPPED fn `unicode_funcs_set_user_data`: return type — unmapped type `bool_t`
-// SKIPPED fn `unicode_general_category`: param `unicode` — unmapped type `codepoint_t`
-// SKIPPED fn `unicode_mirroring`: return type — unmapped type `codepoint_t`
-// SKIPPED fn `unicode_script`: param `unicode` — unmapped type `codepoint_t`
-// SKIPPED fn `variation_from_string`: return type — unmapped type `bool_t`
+// SKIPPED fn `unicode_funcs_set_user_data`: param `destroy` — unmapped type `destroy_func_t`
+#[link_name = "hb_unicode_general_category"]
+extern fn __c_hb_unicode_general_category(ufuncs: *u8, unicode: u32) -> i32;
+fn unicode_general_category(ufuncs: unicode_funcs_t, unicode: u32) -> i32 {
+    let __r: i32 = { __c_hb_unicode_general_category(ufuncs.raw(), unicode) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_mirroring"]
+extern fn __c_hb_unicode_mirroring(ufuncs: *u8, unicode: u32) -> u32;
+fn unicode_mirroring(ufuncs: unicode_funcs_t, unicode: u32) -> u32 {
+    let __r: u32 = { __c_hb_unicode_mirroring(ufuncs.raw(), unicode) };
+    return __r;
+}
+
+#[link_name = "hb_unicode_script"]
+extern fn __c_hb_unicode_script(ufuncs: *u8, unicode: u32) -> i32;
+fn unicode_script(ufuncs: unicode_funcs_t, unicode: u32) -> i32 {
+    let __r: i32 = { __c_hb_unicode_script(ufuncs.raw(), unicode) };
+    return __r;
+}
+
+// SKIPPED fn `variation_from_string`: param `str` — no <type> (array, callback, or varargs)
 // SKIPPED fn `variation_to_string`: param `variation` — unmapped type `variation_t`
 
 // === Interfaces ===
@@ -2649,4 +3459,4 @@ impl user_data_key_t {
 // === Classes ===
 
 
-// cpc-bindgen --gobject: 942 items emitted, 323 SKIPPED.
+// cpc-bindgen --gobject: 1077 items emitted, 188 SKIPPED.

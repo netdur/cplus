@@ -13,7 +13,6 @@ gobject = "*"
 stdlib  = "*"
 gio         = "*"
 glib        = "*"
-gmodule     = "*"
 gobject_gir = "*"
 
 [link]

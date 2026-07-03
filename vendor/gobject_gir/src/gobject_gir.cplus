@@ -1158,7 +1158,7 @@ extern fn __c_g_closure_new_simple(sizeof_closure: u32, data: *u8) -> *u8;
 // SKIPPED method `Closure::add_marshal_guards`: param `pre_marshal_notify` — unmapped type `ClosureNotify`
 #[link_name = "g_closure_invalidate"]
 extern fn __c_g_closure_invalidate(__recv: *u8);
-// SKIPPED method `Closure::invoke`: out parameter `return_value` — only scalar out-params are bound
+// SKIPPED method `Closure::invoke`: out parameter `return_value` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_closure_ref"]
 extern fn __c_g_closure_ref(__recv: *u8) -> *u8;
 // SKIPPED method `Closure::remove_finalize_notifier`: param `notify_func` — unmapped type `ClosureNotify`

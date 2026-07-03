@@ -16,12 +16,10 @@ gdk         = "*"
 gdkpixbuf   = "*"
 gio         = "*"
 glib        = "*"
-gmodule     = "*"
 gobject_gir = "*"
 graphene    = "*"
 harfbuzz    = "*"
 pango       = "*"
-pangocairo  = "*"
 
 [link]
 libs = ["gtk-4"]

@@ -372,7 +372,7 @@ fn cairo_set_source_rgba(cr: cairo::Context, rgba: RGBA) {
 }
 
 // SKIPPED fn `content_deserialize_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
-// SKIPPED fn `content_deserialize_finish`: out parameter `value` — only scalar out-params are bound
+// SKIPPED fn `content_deserialize_finish`: out parameter `value` — non-foldable out (value-struct/record out-param)
 #[link_name = "gdk_content_formats_parse"]
 extern fn __c_gdk_content_formats_parse(string: *u8) -> *u8;
 fn content_formats_parse(string: str) -> option::Option[ContentFormats] {
@@ -1468,8 +1468,8 @@ impl RGBA {
 extern fn __c_gdk_rectangle_contains_point(__recv: *u8, x: i32, y: i32) -> i32;
 #[link_name = "gdk_rectangle_equal"]
 extern fn __c_gdk_rectangle_equal(__recv: *u8, rect2: *u8) -> i32;
-// SKIPPED method `Rectangle::intersect`: out parameter `dest` — only scalar out-params are bound
-// SKIPPED method `Rectangle::union`: out parameter `dest` — only scalar out-params are bound
+// SKIPPED method `Rectangle::intersect`: out parameter `dest` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Rectangle::union`: out parameter `dest` — non-foldable out (value-struct/record out-param)
 // `Rectangle` — boxed record (non-owning handle).
 struct Rectangle {
     opaque _raw: *u8,
@@ -1565,10 +1565,10 @@ extern fn __c_gdk_toplevel_layout_new() -> *u8;
 extern fn __c_gdk_toplevel_layout_copy(__recv: *u8) -> *u8;
 #[link_name = "gdk_toplevel_layout_equal"]
 extern fn __c_gdk_toplevel_layout_equal(__recv: *u8, other: *u8) -> i32;
-// SKIPPED method `ToplevelLayout::get_fullscreen`: out parameter `fullscreen` — only scalar out-params are bound
+// SKIPPED method `ToplevelLayout::get_fullscreen`: out parameter `fullscreen` — non-foldable out (bool out-param)
 #[link_name = "gdk_toplevel_layout_get_fullscreen_monitor"]
 extern fn __c_gdk_toplevel_layout_get_fullscreen_monitor(__recv: *u8) -> *u8;
-// SKIPPED method `ToplevelLayout::get_maximized`: out parameter `maximized` — only scalar out-params are bound
+// SKIPPED method `ToplevelLayout::get_maximized`: out parameter `maximized` — non-foldable out (bool out-param)
 #[link_name = "gdk_toplevel_layout_get_resizable"]
 extern fn __c_gdk_toplevel_layout_get_resizable(__recv: *u8) -> i32;
 #[link_name = "gdk_toplevel_layout_ref"]
@@ -1749,7 +1749,7 @@ extern fn __c_gdk_clipboard_get_formats(__recv: *u8) -> *u8;
 #[link_name = "gdk_clipboard_is_local"]
 extern fn __c_gdk_clipboard_is_local(__recv: *u8) -> i32;
 // SKIPPED method `Clipboard::read_async`: param `mime_types` — no <type> (array, callback, or varargs)
-// SKIPPED method `Clipboard::read_finish`: out parameter `out_mime_type` — only scalar out-params are bound
+// SKIPPED method `Clipboard::read_finish`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `Clipboard::read_text_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_clipboard_read_text_finish"]
 extern fn __c_gdk_clipboard_read_text_finish(__recv: *u8, result: *u8) -> *u8;
@@ -1951,7 +1951,7 @@ extern fn __c_gdk_content_provider_new_for_value(value: *u8) -> *u8;
 // SKIPPED ctor `ContentProvider::new_union`: param `providers` — no <type> (array, callback, or varargs)
 #[link_name = "gdk_content_provider_content_changed"]
 extern fn __c_gdk_content_provider_content_changed(__recv: *u8);
-// SKIPPED method `ContentProvider::get_value`: out parameter `value` — only scalar out-params are bound
+// SKIPPED method `ContentProvider::get_value`: out parameter `value` — non-foldable out (value-struct/record out-param)
 #[link_name = "gdk_content_provider_ref_formats"]
 extern fn __c_gdk_content_provider_ref_formats(__recv: *u8) -> *u8;
 #[link_name = "gdk_content_provider_ref_storable_formats"]
@@ -3074,7 +3074,7 @@ extern fn __c_gdk_drop_get_formats(__recv: *u8) -> *u8;
 #[link_name = "gdk_drop_get_surface"]
 extern fn __c_gdk_drop_get_surface(__recv: *u8) -> *u8;
 // SKIPPED method `Drop::read_async`: param `mime_types` — no <type> (array, callback, or varargs)
-// SKIPPED method `Drop::read_finish`: out parameter `out_mime_type` — only scalar out-params are bound
+// SKIPPED method `Drop::read_finish`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `Drop::read_value_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_drop_read_value_finish"]
 extern fn __c_gdk_drop_read_value_finish(__recv: *u8, result: *u8) -> *u8;
@@ -3879,7 +3879,7 @@ extern fn __c_gdk_monitor_get_connector(__recv: *u8) -> *u8;
 extern fn __c_gdk_monitor_get_description(__recv: *u8) -> *u8;
 #[link_name = "gdk_monitor_get_display"]
 extern fn __c_gdk_monitor_get_display(__recv: *u8) -> *u8;
-// SKIPPED method `Monitor::get_geometry`: out parameter `geometry` — only scalar out-params are bound
+// SKIPPED method `Monitor::get_geometry`: out parameter `geometry` — non-foldable out (value-struct/record out-param)
 #[link_name = "gdk_monitor_get_height_mm"]
 extern fn __c_gdk_monitor_get_height_mm(__recv: *u8) -> i32;
 #[link_name = "gdk_monitor_get_manufacturer"]

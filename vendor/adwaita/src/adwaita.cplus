@@ -247,7 +247,7 @@ extern fn __c_adw_swipeable_get_distance(__recv: *u8) -> f64;
 #[link_name = "adw_swipeable_get_progress"]
 extern fn __c_adw_swipeable_get_progress(__recv: *u8) -> f64;
 // SKIPPED method `Swipeable::get_snap_points`: return type — no <type> (array, callback, or varargs)
-// SKIPPED method `Swipeable::get_swipe_area`: out parameter `rect` — only scalar out-params are bound
+// SKIPPED method `Swipeable::get_swipe_area`: out parameter `rect` — non-foldable out (value-struct/record out-param)
 // `Swipeable` — GObject wrapper (non-owning handle).
 struct Swipeable {
     opaque _raw: *u8,

@@ -15,11 +15,9 @@ cairo       = "*"
 gdkpixbuf   = "*"
 gio         = "*"
 glib        = "*"
-gmodule     = "*"
 gobject_gir = "*"
 harfbuzz    = "*"
 pango       = "*"
-pangocairo  = "*"
 
 [link]
 libs = ["gtk-4"]

@@ -768,7 +768,7 @@ fn log2vis_get_embedding_levels(text: str, length: i32, pbase_dir: i32) -> u8 {
     return __r;
 }
 
-// SKIPPED fn `markup_parser_finish`: out parameter `attr_list` — only scalar out-params are bound
+// SKIPPED fn `markup_parser_finish`: out parameter `attr_list` — non-foldable out (value-struct/record out-param)
 #[link_name = "pango_markup_parser_new"]
 extern fn __c_pango_markup_parser_new(accel_marker: u32) -> *u8;
 fn markup_parser_new(accel_marker: u32) -> glib::MarkupParseContext {
@@ -776,8 +776,18 @@ fn markup_parser_new(accel_marker: u32) -> glib::MarkupParseContext {
     return glib::MarkupParseContext::from_raw(__r);
 }
 
-// SKIPPED fn `parse_enum`: out parameter `possible_values` — only scalar out-params are bound
-// SKIPPED fn `parse_markup`: out parameter `attr_list` — only scalar out-params are bound
+#[link_name = "pango_parse_enum"]
+extern fn __c_pango_parse_enum(type_: usize, str: *u8, value: *i32, warn: i32, possible_values: **u8) -> i32;
+fn parse_enum(type_: usize, str: str, ref value: i32, warn: bool) -> option::Option[text::Text] {
+    let __out: *u8 = { 0 as *u8 };
+    let __cs_str: *u8 = bridge::str_to_cstring(str);
+    { __c_pango_parse_enum(type_, __cs_str, ({ #addr_of(value) as *i32 }), (if warn { 1 as i32 } else { 0 as i32 }), ({ #addr_of(__out) as **u8 })) };
+    bridge::free_cstring(__cs_str);
+    if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+    return option::some(bridge::cstr_to_text_full(__out));
+}
+
+// SKIPPED fn `parse_markup`: out parameter `attr_list` — non-foldable out (value-struct/record out-param)
 #[link_name = "pango_parse_stretch"]
 extern fn __c_pango_parse_stretch(str: *u8, stretch: *i32, warn: i32) -> i32;
 fn parse_stretch(str: str, ref stretch: i32, warn: bool) -> bool {
@@ -923,7 +933,7 @@ extern fn __c_pango_attr_iterator_destroy(__recv: *u8);
 #[link_name = "pango_attr_iterator_get"]
 extern fn __c_pango_attr_iterator_get(__recv: *u8, type_: i32) -> *u8;
 // SKIPPED method `AttrIterator::get_attrs`: return type — unmapped type `GLib.SList`
-// SKIPPED method `AttrIterator::get_font`: out parameter `language` — only scalar out-params are bound
+// SKIPPED method `AttrIterator::get_font`: out parameter `language` — non-foldable out (value-struct/record out-param)
 #[link_name = "pango_attr_iterator_next"]
 extern fn __c_pango_attr_iterator_next(__recv: *u8) -> i32;
 #[link_name = "pango_attr_iterator_range"]
@@ -2020,7 +2030,7 @@ impl Matrix {
 extern fn __c_pango_script_iter_new(text: *u8, length: i32) -> *u8;
 #[link_name = "pango_script_iter_free"]
 extern fn __c_pango_script_iter_free(__recv: *u8);
-// SKIPPED method `ScriptIter::get_range`: out parameter `start` — only scalar out-params are bound
+// SKIPPED method `ScriptIter::get_range`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "pango_script_iter_next"]
 extern fn __c_pango_script_iter_next(__recv: *u8) -> i32;
 // `ScriptIter` — boxed record (non-owning handle).
@@ -2414,7 +2424,7 @@ extern fn __c_pango_font_get_face(__recv: *u8) -> *u8;
 // SKIPPED method `Font::get_features`: param `features` — no <type> (array, callback, or varargs)
 #[link_name = "pango_font_get_font_map"]
 extern fn __c_pango_font_get_font_map(__recv: *u8) -> *u8;
-// SKIPPED method `Font::get_glyph_extents`: param `glyph` — unmapped type `Glyph`
+// SKIPPED method `Font::get_glyph_extents`: param `ink_rect` — unmapped type `Rectangle`
 #[link_name = "pango_font_get_hb_font"]
 extern fn __c_pango_font_get_hb_font(__recv: *u8) -> *u8;
 // SKIPPED method `Font::get_languages`: return type — no <type> (array, callback, or varargs)
@@ -3146,7 +3156,8 @@ extern fn __c_pango_renderer_activate(__recv: *u8);
 extern fn __c_pango_renderer_deactivate(__recv: *u8);
 #[link_name = "pango_renderer_draw_error_underline"]
 extern fn __c_pango_renderer_draw_error_underline(__recv: *u8, x: i32, y: i32, width: i32, height: i32);
-// SKIPPED method `Renderer::draw_glyph`: param `glyph` — unmapped type `Glyph`
+#[link_name = "pango_renderer_draw_glyph"]
+extern fn __c_pango_renderer_draw_glyph(__recv: *u8, font: *u8, glyph: u32, x: f64, y: f64);
 #[link_name = "pango_renderer_draw_glyph_item"]
 extern fn __c_pango_renderer_draw_glyph_item(__recv: *u8, text: *u8, glyph_item: *u8, x: i32, y: i32);
 #[link_name = "pango_renderer_draw_glyphs"]
@@ -3198,6 +3209,11 @@ impl Renderer {
 
     fn draw_error_underline(this, x: i32, y: i32, width: i32, height: i32) {
         { __c_pango_renderer_draw_error_underline(this._raw, x, y, width, height) };
+        return;
+    }
+
+    fn draw_glyph(this, font: Font, glyph: u32, x: f64, y: f64) {
+        { __c_pango_renderer_draw_glyph(this._raw, font.raw(), glyph, x, y) };
         return;
     }
 
@@ -3288,4 +3304,4 @@ impl Renderer {
 }
 
 
-// cpc-bindgen --gobject: 645 items emitted, 85 SKIPPED.
+// cpc-bindgen --gobject: 647 items emitted, 83 SKIPPED.

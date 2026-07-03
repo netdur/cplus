@@ -996,9 +996,9 @@ fn ascii_strncasecmp(s1: str, s2: str, n: usize) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `ascii_strtod`: out parameter `endptr` — only scalar out-params are bound
-// SKIPPED fn `ascii_strtoll`: out parameter `endptr` — only scalar out-params are bound
-// SKIPPED fn `ascii_strtoull`: out parameter `endptr` — only scalar out-params are bound
+// SKIPPED fn `ascii_strtod`: string/object out-param alongside a value return — cannot fold
+// SKIPPED fn `ascii_strtoll`: string/object out-param alongside a value return — cannot fold
+// SKIPPED fn `ascii_strtoull`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_ascii_strup"]
 extern fn __c_g_ascii_strup(str: *u8, len: isize) -> *u8;
 fn ascii_strup(str: str, len: isize) -> text::Text {
@@ -1117,7 +1117,21 @@ fn assertion_message_cmpstrv(domain: str, file: str, line: i32, func: str, expr:
     return;
 }
 
-// SKIPPED fn `assertion_message_error`: param `error_domain` — unmapped type `Quark`
+#[link_name = "g_assertion_message_error"]
+extern fn __c_g_assertion_message_error(domain: *u8, file: *u8, line: i32, func: *u8, expr: *u8, error: *u8, error_domain: u32, error_code: i32);
+fn assertion_message_error(domain: str, file: str, line: i32, func: str, expr: str, error: Error, error_domain: u32, error_code: i32) {
+    let __cs_domain: *u8 = bridge::str_to_cstring(domain);
+    let __cs_file: *u8 = bridge::str_to_cstring(file);
+    let __cs_func: *u8 = bridge::str_to_cstring(func);
+    let __cs_expr: *u8 = bridge::str_to_cstring(expr);
+    { __c_g_assertion_message_error(__cs_domain, __cs_file, line, __cs_func, __cs_expr, error.raw(), error_domain, error_code) };
+    bridge::free_cstring(__cs_domain);
+    bridge::free_cstring(__cs_file);
+    bridge::free_cstring(__cs_func);
+    bridge::free_cstring(__cs_expr);
+    return;
+}
+
 #[link_name = "g_assertion_message_expr"]
 extern fn __c_g_assertion_message_expr(domain: *u8, file: *u8, line: i32, func: *u8, expr: *u8);
 fn assertion_message_expr(domain: str, file: str, line: i32, func: str, expr: str) {
@@ -1218,8 +1232,20 @@ fn atomic_int_xor(atomic: u32, val: u32) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `atomic_pointer_add`: return type — unmapped type `gintptr`
-// SKIPPED fn `atomic_pointer_and`: return type — unmapped type `guintptr`
+#[link_name = "g_atomic_pointer_add"]
+extern fn __c_g_atomic_pointer_add(atomic: *u8, val: isize) -> isize;
+fn atomic_pointer_add(atomic: *u8, val: isize) -> isize {
+    let __r: isize = { __c_g_atomic_pointer_add(atomic, val) };
+    return __r;
+}
+
+#[link_name = "g_atomic_pointer_and"]
+extern fn __c_g_atomic_pointer_and(atomic: *u8, val: usize) -> usize;
+fn atomic_pointer_and(atomic: *u8, val: usize) -> usize {
+    let __r: usize = { __c_g_atomic_pointer_and(atomic, val) };
+    return __r;
+}
+
 #[link_name = "g_atomic_pointer_compare_and_exchange"]
 extern fn __c_g_atomic_pointer_compare_and_exchange(atomic: *u8, oldval: *u8, newval: *u8) -> i32;
 fn atomic_pointer_compare_and_exchange(atomic: *u8, oldval: *u8, newval: *u8) -> bool {
@@ -1227,7 +1253,7 @@ fn atomic_pointer_compare_and_exchange(atomic: *u8, oldval: *u8, newval: *u8) ->
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `atomic_pointer_compare_and_exchange_full`: out parameter `preval` — only scalar out-params are bound
+// SKIPPED fn `atomic_pointer_compare_and_exchange_full`: out parameter `preval` — non-foldable out (raw-pointer out-param)
 #[link_name = "g_atomic_pointer_exchange"]
 extern fn __c_g_atomic_pointer_exchange(atomic: *u8, newval: *u8) -> *u8;
 fn atomic_pointer_exchange(atomic: *u8, newval: *u8) -> *u8 {
@@ -1242,7 +1268,13 @@ fn atomic_pointer_get(atomic: *u8) -> *u8 {
     return __r;
 }
 
-// SKIPPED fn `atomic_pointer_or`: return type — unmapped type `guintptr`
+#[link_name = "g_atomic_pointer_or"]
+extern fn __c_g_atomic_pointer_or(atomic: *u8, val: usize) -> usize;
+fn atomic_pointer_or(atomic: *u8, val: usize) -> usize {
+    let __r: usize = { __c_g_atomic_pointer_or(atomic, val) };
+    return __r;
+}
+
 #[link_name = "g_atomic_pointer_set"]
 extern fn __c_g_atomic_pointer_set(atomic: *u8, newval: *u8);
 fn atomic_pointer_set(atomic: *u8, newval: *u8) {
@@ -1250,7 +1282,13 @@ fn atomic_pointer_set(atomic: *u8, newval: *u8) {
     return;
 }
 
-// SKIPPED fn `atomic_pointer_xor`: return type — unmapped type `guintptr`
+#[link_name = "g_atomic_pointer_xor"]
+extern fn __c_g_atomic_pointer_xor(atomic: *u8, val: usize) -> usize;
+fn atomic_pointer_xor(atomic: *u8, val: usize) -> usize {
+    let __r: usize = { __c_g_atomic_pointer_xor(atomic, val) };
+    return __r;
+}
+
 #[link_name = "g_atomic_rc_box_acquire"]
 extern fn __c_g_atomic_rc_box_acquire(mem_block: *u8) -> *u8;
 fn atomic_rc_box_acquire(mem_block: *u8) -> *u8 {
@@ -1386,7 +1424,13 @@ fn blow_chunks() {
     return;
 }
 
-// SKIPPED fn `bookmark_file_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_bookmark_file_error_quark"]
+extern fn __c_g_bookmark_file_error_quark() -> u32;
+fn bookmark_file_error_quark() -> u32 {
+    let __r: u32 = { __c_g_bookmark_file_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `build_filename`: variadic
 // SKIPPED fn `build_filename_valist`: param `args` — unmapped type `va_list`
 // SKIPPED fn `build_filenamev`: param `args` — no <type> (array, callback, or varargs)
@@ -1443,9 +1487,15 @@ fn checksum_type_get_length(checksum_type: i32) -> isize {
     return __r;
 }
 
-// SKIPPED fn `child_watch_add`: param `pid` — unmapped type `Pid`
-// SKIPPED fn `child_watch_add_full`: param `pid` — unmapped type `Pid`
-// SKIPPED fn `child_watch_source_new`: param `pid` — unmapped type `Pid`
+// SKIPPED fn `child_watch_add`: param `function` — unmapped type `ChildWatchFunc`
+// SKIPPED fn `child_watch_add_full`: param `function` — unmapped type `ChildWatchFunc`
+#[link_name = "g_child_watch_source_new"]
+extern fn __c_g_child_watch_source_new(pid: i32) -> *u8;
+fn child_watch_source_new(pid: i32) -> Source {
+    let __r: *u8 = { __c_g_child_watch_source_new(pid) };
+    return Source::from_raw(__r);
+}
+
 #[link_name = "g_chmod"]
 extern fn __c_g_chmod(filename: *u8, mode: i32) -> i32;
 fn chmod(filename: str, mode: i32) -> i32 {
@@ -1510,7 +1560,13 @@ fn compute_hmac_for_bytes(digest_type: i32, key: Bytes, data: Bytes) -> text::Te
 // SKIPPED fn `compute_hmac_for_string`: param `key` — no <type> (array, callback, or varargs)
 // SKIPPED fn `cond_new`: return type — unmapped type `Cond`
 // SKIPPED fn `convert`: return type — no <type> (array, callback, or varargs)
-// SKIPPED fn `convert_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_convert_error_quark"]
+extern fn __c_g_convert_error_quark() -> u32;
+fn convert_error_quark() -> u32 {
+    let __r: u32 = { __c_g_convert_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `convert_with_fallback`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `convert_with_iconv`: return type — no <type> (array, callback, or varargs)
 #[link_name = "g_creat"]
@@ -1543,13 +1599,49 @@ fn dataset_destroy(dataset_location: *u8) {
 }
 
 // SKIPPED fn `dataset_foreach`: param `func` — unmapped type `DataForeachFunc`
-// SKIPPED fn `dataset_id_get_data`: param `key_id` — unmapped type `Quark`
-// SKIPPED fn `dataset_id_remove_no_notify`: param `key_id` — unmapped type `Quark`
-// SKIPPED fn `dataset_id_set_data_full`: param `key_id` — unmapped type `Quark`
-// SKIPPED fn `date_get_days_in_month`: param `year` — unmapped type `DateYear`
-// SKIPPED fn `date_get_monday_weeks_in_year`: param `year` — unmapped type `DateYear`
-// SKIPPED fn `date_get_sunday_weeks_in_year`: param `year` — unmapped type `DateYear`
-// SKIPPED fn `date_is_leap_year`: param `year` — unmapped type `DateYear`
+#[link_name = "g_dataset_id_get_data"]
+extern fn __c_g_dataset_id_get_data(dataset_location: *u8, key_id: u32) -> *u8;
+fn dataset_id_get_data(dataset_location: *u8, key_id: u32) -> *u8 {
+    let __r: *u8 = { __c_g_dataset_id_get_data(dataset_location, key_id) };
+    return __r;
+}
+
+#[link_name = "g_dataset_id_remove_no_notify"]
+extern fn __c_g_dataset_id_remove_no_notify(dataset_location: *u8, key_id: u32) -> *u8;
+fn dataset_id_remove_no_notify(dataset_location: *u8, key_id: u32) -> *u8 {
+    let __r: *u8 = { __c_g_dataset_id_remove_no_notify(dataset_location, key_id) };
+    return __r;
+}
+
+// SKIPPED fn `dataset_id_set_data_full`: param `destroy_func` — unmapped type `DestroyNotify`
+#[link_name = "g_date_get_days_in_month"]
+extern fn __c_g_date_get_days_in_month(month: i32, year: u16) -> u8;
+fn date_get_days_in_month(month: i32, year: u16) -> u8 {
+    let __r: u8 = { __c_g_date_get_days_in_month(month, year) };
+    return __r;
+}
+
+#[link_name = "g_date_get_monday_weeks_in_year"]
+extern fn __c_g_date_get_monday_weeks_in_year(year: u16) -> u8;
+fn date_get_monday_weeks_in_year(year: u16) -> u8 {
+    let __r: u8 = { __c_g_date_get_monday_weeks_in_year(year) };
+    return __r;
+}
+
+#[link_name = "g_date_get_sunday_weeks_in_year"]
+extern fn __c_g_date_get_sunday_weeks_in_year(year: u16) -> u8;
+fn date_get_sunday_weeks_in_year(year: u16) -> u8 {
+    let __r: u8 = { __c_g_date_get_sunday_weeks_in_year(year) };
+    return __r;
+}
+
+#[link_name = "g_date_is_leap_year"]
+extern fn __c_g_date_is_leap_year(year: u16) -> i32;
+fn date_is_leap_year(year: u16) -> bool {
+    let __r: i32 = { __c_g_date_is_leap_year(year) };
+    return __r != (0 as i32);
+}
+
 #[link_name = "g_date_strftime"]
 extern fn __c_g_date_strftime(s: *u8, slen: usize, format: *u8, date: *u8) -> usize;
 fn date_strftime(s: str, slen: usize, format: str, date: Date) -> usize {
@@ -1561,8 +1653,20 @@ fn date_strftime(s: str, slen: usize, format: str, date: Date) -> usize {
     return __r;
 }
 
-// SKIPPED fn `date_valid_day`: param `day` — unmapped type `DateDay`
-// SKIPPED fn `date_valid_dmy`: param `day` — unmapped type `DateDay`
+#[link_name = "g_date_valid_day"]
+extern fn __c_g_date_valid_day(day: u8) -> i32;
+fn date_valid_day(day: u8) -> bool {
+    let __r: i32 = { __c_g_date_valid_day(day) };
+    return __r != (0 as i32);
+}
+
+#[link_name = "g_date_valid_dmy"]
+extern fn __c_g_date_valid_dmy(day: u8, month: i32, year: u16) -> i32;
+fn date_valid_dmy(day: u8, month: i32, year: u16) -> bool {
+    let __r: i32 = { __c_g_date_valid_dmy(day, month, year) };
+    return __r != (0 as i32);
+}
+
 #[link_name = "g_date_valid_julian"]
 extern fn __c_g_date_valid_julian(julian_date: u32) -> i32;
 fn date_valid_julian(julian_date: u32) -> bool {
@@ -1584,7 +1688,13 @@ fn date_valid_weekday(weekday: i32) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `date_valid_year`: param `year` — unmapped type `DateYear`
+#[link_name = "g_date_valid_year"]
+extern fn __c_g_date_valid_year(year: u16) -> i32;
+fn date_valid_year(year: u16) -> bool {
+    let __r: i32 = { __c_g_date_valid_year(year) };
+    return __r != (0 as i32);
+}
+
 #[link_name = "g_dcgettext"]
 extern fn __c_g_dcgettext(domain: *u8, msgid: *u8, category: i32) -> *u8;
 fn dcgettext(domain: str, msgid: str, category: i32) -> text::Text {
@@ -1684,8 +1794,8 @@ fn dpgettext2(domain: str, context: str, msgid: str) -> text::Text {
 // SKIPPED fn `environ_getenv`: param `envp` — no <type> (array, callback, or varargs)
 // SKIPPED fn `environ_setenv`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `environ_unsetenv`: return type — no <type> (array, callback, or varargs)
-// SKIPPED fn `error_domain_register`: return type — unmapped type `Quark`
-// SKIPPED fn `error_domain_register_static`: return type — unmapped type `Quark`
+// SKIPPED fn `error_domain_register`: param `error_type_init` — unmapped type `ErrorInitFunc`
+// SKIPPED fn `error_domain_register_static`: param `error_type_init` — unmapped type `ErrorInitFunc`
 #[link_name = "g_fdwalk_set_cloexec"]
 extern fn __c_g_fdwalk_set_cloexec(lowfd: i32) -> i32;
 fn fdwalk_set_cloexec(lowfd: i32) -> i32 {
@@ -1700,9 +1810,15 @@ fn file_error_from_errno(err_no: i32) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `file_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_file_error_quark"]
+extern fn __c_g_file_error_quark() -> u32;
+fn file_error_quark() -> u32 {
+    let __r: u32 = { __c_g_file_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `file_get_contents`: param `contents` — no <type> (array, callback, or varargs)
-// SKIPPED fn `file_open_tmp`: out parameter `name_used` — only scalar out-params are bound
+// SKIPPED fn `file_open_tmp`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_file_read_link"]
 extern fn __c_g_file_read_link(filename: *u8) -> *u8;
 fn file_read_link(filename: str) -> text::Text {
@@ -1741,7 +1857,7 @@ fn filename_display_name(filename: str) -> text::Text {
     return bridge::cstr_to_text_full(__r);
 }
 
-// SKIPPED fn `filename_from_uri`: out parameter `hostname` — only scalar out-params are bound
+// SKIPPED fn `filename_from_uri`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_filename_from_utf8"]
 extern fn __c_g_filename_from_utf8(utf8string: *u8, len: isize, bytes_read: *usize, bytes_written: *usize) -> *u8;
 fn filename_from_utf8(utf8string: str, len: isize, ref bytes_read: usize, ref bytes_written: usize) -> text::Text {
@@ -1848,7 +1964,15 @@ fn get_application_name() -> option::Option[text::Text] {
     return option::some(bridge::cstr_to_text(__r));
 }
 
-// SKIPPED fn `get_charset`: out parameter `charset` — only scalar out-params are bound
+#[link_name = "g_get_charset"]
+extern fn __c_g_get_charset(charset: **u8) -> i32;
+fn get_charset() -> option::Option[text::Text] {
+    let __out: *u8 = { 0 as *u8 };
+    { __c_g_get_charset(({ #addr_of(__out) as **u8 })) };
+    if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+    return option::some(bridge::cstr_to_text(__out));
+}
+
 #[link_name = "g_get_codeset"]
 extern fn __c_g_get_codeset() -> *u8;
 fn get_codeset() -> text::Text {
@@ -1856,7 +1980,15 @@ fn get_codeset() -> text::Text {
     return bridge::cstr_to_text_full(__r);
 }
 
-// SKIPPED fn `get_console_charset`: out parameter `charset` — only scalar out-params are bound
+#[link_name = "g_get_console_charset"]
+extern fn __c_g_get_console_charset(charset: **u8) -> i32;
+fn get_console_charset() -> option::Option[text::Text] {
+    let __out: *u8 = { 0 as *u8 };
+    { __c_g_get_console_charset(({ #addr_of(__out) as **u8 })) };
+    if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+    return option::some(bridge::cstr_to_text(__out));
+}
+
 #[link_name = "g_get_current_dir"]
 extern fn __c_g_get_current_dir() -> *u8;
 fn get_current_dir() -> text::Text {
@@ -2151,7 +2283,13 @@ fn io_channel_error_from_errno(en: i32) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `io_channel_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_io_channel_error_quark"]
+extern fn __c_g_io_channel_error_quark() -> u32;
+fn io_channel_error_quark() -> u32 {
+    let __r: u32 = { __c_g_io_channel_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_io_create_watch"]
 extern fn __c_g_io_create_watch(channel: *u8, condition: u32) -> *u8;
 fn io_create_watch(channel: IOChannel, condition: u32) -> Source {
@@ -2159,7 +2297,13 @@ fn io_create_watch(channel: IOChannel, condition: u32) -> Source {
     return Source::from_raw(__r);
 }
 
-// SKIPPED fn `key_file_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_key_file_error_quark"]
+extern fn __c_g_key_file_error_quark() -> u32;
+fn key_file_error_quark() -> u32 {
+    let __r: u32 = { __c_g_key_file_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_list_pop_allocator"]
 extern fn __c_g_list_pop_allocator();
 fn list_pop_allocator() {
@@ -2344,7 +2488,13 @@ fn malloc_n(n_blocks: usize, n_block_bytes: usize) -> *u8 {
 }
 
 // SKIPPED fn `markup_collect_attributes`: variadic
-// SKIPPED fn `markup_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_markup_error_quark"]
+extern fn __c_g_markup_error_quark() -> u32;
+fn markup_error_quark() -> u32 {
+    let __r: u32 = { __c_g_markup_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_markup_escape_text"]
 extern fn __c_g_markup_escape_text(text: *u8, length: isize) -> *u8;
 fn markup_escape_text(text: str, length: isize) -> text::Text {
@@ -2464,7 +2614,13 @@ fn nullify_pointer(nullify_location: *u8) {
     return;
 }
 
-// SKIPPED fn `number_parser_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_number_parser_error_quark"]
+extern fn __c_g_number_parser_error_quark() -> u32;
+fn number_parser_error_quark() -> u32 {
+    let __r: u32 = { __c_g_number_parser_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_on_error_query"]
 extern fn __c_g_on_error_query(prg_name: *u8);
 fn on_error_query(prg_name: str) {
@@ -2515,7 +2671,13 @@ fn open(filename: str, flags: i32, mode: i32) -> i32 {
     return __r;
 }
 
-// SKIPPED fn `option_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_option_error_quark"]
+extern fn __c_g_option_error_quark() -> u32;
+fn option_error_quark() -> u32 {
+    let __r: u32 = { __c_g_option_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `parse_debug_string`: param `keys` — no <type> (array, callback, or varargs)
 #[link_name = "g_path_buf_equal"]
 extern fn __c_g_path_buf_equal(v1: *u8, v2: *u8) -> i32;
@@ -2599,8 +2761,20 @@ fn pointer_bit_lock(address: *u8, lock_bit: i32) {
     return;
 }
 
-// SKIPPED fn `pointer_bit_lock_and_get`: param `out_ptr` — unmapped type `guintptr`
-// SKIPPED fn `pointer_bit_lock_mask_ptr`: param `preserve_mask` — unmapped type `guintptr`
+#[link_name = "g_pointer_bit_lock_and_get"]
+extern fn __c_g_pointer_bit_lock_and_get(address: *u8, lock_bit: u32, out_ptr: *usize);
+fn pointer_bit_lock_and_get(address: *u8, lock_bit: u32, ref out_ptr: usize) {
+    { __c_g_pointer_bit_lock_and_get(address, lock_bit, ({ #addr_of(out_ptr) as *usize })) };
+    return;
+}
+
+#[link_name = "g_pointer_bit_lock_mask_ptr"]
+extern fn __c_g_pointer_bit_lock_mask_ptr(ptr: *u8, lock_bit: u32, set: i32, preserve_mask: usize, preserve_ptr: *u8) -> *u8;
+fn pointer_bit_lock_mask_ptr(ptr: *u8, lock_bit: u32, set: bool, preserve_mask: usize, preserve_ptr: *u8) -> *u8 {
+    let __r: *u8 = { __c_g_pointer_bit_lock_mask_ptr(ptr, lock_bit, (if set { 1 as i32 } else { 0 as i32 }), preserve_mask, preserve_ptr) };
+    return __r;
+}
+
 #[link_name = "g_pointer_bit_trylock"]
 extern fn __c_g_pointer_bit_trylock(address: *u8, lock_bit: i32) -> i32;
 fn pointer_bit_trylock(address: *u8, lock_bit: i32) -> bool {
@@ -2615,7 +2789,13 @@ fn pointer_bit_unlock(address: *u8, lock_bit: i32) {
     return;
 }
 
-// SKIPPED fn `pointer_bit_unlock_and_set`: param `preserve_mask` — unmapped type `guintptr`
+#[link_name = "g_pointer_bit_unlock_and_set"]
+extern fn __c_g_pointer_bit_unlock_and_set(address: *u8, lock_bit: u32, ptr: *u8, preserve_mask: usize);
+fn pointer_bit_unlock_and_set(address: *u8, lock_bit: u32, ptr: *u8, preserve_mask: usize) {
+    { __c_g_pointer_bit_unlock_and_set(address, lock_bit, ptr, preserve_mask) };
+    return;
+}
+
 #[link_name = "g_poll"]
 extern fn __c_g_poll(fds: *u8, nfds: u32, timeout: i32) -> i32;
 fn poll(fds: PollFD, nfds: u32, timeout: i32) -> i32 {
@@ -2630,7 +2810,7 @@ fn poll(fds: PollFD, nfds: u32, timeout: i32) -> i32 {
 // SKIPPED fn `printf`: variadic
 // SKIPPED fn `printf_string_upper_bound`: param `args` — unmapped type `va_list`
 // SKIPPED fn `private_new`: return type — unmapped type `Private`
-// SKIPPED fn `propagate_error`: out parameter `dest` — only scalar out-params are bound
+// SKIPPED fn `propagate_error`: out parameter `dest` — non-foldable out (value-struct/record out-param)
 // SKIPPED fn `propagate_prefixed_error`: variadic
 // SKIPPED fn `ptr_array_find`: param `haystack` — no <type> (array, callback, or varargs)
 // SKIPPED fn `ptr_array_find_with_equal_func`: param `haystack` — no <type> (array, callback, or varargs)
@@ -2639,10 +2819,40 @@ fn poll(fds: PollFD, nfds: u32, timeout: i32) -> i32 {
 // SKIPPED fn `ptr_array_new_take`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `ptr_array_new_take_null_terminated`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `qsort_with_data`: param `compare_func` — unmapped type `CompareDataFunc`
-// SKIPPED fn `quark_from_static_string`: return type — unmapped type `Quark`
-// SKIPPED fn `quark_from_string`: return type — unmapped type `Quark`
-// SKIPPED fn `quark_to_string`: param `quark` — unmapped type `Quark`
-// SKIPPED fn `quark_try_string`: return type — unmapped type `Quark`
+#[link_name = "g_quark_from_static_string"]
+extern fn __c_g_quark_from_static_string(string: *u8) -> u32;
+fn quark_from_static_string(string: str) -> u32 {
+    let __cs_string: *u8 = bridge::str_to_cstring(string);
+    let __r: u32 = { __c_g_quark_from_static_string(__cs_string) };
+    bridge::free_cstring(__cs_string);
+    return __r;
+}
+
+#[link_name = "g_quark_from_string"]
+extern fn __c_g_quark_from_string(string: *u8) -> u32;
+fn quark_from_string(string: str) -> u32 {
+    let __cs_string: *u8 = bridge::str_to_cstring(string);
+    let __r: u32 = { __c_g_quark_from_string(__cs_string) };
+    bridge::free_cstring(__cs_string);
+    return __r;
+}
+
+#[link_name = "g_quark_to_string"]
+extern fn __c_g_quark_to_string(quark: u32) -> *u8;
+fn quark_to_string(quark: u32) -> text::Text {
+    let __r: *u8 = { __c_g_quark_to_string(quark) };
+    return bridge::cstr_to_text(__r);
+}
+
+#[link_name = "g_quark_try_string"]
+extern fn __c_g_quark_try_string(string: *u8) -> u32;
+fn quark_try_string(string: str) -> u32 {
+    let __cs_string: *u8 = bridge::str_to_cstring(string);
+    let __r: u32 = { __c_g_quark_try_string(__cs_string) };
+    bridge::free_cstring(__cs_string);
+    return __r;
+}
+
 #[link_name = "g_random_double"]
 extern fn __c_g_random_double() -> f64;
 fn random_double() -> f64 {
@@ -2811,8 +3021,14 @@ fn ref_string_release(str: str) {
     return;
 }
 
-// SKIPPED fn `regex_check_replacement`: out parameter `has_references` — only scalar out-params are bound
-// SKIPPED fn `regex_error_quark`: return type — unmapped type `Quark`
+// SKIPPED fn `regex_check_replacement`: out parameter `has_references` — non-foldable out (bool out-param)
+#[link_name = "g_regex_error_quark"]
+extern fn __c_g_regex_error_quark() -> u32;
+fn regex_error_quark() -> u32 {
+    let __r: u32 = { __c_g_regex_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_regex_escape_nul"]
 extern fn __c_g_regex_escape_nul(string: *u8, length: i32) -> *u8;
 fn regex_escape_nul(string: str, length: i32) -> text::Text {
@@ -2913,8 +3129,8 @@ fn set_application_name(application_name: str) {
     return;
 }
 
-// SKIPPED fn `set_error`: out parameter `err` — only scalar out-params are bound
-// SKIPPED fn `set_error_literal`: out parameter `err` — only scalar out-params are bound
+// SKIPPED fn `set_error`: out parameter `err` — non-foldable out (value-struct/record out-param)
+// SKIPPED fn `set_error_literal`: out parameter `err` — non-foldable out (value-struct/record out-param)
 #[link_name = "g_set_prgname"]
 extern fn __c_g_set_prgname(prgname: *u8);
 fn set_prgname(prgname: str) {
@@ -2937,7 +3153,13 @@ fn setenv(variable: str, value: str, overwrite: bool) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `shell_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_shell_error_quark"]
+extern fn __c_g_shell_error_quark() -> u32;
+fn shell_error_quark() -> u32 {
+    let __r: u32 = { __c_g_shell_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `shell_parse_argv`: param `argvp` — no <type> (array, callback, or varargs)
 #[link_name = "g_shell_quote"]
 extern fn __c_g_shell_quote(unquoted_string: *u8) -> *u8;
@@ -3071,7 +3293,13 @@ fn spawn_check_wait_status(wait_status: i32) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `spawn_close_pid`: param `pid` — unmapped type `Pid`
+#[link_name = "g_spawn_close_pid"]
+extern fn __c_g_spawn_close_pid(pid: i32);
+fn spawn_close_pid(pid: i32) {
+    { __c_g_spawn_close_pid(pid) };
+    return;
+}
+
 #[link_name = "g_spawn_command_line_async"]
 extern fn __c_g_spawn_command_line_async(command_line: *u8) -> i32;
 fn spawn_command_line_async(command_line: str) -> bool {
@@ -3082,8 +3310,20 @@ fn spawn_command_line_async(command_line: str) -> bool {
 }
 
 // SKIPPED fn `spawn_command_line_sync`: param `standard_output` — no <type> (array, callback, or varargs)
-// SKIPPED fn `spawn_error_quark`: return type — unmapped type `Quark`
-// SKIPPED fn `spawn_exit_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_spawn_error_quark"]
+extern fn __c_g_spawn_error_quark() -> u32;
+fn spawn_error_quark() -> u32 {
+    let __r: u32 = { __c_g_spawn_error_quark() };
+    return __r;
+}
+
+#[link_name = "g_spawn_exit_error_quark"]
+extern fn __c_g_spawn_exit_error_quark() -> u32;
+fn spawn_exit_error_quark() -> u32 {
+    let __r: u32 = { __c_g_spawn_exit_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `spawn_sync`: param `argv` — no <type> (array, callback, or varargs)
 // SKIPPED fn `sprintf`: variadic
 // SKIPPED fn `stat`: param `buf` — unmapped type `StatBuf`
@@ -3392,7 +3632,7 @@ fn strstr_len(haystack: str, haystack_len: isize, needle: str) -> text::Text {
     return bridge::cstr_to_text_full(__r);
 }
 
-// SKIPPED fn `strtod`: out parameter `endptr` — only scalar out-params are bound
+// SKIPPED fn `strtod`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_strup"]
 extern fn __c_g_strup(string: *u8) -> *u8;
 fn strup(string: str) -> text::Text {
@@ -3667,7 +3907,13 @@ fn test_trap_subprocess(test_path: str, usec_timeout: u64, test_flags: u32) {
 // SKIPPED fn `test_trap_subprocess_with_envp`: param `envp` — no <type> (array, callback, or varargs)
 // SKIPPED fn `thread_create`: param `func` — unmapped type `ThreadFunc`
 // SKIPPED fn `thread_create_full`: param `func` — unmapped type `ThreadFunc`
-// SKIPPED fn `thread_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_thread_error_quark"]
+extern fn __c_g_thread_error_quark() -> u32;
+fn thread_error_quark() -> u32 {
+    let __r: u32 = { __c_g_thread_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_thread_exit"]
 extern fn __c_g_thread_exit(retval: *u8);
 fn thread_exit(retval: *u8) {
@@ -3997,7 +4243,7 @@ fn unichar_iszerowidth(c: u32) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `unichar_to_utf8`: out parameter `outbuf` — only scalar out-params are bound
+// SKIPPED fn `unichar_to_utf8`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_unichar_tolower"]
 extern fn __c_g_unichar_tolower(c: u32) -> u32;
 fn unichar_tolower(c: u32) -> u32 {
@@ -4062,7 +4308,13 @@ fn unicode_script_to_iso15924(script: i32) -> u32 {
     return __r;
 }
 
-// SKIPPED fn `unix_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_unix_error_quark"]
+extern fn __c_g_unix_error_quark() -> u32;
+fn unix_error_quark() -> u32 {
+    let __r: u32 = { __c_g_unix_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `unix_fd_add`: param `function` — unmapped type `UnixFDSourceFunc`
 // SKIPPED fn `unix_fd_add_full`: param `function` — unmapped type `UnixFDSourceFunc`
 #[link_name = "g_unix_fd_source_new"]
@@ -4158,7 +4410,13 @@ fn uri_build_with_user(flags: u32, scheme: str, user: str, password: str, auth_p
     return Uri::from_raw(__r);
 }
 
-// SKIPPED fn `uri_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_uri_error_quark"]
+extern fn __c_g_uri_error_quark() -> u32;
+fn uri_error_quark() -> u32 {
+    let __r: u32 = { __c_g_uri_error_quark() };
+    return __r;
+}
+
 // SKIPPED fn `uri_escape_bytes`: param `unescaped` — no <type> (array, callback, or varargs)
 #[link_name = "g_uri_escape_string"]
 extern fn __c_g_uri_escape_string(unescaped: *u8, reserved_chars_allowed: *u8, allow_utf8: i32) -> *u8;
@@ -4264,9 +4522,9 @@ fn uri_resolve_relative(base_uri_string: str, uri_ref: str, flags: u32) -> text:
     return bridge::cstr_to_text_full(__r);
 }
 
-// SKIPPED fn `uri_split`: out parameter `scheme` — only scalar out-params are bound
-// SKIPPED fn `uri_split_network`: out parameter `scheme` — only scalar out-params are bound
-// SKIPPED fn `uri_split_with_user`: out parameter `scheme` — only scalar out-params are bound
+// SKIPPED fn `uri_split`: multiple string/object out-params — only a single out folds into the return
+// SKIPPED fn `uri_split_network`: multiple string/object out-params — only a single out folds into the return
+// SKIPPED fn `uri_split_with_user`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "g_uri_unescape_bytes"]
 extern fn __c_g_uri_unescape_bytes(escaped_string: *u8, length: isize, illegal_characters: *u8) -> *u8;
 fn uri_unescape_bytes(escaped_string: str, length: isize, illegal_characters: str) -> Bytes {
@@ -4627,8 +4885,20 @@ fn variant_parse_error_print_context(error: Error, source_str: str) -> text::Tex
     return bridge::cstr_to_text_full(__r);
 }
 
-// SKIPPED fn `variant_parse_error_quark`: return type — unmapped type `Quark`
-// SKIPPED fn `variant_parser_get_error_quark`: return type — unmapped type `Quark`
+#[link_name = "g_variant_parse_error_quark"]
+extern fn __c_g_variant_parse_error_quark() -> u32;
+fn variant_parse_error_quark() -> u32 {
+    let __r: u32 = { __c_g_variant_parse_error_quark() };
+    return __r;
+}
+
+#[link_name = "g_variant_parser_get_error_quark"]
+extern fn __c_g_variant_parser_get_error_quark() -> u32;
+fn variant_parser_get_error_quark() -> u32 {
+    let __r: u32 = { __c_g_variant_parser_get_error_quark() };
+    return __r;
+}
+
 #[link_name = "g_variant_type_checked_"]
 extern fn __c_g_variant_type_checked_(type_string: *u8) -> *u8;
 fn variant_type_checked_(type_string: str) -> VariantType {
@@ -4656,8 +4926,20 @@ fn variant_type_string_is_valid(type_string: str) -> bool {
     return __r != (0 as i32);
 }
 
-// SKIPPED fn `variant_type_string_scan`: out parameter `endptr` — only scalar out-params are bound
-// SKIPPED fn `vasprintf`: out parameter `string` — only scalar out-params are bound
+#[link_name = "g_variant_type_string_scan"]
+extern fn __c_g_variant_type_string_scan(string: *u8, limit: *u8, endptr: **u8) -> i32;
+fn variant_type_string_scan(string: str, limit: str) -> option::Option[text::Text] {
+    let __out: *u8 = { 0 as *u8 };
+    let __cs_string: *u8 = bridge::str_to_cstring(string);
+    let __cs_limit: *u8 = bridge::str_to_cstring(limit);
+    { __c_g_variant_type_string_scan(__cs_string, __cs_limit, ({ #addr_of(__out) as **u8 })) };
+    bridge::free_cstring(__cs_string);
+    bridge::free_cstring(__cs_limit);
+    if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+    return option::some(bridge::cstr_to_text_full(__out));
+}
+
+// SKIPPED fn `vasprintf`: param `args` — unmapped type `va_list`
 // SKIPPED fn `vfprintf`: param `args` — unmapped type `va_list`
 // SKIPPED fn `vprintf`: param `args` — unmapped type `va_list`
 // SKIPPED fn `vsnprintf`: param `args` — unmapped type `va_list`
@@ -4707,13 +4989,13 @@ extern fn __c_g_bookmark_file_free(__recv: *u8);
 // SKIPPED method `BookmarkFile::get_added`: return type — unmapped type `time_t`
 #[link_name = "g_bookmark_file_get_added_date_time"]
 extern fn __c_g_bookmark_file_get_added_date_time(__recv: *u8, uri: *u8) -> *u8;
-// SKIPPED method `BookmarkFile::get_app_info`: out parameter `exec` — only scalar out-params are bound
-// SKIPPED method `BookmarkFile::get_application_info`: out parameter `exec` — only scalar out-params are bound
+// SKIPPED method `BookmarkFile::get_app_info`: param `stamp` — unmapped type `time_t`
+// SKIPPED method `BookmarkFile::get_application_info`: out parameter `stamp` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `BookmarkFile::get_applications`: return type — no <type> (array, callback, or varargs)
 #[link_name = "g_bookmark_file_get_description"]
 extern fn __c_g_bookmark_file_get_description(__recv: *u8, uri: *u8) -> *u8;
 // SKIPPED method `BookmarkFile::get_groups`: return type — no <type> (array, callback, or varargs)
-// SKIPPED method `BookmarkFile::get_icon`: out parameter `href` — only scalar out-params are bound
+// SKIPPED method `BookmarkFile::get_icon`: multiple string/object out-params — only a single out folds into the return
 #[link_name = "g_bookmark_file_get_is_private"]
 extern fn __c_g_bookmark_file_get_is_private(__recv: *u8, uri: *u8) -> i32;
 #[link_name = "g_bookmark_file_get_mime_type"]
@@ -4736,7 +5018,8 @@ extern fn __c_g_bookmark_file_has_group(__recv: *u8, uri: *u8, group: *u8) -> i3
 #[link_name = "g_bookmark_file_has_item"]
 extern fn __c_g_bookmark_file_has_item(__recv: *u8, uri: *u8) -> i32;
 // SKIPPED method `BookmarkFile::load_from_data`: param `data` — no <type> (array, callback, or varargs)
-// SKIPPED method `BookmarkFile::load_from_data_dirs`: out parameter `full_path` — only scalar out-params are bound
+#[link_name = "g_bookmark_file_load_from_data_dirs"]
+extern fn __c_g_bookmark_file_load_from_data_dirs(__recv: *u8, file: *u8, full_path: **u8) -> i32;
 #[link_name = "g_bookmark_file_load_from_file"]
 extern fn __c_g_bookmark_file_load_from_file(__recv: *u8, filename: *u8) -> i32;
 #[link_name = "g_bookmark_file_move_item"]
@@ -4894,6 +5177,15 @@ impl BookmarkFile {
         let __r: i32 = { __c_g_bookmark_file_has_item(this._raw, __cs_uri) };
         bridge::free_cstring(__cs_uri);
         return __r != (0 as i32);
+    }
+
+    fn load_from_data_dirs(this, file: str) -> option::Option[text::Text] {
+        let __out: *u8 = { 0 as *u8 };
+        let __cs_file: *u8 = bridge::str_to_cstring(file);
+        { __c_g_bookmark_file_load_from_data_dirs(this._raw, __cs_file, ({ #addr_of(__out) as **u8 })) };
+        bridge::free_cstring(__cs_file);
+        if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+        return option::some(bridge::cstr_to_text_full(__out));
     }
 
     fn load_from_file(this, filename: str) -> bool {
@@ -5159,7 +5451,8 @@ impl Checksum {
 
 #[link_name = "g_date_new"]
 extern fn __c_g_date_new() -> *u8;
-// SKIPPED ctor `Date::new_dmy`: param `day` — unmapped type `DateDay`
+#[link_name = "g_date_new_dmy"]
+extern fn __c_g_date_new_dmy(day: u8, month: i32, year: u16) -> *u8;
 #[link_name = "g_date_new_julian"]
 extern fn __c_g_date_new_julian(julian_day: u32) -> *u8;
 #[link_name = "g_date_add_days"]
@@ -5180,7 +5473,8 @@ extern fn __c_g_date_copy(__recv: *u8) -> *u8;
 extern fn __c_g_date_days_between(__recv: *u8, date2: *u8) -> i32;
 #[link_name = "g_date_free"]
 extern fn __c_g_date_free(__recv: *u8);
-// SKIPPED method `Date::get_day`: return type — unmapped type `DateDay`
+#[link_name = "g_date_get_day"]
+extern fn __c_g_date_get_day(__recv: *u8) -> u8;
 #[link_name = "g_date_get_day_of_year"]
 extern fn __c_g_date_get_day_of_year(__recv: *u8) -> u32;
 #[link_name = "g_date_get_iso8601_week_of_year"]
@@ -5195,25 +5489,30 @@ extern fn __c_g_date_get_month(__recv: *u8) -> i32;
 extern fn __c_g_date_get_sunday_week_of_year(__recv: *u8) -> u32;
 #[link_name = "g_date_get_weekday"]
 extern fn __c_g_date_get_weekday(__recv: *u8) -> i32;
-// SKIPPED method `Date::get_year`: return type — unmapped type `DateYear`
+#[link_name = "g_date_get_year"]
+extern fn __c_g_date_get_year(__recv: *u8) -> u16;
 #[link_name = "g_date_is_first_of_month"]
 extern fn __c_g_date_is_first_of_month(__recv: *u8) -> i32;
 #[link_name = "g_date_is_last_of_month"]
 extern fn __c_g_date_is_last_of_month(__recv: *u8) -> i32;
 #[link_name = "g_date_order"]
 extern fn __c_g_date_order(__recv: *u8, date2: *u8);
-// SKIPPED method `Date::set_day`: param `day` — unmapped type `DateDay`
-// SKIPPED method `Date::set_dmy`: param `day` — unmapped type `DateDay`
+#[link_name = "g_date_set_day"]
+extern fn __c_g_date_set_day(__recv: *u8, day: u8);
+#[link_name = "g_date_set_dmy"]
+extern fn __c_g_date_set_dmy(__recv: *u8, day: u8, month: i32, y: u16);
 #[link_name = "g_date_set_julian"]
 extern fn __c_g_date_set_julian(__recv: *u8, julian_date: u32);
 #[link_name = "g_date_set_month"]
 extern fn __c_g_date_set_month(__recv: *u8, month: i32);
 #[link_name = "g_date_set_parse"]
 extern fn __c_g_date_set_parse(__recv: *u8, str: *u8);
-// SKIPPED method `Date::set_time`: param `time_` — unmapped type `Time`
+#[link_name = "g_date_set_time"]
+extern fn __c_g_date_set_time(__recv: *u8, time_: i32);
 // SKIPPED method `Date::set_time_t`: param `timet` — unmapped type `time_t`
 // SKIPPED method `Date::set_time_val`: param `timeval` — unmapped type `TimeVal`
-// SKIPPED method `Date::set_year`: param `year` — unmapped type `DateYear`
+#[link_name = "g_date_set_year"]
+extern fn __c_g_date_set_year(__recv: *u8, year: u16);
 #[link_name = "g_date_subtract_days"]
 extern fn __c_g_date_subtract_days(__recv: *u8, n_days: u32);
 #[link_name = "g_date_subtract_months"]
@@ -5235,6 +5534,11 @@ impl Date {
 
     fn new() -> Date {
         let __r: *u8 = { __c_g_date_new() };
+        return Date::from_raw(__r);
+    }
+
+    fn new_dmy(day: u8, month: i32, year: u16) -> Date {
+        let __r: *u8 = { __c_g_date_new_dmy(day, month, year) };
         return Date::from_raw(__r);
     }
 
@@ -5288,6 +5592,11 @@ impl Date {
         return;
     }
 
+    fn get_day(this) -> u8 {
+        let __r: u8 = { __c_g_date_get_day(this._raw) };
+        return __r;
+    }
+
     fn get_day_of_year(this) -> u32 {
         let __r: u32 = { __c_g_date_get_day_of_year(this._raw) };
         return __r;
@@ -5323,6 +5632,11 @@ impl Date {
         return __r;
     }
 
+    fn get_year(this) -> u16 {
+        let __r: u16 = { __c_g_date_get_year(this._raw) };
+        return __r;
+    }
+
     fn is_first_of_month(this) -> bool {
         let __r: i32 = { __c_g_date_is_first_of_month(this._raw) };
         return __r != (0 as i32);
@@ -5335,6 +5649,16 @@ impl Date {
 
     fn order(this, date2: Date) {
         { __c_g_date_order(this._raw, date2.raw()) };
+        return;
+    }
+
+    fn set_day(this, day: u8) {
+        { __c_g_date_set_day(this._raw, day) };
+        return;
+    }
+
+    fn set_dmy(this, day: u8, month: i32, y: u16) {
+        { __c_g_date_set_dmy(this._raw, day, month, y) };
         return;
     }
 
@@ -5352,6 +5676,16 @@ impl Date {
         let __cs_str: *u8 = bridge::str_to_cstring(str);
         { __c_g_date_set_parse(this._raw, __cs_str) };
         bridge::free_cstring(__cs_str);
+        return;
+    }
+
+    fn set_time(this, time_: i32) {
+        { __c_g_date_set_time(this._raw, time_) };
+        return;
+    }
+
+    fn set_year(this, year: u16) {
+        { __c_g_date_set_year(this._raw, year) };
         return;
     }
 
@@ -5406,7 +5740,8 @@ extern fn __c_g_date_time_new_now_local() -> *u8;
 extern fn __c_g_date_time_new_now_utc() -> *u8;
 #[link_name = "g_date_time_new_utc"]
 extern fn __c_g_date_time_new_utc(year: i32, month: i32, day: i32, hour: i32, minute: i32, seconds: f64) -> *u8;
-// SKIPPED method `DateTime::add`: param `timespan` — unmapped type `TimeSpan`
+#[link_name = "g_date_time_add"]
+extern fn __c_g_date_time_add(__recv: *u8, timespan: i64) -> *u8;
 #[link_name = "g_date_time_add_days"]
 extern fn __c_g_date_time_add_days(__recv: *u8, days: i32) -> *u8;
 #[link_name = "g_date_time_add_full"]
@@ -5425,7 +5760,8 @@ extern fn __c_g_date_time_add_weeks(__recv: *u8, weeks: i32) -> *u8;
 extern fn __c_g_date_time_add_years(__recv: *u8, years: i32) -> *u8;
 #[link_name = "g_date_time_compare"]
 extern fn __c_g_date_time_compare(__recv: *u8, dt2: *u8) -> i32;
-// SKIPPED method `DateTime::difference`: return type — unmapped type `TimeSpan`
+#[link_name = "g_date_time_difference"]
+extern fn __c_g_date_time_difference(__recv: *u8, begin: *u8) -> i64;
 #[link_name = "g_date_time_equal"]
 extern fn __c_g_date_time_equal(__recv: *u8, dt2: *u8) -> i32;
 #[link_name = "g_date_time_format"]
@@ -5454,7 +5790,8 @@ extern fn __c_g_date_time_get_seconds(__recv: *u8) -> f64;
 extern fn __c_g_date_time_get_timezone(__recv: *u8) -> *u8;
 #[link_name = "g_date_time_get_timezone_abbreviation"]
 extern fn __c_g_date_time_get_timezone_abbreviation(__recv: *u8) -> *u8;
-// SKIPPED method `DateTime::get_utc_offset`: return type — unmapped type `TimeSpan`
+#[link_name = "g_date_time_get_utc_offset"]
+extern fn __c_g_date_time_get_utc_offset(__recv: *u8) -> i64;
 #[link_name = "g_date_time_get_week_numbering_year"]
 extern fn __c_g_date_time_get_week_numbering_year(__recv: *u8) -> i32;
 #[link_name = "g_date_time_get_week_of_year"]
@@ -5559,6 +5896,12 @@ impl DateTime {
         return option::some(DateTime::from_raw(__r));
     }
 
+    fn add(this, timespan: i64) -> option::Option[DateTime] {
+        let __r: *u8 = { __c_g_date_time_add(this._raw, timespan) };
+        if __r == { 0 as *u8 } { return option::Option[DateTime]::None; }
+        return option::some(DateTime::from_raw(__r));
+    }
+
     fn add_days(this, days: i32) -> option::Option[DateTime] {
         let __r: *u8 = { __c_g_date_time_add_days(this._raw, days) };
         if __r == { 0 as *u8 } { return option::Option[DateTime]::None; }
@@ -5609,6 +5952,11 @@ impl DateTime {
 
     fn compare(this, dt2: DateTime) -> i32 {
         let __r: i32 = { __c_g_date_time_compare(this._raw, dt2.raw()) };
+        return __r;
+    }
+
+    fn difference(this, begin: DateTime) -> i64 {
+        let __r: i64 = { __c_g_date_time_difference(this._raw, begin.raw()) };
         return __r;
     }
 
@@ -5684,6 +6032,11 @@ impl DateTime {
     fn get_timezone_abbreviation(this) -> text::Text {
         let __r: *u8 = { __c_g_date_time_get_timezone_abbreviation(this._raw) };
         return bridge::cstr_to_text(__r);
+    }
+
+    fn get_utc_offset(this) -> i64 {
+        let __r: i64 = { __c_g_date_time_get_utc_offset(this._raw) };
+        return __r;
     }
 
     fn get_week_numbering_year(this) -> i32 {
@@ -5811,14 +6164,16 @@ impl Dir {
 
 }
 
-// SKIPPED ctor `Error::new`: param `domain` — unmapped type `Quark`
-// SKIPPED ctor `Error::new_literal`: param `domain` — unmapped type `Quark`
-// SKIPPED ctor `Error::new_valist`: param `domain` — unmapped type `Quark`
+// SKIPPED ctor `Error::new`: variadic
+#[link_name = "g_error_new_literal"]
+extern fn __c_g_error_new_literal(domain: u32, code: i32, message: *u8) -> *u8;
+// SKIPPED ctor `Error::new_valist`: param `args` — unmapped type `va_list`
 #[link_name = "g_error_copy"]
 extern fn __c_g_error_copy(__recv: *u8) -> *u8;
 #[link_name = "g_error_free"]
 extern fn __c_g_error_free(__recv: *u8);
-// SKIPPED method `Error::matches`: param `domain` — unmapped type `Quark`
+#[link_name = "g_error_matches"]
+extern fn __c_g_error_matches(__recv: *u8, domain: u32, code: i32) -> i32;
 // `Error` — boxed record (non-owning handle).
 struct Error {
     opaque _raw: *u8,
@@ -5828,6 +6183,13 @@ impl Error {
     fn raw(this) -> *u8 { return this._raw; }
     fn from_raw(ptr: *u8) -> Error { return Error { _raw: ptr }; }
 
+    fn new_literal(domain: u32, code: i32, message: str) -> Error {
+        let __cs_message: *u8 = bridge::str_to_cstring(message);
+        let __r: *u8 = { __c_g_error_new_literal(domain, code, __cs_message) };
+        bridge::free_cstring(__cs_message);
+        return Error::from_raw(__r);
+    }
+
     fn copy(this) -> Error {
         let __r: *u8 = { __c_g_error_copy(this._raw) };
         return Error::from_raw(__r);
@@ -5836,6 +6198,11 @@ impl Error {
     fn free(this) {
         { __c_g_error_free(this._raw) };
         return;
+    }
+
+    fn matches(this, domain: u32, code: i32) -> bool {
+        let __r: i32 = { __c_g_error_matches(this._raw, domain, code) };
+        return __r != (0 as i32);
     }
 
 }
@@ -5920,7 +6287,7 @@ extern fn __c_g_io_channel_init(__recv: *u8);
 #[link_name = "g_io_channel_read"]
 extern fn __c_g_io_channel_read(__recv: *u8, buf: *u8, count: usize, bytes_read: usize) -> i32;
 // SKIPPED method `IOChannel::read_chars`: param `buf` — no <type> (array, callback, or varargs)
-// SKIPPED method `IOChannel::read_line`: out parameter `str_return` — only scalar out-params are bound
+// SKIPPED method `IOChannel::read_line`: string/object out-param alongside a value return — cannot fold
 #[link_name = "g_io_channel_read_line_string"]
 extern fn __c_g_io_channel_read_line_string(__recv: *u8, buffer: *u8, terminator_pos: usize) -> i32;
 // SKIPPED method `IOChannel::read_to_end`: param `str_return` — no <type> (array, callback, or varargs)
@@ -6164,7 +6531,8 @@ extern fn __c_g_key_file_has_key(__recv: *u8, group_name: *u8, key: *u8) -> i32;
 extern fn __c_g_key_file_load_from_bytes(__recv: *u8, bytes: *u8, flags: u32) -> i32;
 #[link_name = "g_key_file_load_from_data"]
 extern fn __c_g_key_file_load_from_data(__recv: *u8, data: *u8, length: usize, flags: u32) -> i32;
-// SKIPPED method `KeyFile::load_from_data_dirs`: out parameter `full_path` — only scalar out-params are bound
+#[link_name = "g_key_file_load_from_data_dirs"]
+extern fn __c_g_key_file_load_from_data_dirs(__recv: *u8, file: *u8, full_path: **u8, flags: u32) -> i32;
 // SKIPPED method `KeyFile::load_from_dirs`: param `search_dirs` — no <type> (array, callback, or varargs)
 #[link_name = "g_key_file_load_from_file"]
 extern fn __c_g_key_file_load_from_file(__recv: *u8, file: *u8, flags: u32) -> i32;
@@ -6353,6 +6721,15 @@ impl KeyFile {
         let __r: i32 = { __c_g_key_file_load_from_data(this._raw, __cs_data, length, flags) };
         bridge::free_cstring(__cs_data);
         return __r != (0 as i32);
+    }
+
+    fn load_from_data_dirs(this, file: str, flags: u32) -> option::Option[text::Text] {
+        let __out: *u8 = { 0 as *u8 };
+        let __cs_file: *u8 = bridge::str_to_cstring(file);
+        { __c_g_key_file_load_from_data_dirs(this._raw, __cs_file, ({ #addr_of(__out) as **u8 }), flags) };
+        bridge::free_cstring(__cs_file);
+        if __out == { 0 as *u8 } { return option::Option[text::Text]::None; }
+        return option::some(bridge::cstr_to_text_full(__out));
     }
 
     fn load_from_file(this, file: str, flags: u32) -> bool {
@@ -7214,8 +7591,8 @@ extern fn __c_g_regex_get_max_lookbehind(__recv: *u8) -> i32;
 extern fn __c_g_regex_get_pattern(__recv: *u8) -> *u8;
 #[link_name = "g_regex_get_string_number"]
 extern fn __c_g_regex_get_string_number(__recv: *u8, name: *u8) -> i32;
-// SKIPPED method `Regex::match`: out parameter `match_info` — only scalar out-params are bound
-// SKIPPED method `Regex::match_all`: out parameter `match_info` — only scalar out-params are bound
+// SKIPPED method `Regex::match`: out parameter `match_info` — non-foldable out (value-struct/record out-param)
+// SKIPPED method `Regex::match_all`: out parameter `match_info` — non-foldable out (value-struct/record out-param)
 // SKIPPED method `Regex::match_all_full`: param `string` — no <type> (array, callback, or varargs)
 // SKIPPED method `Regex::match_full`: param `string` — no <type> (array, callback, or varargs)
 #[link_name = "g_regex_ref"]
@@ -7984,7 +8361,7 @@ extern fn __c_g_tree_insert(__recv: *u8, key: *u8, value: *u8);
 // SKIPPED method `Tree::insert_node`: return type — unmapped type `TreeNode`
 #[link_name = "g_tree_lookup"]
 extern fn __c_g_tree_lookup(__recv: *u8, key: *u8) -> *u8;
-// SKIPPED method `Tree::lookup_extended`: out parameter `orig_key` — only scalar out-params are bound
+// SKIPPED method `Tree::lookup_extended`: out parameter `orig_key` — non-foldable out (raw-pointer out-param)
 // SKIPPED method `Tree::lookup_node`: return type — unmapped type `TreeNode`
 // SKIPPED method `Tree::lower_bound`: return type — unmapped type `TreeNode`
 #[link_name = "g_tree_nnodes"]
@@ -9037,4 +9414,4 @@ impl VariantType {
 // === Classes ===
 
 
-// cpc-bindgen --gobject: 1647 items emitted, 469 SKIPPED.
+// cpc-bindgen --gobject: 1704 items emitted, 412 SKIPPED.
