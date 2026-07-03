@@ -883,6 +883,16 @@ impl Emitter {
         // system/dependency header). Sticky per-file, computed once in TU order;
         // both passes below index it by position.
         let in_header = self.compute_in_header_flags(inner);
+        // Pull in complete records from *dependency* headers that our header uses
+        // BY VALUE (Win32's POINT/RECT/SIZE/LOGFONT, defined in windef.h/wingdi.h
+        // but passed by value all over user32). Without their bodies every such
+        // field/param degrades to `// SKIPPED incomplete record`. This is a
+        // bounded reachability closure — only value-reachable records, not the
+        // whole transitive include graph — emitted before the in-header records so
+        // later by-value uses resolve. Deterministic (dependency-first order).
+        for rec in self.collect_value_reachable_records(inner, &in_header) {
+            self.emit_record(&rec);
+        }
         // Two-pass: structs/typedefs first so functions reference defined types.
         for (i, decl) in inner.iter().enumerate() {
             if !in_header[i] {
@@ -907,6 +917,158 @@ impl Emitter {
         for line in std::mem::take(&mut self.deferred_fns) {
             self.out.push_str(&line);
         }
+    }
+
+    /// If `qt` names a struct/union used *by value* (not behind a pointer), return
+    /// its tag. Pointers are opaque handles that need no body, so they return
+    /// `None`. Arrays keep their element type — an array field still needs the
+    /// complete element record for its layout. Used to decide which
+    /// dependency-header records to pull in.
+    fn value_struct_tag(&self, qt: &str) -> Option<String> {
+        // An array field/param — its element type is what must be complete.
+        let base = qt.split('[').next().unwrap_or(qt);
+        let expanded = self.expand(base, 16);
+        // A pointer to a record is an opaque handle; no body required.
+        if expanded.contains('*') {
+            return None;
+        }
+        let s = expanded
+            .split_whitespace()
+            .filter(|t| !matches!(*t, "const" | "volatile" | "restrict"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for kw in ["struct ", "union "] {
+            if let Some(rest) = s.strip_prefix(kw) {
+                let tag = rest.split_whitespace().next().unwrap_or("");
+                if !tag.is_empty() {
+                    return Some(tag.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// The complete records from dependency headers that in-header declarations
+    /// reference by value, closed over transitively (a record's own by-value
+    /// fields pull in their records too), returned in dependency-first order.
+    /// Bounded to what is actually value-reachable — never the whole include
+    /// graph. Deterministic via sorted iteration.
+    fn collect_value_reachable_records(
+        &self,
+        inner: &[serde_json::Value],
+        in_header: &[bool],
+    ) -> Vec<serde_json::Value> {
+        use std::collections::{BTreeMap, BTreeSet};
+        // Index every complete RecordDecl in the TU by tag; note which tags our
+        // header already emits (so we neither duplicate nor re-pull them).
+        let mut by_tag: BTreeMap<&str, &serde_json::Value> = BTreeMap::new();
+        let mut in_header_tags: BTreeSet<&str> = BTreeSet::new();
+        for (i, d) in inner.iter().enumerate() {
+            if d.get("kind").and_then(|v| v.as_str()) != Some("RecordDecl") {
+                continue;
+            }
+            let name = match d.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.is_empty() => n,
+                _ => continue,
+            };
+            if d.get("completeDefinition").and_then(|v| v.as_bool()) != Some(true) {
+                continue;
+            }
+            by_tag.entry(name).or_insert(d);
+            if in_header[i] {
+                in_header_tags.insert(name);
+            }
+        }
+        // By-value record tags referenced by a decl's fields (records) or its
+        // parsed signature (functions).
+        let refs_of = |d: &serde_json::Value| -> Vec<String> {
+            let mut out = Vec::new();
+            match d.get("kind").and_then(|v| v.as_str()) {
+                Some("RecordDecl") => {
+                    for f in d.get("inner").and_then(|v| v.as_array()).into_iter().flatten() {
+                        if f.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
+                            continue;
+                        }
+                        if let Some(qt) =
+                            f.get("type").and_then(|t| t.get("qualType")).and_then(|v| v.as_str())
+                        {
+                            if let Some(tag) = self.value_struct_tag(qt) {
+                                out.push(tag);
+                            }
+                        }
+                    }
+                }
+                Some("FunctionDecl") => {
+                    let qt = d
+                        .get("type")
+                        .and_then(|t| t.get("qualType"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if let Some((ret, params, _)) = parse_fn_qual_type(qt) {
+                        if let Some(tag) = self.value_struct_tag(&ret) {
+                            out.push(tag);
+                        }
+                        for p in &params {
+                            if let Some(tag) = self.value_struct_tag(p) {
+                                out.push(tag);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            out
+        };
+        // Seed from in-header decls, then close over pulled-in records' own fields.
+        let mut wanted: BTreeSet<String> = BTreeSet::new();
+        let mut work: Vec<String> = Vec::new();
+        for (i, d) in inner.iter().enumerate() {
+            if in_header[i] {
+                work.extend(refs_of(d));
+            }
+        }
+        while let Some(tag) = work.pop() {
+            if in_header_tags.contains(tag.as_str()) {
+                continue;
+            }
+            let Some(rec) = by_tag.get(tag.as_str()) else {
+                continue;
+            };
+            if !wanted.insert(tag.clone()) {
+                continue;
+            }
+            work.extend(refs_of(rec));
+        }
+        // Emit dependency-first: a record after every wanted record it uses by
+        // value. Simple fixpoint (wanted is small); any residual cycle trails.
+        let mut order: Vec<serde_json::Value> = Vec::new();
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let mut progressed = false;
+            for tag in &wanted {
+                if emitted.contains(tag) {
+                    continue;
+                }
+                let rec = by_tag[tag.as_str()];
+                let deps_ready = refs_of(rec)
+                    .iter()
+                    .all(|d| !wanted.contains(d) || emitted.contains(d));
+                if deps_ready {
+                    order.push(rec.clone());
+                    emitted.insert(tag.clone());
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+        for tag in &wanted {
+            if !emitted.contains(tag) {
+                order.push(by_tag[tag.as_str()].clone());
+            }
+        }
+        order
     }
 
     /// Replace typedef-name tokens with their underlying spelling (recursively),
@@ -1741,6 +1903,48 @@ mod tests {
         assert_eq!(ret, "int");
         assert_eq!(params, vec!["int", "const char *"]);
         assert!(!var);
+    }
+
+    // By-value struct uses need the record body pulled in; pointer uses (opaque
+    // handles) and scalars don't.
+    #[test]
+    fn value_struct_tag_detects_by_value_records() {
+        let mut e = Emitter::new("winuser.h", true);
+        e.typedefs.insert("POINT".to_string(), "struct tagPOINT".to_string());
+        assert_eq!(e.value_struct_tag("POINT").as_deref(), Some("tagPOINT"));
+        assert_eq!(e.value_struct_tag("struct tagRECT").as_deref(), Some("tagRECT"));
+        // pointer to a record — opaque handle, no body required
+        assert_eq!(e.value_struct_tag("POINT *"), None);
+        assert_eq!(e.value_struct_tag("const POINT *"), None);
+        // scalars
+        assert_eq!(e.value_struct_tag("int"), None);
+    }
+
+    // A by-value struct from a dependency header (POINT in windef.h), referenced
+    // by an in-header function, must be pulled in and emitted even though the
+    // in-header filter excludes the dependency header itself.
+    #[test]
+    fn collect_pulls_in_by_value_dependency_records() {
+        let mut e = Emitter::new("winuser.h", true);
+        e.typedefs.insert("POINT".to_string(), "struct tagPOINT".to_string());
+        let inner = vec![
+            serde_json::json!({
+                "kind": "RecordDecl", "name": "tagPOINT", "tagUsed": "struct",
+                "completeDefinition": true, "loc": { "file": "windef.h" },
+                "inner": [
+                    {"kind": "FieldDecl", "name": "x", "type": {"qualType": "long"}},
+                    {"kind": "FieldDecl", "name": "y", "type": {"qualType": "long"}},
+                ]
+            }),
+            serde_json::json!({
+                "kind": "FunctionDecl", "name": "ClientToScreen",
+                "loc": { "file": "winuser.h" }, "type": {"qualType": "int (POINT)"}
+            }),
+        ];
+        let in_header = e.compute_in_header_flags(&inner); // [false, true]
+        let extra = e.collect_value_reachable_records(&inner, &in_header);
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0].get("name").and_then(|v| v.as_str()), Some("tagPOINT"));
     }
 
     #[test]
