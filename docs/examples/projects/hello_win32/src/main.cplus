@@ -46,10 +46,10 @@ fn main() -> i32 {
     let win: win32::Window = win32::Window::new(
         #str_ptr("Hello from C+ on Win32\0"), 360 as i32, 200 as i32);
     let lbl: controls::Label = controls::Label::new(win.raw(),
-        #str_ptr("Hello from C+ on native Win32\0"),
-        20 as i32, 28 as i32, 320 as i32, 24 as i32);
+    #str_ptr("Hello from C+ on native Win32\0"),
+    20 as i32, 28 as i32, 320 as i32, 24 as i32);
     let btn: controls::Button = controls::Button::new(win.raw(),
-        #str_ptr("Close\0"), 130 as i32, 110 as i32, 100 as i32, 34 as i32);
+    #str_ptr("Close\0"), 130 as i32, 110 as i32, 100 as i32, 34 as i32);
     set_font(lbl.raw(), font);
     set_font(btn.raw(), font);
     btn.on_click(on_close_click, win.raw());
