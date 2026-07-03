@@ -5,7 +5,7 @@
 // identity tree (ids / roles / enabled state / exposure) plus a NodeId->HWND
 // map and the text-version state. From a `Surface` you get:
 //
-//   - the READ path: `describe()` -> `Vec[UiNode]`, a live snapshot
+//   - the READ path: `describe()` -> `Vec[Win32Node]`, a live snapshot
 //     ({ id, role, class_name, frame, is_hidden, text, actionable, parent }) —
 //     how an agent sees the UI (describe_ui, not screenshots).
 //   - the WRITE path: `click` / `set_text` / `focus`, each gated through the

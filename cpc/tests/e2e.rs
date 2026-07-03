@@ -13594,13 +13594,13 @@ fn main() -> i32 {
     agent::set_agent_id(ed.raw(), #str_ptr("field\0"));
 
     var s: agent::Surface = agent::open(win.raw());
-    let nodes: vec::Vec[agent::UiNode] = s.describe();
+    let nodes: vec::Vec[agent::Win32Node] = s.describe();
 
     var r: i32 = 0;
     if surface::outcome_eq({ s.click("btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
     r = r +% { *counter };
     if surface::outcome_eq({ s.click("ghost") }, surface::Outcome::NotFound) { r = r +% (2 as i32); }
-    if nodes.len() >= (4 as usize) { r = r +% (10 as i32); }
+    if nodes.count() >= (4 as usize) { r = r +% (10 as i32); }
     let v0: u64 = s.text_version("field");
     if surface::outcome_eq({ s.set_text("field", "hi", v0) }, surface::Outcome::Allowed) { r = r +% (4 as i32); }
     if s.text_version("field") > v0 { r = r +% (8 as i32); }
