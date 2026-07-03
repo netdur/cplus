@@ -40,6 +40,12 @@ pub struct ObjcEmitter {
     needs_string_set: bool,
     needs_any_object: bool,
     needs_synth: bool,
+    // v0.0.26 cross-package type resolution (`--use PKG=PREFIX`): a foreign
+    // ObjC type whose name starts with `PREFIX` resolves to `PKG::<stripped>`
+    // (with an `import "PKG/PKG"`), instead of a local methodless stub. Empty by
+    // default -> every resolution stays local and byte-identical.
+    foreign: Vec<(String, String)>, // (objc prefix, package name)
+    used_foreign: std::cell::RefCell<std::collections::HashSet<String>>,
     // Emitted the shared target/action helper block (one per module) yet?
     emitted_action_target: bool,
     synth_key: u64,
@@ -346,6 +352,8 @@ impl ObjcEmitter {
             needs_string_set: false,
             needs_any_object: false,
             needs_synth: false,
+            foreign: Vec::new(),
+            used_foreign: std::cell::RefCell::new(std::collections::HashSet::new()),
             emitted_action_target: false,
             synth_key: 0x7000,
             typedefs: HashMap::new(),
@@ -569,6 +577,11 @@ impl ObjcEmitter {
         // registered as typeable returns.
         for itf in &deduped {
             if let Some(n) = itf.get("name").and_then(|n| n.as_str()) {
+                // A foreign-package type is owned by another package — don't
+                // register it as a local wrapper (it resolves to `PKG::<name>`).
+                if self.is_foreign(n) {
+                    continue;
+                }
                 let ty = self.cplus_type_name(n);
                 self.known_types.insert(ty.clone());
                 // A class with no `init`/`initWith*` is a factory/singleton: its
@@ -734,6 +747,14 @@ impl ObjcEmitter {
         }
         if self.needs_synth {
             p.push_str("import \"objc/synthesis\" as synth;\n");
+        }
+        // Cross-package imports for every foreign package actually referenced.
+        // The module of a merged package is `<pkg>/<pkg>`. Sorted for a stable,
+        // byte-reproducible preamble.
+        let mut used: Vec<String> = self.used_foreign.borrow().iter().cloned().collect();
+        used.sort();
+        for pkg in used {
+            p.push_str(&format!("import \"{pkg}/{pkg}\" as {pkg};\n"));
         }
         p.push('\n');
         p
@@ -943,7 +964,7 @@ impl ObjcEmitter {
             if inner.is_empty() || inner.contains(',') {
                 return None;
             }
-            return Some(self.cplus_type_name(inner));
+            return Some(self.resolve_wrapper(inner));
         }
         if base_ty == "id" || base_ty == "instancetype" || base_ty == "Class" || base_ty == "SEL" {
             return None;
@@ -958,7 +979,7 @@ impl ObjcEmitter {
             if token.is_empty() || token.contains(['*', '<', ' ']) {
                 return None;
             }
-            return Some(self.cplus_type_name(token));
+            return Some(self.resolve_wrapper(token));
         }
         None
     }
@@ -968,7 +989,49 @@ impl ObjcEmitter {
     /// return/arg legal (the struct exists) and degrades foreign-framework types
     /// (NSURL/NSError/CAMetalLayer — never declared here) to `*u8`.
     fn typed_object(&self, base_ty: &str) -> Option<String> {
-        self.wrapper_name_of(base_ty).filter(|n| self.known_types.contains(n))
+        // A `::`-qualified name is a foreign-package type (`quartzcore::Layer`),
+        // defined in that package — always typeable. A bare name is gated on the
+        // local `known_types` (THE soundness gate).
+        self.wrapper_name_of(base_ty)
+            .filter(|n| n.contains("::") || self.known_types.contains(n))
+    }
+
+    /// Register `--use PKG=PREFIX` mappings (repeatable). An ObjC type whose name
+    /// starts with `PREFIX` resolves to `PKG::<stripped>` in another package.
+    pub fn set_foreign(&mut self, foreign: Vec<(String, String)>) {
+        self.foreign = foreign;
+    }
+
+    /// If `objc` matches a registered foreign prefix, the qualified wrapper name
+    /// `PKG::<stripped>` (and record PKG as used, so its import is emitted). The
+    /// stripped name mirrors the foreign package's own `cplus_type_name` (strip
+    /// the prefix, sanitize). `None` when no foreign package owns it.
+    fn foreign_qualified(&self, objc: &str) -> Option<String> {
+        for (prefix, pkg) in &self.foreign {
+            if let Some(stripped) = objc.strip_prefix(prefix.as_str()) {
+                if !stripped.is_empty() && !stripped.starts_with(|c: char| c.is_ascii_digit()) {
+                    self.used_foreign.borrow_mut().insert(pkg.clone());
+                    return Some(format!("{pkg}::{}", crate::sanitize_ident(stripped)));
+                }
+            }
+        }
+        None
+    }
+
+    /// Does a foreign package own this ObjC type? (Same prefix test as
+    /// `foreign_qualified`, without recording use — for skipping local stubs.)
+    fn is_foreign(&self, objc: &str) -> bool {
+        self.foreign.iter().any(|(prefix, _)| {
+            objc.strip_prefix(prefix.as_str())
+                .map(|s| !s.is_empty() && !s.starts_with(|c: char| c.is_ascii_digit()))
+                .unwrap_or(false)
+        })
+    }
+
+    /// The wrapper name for an ObjC class token: a foreign-package qualified name
+    /// when a `--use` prefix owns it, else the local `cplus_type_name`.
+    fn resolve_wrapper(&self, objc: &str) -> String {
+        self.foreign_qualified(objc).unwrap_or_else(|| self.cplus_type_name(objc))
     }
 
     /// Shared target/action → typed `fn(*u8)` machinery, emitted once per module
@@ -1055,6 +1118,11 @@ impl ObjcEmitter {
             Some(n) => n.to_string(),
             None => return,
         };
+        // A foreign-package type (`--use quartzcore=CA`): don't emit a local
+        // methodless stub — it resolves to `PKG::<stripped>` at every use site.
+        if self.is_foreign(&objc_name) {
+            return;
+        }
         let ty = self.cplus_type_name(&objc_name);
         self.seen_types.insert(ty.clone());
         // Methods from the @interface plus every category that extends it,
@@ -1665,7 +1733,11 @@ impl ObjcEmitter {
             Ret::Object(Some(n)) | Ret::ObjectOption(Some(n)) => n,
             _ => return false,
         };
-        self.owning_types.contains(n) && !Self::returns_retained_plus_one(sel, m)
+        // A foreign-package wrapper (`quartzcore::Layer`) is assumed owning (it
+        // carries a releasing `drop`), so a +0 return of one must retain exactly
+        // like a local owning wrapper — else it over-releases when it drops.
+        let owning = self.owning_types.contains(n) || n.contains("::");
+        owning && !Self::returns_retained_plus_one(sel, m)
     }
 
     fn emit_method(&mut self, m: &serde_json::Value, objc_class: &str, ty: &str, is_init: bool, owned: bool, ctor: Option<&str>) {
@@ -1724,7 +1796,9 @@ impl ObjcEmitter {
         // instead of the segment-joined `set_buffer_offset_at_index`. Init selectors
         // aren't planned (they take the ctor path); `positional = MAX` then leaves
         // every param on its AST name, exactly as before.
-        let segments = selector_segments(&sel);
+        // Position-aligned labels (empty for an unlabeled param), so `segments[idx]`
+        // maps to param `idx` even when the selector has an empty `::` component.
+        let segments = selector_param_labels(&sel);
         let planned = self.method_plan.get(&sel).cloned();
         let positional = planned.as_ref().map(|(_, k)| *k).unwrap_or(usize::MAX);
 
@@ -1735,7 +1809,7 @@ impl ObjcEmitter {
         let mut args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params.iter().enumerate() {
             let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| {
-                if idx >= positional && idx < segments.len() {
+                if idx >= positional && idx < segments.len() && !segments[idx].is_empty() {
                     segments[idx].clone()
                 } else {
                     snake(pname)
@@ -2240,7 +2314,7 @@ impl ObjcEmitter {
         // methods read as clauses and share the class-wide unique-name scope. The
         // block param itself is the fixed `cb`/`ctx` pair (one selector label can't
         // name a two-value callback), so only the leading params take labels.
-        let segments = selector_segments(sel);
+        let segments = selector_param_labels(sel);
         let planned = self.method_plan.get(sel).cloned();
         let positional = planned.as_ref().map(|(_, k)| *k).unwrap_or(usize::MAX);
 
@@ -2249,7 +2323,7 @@ impl ObjcEmitter {
         let mut send_args: Vec<Arg> = Vec::new();
         for (idx, (pname, pqt)) in params[..bidx].iter().enumerate() {
             let pn = crate::sanitize_ident(&ov_params.get(idx).cloned().unwrap_or_else(|| {
-                if idx >= positional && idx < segments.len() {
+                if idx >= positional && idx < segments.len() && !segments[idx].is_empty() {
                     segments[idx].clone()
                 } else {
                     snake(pname)
@@ -3960,6 +4034,25 @@ fn selector_segments(sel: &str) -> Vec<String> {
     sel.split(':').filter(|s| !s.is_empty()).map(snake).collect()
 }
 
+/// Selector components aligned 1:1 with parameters (positional). The label for
+/// param `idx` is the `idx`-th `:`-delimited component — `""` for an UNLABELED
+/// param (`imageWithImageProvider:size::format:` — the 3rd param has no label).
+/// Only the trailing empty (from the selector's final `:`) is dropped; empty
+/// middle labels are KEPT so segment index stays aligned with param index. The
+/// naming loop falls back to the AST param name for an empty label. (Distinct
+/// from `selector_segments`, which filters empties for base-name planning and
+/// so must not be used to index params.)
+fn selector_param_labels(sel: &str) -> Vec<String> {
+    let mut parts: Vec<&str> = sel.split(':').collect();
+    if parts.last() == Some(&"") {
+        parts.pop(); // trailing empty from the final ':'
+    }
+    parts
+        .into_iter()
+        .map(|s| if s.is_empty() { String::new() } else { snake(s) })
+        .collect()
+}
+
 /// Plan every non-init method's name for one class (naming_guideline.md). Each
 /// method claims the SHORTEST leading selector-segment prefix that is still free
 /// as its base name; the remaining segments become argument labels. Shorter
@@ -5439,6 +5532,89 @@ mod tests {
         assert!(out.contains("fn file_wrappers(this) -> string_map::StringMap[FileWrapper]"), "owning-wrapper dict return:\n{out}");
         assert!(out.contains("FileWrapper::from_raw(rt::retain(nsval))"), "retain-on-wrap for owning value:\n{out}");
         assert!(!out.contains("// SKIPPED `setOptions:`") && !out.contains("// SKIPPED `fileWrappers`"), "no skips:\n{out}");
+    }
+
+    #[test]
+    fn foreign_package_type_resolves_cross_package() {
+        // `--use CA=quartzcore`: a foreign `CA*` type resolves to
+        // `quartzcore::<stripped>` (with a `quartzcore/quartzcore` import), instead
+        // of a local methodless stub. A +0 accessor of one retains (foreign owning
+        // wrapper), and the local stub is not emitted.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithFrame:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "frame", "type": { "qualType": "NSRect" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "layer", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "CALayer * _Nullable" }, "inner": [] } ] },
+                // A referenced CALayer @interface — normally emitted as a local stub.
+                { "kind": "ObjCInterfaceDecl", "name": "CALayer", "loc": { "file": "test.h" }, "inner": [] },
+            ]
+        });
+        let mut e = ObjcEmitter::new("test.h", "NS", serde_json::json!({}));
+        e.set_foreign(vec![("CA".to_string(), "quartzcore".to_string())]);
+        let out = e.run(&tu);
+        assert!(out.contains("fn layer(this) -> option::Option[quartzcore::Layer]"),
+            "layer() returns the cross-package type:\n{out}");
+        assert!(out.contains("import \"quartzcore/quartzcore\" as quartzcore;"),
+            "foreign import emitted:\n{out}");
+        assert!(!out.contains("struct CALayer"), "no local CALayer stub:\n{out}");
+        // +0 accessor of a foreign (owning) wrapper retains to balance its drop.
+        assert!(out.contains("let obj: *u8 = rt::retain("), "+0 foreign accessor retains:\n{out}");
+    }
+
+    #[test]
+    fn foreign_disabled_by_default_is_byte_identical() {
+        // With no `--use`, a `CA*` type stays a local stub — the feature is opt-in.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "layer", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "CALayer * _Nullable" }, "inner": [] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "CALayer", "loc": { "file": "test.h" }, "inner": [] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("struct CALayer"), "local stub emitted by default:\n{out}");
+        assert!(!out.contains("quartzcore"), "no cross-package import by default:\n{out}");
+    }
+
+    #[test]
+    fn unlabeled_param_selector_names_stay_aligned() {
+        // A selector with an empty `::` component (an UNLABELED middle param, e.g.
+        // CIImage `imageWithImageProvider:size::format:...`) must keep segment index
+        // aligned with param index — the unlabeled param falls back to its AST name,
+        // and no two params collide. Regression for the shifted/duplicate-name bug
+        // that made the generated method fail to compile.
+        assert_eq!(
+            selector_param_labels("makeWith:size::format:"),
+            vec![
+                "make_with".to_string(),
+                "size".to_string(),
+                String::new(),
+                "format".to_string()
+            ],
+            "empty middle label kept, aligned by position"
+        );
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "makeWith:size::format:", "instance": false, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "double" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "provider", "type": { "qualType": "id" } },
+                        { "kind": "ParmVarDecl", "name": "width", "type": { "qualType": "unsigned long" } },
+                        { "kind": "ParmVarDecl", "name": "height", "type": { "qualType": "unsigned long" } },
+                        { "kind": "ParmVarDecl", "name": "format", "type": { "qualType": "int" } } ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // The unlabeled 3rd param takes its AST name `height`; every param name is
+        // distinct (no duplicate that would fail to compile).
+        assert!(out.contains("height: u64"), "unlabeled param uses AST name `height`:\n{out}");
+        assert!(!out.contains("width: u64, width: u64") && !out.contains("format: i32, format"),
+            "no duplicate param names:\n{out}");
     }
 
     #[test]

@@ -608,6 +608,8 @@ extern fn objc_msg_id_CGAffineTransform_i8(recv: *u8, sel: *u8, a0: CGAffineTran
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_f32_f32_f32(recv: *u8, sel: *u8, a0: f32, a1: f32, a2: f32) -> *u8;
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f32_f32_f32_f32(recv: *u8, sel: *u8, a0: f32, a1: f32, a2: f32, a3: f32) -> *u8;
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_f64_f64_f64_f64_id(recv: *u8, sel: *u8, a0: f64, a1: f64, a2: f64, a3: f64, a4: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_f64_f64_f64_id(recv: *u8, sel: *u8, a0: f64, a1: f64, a2: f64, a3: *u8) -> *u8;
@@ -645,6 +647,8 @@ extern fn objc_msg_id_id_rect_i32_id_i8_i8(recv: *u8, sel: *u8, a0: *u8, a1: rt:
 extern fn objc_msg_id_id_u64_i32_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: i32, a3: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_u64_size_i32_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: rt::Size, a3: i32, a4: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_u64_u64_i32_id_id(recv: *u8, sel: *u8, a0: *u8, a1: u64, a2: u64, a3: i32, a4: *u8, a5: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_rect_i32(recv: *u8, sel: *u8, a0: rt::Rect, a1: i32) -> *u8;
 #[link_name = "objc_msgSend"]
@@ -3114,8 +3118,54 @@ impl CIImage {
         return rt::msg_id(this._obj, rt::sel(#str_ptr("semanticSegmentationMatte\0")));
     }
 
-    // SKIPPED `imageWithImageProvider:size::format:colorSpace:options:`: override
-    // SKIPPED `initWithImageProvider:size::format:colorSpace:options:`: override
+    fn image_with_image_provider(provider: *u8, size: u64, height: u64, format: i32, color_space: *u8, options: string_map::StringMap[AnyObject]) -> CIImage {
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return CIImage::from_raw(rt::retain(objc_msg_id_id_u64_u64_i32_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithImageProvider:size::format:colorSpace:options:\0")), provider, size, height, format, color_space, dict_options)));
+    }
+
+    fn new_with_image_provider_size_format_color_space_options(provider: *u8, width: u64, height: u64, format: i32, color_space: *u8, options: string_map::StringMap[AnyObject]) -> CIImage {
+        let cls: *u8 = rt::get_class(#str_ptr("CIImage\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+        let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
+        let dcap_options: usize = options.slot_capacity();
+        var dsi_options: usize = 0 as usize;
+        while dsi_options < dcap_options {
+            match options.value_ptr_at_slot(dsi_options) {
+                option::Option[*AnyObject]::Some(dvp_options) => {
+                    match options.key_ptr_at_slot(dsi_options) {
+                        option::Option[*text::Text]::Some(dkp_options) => {
+                    let dval_options: *u8 = (*dvp_options).raw();
+                            rt::msg_void_id_id(dict_options, dset_options, dval_options, bridge::nsstring((*dkp_options).view()));
+                        }
+                        option::Option[*text::Text]::None => {}
+                    }
+                }
+                option::Option[*AnyObject]::None => {}
+            }
+            dsi_options = dsi_options +% (1 as usize);
+        }
+        return CIImage { _obj: objc_msg_id_id_u64_u64_i32_id_id(alloced, rt::sel(#str_ptr("initWithImageProvider:size::format:colorSpace:options:\0")), provider, width, height, format, color_space, dict_options) };
+    }
+
     fn drop(ref this) {
         rt::release(this._obj);
     }
@@ -5053,8 +5103,16 @@ impl MediaTimingFunction {
         return MediaTimingFunction { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CAMediaTimingFunction\0")), rt::sel(#str_ptr("functionWithName:\0")), bridge::nsstring(name))) };
     }
 
-    // SKIPPED `functionWithControlPoints::::`: override
-    // SKIPPED `initWithControlPoints::::`: override
+    fn function_with_control_points(c1x: f32, c1y: f32, c2x: f32, c2y: f32) -> MediaTimingFunction {
+        return MediaTimingFunction { _obj: rt::retain(objc_msg_id_f32_f32_f32_f32(rt::get_class(#str_ptr("CAMediaTimingFunction\0")), rt::sel(#str_ptr("functionWithControlPoints::::\0")), c1x, c1y, c2x, c2y)) };
+    }
+
+    fn new(c1x: f32, c1y: f32, c2x: f32, c2y: f32) -> MediaTimingFunction {
+        let cls: *u8 = rt::get_class(#str_ptr("CAMediaTimingFunction\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return MediaTimingFunction { _obj: objc_msg_id_f32_f32_f32_f32(alloced, rt::sel(#str_ptr("initWithControlPoints::::\0")), c1x, c1y, c2x, c2y) };
+    }
+
     fn get_control_point_at_index(this, idx: u64, values: *u8) {
         rt::msg_void_u64_id(this._obj, rt::sel(#str_ptr("getControlPointAtIndex:values:\0")), idx, values);
     }

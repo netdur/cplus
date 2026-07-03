@@ -1,14 +1,4 @@
 {
   "_comment": "cpc-bindgen naming overrides for QuartzCore. Add `types` / `methods` / `skip` entries to refine the mechanical snake_case names.",
-  "methods": {},
-  "skip": {
-    "CIImage": [
-      "imageWithImageProvider:size::format:colorSpace:options:",
-      "initWithImageProvider:size::format:colorSpace:options:"
-    ],
-    "CAMediaTimingFunction": [
-      "functionWithControlPoints::::",
-      "initWithControlPoints::::"
-    ]
-  }
+  "methods": {}
 }

@@ -18,6 +18,7 @@ pub fn generate(
     out_dir: Option<&str>,
     merge: bool,
     sdk_name: Option<&str>,
+    foreign: &[(String, String)],
 ) -> i32 {
     let sdk = match sdk_path(sdk_name) {
         Some(s) => s,
@@ -71,7 +72,7 @@ pub fn generate(
     // co-resident, so object returns/args resolve to FULL types (chaining works,
     // no method-less cross-module stubs) and there is no cyclic-import problem.
     if merge {
-        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg, sdk_name);
+        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg, sdk_name, foreign);
     }
 
     // One module per header. Detect Objective-C vs C per header (a header is
@@ -93,7 +94,9 @@ pub fn generate(
         let hp_str = hp.to_string_lossy();
         let text = if is_objc {
             any_objc = true;
-            ObjcEmitter::new(&hp_str, prefix, overrides.clone()).run(&ast)
+            let mut e = ObjcEmitter::new(&hp_str, prefix, overrides.clone());
+            e.set_foreign(foreign.to_vec());
+            e.run(&ast)
         } else {
             // Apple frameworks are LP64 (never LLP64), so `long` stays 64-bit.
             let mut e = Emitter::new(&hp_str, false);
@@ -120,7 +123,7 @@ pub fn generate(
     std::fs::write(src.join(format!("{pkg}.cplus")), build_umbrella(name, &modules)).ok();
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), modules.len(), any_objc, false, sdk_name),
+        cplus_toml(name, &pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), modules.len(), any_objc, false, sdk_name, foreign),
     )
     .ok();
     if overrides_path.is_none() {
@@ -153,6 +156,7 @@ fn generate_merged(
     sdk: &str,
     pkg: &str,
     sdk_name: Option<&str>,
+    foreign: &[(String, String)],
 ) -> i32 {
     // The umbrella (`Headers/<name>.h`) transitively imports every public header,
     // so one parse yields all framework types with their home-header locs intact.
@@ -220,8 +224,11 @@ fn generate_merged(
             return 1;
         }
     };
-    let text =
-        ObjcEmitter::new_merged(&umbrella.to_string_lossy(), prefix, overrides, home_set).run(&ast);
+    let text = {
+        let mut e = ObjcEmitter::new_merged(&umbrella.to_string_lossy(), prefix, overrides, home_set);
+        e.set_foreign(foreign.to_vec());
+        e.run(&ast)
+    };
 
     // Going from N per-header modules to one: clear stale module files first.
     for entry in std::fs::read_dir(src).into_iter().flatten().flatten() {
@@ -237,7 +244,7 @@ fn generate_merged(
     }
     std::fs::write(
         out.join("Cplus.toml"),
-        cplus_toml(name, pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), header_paths.len(), true, true, sdk_name),
+        cplus_toml(name, pkg, prefix, overrides_path.is_some(), &sdk_version(sdk_name), header_paths.len(), true, true, sdk_name, foreign),
     )
     .ok();
     if overrides_path.is_none() {
@@ -477,13 +484,22 @@ fn cplus_toml(
     any_objc: bool,
     merge: bool,
     sdk_name: Option<&str>,
+    foreign: &[(String, String)],
 ) -> String {
     // A pure-C framework (Accelerate) needs no `objc` runtime dependency.
-    let deps = if any_objc {
-        "stdlib = \"*\"\nobjc   = \"*\""
+    let mut deps = if any_objc {
+        "stdlib = \"*\"\nobjc   = \"*\"".to_string()
     } else {
-        "stdlib = \"*\""
+        "stdlib = \"*\"".to_string()
     };
+    // Cross-package (`--use`) dependencies: the packages whose types this one
+    // references. Sorted + deduped for a stable manifest.
+    let mut fpkgs: Vec<&str> = foreign.iter().map(|(_, p)| p.as_str()).collect();
+    fpkgs.sort();
+    fpkgs.dedup();
+    for p in fpkgs {
+        deps.push_str(&format!("\n{p} = \"*\""));
+    }
     // Reproduce line: the exact command that regenerates this package.
     let mut repro = format!("cpc-bindgen --framework {name}");
     if !prefix.is_empty() {
@@ -494,6 +510,9 @@ fn cplus_toml(
     }
     if merge {
         repro.push_str(" --merge");
+    }
+    for (prefix, p) in foreign {
+        repro.push_str(&format!(" --use {p}={prefix}"));
     }
     if overrides_used {
         repro.push_str(" --overrides overrides.json");

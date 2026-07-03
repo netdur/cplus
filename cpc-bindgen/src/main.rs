@@ -32,7 +32,12 @@ fn main() {
     // `--use <Namespace>=<package>` maps a foreign GIR namespace to the C+
     // binding package that provides its wrappers (e.g. `Gtk=gtk4`), so
     // cross-namespace object/enum types resolve and auto-import.
-    let mut gobject_uses: Vec<(String, String)> = Vec::new();
+    // `--use PREFIX=pkg` (repeatable): resolve a foreign namespace/prefix
+    // `PREFIX` via the C+ package `pkg`. Used by the GObject frontend (GIR
+    // namespaces) and the ObjC `--framework` frontend (class-name prefixes) —
+    // e.g. `--use CA=quartzcore` makes appkit's `layer()` return
+    // `quartzcore::Layer` instead of a local methodless stub. Stored (prefix, pkg).
+    let mut uses: Vec<(String, String)> = Vec::new();
     // C package mode (`--cpackage`): bind one or more C headers into a whole C+
     // package, with `[link]` libs/search-paths from pkg-config or explicit flags.
     let mut cpackage_mode = false;
@@ -79,14 +84,14 @@ fn main() {
             // C+ package `pkg`.
             if a == "--use" {
                 if let Some((ns, pkg)) = raw.get(i + 1).and_then(|v| v.split_once('=')) {
-                    gobject_uses.push((ns.to_string(), pkg.to_string()));
+                    uses.push((ns.to_string(), pkg.to_string()));
                 }
                 i += 2;
                 continue;
             }
             if let Some(v) = a.strip_prefix("--use=") {
                 if let Some((ns, pkg)) = v.split_once('=') {
-                    gobject_uses.push((ns.to_string(), pkg.to_string()));
+                    uses.push((ns.to_string(), pkg.to_string()));
                 }
                 i += 1;
                 continue;
@@ -280,6 +285,7 @@ fn main() {
             out_dir.as_deref(),
             merge,
             sdk_name.as_deref(),
+            &uses,
         ));
     }
 
@@ -294,7 +300,7 @@ fn main() {
         };
         // `--out DIR` writes a whole package; without it, emit to stdout.
         if let Some(dir) = out_dir.as_deref() {
-            match gir::generate_package(&arg, dir, &gobject_uses) {
+            match gir::generate_package(&arg, dir, &uses) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("cpc-bindgen --gobject: {e}");
@@ -302,7 +308,7 @@ fn main() {
                 }
             }
         }
-        match gir::generate(&arg, &gobject_uses) {
+        match gir::generate(&arg, &uses) {
             Ok(src) => {
                 print!("{src}");
                 std::process::exit(0);
@@ -447,7 +453,8 @@ fn main() {
             },
             None => serde_json::Value::Null,
         };
-        let emitter = objc::ObjcEmitter::new(&header, &prefix, overrides);
+        let mut emitter = objc::ObjcEmitter::new(&header, &prefix, overrides);
+        emitter.set_foreign(uses.clone());
         print!("{}", emitter.run(&v));
     } else {
         let mut emitter = Emitter::new(&header, target_is_llp64(&clang_args));
