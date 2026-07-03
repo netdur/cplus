@@ -451,6 +451,7 @@ fn main() {
         print!("{}", emitter.run(&v));
     } else {
         let mut emitter = Emitter::new(&header, target_is_llp64(&clang_args));
+        emitter.set_record_sizes(record_layout_sizes(&header, &clang_args));
         emitter.walk(&v);
         print!("{}", emitter.finish());
     }
@@ -472,8 +473,60 @@ fn emit_c_header(header: &str, clang_args: &[String], llp64: bool) -> Result<Str
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("clang JSON parse failed for {header}: {e}"))?;
     let mut emitter = Emitter::new(header, llp64);
+    emitter.set_record_sizes(record_layout_sizes(header, clang_args));
     emitter.walk(&v);
     Ok(emitter.finish())
+}
+
+/// Authoritative record sizes (bytes) via clang's `-fdump-record-layouts-complete`
+/// — the only reliable source (the JSON AST omits layout). Keyed by tag name.
+/// Returns empty on any failure; callers degrade gracefully.
+fn record_layout_sizes(header: &str, clang_args: &[String]) -> std::collections::HashMap<String, u64> {
+    let mut cmd = Command::new("clang");
+    cmd.arg("-fsyntax-only")
+        .arg("-Xclang")
+        .arg("-fdump-record-layouts-complete")
+        .arg("-x")
+        .arg("c");
+    for a in clang_args {
+        cmd.arg(a);
+    }
+    cmd.arg(header);
+    match cmd.output() {
+        Ok(o) if o.status.success() => parse_record_sizes(&String::from_utf8_lossy(&o.stdout)),
+        _ => std::collections::HashMap::new(),
+    }
+}
+
+/// Parse `clang -fdump-record-layouts` text into tag -> sizeof(bytes). Each
+/// top-level record block opens with an indent-0 `struct/union/class <tag>` line
+/// (after the `<offset> |` prefix) and closes with an indent-0 `[sizeof=N, ...]`
+/// line; inline member sub-layouts are indented and ignored.
+fn parse_record_sizes(dump: &str) -> std::collections::HashMap<String, u64> {
+    let mut sizes = std::collections::HashMap::new();
+    let mut current: Option<String> = None;
+    for line in dump.lines() {
+        let Some(bar) = line.find('|') else { continue };
+        let right = &line[bar + 1..];
+        // The dump always writes a single space after `|`; strip exactly one.
+        let content = right.strip_prefix(' ').unwrap_or(right);
+        let indent = content.len() - content.trim_start().len();
+        if indent != 0 {
+            continue;
+        }
+        let body = content.trim_start();
+        if body.starts_with("struct ") || body.starts_with("union ") || body.starts_with("class ") {
+            current = body.split_whitespace().nth(1).map(|s| s.to_string());
+        } else if let Some(rest) = body.strip_prefix("[sizeof=") {
+            if let Some(cur) = &current {
+                let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(v) = n.parse::<u64>() {
+                    sizes.entry(cur.clone()).or_insert(v);
+                }
+            }
+        }
+    }
+    sizes
 }
 
 /// Windows targets are LLP64 — `long`/`unsigned long` are 32-bit, unlike the
@@ -839,6 +892,11 @@ struct Emitter {
     /// 64-bit of LP64 (Linux/macOS). Determines DWORD/LONG/ULONG widths so
     /// struct layouts and param types match the ABI.
     llp64: bool,
+    /// Authoritative record sizes (bytes) from clang's `-fdump-record-layouts`,
+    /// keyed by tag. Used to byte-shim structs the field-by-field emitter can't
+    /// model (inline anonymous unions) at their exact C size. Empty if the dump
+    /// was unavailable.
+    record_sizes: std::collections::HashMap<String, u64>,
 }
 
 impl Emitter {
@@ -858,7 +916,15 @@ impl Emitter {
             last_tu_inner: None,
             typedefs: std::collections::HashMap::new(),
             llp64,
+            record_sizes: std::collections::HashMap::new(),
         }
+    }
+
+    /// Supply authoritative record sizes from clang's record-layout dump (see
+    /// `record_layout_sizes`). Optional — without it, records with unmodellable
+    /// fields keep their previous partial/skip behavior.
+    fn set_record_sizes(&mut self, sizes: std::collections::HashMap<String, u64>) {
+        self.record_sizes = sizes;
     }
 
     fn walk(&mut self, tu: &serde_json::Value) {
@@ -1284,11 +1350,15 @@ impl Emitter {
             return;
         }
         if kind == "union" {
-            // §4B: byte-array shim. Compute size as max(field size).
-            // Without layout info from clang we use the `_size` from the
-            // record's `definitionData` if present, else punt with a comment.
-            let size_bytes = guess_record_size(decl);
-            let size = size_bytes.unwrap_or(8); // conservative fallback
+            // §4B: byte-array shim. Prefer clang's authoritative record size;
+            // fall back to the JSON `definitionData.sizeof` (usually absent), then
+            // a conservative 8.
+            let size = self
+                .record_sizes
+                .get(name)
+                .copied()
+                .or_else(|| guess_record_size(decl))
+                .unwrap_or(8);
             self.out.push_str(&format!(
                 "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
             ));
@@ -1297,6 +1367,39 @@ impl Emitter {
                  // via `unsafe` reinterpret cast: `let p = (&u._bytes) as *<FieldTy>;`\n"
             ));
             return;
+        }
+        // A struct with an inline anonymous union/struct member (INPUT, RAWMOUSE,
+        // …) can't be modelled field-by-field — the anonymous member has no name
+        // to bind and shares storage. If clang gave us the exact size, emit the
+        // whole struct as a byte shim at that size (same contract as the union
+        // case) so it stays layout-correct instead of dropping the member and
+        // silently shrinking. Without a size we fall through (member is skipped).
+        let has_anon_member = decl
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().any(|f| {
+                    f.get("kind").and_then(|k| k.as_str()) == Some("FieldDecl")
+                        && f.get("type")
+                            .and_then(|t| t.get("qualType"))
+                            .and_then(|v| v.as_str())
+                            .map_or(false, |qt| qt.contains("(anonymous") || qt.contains("(unnamed"))
+                })
+            })
+            .unwrap_or(false);
+        if has_anon_member {
+            if let Some(&size) = self.record_sizes.get(name) {
+                self.out.push_str(&format!(
+                    "// `{name}` embeds an inline anonymous union whose members share\n\
+                     // storage; the fields can't be bound individually. Emitted as a\n\
+                     // byte shim of the exact C size (clang record layout) — pass by\n\
+                     // pointer, or access via `unsafe` reinterpret cast.\n"
+                ));
+                self.out.push_str(&format!(
+                    "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
+                ));
+                return;
+            }
         }
         // struct: walk fields, emit a #[repr(C)] struct.
         self.out.push_str(&format!("#[repr(C)] struct {name} {{\n"));
@@ -1903,6 +2006,32 @@ mod tests {
         assert_eq!(ret, "int");
         assert_eq!(params, vec!["int", "const char *"]);
         assert!(!var);
+    }
+
+    // Parse clang's record-layout dump: indent-0 record header opens a block,
+    // indent-0 `[sizeof=N]` closes it; indented member sub-layouts are ignored.
+    #[test]
+    fn parse_record_sizes_reads_top_level_sizeof() {
+        let dump = "\
+*** Dumping AST Record Layout
+         0 | struct tagINPUT
+         0 |   DWORD type
+         8 |   union tagINPUT::(anonymous at winuser.h:6161:5)
+         8 |     struct tagMOUSEINPUT mi
+         8 |       LONG dx
+        32 |       ULONG_PTR dwExtraInfo
+           | [sizeof=40, align=8]
+*** Dumping AST Record Layout
+         0 | struct tagPOINT
+         0 |   LONG x
+         4 |   LONG y
+           | [sizeof=8, align=4]
+";
+        let sizes = parse_record_sizes(dump);
+        assert_eq!(sizes.get("tagINPUT"), Some(&40));
+        assert_eq!(sizes.get("tagPOINT"), Some(&8));
+        // the inline anonymous member's own sub-layout must not be captured
+        assert_eq!(sizes.len(), 2);
     }
 
     // By-value struct uses need the record body pulled in; pointer uses (opaque
