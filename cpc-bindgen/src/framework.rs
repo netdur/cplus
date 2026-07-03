@@ -95,7 +95,8 @@ pub fn generate(
             any_objc = true;
             ObjcEmitter::new(&hp_str, prefix, overrides.clone()).run(&ast)
         } else {
-            let mut e = Emitter::new(&hp_str);
+            // Apple frameworks are LP64 (never LLP64), so `long` stays 64-bit.
+            let mut e = Emitter::new(&hp_str, false);
             e.walk(&ast);
             e.finish()
         };
