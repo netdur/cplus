@@ -47,3 +47,45 @@ fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
     };
 }
 fn approx(a: f64, b: f64) -> bool { let d: f64 = a - b; if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; } return d < 0.01f64; }
+
+// A HIG-styled screen: 20pt window margins, an 8pt-spaced vertical stack, with a
+// content card (16pt padding). All spacing comes from the HIG presets — no magic
+// numbers in the layout code.
+fn build_hig_screen() -> flex::Node {
+    return @flex {
+        screen {                 // 20pt edge margins + 8pt item spacing
+            hstack {             // sidebar | content, 8pt apart
+                box().width(200.0)
+                card {           // 16pt padding
+                    box().grow(1.0)
+                }
+            }
+        }
+    };
+}
+
+#[test]
+fn dsl_hig_screen_applies_standard_spacing() {
+    var ui: flex::Node = build_hig_screen();   // ui = @flex root column -> [screen]
+    ui.calculate_layout(1000.0f64, 600.0f64, flex::Direction::LTR);
+    // navigate: root -> screen (child 0) -> hstack (child 0) -> [sidebar, card]
+    match ui.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(pscreen) => {
+            let hstack_frame: flex::Layout = must_layout({ (*pscreen).child_layout(0 as usize) });
+            assert approx(hstack_frame.left, 20.0f64);       // inside the 20pt screen margin
+            assert approx(hstack_frame.top, 20.0f64);
+            assert approx(hstack_frame.width, 960.0f64);     // 1000 - 20 - 20
+            match { (*pscreen).children.at_ptr(0 as usize) } {
+                option::Option[*flex::Node]::Some(ph) => {
+                    let sidebar: flex::Layout = must_layout({ (*ph).child_layout(0 as usize) });
+                    let card: flex::Layout = must_layout({ (*ph).child_layout(1 as usize) });
+                    assert approx(sidebar.left, 20.0f64);    // at the screen margin
+                    assert approx(card.left, 228.0f64);      // 20 + 200 sidebar + 8pt hstack gap
+                }
+                option::Option[*flex::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    }
+    return;
+}

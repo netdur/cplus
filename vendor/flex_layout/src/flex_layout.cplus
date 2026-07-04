@@ -2025,6 +2025,60 @@ impl Node {
 }
 
 // ==========================================================================
+// HIG defaults — Apple Human Interface Guidelines spacing + sizing (8pt grid)
+// ==========================================================================
+// Apple's layout system is an 8-point grid: related items sit 8pt apart, content
+// gets 16pt padding, windows keep ~20pt edge margins (macOS), and any tappable
+// control needs a >=44x44pt hit area (iOS/touch). The engine's own defaults stay
+// Yoga-compatible; these constants + preset containers/modifiers are the opt-in
+// layer that makes an @flex layout HIG-correct by default.
+//   https://developer.apple.com/design/human-interface-guidelines/layout
+
+const HIG_SPACE_XS: f64 = 4.0f64;    // half-step: tight groupings, inner chrome
+const HIG_SPACE_S:  f64 = 8.0f64;    // base grid unit: spacing between related items
+const HIG_SPACE_M:  f64 = 16.0f64;   // content / card padding; compact screen margin
+const HIG_SPACE_L:  f64 = 20.0f64;   // regular window / screen edge margin (macOS)
+const HIG_SPACE_XL: f64 = 32.0f64;   // separation between distinct content groups
+const HIG_TAP_MIN:  f64 = 44.0f64;   // minimum tap target (iOS/touch); visionOS is 60
+
+// ---- preset containers (standard 8pt inter-item spacing) ----
+// A vertical stack of related items, 8pt apart.
+fn vstack(take b: Builder) -> Node { var n: Node = column(b); n.set_gap(Gutter::Row, HIG_SPACE_S); return n; }
+// A horizontal stack of related items, 8pt apart.
+fn hstack(take b: Builder) -> Node { var n: Node = row(b); n.set_gap(Gutter::Column, HIG_SPACE_S); return n; }
+// A window/screen root: a vertical stack with standard 20pt edge margins.
+fn screen(take b: Builder) -> Node {
+    var n: Node = column(b);
+    n.set_padding(Edge::All, StyleLength::points(HIG_SPACE_L));
+    n.set_gap(Gutter::Row, HIG_SPACE_S);
+    return n;
+}
+// A card: grouped content with 16pt padding and 8pt inter-item spacing.
+fn card(take b: Builder) -> Node {
+    var n: Node = column(b);
+    n.set_padding(Edge::All, StyleLength::points(HIG_SPACE_M));
+    n.set_gap(Gutter::Row, HIG_SPACE_S);
+    return n;
+}
+
+// ---- HIG modifiers (fluent) ----
+impl Node {
+    // Guarantee the 44x44pt minimum tap target — the item never lays out smaller.
+    fn tappable(take this) -> Node {
+        var n: Node = this;
+        n.set_min_width(StyleLength::points(HIG_TAP_MIN));
+        n.set_min_height(StyleLength::points(HIG_TAP_MIN));
+        return n;
+    }
+    // Standard 16pt content padding.
+    fn card_padding(take this) -> Node { return this.padding(HIG_SPACE_M); }
+    // Standard 20pt screen/window edge margins.
+    fn screen_margins(take this) -> Node { return this.padding(HIG_SPACE_L); }
+    // Standard 8pt gap between children.
+    fn std_gap(take this) -> Node { return this.gap(HIG_SPACE_S); }
+}
+
+// ==========================================================================
 // Tests
 // ==========================================================================
 
@@ -3412,4 +3466,54 @@ fn grandchild(root: Node, pi: usize, ci: usize) -> Layout {
         },
         option::Option[*Node]::None => Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
     };
+}
+
+// ---- HIG defaults ----
+
+#[test]
+fn test_hig_vstack_uses_8pt_spacing() {
+    var b: Builder = Builder::new();
+    b.add(leaf(40.0f64, 30.0f64));
+    b.add(leaf(40.0f64, 30.0f64));
+    var root: Node = vstack(b);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).top, 38.0f64);   // 30 + 8pt HIG gap
+}
+
+#[test]
+fn test_hig_screen_uses_20pt_margins() {
+    var b: Builder = Builder::new();
+    var content: Node = Node::new(); content.set_flex_grow(1.0f64);
+    b.add(content);
+    var root: Node = screen(b);
+    root.calculate_layout(400.0f64, 300.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.left, 20.0f64);                 // 20pt window margin
+    assert approx(c.top, 20.0f64);
+    assert approx(c.width, 360.0f64);               // 400 - 20 - 20
+}
+
+#[test]
+fn test_hig_card_uses_16pt_padding() {
+    var b: Builder = Builder::new();
+    var content: Node = Node::new(); content.set_flex_grow(1.0f64);
+    b.add(content);
+    var root: Node = card(b);
+    root.set_width(pts(200.0f64));
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 16.0f64);   // 16pt card padding
+}
+
+#[test]
+fn test_hig_tappable_enforces_44pt_minimum() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);
+    // asks for 20x20 but .tappable() enforces the 44pt minimum
+    root.add_child(Node::new().width(20.0f64).height(20.0f64).tappable());
+    root.calculate_layout(300.0f64, 300.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.width, 44.0f64);                // clamped up to the 44pt minimum
+    assert approx(c.height, 44.0f64);
 }

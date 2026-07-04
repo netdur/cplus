@@ -106,3 +106,30 @@ children align to the parent grid's lines over its span.
 
 **Full CSS Flexbox + Grid parity.** `overflow` is stored + readable
 (`node.overflow()`) for the adapter to apply clipping; it does not alter frames.
+
+## HIG defaults (`@flex`)
+
+Apple's layout system is an **8-point grid**; the engine ships opt-in presets that
+encode it, so `@flex` layouts are HIG-correct without magic numbers:
+
+| Preset | HIG rule |
+|---|---|
+| `vstack { }` / `hstack { }` | related items **8pt** apart |
+| `screen { }` | **20pt** window/screen edge margins (macOS) + 8pt spacing |
+| `card { }` | **16pt** content padding + 8pt spacing |
+| `.tappable()` | enforces the **44×44pt** minimum tap target (iOS/touch) |
+| `.card_padding()` / `.screen_margins()` / `.std_gap()` | 16 / 20 / 8 pt |
+
+Constants: `HIG_SPACE_XS/S/M/L/XL` = 4/8/16/20/32, `HIG_TAP_MIN` = 44. The engine's
+own `Style::new` defaults stay Yoga-compatible — HIG is a layer on top.
+
+```
+@flex {
+    screen {                 // 20pt margins
+        hstack {             // sidebar | content, 8pt apart
+            box().width(200.0)
+            card { box().grow(1.0) }   // 16pt padding
+        }
+    }
+}
+```
