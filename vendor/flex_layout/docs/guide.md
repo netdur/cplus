@@ -31,7 +31,10 @@ root.calculate_layout(available_width, available_height, flex::Direction::LTR);
   may be `flex::undefined()` for an **unconstrained** axis — the root then sizes
   to its content.
 - The root is placed at `(0, 0)`; every descendant's frame is filled in and is
-  **absolute** in the root's coordinate space.
+  **absolute in the root's coordinate space** — a child's `left`/`top` already
+  includes all ancestor offsets. An adapter nesting into a real (per-superview)
+  view tree must therefore **subtract the parent node's `layout` origin** to get
+  a superview-relative frame: `child.left - parent.left`, `child.top - parent.top`.
 
 Read frames back:
 
@@ -163,27 +166,32 @@ thumb.set_width(flex::StyleLength::points(320.0f64));   // -> height 180
 ## Content sizing — the measure callback
 
 Content leaves (text, images) report their intrinsic size through a **measure
-function pointer**, so the engine stays UI-kit-agnostic. The adapter supplies one
-that asks the real view for its fitting size.
+function pointer**, so the engine stays UI-kit-agnostic. The callback's first
+argument is the node's **context** (`set_context`) — a platform adapter stores
+the backing view there so one `fn` can size *any* view: it casts the context
+back and asks that specific view for its fitting size at the engine's proposed
+width. This is what makes wrapping text wrap to its computed column width.
 
 ```
-fn measure_label(w: f64, wm: flex::MeasureMode, h: f64, hm: flex::MeasureMode) -> flex::Size {
-    // e.g. call NSTextField.fittingSize with the given constraints
-    return flex::Size { width: 80.0f64, height: 24.0f64 };
+fn measure_label(ctx: *u8, w: f64, wm: flex::MeasureMode, h: f64, hm: flex::MeasureMode) -> flex::Size {
+    let view: *MyTextView = ctx as *MyTextView;      // the adapter's backing view
+    return fitting_size(view, w, wm, h, hm);         // e.g. NSTextField.fittingSize
 }
 
 var label: flex::Node = flex::Node::new();
+label.set_context(view_ptr as *u8);                  // store the backing view
 label.set_measure(measure_label);
 ```
 
-`MeasureMode` tells the callback how the constraint is meant: `Exactly` (fixed),
-`AtMost` (shrink to fit within), `Undefined` (unconstrained).
+The engine never owns the context (it's `opaque` / borrowed) — the adapter keeps
+the view alive. `MeasureMode` tells the callback how the constraint is meant:
+`Exactly` (fixed), `AtMost` (shrink to fit within), `Undefined` (unconstrained).
 
-For text baselines (align-items: baseline), supply a baseline callback returning
-the ascent from the top:
+For text baselines (align-items: baseline), supply a baseline callback — same
+context, returning the ascent from the top:
 
 ```
-fn baseline_first_line(width: f64, height: f64) -> f64 { return 15.0f64; }
+fn baseline_first_line(ctx: *u8, width: f64, height: f64) -> f64 { return 15.0f64; }
 label.set_baseline(baseline_first_line);
 ```
 

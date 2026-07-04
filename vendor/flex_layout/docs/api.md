@@ -52,6 +52,10 @@ available size; `flex::is_undef(x)` / `flex::is_def(x)` test it.
 | `layout_frame` | `(this) -> Layout` |
 | `layout_direction` | `(this) -> Direction` — resolved LTR/RTL |
 | `child_layout` | `(this, index: usize) -> Option[Layout]` |
+
+Every `layout` is **absolute in the root's coordinate space** (it includes all
+ancestor offsets). To place a node into a per-superview view tree, subtract the
+parent node's `layout` origin: `child.left - parent.left`, `child.top - parent.top`.
 | `overflow` / `display` / `position_type` | `(this) -> Overflow / Display / PositionType` |
 
 ### Flex style setters
@@ -85,12 +89,18 @@ available size; `flex::is_undef(x)` / `flex::is_def(x)` test it.
 `Edge::Start` / `End` are logical (resolve to left/right per direction); a
 physical `Left`/`Right` wins if also set. An `auto` margin absorbs free space.
 
-### Content callbacks
+### Content callbacks & context
 
 | Method | Signature |
 |---|---|
-| `set_measure` | `(ref this, fn(f64, MeasureMode, f64, MeasureMode) -> Size)` |
-| `set_baseline` | `(ref this, fn(f64, f64) -> f64)` — ascent from top |
+| `set_context` | `(ref this, ctx: *u8)` — opaque, borrowed; handed to the callbacks |
+| `context` | `(this) -> *u8` |
+| `set_measure` | `(ref this, fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size)` |
+| `set_baseline` | `(ref this, fn(*u8, f64, f64) -> f64)` — `(ctx, width, height) -> ascent` |
+
+The callback's first argument is the node's context. An adapter stores the
+backing view there so one `fn` can size any view (cast `ctx` back, ask for its
+fitting size). The engine never frees the context — the adapter owns it.
 
 ### Grid (container / item)
 

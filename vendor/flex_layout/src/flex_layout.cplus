@@ -130,16 +130,19 @@ impl StyleLength {
     }
 }
 
-// The measure callback. Given the available width/height and their measure modes,
-// a content node (text, image) returns its intrinsic size. The engine calls this
-// for childless nodes whose size is otherwise undefined. Signature mirrors Yoga's
-// YGMeasureFunc (minus the node handle — measure is a pure function of constraints).
-fn measure_none(avail_w: f64, wmode: MeasureMode, avail_h: f64, hmode: MeasureMode) -> Size {
+// The measure callback. Given the node's opaque context pointer (see
+// `set_context`), the available width/height, and their measure modes, a content
+// node (text, image) returns its intrinsic size. The engine calls this for
+// childless nodes whose size is otherwise undefined. The `ctx` first argument
+// lets a platform adapter store the backing view and ask *that view* for its
+// fitting size — so wrapping text measures to its computed width. `ctx` is
+// `0 as *u8` (null) when unset.
+fn measure_none(ctx: *u8, avail_w: f64, wmode: MeasureMode, avail_h: f64, hmode: MeasureMode) -> Size {
     return Size { width: 0.0f64, height: 0.0f64 };
 }
 
-// Default baseline: the box bottom (ascent == height).
-fn baseline_none(width: f64, height: f64) -> f64 { return height; }
+// Default baseline: the box bottom (ascent == height). `ctx` as for measure.
+fn baseline_none(ctx: *u8, width: f64, height: f64) -> f64 { return height; }
 
 // ==========================================================================
 // Style
@@ -263,10 +266,11 @@ struct Layout {
 struct Node {
     style: Style,
     children: vec::Vec[Node],
-    measure: fn(f64, MeasureMode, f64, MeasureMode) -> Size,
+    measure: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size,
     has_measure: bool,
-    baseline: fn(f64, f64) -> f64,   // ascent from top, given (width, height)
+    baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
     has_baseline: bool,
+    opaque node_ctx: *u8,            // borrowed context for measure/baseline (adapter owns it)
     grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
     grid_rows: vec::Vec[GridTrack],  // grid-template-rows
     grid_col_span: i32,              // how many columns this item spans (>=1)
@@ -319,6 +323,7 @@ impl Node {
             has_measure: false,
             baseline: baseline_none,
             has_baseline: false,
+            node_ctx: 0 as *u8,
             grid_cols: vec::new::[GridTrack](),
             grid_rows: vec::new::[GridTrack](),
             grid_col_span: 1,
@@ -470,14 +475,20 @@ impl Node {
         return;
     }
 
-    fn set_measure(ref this, f: fn(f64, MeasureMode, f64, MeasureMode) -> Size) {
+    // Opaque per-node context handed to the measure / baseline callbacks — a
+    // platform adapter stores the backing view here so the callback can size that
+    // specific view. Pass `0 as *u8` to clear.
+    fn set_context(ref this, ctx: *u8) { this.node_ctx = ctx; return; }
+    fn context(this) -> *u8 { return this.node_ctx; }
+
+    fn set_measure(ref this, f: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size) {
         this.measure = f;
         this.has_measure = true;
         return;
     }
-    // Provide a baseline (ascent from the top, given the item's width/height) for
-    // align-items: baseline — e.g. a text view's first-line baseline.
-    fn set_baseline(ref this, f: fn(f64, f64) -> f64) {
+    // Provide a baseline (ascent from the top, given ctx + the item's width/height)
+    // for align-items: baseline — e.g. a text view's first-line baseline.
+    fn set_baseline(ref this, f: fn(*u8, f64, f64) -> f64) {
         this.baseline = f;
         this.has_baseline = true;
         return;
@@ -1376,7 +1387,7 @@ impl Node {
     fn child_ascent(this, index: usize, width: f64, height: f64) -> f64 {
         return match this.children.at_ptr(index) {
             option::Option[*Node]::Some(p) => {
-                if { (*p).has_baseline } { let bf: fn(f64, f64) -> f64 = { (*p).baseline }; bf(width, height) }
+                if { (*p).has_baseline } { let bf: fn(*u8, f64, f64) -> f64 = { (*p).baseline }; bf({ (*p).node_ctx }, width, height) }
                 else { height }
             }
             option::Option[*Node]::None => height,
@@ -1457,8 +1468,8 @@ impl Node {
         if n == (0 as usize) {
             // Leaf: measure callback supplies content, else the box is just padding.
             if this.has_measure && (!have_w || !have_h) {
-                let mf: fn(f64, MeasureMode, f64, MeasureMode) -> Size = this.measure;
-                let s: Size = mf(sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
+                let mf: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size = this.measure;
+                let s: Size = mf(this.node_ctx, sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
                                  sub_or_undef(avail_h, pad_h), MeasureMode::AtMost);
                 if !have_w { w = s.width + pad_w; }
                 if !have_h { h = s.height + pad_h; }
@@ -2386,7 +2397,7 @@ fn test_measure_leaf_sizes_from_callback() {
     assert approx(c.width, 200.0f64);
 }
 
-fn measure_fixed_80x24(w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
+fn measure_fixed_80x24(ctx: *u8, w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
     return Size { width: 80.0f64, height: 24.0f64 };
 }
 
@@ -2973,8 +2984,8 @@ fn test_percent_gap() {
     assert approx(must(root.child_layout(1 as usize)).left, 50.0f64);     // 30 + 20 gap
 }
 
-fn baseline_at_15(width: f64, height: f64) -> f64 { return 15.0f64; }
-fn baseline_at_5(width: f64, height: f64) -> f64 { return 5.0f64; }
+fn baseline_at_15(ctx: *u8, width: f64, height: f64) -> f64 { return 15.0f64; }
+fn baseline_at_5(ctx: *u8, width: f64, height: f64) -> f64 { return 5.0f64; }
 
 #[test]
 fn test_baseline_callback_aligns_reported_baselines() {
@@ -3516,4 +3527,36 @@ fn test_hig_tappable_enforces_44pt_minimum() {
     let c: Layout = must(root.child_layout(0 as usize));
     assert approx(c.width, 44.0f64);                // clamped up to the 44pt minimum
     assert approx(c.height, 44.0f64);
+}
+
+// ---- measure context (per-view sizing) ----
+
+// A measure callback that reads its context: `ctx` points at an f64 holding the
+// width this specific "view" wants. Proves one fn measures many nodes distinctly.
+fn measure_from_ctx(ctx: *u8, w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
+    let pw: *f64 = ctx as *f64;
+    return Size { width: { *pw }, height: 24.0f64 };
+}
+
+#[test]
+fn test_measure_context_distinguishes_nodes() {
+    var widths: vec::Vec[f64] = vec::new::[f64]();
+    widths.append(60.0f64);
+    widths.append(120.0f64);
+
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);        // keep the measured height (no stretch)
+    var a: Node = Node::new(); a.set_measure(measure_from_ctx);
+    var b: Node = Node::new(); b.set_measure(measure_from_ctx);
+    match widths.at_ptr(0 as usize) { option::Option[*f64]::Some(p) => { a.set_context(p as *u8); } option::Option[*f64]::None => {} }
+    match widths.at_ptr(1 as usize) { option::Option[*f64]::Some(p) => { b.set_context(p as *u8); } option::Option[*f64]::None => {} }
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(undefined(), 100.0f64, Direction::LTR);
+
+    // one measure fn, two contexts -> two distinct sizes (the reported use case)
+    assert approx(must(root.child_layout(0 as usize)).width, 60.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 120.0f64);
+    assert approx(must(root.child_layout(0 as usize)).height, 24.0f64);
 }
