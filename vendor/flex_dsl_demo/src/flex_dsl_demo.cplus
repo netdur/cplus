@@ -1,0 +1,49 @@
+// Demo/spec for the @flex DSL — a contextual builder block over flex_layout.
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+
+// A classic app shell: a fixed 200px sidebar + a content pane that fills the rest,
+// written declaratively. `row { }` is a nested same-context container (NOT a
+// sub-DSL) — the nesting the DSL supports.
+fn build_shell() -> flex::Node {
+    return @flex {
+        row {
+            box().width(200.0)              // sidebar
+            box().grow(1.0).padding(8.0)    // content fills the rest
+        }
+    };
+}
+
+#[test]
+fn dsl_block_builds_a_column_with_one_row() {
+    var ui: flex::Node = build_shell();
+    ui.calculate_layout(1000.0f64, 600.0f64, flex::Direction::LTR);
+    assert ui.child_count() == (1 as usize);          // the @flex block => a column with the row
+}
+
+#[test]
+fn dsl_nested_container_lays_out_children() {
+    var ui: flex::Node = build_shell();
+    ui.calculate_layout(1000.0f64, 600.0f64, flex::Direction::LTR);
+    // navigate ui -> row (child 0) -> [sidebar, content]
+    match ui.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(prow) => {
+            let sidebar: flex::Layout = must_layout({ (*prow).child_layout(0 as usize) });
+            let content: flex::Layout = must_layout({ (*prow).child_layout(1 as usize) });
+            assert approx(sidebar.left, 0.0f64);
+            assert approx(sidebar.width, 200.0f64);
+            assert approx(content.left, 200.0f64);
+            assert approx(content.width, 800.0f64);    // 1000 - 200
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    }
+    return;
+}
+
+fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
+    return match o {
+        option::Option[flex::Layout]::Some(l) => l,
+        option::Option[flex::Layout]::None => flex::Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+}
+fn approx(a: f64, b: f64) -> bool { let d: f64 = a - b; if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; } return d < 0.01f64; }
