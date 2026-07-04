@@ -9897,6 +9897,17 @@ impl<'a> FnState<'a> {
             }
 
             ExprKind::Ident(name) => {
+                // Lexical scoping: a local binding shadows a module-level fn (or a
+                // static) of the same name. Resolve locals FIRST — otherwise a bare
+                // ident that names a local but also matches a fn in `sigs` would emit
+                // the fn's address (`@name`) instead of loading the local, which the
+                // backend rejects (`global variable reference must have pointer type`)
+                // and which is simply wrong scoping.
+                if let Some((slot, ty)) = self.lookup(name).cloned() {
+                    let v = self.next_tmp();
+                    self.gen_load(&v, &ty, &slot);
+                    return Some((v, ty));
+                }
                 // Slice 11.FN_PTR: bare-ident referring to a fn (sema
                 // coerced it via the expected-FnPtr context) produces
                 // the symbol's address as a `ptr` SSA value. Use the
