@@ -18326,3 +18326,37 @@ fn default_value_diagnostics() {
         "default on an extern fn parameter should be E1008"
     );
 }
+
+// Float `!=` must be UNORDERED (IEEE / C, clang-verified): `x != x` is TRUE for
+// NaN, so the canonical NaN test works. Was lowered as ordered `fcmp one` (false
+// for NaN) — the report's program returned 6 instead of 7.
+#[test]
+fn float_ne_is_unordered_for_nan() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nan_ne.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+         \x20   let zero: f64 = 0.0f64;\n\
+         \x20   let nan: f64 = zero / zero;\n\
+         \x20   var out: i32 = 0;\n\
+         \x20   if nan != nan { out = out + 1; }\n\
+         \x20   if !(nan == nan) { out = out + 2; }\n\
+         \x20   if !(nan <= 0.0f64) && !(nan >= 0.0f64) { out = out + 4; }\n\
+         \x20   return out;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("nan_ne");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "NaN-ne program must compile");
+    let run = Command::new(&bin).status().expect("run nan_ne");
+    // nan != nan (+1), !(nan == nan) (+2), ordered-safe NaN test (+4) = 7.
+    assert_eq!(run.code(), Some(7), "x != x must be true for NaN; got {:?}", run.code());
+}

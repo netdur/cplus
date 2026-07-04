@@ -824,8 +824,20 @@ fn check_with_files_inner<'a>(
     cx.collect_methods(program);
     cx.collect_method_contracts(program);
     cx.reconcile_drop_from_methods();
-    cx.compute_struct_copy_flags();
-    cx.compute_enum_copy_flags(program);
+    // Struct and enum Copy-ness are mutually recursive (a struct may hold an
+    // enum field; an enum payload may be a struct), and each pass is a monotone
+    // false→true fixpoint. Running either once in isolation leaves the other's
+    // types stale — e.g. a struct with an enum field would be evaluated while
+    // every enum still reads non-Copy, permanently mis-classifying the struct.
+    // Alternate the two passes until neither flips another flag.
+    loop {
+        let before = cx.count_copy_types();
+        cx.compute_enum_copy_flags(program);
+        cx.compute_struct_copy_flags();
+        if cx.count_copy_types() == before {
+            break;
+        }
+    }
     cx.collect_functions(program);
     // v0.0.9 Phase 4: register module-scope const/static items. Runs
     // after function collection so cross-item name collisions are
@@ -1695,6 +1707,15 @@ impl SemaCx<'_> {
                 s.is_drop = true;
             }
         }
+    }
+
+    /// Total number of struct + enum types currently flagged Copy. Both copy
+    /// fixpoints are monotone (they only ever flip `false`→`true`), so this
+    /// count strictly increases until the combined fixpoint settles — the outer
+    /// loop in `run` uses it as the change detector.
+    fn count_copy_types(&self) -> usize {
+        self.structs.iter().filter(|s| s.is_copy).count()
+            + self.enums.iter().filter(|e| e.is_copy).count()
     }
 
     fn compute_struct_copy_flags(&mut self) {
@@ -3474,7 +3495,16 @@ impl SemaCx<'_> {
             }
             // Phase 11 / ObjC interop: `#[link_name = "..."]` symbol alias.
             // Extract here once and stash on FnSig; gate placement on extern.
-            let link_name = extract_link_name(&f.attributes);
+            let mut link_name = extract_link_name(&f.attributes);
+            // The resolver module-qualifies `extern fn` NAMES (to scope the C+ name
+            // to its declaring module), but the linker SYMBOL must stay the bare
+            // declared name. When no explicit `#[link_name]` was given, recover the
+            // symbol from the last path segment of the (now-qualified) name so
+            // codegen emits `@free`, not `@<module>.free`.
+            if f.is_extern && link_name.is_none() {
+                let bare = f.name.name.rsplit('.').next().unwrap_or(&f.name.name);
+                link_name = Some(bare.to_string());
+            }
             if link_name.is_some() && !f.is_extern {
                 // Find the attribute's span for the diagnostic primary.
                 let attr_span = f

@@ -1757,7 +1757,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         } else {
             declared_ret
         };
-        let link_name = f.attributes.iter().find_map(|a| {
+        let mut link_name = f.attributes.iter().find_map(|a| {
             if a.path.name != "link_name" {
                 return None;
             }
@@ -1766,6 +1766,14 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
                 _ => None,
             }
         });
+        // The resolver module-qualifies `extern fn` NAMES (scoping the C+ name to
+        // its declaring module), but the linker SYMBOL is the bare declared name.
+        // With no explicit `#[link_name]`, recover it from the last path segment so
+        // the call/declare emit `@free`, not `@<module>.free`. Mirrors sema.
+        if f.is_extern && link_name.is_none() {
+            let bare = f.name.name.rsplit('.').next().unwrap_or(&f.name.name);
+            link_name = Some(bare.to_string());
+        }
         sigs.insert(
             f.name.name.clone(),
             FnSig {
@@ -8111,6 +8119,14 @@ impl<'a> FnState<'a> {
     /// call, constructor, block, …) makes `gen_place` spill a fresh anonymous
     /// temp that IS ours to drop.
     fn is_place_expr(e: &Expr) -> bool {
+        // A trivial `{ place }` block (no statements, only a tail) is the
+        // source form of every raw-pointer read — `{ *p }`, `{ (*p).field }`.
+        // It denotes the same place as its tail, so see through it; otherwise
+        // callers treat the argument as an owned temporary and drop a bit-copy
+        // that still aliases the caller's heap (double free).
+        if let Some(inner) = Self::trivial_block_tail(e) {
+            return Self::is_place_expr(inner);
+        }
         matches!(
             &e.kind,
             ExprKind::Ident(_)
@@ -8121,6 +8137,21 @@ impl<'a> FnState<'a> {
                     ..
                 }
         )
+    }
+
+    /// If `e` is a `{ tail }` block with no statements, return its tail
+    /// expression; otherwise `None`. Used to see through the `{ … }` wrapper
+    /// that raw-pointer reads are written with, so a wrapped place is still
+    /// recognized as a place (not materialized into a dropped temporary).
+    fn trivial_block_tail(e: &Expr) -> Option<&Expr> {
+        if let ExprKind::Block(b) = &e.kind {
+            if b.stmts.is_empty() {
+                if let Some(tail) = &b.tail {
+                    return Some(tail);
+                }
+            }
+        }
+        None
     }
 
     fn lookup(&self, name: &str) -> Option<&(String, Ty)> {
@@ -10952,6 +10983,13 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_place(&mut self, e: &Expr) -> (String, Ty) {
+        // See through a trivial `{ place }` wrapper (raw-pointer reads are
+        // written `{ *p }` / `{ (*p).f }`). Without this the block falls to the
+        // value fallback below, which spills a bit-copy — aliasing the caller's
+        // heap — instead of yielding the place's own address.
+        if let Some(inner) = Self::trivial_block_tail(e) {
+            return self.gen_place(inner);
+        }
         match &e.kind {
             ExprKind::Ident(name) => {
                 // v0.0.9 Phase 4: module-scope `static` write. The
@@ -15897,8 +15935,10 @@ impl<'a> FnState<'a> {
                     "icmp"
                 };
                 let pred = match (method, elem.is_float(), elem.is_signed_int()) {
+                    // Float `ne` is UNORDERED (`une`), like scalar `!=` and C — a NaN
+                    // lane compares not-equal (true); every other predicate is ordered.
                     ("eq", true, _) => "oeq",
-                    ("ne", true, _) => "one",
+                    ("ne", true, _) => "une",
                     ("lt", true, _) => "olt",
                     ("le", true, _) => "ole",
                     ("gt", true, _) => "ogt",
@@ -16435,10 +16475,13 @@ fn simd_lane_literal(e: &Expr) -> Option<u64> {
 
 fn cmp_op_for_type(op: BinOp, ty: &Ty) -> &'static str {
     if ty.is_float() {
-        // Ordered comparisons (NaN comparisons are false). Bool eq/ne handled via i1 icmp.
+        // Match C / IEEE-754 (clang-verified): `!=` is UNORDERED (`une` — true when
+        // either operand is NaN, so `x != x` is the canonical NaN test), while `==`
+        // and the relational ops are ORDERED (`oeq`/`olt`/… — false for NaN). Bool
+        // eq/ne handled via i1 icmp.
         return match op {
             BinOp::Eq => "oeq",
-            BinOp::Ne => "one",
+            BinOp::Ne => "une",
             BinOp::Lt => "olt",
             BinOp::Le => "ole",
             BinOp::Gt => "ogt",
@@ -18194,6 +18237,17 @@ mod tests {
     fn float_comparison_uses_ordered_predicates() {
         let ir = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; return if a < b { 0 } else { 1 }; }");
         assert!(ir.contains(" = fcmp olt double "));
+    }
+
+    #[test]
+    fn float_ne_is_unordered_eq_is_ordered() {
+        // Match C / IEEE (clang-verified): `!=` is UNORDERED (`une`, true for NaN, so
+        // `x != x` detects NaN), `==` is ORDERED (`oeq`, false for NaN).
+        let ne = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; return if a != b { 0 } else { 1 }; }");
+        assert!(ne.contains(" = fcmp une double "), "!= must be unordered `une`:\n{ne}");
+        assert!(!ne.contains(" = fcmp one double "), "!= must NOT be ordered `one`:\n{ne}");
+        let eq = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; return if a == b { 0 } else { 1 }; }");
+        assert!(eq.contains(" = fcmp oeq double "), "== must be ordered `oeq`:\n{eq}");
     }
 
     #[test]

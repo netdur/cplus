@@ -1309,6 +1309,19 @@ fn exported_name(name: &str) -> bool {
     !name.starts_with('_')
 }
 
+/// An `extern fn` whose C+ NAME stays bare/global instead of being module-scoped:
+///  - `export extern fn …` — an exported C-ABI symbol/definition whose whole purpose
+///    is to expose a specific bare linker symbol (e.g. the `stdlib_reactor_*` runtime
+///    helpers defined in C+ and called by the compiler's emitted code), and
+///  - `__cplus_*` — compiler-runtime ABI reached by `#name` intrinsics from any module
+///    (`#reactor_get_state` -> `__cplus_reactor_get_state`).
+/// A plain (non-`export`) `extern fn` FFI import (`free`, `read`, `write`) is the
+/// scoped case: private to its declaring module, so importers don't inherit libc
+/// names bare into their namespace.
+fn extern_stays_global(f: &Function) -> bool {
+    f.is_extern && (f.is_pub || f.name.name.starts_with("__cplus_"))
+}
+
 fn merge(
     files: BTreeMap<String, FileUnit>,
     entry_file_id: &str,
@@ -1343,19 +1356,24 @@ fn merge(
         for it in &unit.program.items {
             match &it.kind {
                 ItemKind::Function(f) => {
-                    // Slice 10.FFI.1: extern fns are never local-qualified —
-                    // they bind to a literal external C symbol. Skip the
-                    // `all` insertion so call-site rewriting doesn't try
-                    // to prefix the name. Pub is rejected by the parser
-                    // for extern fns; nothing to record there.
-                    if f.is_extern {
+                    // Compiler-runtime externs (`__cplus_*`) stay GLOBAL and bare —
+                    // they are the runtime ABI, reached by `#name` intrinsics from any
+                    // module (`#reactor_get_state` -> `__cplus_reactor_get_state`),
+                    // not user-facing names. Skip qualification entirely.
+                    if extern_stays_global(f) {
                         continue;
                     }
                     all.insert(f.name.name.clone());
                     kinds.insert(f.name.name.clone(), ItemKindTag::Function);
-                    // v0.0.24 #10: visibility is name-based — public unless the
-                    // name starts with `_` (Dart model, public by default).
-                    if exported_name(&f.name.name) {
+                    // `extern fn` is MODULE-PRIVATE: it is qualified within its
+                    // declaring module (so a local can shadow it and, crucially, an
+                    // importer does NOT get libc names like `free`/`read`/`write`
+                    // dumped bare into its namespace), but it is never exported —
+                    // not even as `pkg::free`. Only the linker symbol it binds is
+                    // global; the C+ *name* is a private implementation detail. A
+                    // regular fn exports by name (Dart model: public unless
+                    // `_`-prefixed).
+                    if !f.is_extern && exported_name(&f.name.name) {
                         pubs.insert(f.name.name.clone());
                     }
                 }
@@ -1902,11 +1920,14 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
 fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> {
     let mut f = f.clone();
     let local_scope = HashSet::new();
-    // Slice 10.FFI.1: extern fns keep their literal C symbol name —
-    // the whole point of the FFI declaration is to bind a specific
-    // external symbol. Param/return type rewriting still happens
-    // (in case they reference C+ structs / type aliases).
-    if !f.is_extern {
+    // The C+ NAME is module-qualified even for `extern fn`, so it is scoped to
+    // this module (a local can shadow it; importers don't see it bare). The
+    // literal C SYMBOL it binds is preserved separately: sema sets the extern's
+    // `link_name` to the bare declared name (recovered from the last path
+    // segment) when no explicit `#[link_name]` is present, so codegen still emits
+    // `@free`, not `@<module>.free`. Compiler-runtime externs (`__cplus_*`) are the
+    // exception — they stay bare/global (the runtime ABI reached by `#name`).
+    if !extern_stays_global(&f) {
         f.name.name = ctx.qualify_local(&f.name.name);
     }
     for p in &mut f.params {
