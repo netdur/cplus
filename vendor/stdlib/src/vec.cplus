@@ -3,16 +3,19 @@
 // The core API rule is: a generic Vec[T] never bitwise-copies a T out of
 // storage. Operations that yield an owned element either remove it first
 // (`remove_last`, `swap_remove`), or require `T: Copy` at the boundary
-// (`at` / `first` / `last` / `append_slice`). To READ a non-Copy element in
-// place, use `at_ptr(index) -> Option[*T]` (a bounds-checked pointer; deref is
-// `unsafe` because the language has no element borrowing yet). `iter` is a gen
-// method intended for Copy `T` (it copies each element out); iterate non-Copy
-// vectors by index via `at_ptr`. Allocation sizing is overflow-checked and every
-// malloc/realloc is null-checked.
+// (`at` / `first` / `last` / `append_slice`). To WALK a non-Copy `T` in place,
+// prefer the borrow accessors `each_ref(f)` (visit each element) and
+// `fold_ref(init, f)` (accumulate) — they hand each element to `f` as a borrow,
+// so user code never touches a raw pointer. `at_ptr(index) -> Option[*T]` remains
+// the low-level primitive they are built on (a bounds-checked pointer; `{ *p }`
+// borrows the pointee — safe when passed to a borrow parameter). `iter` is a gen
+// method intended for Copy `T` (it copies each element out). Allocation sizing is
+// overflow-checked and every malloc/realloc is null-checked.
 //
 // API (Swift-flavored): count, capacity, is_empty; at(index)/first/last [Copy];
-// at_ptr(index) [any]; append, insert..at, set..at, remove_last, swap_remove,
-// remove_all, truncate, reserve, shrink_to_fit, append_slice; iter, as_slice.
+// at_ptr(index), each_ref(f), fold_ref(init, f) [any]; append, insert..at,
+// set..at, remove_last, swap_remove, remove_all, truncate, reserve,
+// shrink_to_fit, append_slice; iter, as_slice.
 
 import "./option" as option;
 import "./iterator" as iterator;
@@ -322,6 +325,46 @@ impl Vec[T] {
             return option::Option[*T]::None;
         }
         return option::Option[*T]::Some({ this._ptr + index });
+    }
+
+    // Visit each element in order by BORROW — never moving or copying it — so a Vec
+    // of non-Copy `T` (`Vec[Text]`, `Vec[Node]`, a tree of owned handles) can be
+    // walked without dropping to `at_ptr` + `{ *p }` in user code. `f` receives each
+    // element as a read-only borrow. C+ has no capturing closures, so `f` is a plain
+    // fn; to carry state across the walk (a sum, a running max), use `fold_ref` — it
+    // threads an accumulator through `f` instead of relying on captured variables.
+    fn each_ref(this, f: fn(T)) {
+        var i: usize = 0 as usize;
+        while i < this._len {
+            match this.at_ptr(i) {
+                option::Option[*T]::Some(p) => { f({ *p }); }
+                option::Option[*T]::None => { return; }
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    // Fold the elements into an accumulator, each element BORROWED (never moved or
+    // copied out of storage). `f(acc, element) -> acc` threads the running value, so
+    // state accumulates without a capturing closure (which C+ lacks) — the pointer-
+    // free way to sum / count / scan a Vec of non-Copy `T`. `init` is consumed and the
+    // final accumulator returned. Best for a Copy-ish accumulator (`f` reads `acc`
+    // and returns the next one); a non-Copy accumulator works but is rebuilt each step.
+    //
+    //     let total: i32 = tree.children.fold_ref(tree.tag, add_subtree);
+    //     fn add_subtree(acc: i32, child: Node) -> i32 { return acc +% sum_tags(child); }
+    fn fold_ref[A](this, take init: A, f: fn(A, T) -> A) -> A {
+        var acc: A = init;
+        var i: usize = 0 as usize;
+        while i < this._len {
+            match this.at_ptr(i) {
+                option::Option[*T]::Some(p) => { acc = f(acc, { *p }); }
+                option::Option[*T]::None => { return acc; }
+            }
+            i = i +% (1 as usize);
+        }
+        return acc;
     }
 
     // Replace the element at `at` with `value`. Out of bounds is reported, not
@@ -744,4 +787,65 @@ fn vec_iter_sums() {
         sum = sum +% x;
     }
     assert sum == 6;
+}
+
+// --- each_ref / fold_ref: borrow accessors (walk non-Copy T without at_ptr) ---
+
+static _each_ref_probe: i32 = 0;
+fn _each_ref_add(x: i32) { _each_ref_probe = _each_ref_probe +% x; }
+
+#[test]
+fn vec_each_ref_visits_every_element_by_borrow() {
+    _each_ref_probe = 0;
+    var v: Vec[i32] = new::[i32]();
+    v.append(1);
+    v.append(2);
+    v.append(3);
+    v.each_ref(_each_ref_add);
+    assert _each_ref_probe == 6;         // visited all three
+    assert v.count() == (3 as usize);    // borrowed, not moved out
+}
+
+fn _fold_add(acc: i32, x: i32) -> i32 { return acc +% x; }
+
+#[test]
+fn vec_fold_ref_accumulates() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(10);
+    v.append(20);
+    v.append(30);
+    assert v.fold_ref::[i32](0, _fold_add) == 60;
+    assert v.count() == (3 as usize);
+}
+
+#[test]
+fn vec_fold_ref_empty_returns_init() {
+    var v: Vec[i32] = new::[i32]();
+    assert v.fold_ref::[i32](7, _fold_add) == 7;   // no elements -> init passes through
+}
+
+fn _fold_add_count(acc: usize, e: Vec[i32]) -> usize { return acc +% e.count(); }
+
+#[test]
+fn vec_fold_ref_borrows_noncopy_elements() {
+    // Elements are `Vec[i32]` — NON-Copy. `fold_ref` must borrow each element (no
+    // move-out, no double free) and leave the outer vec intact. Also exercises a
+    // method-generic `A` on a generic struct `Vec[Vec[i32]]`.
+    var v: Vec[Vec[i32]] = new::[Vec[i32]]();
+    var a: Vec[i32] = new::[i32]();
+    a.append(1);
+    a.append(2);                 // len 2
+    var b: Vec[i32] = new::[i32]();
+    b.append(3);                 // len 1
+    v.append(a);
+    v.append(b);
+    let total: usize = v.fold_ref::[usize](0 as usize, _fold_add_count);
+    assert total == (3 as usize);
+    // The outer vec still owns both inner vecs, contents intact (nothing moved out).
+    assert v.count() == (2 as usize);
+    match v.at_ptr(0 as usize) {
+        option::Option[*Vec[i32]]::Some(p) => { assert { *p }.count() == (2 as usize); }
+        option::Option[*Vec[i32]]::None => { assert false; }
+    }
+    return;
 }
