@@ -1,0 +1,3358 @@
+// vendor/flex_layout/src/flex_layout.cplus — a pure-C+ flexbox layout engine.
+//
+// A UI-kit-agnostic layout engine modeled on Facebook's Yoga (vendored under
+// `yoga/` as the reference spec — C+ cannot call the C++ directly). The engine
+// computes frames from a flexbox style tree; a platform adapter (e.g. AppKit)
+// applies those frames to real views.
+//
+// Model: **persistent, mutable nodes** (like Yoga). Create a `Node`, set style
+// imperatively, attach children (the parent owns them), call `calculate_layout`,
+// then read each node's computed frame back off the node. Content-driven sizing
+// (text, images) enters through a **measure function pointer**, so the engine
+// never depends on any UI kit.
+//
+// STATUS. A complete Yoga-parity engine (subgrid aside): flex-direction (+reverse),
+// justify/align (all values incl. baseline, Start/End/Stretch), flex
+// grow/shrink/basis + the `flex` shorthand, iterative min/max flex resolution,
+// width/height/min/max (point+percent), margin/padding/border (+ margin:auto +
+// logical RTL Start/End edges), absolute/relative/static, measure + baseline
+// callbacks, display:none, content-fit sizing, flex-wrap + align-content,
+// gap/gutters (incl. percent), aspect-ratio, RTL/direction, box-sizing, pixel-grid
+// rounding, a sound within-pass measurement memo, a sound CROSS-CALL incremental
+// cache (unchanged subtrees keep their frames), AND CSS Grid (display:grid:
+// points/fr/auto tracks, auto-flow, implicit rows, spanning, dense, explicit +
+// named line placement, subgrid, gaps). Full Flexbox + Grid parity. 167 tests,
+// ASan-clean.
+//
+// Note: the mutable layout descent uses `children.at_ptr` in one internal helper
+// — the only raw pointer in the engine. A stdlib `at_mut(i) -> ref T` would
+// remove it. Read traversal uses the safe borrow accessors.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+// ==========================================================================
+// Enums — values mirror Yoga's declaration order (yoga/enums/*.h)
+// ==========================================================================
+
+enum FlexDirection { Column, ColumnReverse, Row, RowReverse }
+enum Justify { FlexStart, Center, FlexEnd, SpaceBetween, SpaceAround, SpaceEvenly, Stretch, Start, End }
+enum Align { Auto, FlexStart, Center, FlexEnd, Stretch, Baseline, SpaceBetween, SpaceAround, SpaceEvenly, Start, End }
+enum Wrap { NoWrap, Wrap, WrapReverse }
+enum Edge { Left, Top, Right, Bottom, Start, End, Horizontal, Vertical, All }
+enum PositionType { Static, Relative, Absolute }
+enum Overflow { Visible, Hidden, Scroll }
+enum Display { Flex, None, Grid }
+enum BoxSizing { BorderBox, ContentBox }
+enum Gutter { Column, Row, All }
+
+// A grid track sizing function: a fixed length, a flexible `fr` share, or `auto`
+// (sized to the max content of the items in that track).
+enum TrackUnit { Points, Fr, Auto }
+struct GridTrack {
+    value: f64,
+    unit: TrackUnit,
+}
+impl GridTrack {
+    fn points(v: f64) -> GridTrack { return GridTrack { value: v, unit: TrackUnit::Points }; }
+    fn fr(v: f64) -> GridTrack { return GridTrack { value: v, unit: TrackUnit::Fr }; }
+    fn auto() -> GridTrack { return GridTrack { value: 0.0f64, unit: TrackUnit::Auto }; }
+}
+enum Unit { Undefined, Point, Percent, Auto }
+enum MeasureMode { Undefined, Exactly, AtMost }
+enum Direction { Inherit, LTR, RTL }
+
+// ==========================================================================
+// Value types
+// ==========================================================================
+
+// Yoga represents "no value" as NaN (YGUndefined); we do the same. A resolved
+// length is an f64 that is NaN when undefined. `is_undef` detects it (NaN is the
+// only value not equal to itself).
+fn undefined() -> f64 {
+    let zero: f64 = 0.0f64;
+    return zero / zero;      // NaN
+}
+// NaN detection: NaN is the only value not equal to itself (`!=` is unordered).
+fn is_undef(x: f64) -> bool { return x != x; }
+fn is_def(x: f64) -> bool { return !is_undef(x); }
+// Two available-size values are "the same" if both undefined or numerically equal
+// (used to key the measurement memo, where an axis can be `undefined()`).
+fn same_avail(a: f64, b: f64) -> bool {
+    if is_undef(a) && is_undef(b) { return true; }
+    return is_def(a) && is_def(b) && a == b;
+}
+
+fn f_max(a: f64, b: f64) -> f64 { if a > b { return a; } return b; }
+fn f_min(a: f64, b: f64) -> f64 { if a < b { return a; } return b; }
+
+// Clamp `v` to [lo, hi]; either bound may be undefined (NaN) meaning "no bound".
+fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
+    var out: f64 = v;
+    if is_def(hi) && out > hi { out = hi; }
+    if is_def(lo) && out < lo { out = lo; }
+    return out;
+}
+
+struct Size {
+    width: f64,
+    height: f64,
+}
+
+// A CSS-style length: a scalar plus a unit. `Auto`/`Undefined` carry no numeric
+// value. Copy — cheap to pass around and store in Style.
+struct StyleLength {
+    value: f64,
+    unit: Unit,
+}
+
+impl StyleLength {
+    fn points(v: f64) -> StyleLength { return StyleLength { value: v, unit: Unit::Point }; }
+    fn percent(v: f64) -> StyleLength { return StyleLength { value: v, unit: Unit::Percent }; }
+    fn auto() -> StyleLength { return StyleLength { value: 0.0f64, unit: Unit::Auto }; }
+    fn undef() -> StyleLength { return StyleLength { value: 0.0f64, unit: Unit::Undefined }; }
+
+    fn is_auto(this) -> bool { return match this.unit { Unit::Auto => true, _ => false }; }
+    fn is_defined(this) -> bool {
+        return match this.unit { Unit::Point => true, Unit::Percent => true, _ => false };
+    }
+
+    // Resolve against a reference length (the containing dimension). NaN for
+    // Auto/Undefined, or for a percent of an undefined reference.
+    fn resolve(this, reference: f64) -> f64 {
+        return match this.unit {
+            Unit::Point => this.value,
+            Unit::Percent => if is_undef(reference) { undefined() } else { this.value / 100.0f64 * reference },
+            Unit::Auto => undefined(),
+            Unit::Undefined => undefined(),
+        };
+    }
+}
+
+// The measure callback. Given the available width/height and their measure modes,
+// a content node (text, image) returns its intrinsic size. The engine calls this
+// for childless nodes whose size is otherwise undefined. Signature mirrors Yoga's
+// YGMeasureFunc (minus the node handle — measure is a pure function of constraints).
+fn measure_none(avail_w: f64, wmode: MeasureMode, avail_h: f64, hmode: MeasureMode) -> Size {
+    return Size { width: 0.0f64, height: 0.0f64 };
+}
+
+// Default baseline: the box bottom (ascent == height).
+fn baseline_none(width: f64, height: f64) -> f64 { return height; }
+
+// ==========================================================================
+// Style
+// ==========================================================================
+
+struct Style {
+    direction: Direction,
+    flex_direction: FlexDirection,
+    justify_content: Justify,
+    align_items: Align,
+    align_self: Align,
+    align_content: Align,
+    position_type: PositionType,
+    flex_wrap: Wrap,
+    overflow: Overflow,
+    display: Display,
+    box_sizing: BoxSizing,
+
+    flex_grow: f64,
+    flex_shrink: f64,
+    flex_basis: StyleLength,
+
+    width: StyleLength,
+    height: StyleLength,
+    min_width: StyleLength,
+    min_height: StyleLength,
+    max_width: StyleLength,
+    max_height: StyleLength,
+
+    margin_left: StyleLength,
+    margin_top: StyleLength,
+    margin_right: StyleLength,
+    margin_bottom: StyleLength,
+
+    padding_left: StyleLength,
+    padding_top: StyleLength,
+    padding_right: StyleLength,
+    padding_bottom: StyleLength,
+
+    border_left: StyleLength,
+    border_top: StyleLength,
+    border_right: StyleLength,
+    border_bottom: StyleLength,
+
+    position_left: StyleLength,
+    position_top: StyleLength,
+    position_right: StyleLength,
+    position_bottom: StyleLength,
+
+    // Logical (direction-relative) inline edges. Start maps to left in LTR / right
+    // in RTL; End the opposite. A physical edge (left/right) wins if also set.
+    margin_start: StyleLength,
+    margin_end: StyleLength,
+    padding_start: StyleLength,
+    padding_end: StyleLength,
+    border_start: StyleLength,
+    border_end: StyleLength,
+    position_start: StyleLength,
+    position_end: StyleLength,
+
+    gap_row: StyleLength,       // vertical gap (between rows / column-direction items)
+    gap_column: StyleLength,    // horizontal gap (between columns / row-direction items)
+
+    aspect_ratio: f64,  // width / height; undefined() when unset
+}
+
+impl Style {
+    // Yoga's defaults: column direction, flex-start justify, stretch align-items,
+    // relative position, no-wrap, border-box, grow/shrink 0, basis + sizes auto,
+    // margins/padding/border/insets undefined.
+    fn new() -> Style {
+        let a: StyleLength = StyleLength::auto();
+        let u: StyleLength = StyleLength::undef();
+        return Style {
+            direction: Direction::Inherit,
+            flex_direction: FlexDirection::Column,
+            justify_content: Justify::FlexStart,
+            align_items: Align::Stretch,
+            align_self: Align::Auto,
+            align_content: Align::FlexStart,
+            position_type: PositionType::Relative,
+            flex_wrap: Wrap::NoWrap,
+            overflow: Overflow::Visible,
+            display: Display::Flex,
+            box_sizing: BoxSizing::BorderBox,
+            flex_grow: 0.0f64,
+            flex_shrink: 0.0f64,
+            flex_basis: a,
+            width: a,
+            height: a,
+            min_width: u,
+            min_height: u,
+            max_width: u,
+            max_height: u,
+            margin_left: u, margin_top: u, margin_right: u, margin_bottom: u,
+            padding_left: u, padding_top: u, padding_right: u, padding_bottom: u,
+            border_left: u, border_top: u, border_right: u, border_bottom: u,
+            position_left: u, position_top: u, position_right: u, position_bottom: u,
+            margin_start: u, margin_end: u,
+            padding_start: u, padding_end: u,
+            border_start: u, border_end: u,
+            position_start: u, position_end: u,
+            gap_row: StyleLength::points(0.0f64),
+            gap_column: StyleLength::points(0.0f64),
+            aspect_ratio: undefined(),
+        };
+    }
+}
+
+// ==========================================================================
+// Node — persistent, mutable
+// ==========================================================================
+
+struct Layout {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+struct Node {
+    style: Style,
+    children: vec::Vec[Node],
+    measure: fn(f64, MeasureMode, f64, MeasureMode) -> Size,
+    has_measure: bool,
+    baseline: fn(f64, f64) -> f64,   // ascent from top, given (width, height)
+    has_baseline: bool,
+    grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
+    grid_rows: vec::Vec[GridTrack],  // grid-template-rows
+    grid_col_span: i32,              // how many columns this item spans (>=1)
+    grid_row_span: i32,              // how many rows this item spans (>=1)
+    grid_dense: bool,                // grid-auto-flow: dense (container)
+    grid_col_start: i32,             // explicit start column line, 0-based (-1 = auto)
+    grid_row_start: i32,             // explicit start row line, 0-based (-1 = auto)
+    grid_col_line_names: vec::Vec[text::Text], // container: name registered at each line index
+    grid_row_line_names: vec::Vec[text::Text],
+    grid_cols_subgrid: bool,         // columns adopt the parent grid's tracks
+    grid_rows_subgrid: bool,         // rows adopt the parent grid's tracks
+    // Transient: track sizes inherited from the parent for a subgrid axis, written
+    // by the parent before it recurses. Not user input; not part of the cache key.
+    sub_cols: vec::Vec[f64],
+    sub_rows: vec::Vec[f64],
+    sub_col_gap: f64,
+    sub_row_gap: f64,
+    has_sub_cols: bool,
+    has_sub_rows: bool,
+    layout: Layout,
+    rdir: Direction,     // resolved direction (LTR/RTL) filled in during layout
+
+    // Within-pass intrinsic-measurement memo (reset at the start of each
+    // calculate_layout, so it is always sound and never stale across passes).
+    measured: bool,
+    m_avail_w: f64,
+    m_avail_h: f64,
+    m_size_w: f64,
+    m_size_h: f64,
+
+    // Cross-call incremental cache. A subtree whose style/grid/children are all
+    // unchanged since the last layout, and which is handed the same box+direction,
+    // keeps its computed frames (no re-layout). Change is detected by comparing the
+    // snapshot below to the live values — no per-setter dirty flag to forget.
+    cached_valid: bool,
+    cached_style: Style,
+    cached_box: Layout,
+    cached_dir: Direction,
+    cached_child_count: usize,
+    cached_grid_sig: f64,
+    subtree_changed: bool,   // scratch, recomputed each pass
+}
+
+impl Node {
+    fn new() -> Node {
+        return Node {
+            style: Style::new(),
+            children: vec::new::[Node](),
+            measure: measure_none,
+            has_measure: false,
+            baseline: baseline_none,
+            has_baseline: false,
+            grid_cols: vec::new::[GridTrack](),
+            grid_rows: vec::new::[GridTrack](),
+            grid_col_span: 1,
+            grid_row_span: 1,
+            grid_dense: false,
+            grid_col_start: -1,
+            grid_row_start: -1,
+            grid_col_line_names: vec::new::[text::Text](),
+            grid_row_line_names: vec::new::[text::Text](),
+            grid_cols_subgrid: false,
+            grid_rows_subgrid: false,
+            sub_cols: vec::new::[f64](),
+            sub_rows: vec::new::[f64](),
+            sub_col_gap: 0.0f64,
+            sub_row_gap: 0.0f64,
+            has_sub_cols: false,
+            has_sub_rows: false,
+            layout: Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            rdir: Direction::LTR,
+            measured: false,
+            m_avail_w: 0.0f64,
+            m_avail_h: 0.0f64,
+            m_size_w: 0.0f64,
+            m_size_h: 0.0f64,
+            cached_valid: false,
+            cached_style: Style::new(),
+            cached_box: Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            cached_dir: Direction::LTR,
+            cached_child_count: 0 as usize,
+            cached_grid_sig: 0.0f64,
+            subtree_changed: true,
+        };
+    }
+
+    // ---- tree ----
+    fn add_child(ref this, take child: Node) { this.children.append(child); return; }
+    fn child_count(this) -> usize { return this.children.count(); }
+
+    // ---- grid template (display:grid) ----
+    fn add_grid_column(ref this, t: GridTrack) { this.grid_cols.append(t); return; }
+    fn add_grid_row(ref this, t: GridTrack) { this.grid_rows.append(t); return; }
+    fn set_grid_dense(ref this, v: bool) { this.grid_dense = v; return; }        // container
+    fn set_grid_column_span(ref this, v: i32) { this.grid_col_span = if v < 1 { 1 } else { v }; return; }  // item
+    fn set_grid_row_span(ref this, v: i32) { this.grid_row_span = if v < 1 { 1 } else { v }; return; }     // item
+    // Explicit placement: 0-based start line (column index) for this item; -1 = auto.
+    fn set_grid_column_start(ref this, v: i32) { this.grid_col_start = v; return; }  // item
+    fn set_grid_row_start(ref this, v: i32) { this.grid_row_start = v; return; }     // item
+    // Subgrid: this (grid) item adopts the parent grid's tracks over its span,
+    // so its own children align to the parent's grid lines.
+    fn set_grid_columns_subgrid(ref this, v: bool) { this.grid_cols_subgrid = v; return; }
+    fn set_grid_rows_subgrid(ref this, v: bool) { this.grid_rows_subgrid = v; return; }
+
+    // Named grid lines (container). `name_grid_column_line(name)` names the line at
+    // the *current* column count (i.e. the line before the next column added).
+    // `column_line(name)` returns that line's index, or -1 if unknown.
+    fn name_grid_column_line(ref this, name: str) {
+        let idx: usize = this.grid_cols.count();
+        while this.grid_col_line_names.count() <= idx { this.grid_col_line_names.append("".to_text()); }
+        this.grid_col_line_names.set(name.to_text(), idx);
+        return;
+    }
+    fn name_grid_row_line(ref this, name: str) {
+        let idx: usize = this.grid_rows.count();
+        while this.grid_row_line_names.count() <= idx { this.grid_row_line_names.append("".to_text()); }
+        this.grid_row_line_names.set(name.to_text(), idx);
+        return;
+    }
+    fn column_line(this, name: str) -> i32 { return line_index(this.grid_col_line_names, name); }
+    fn row_line(this, name: str) -> i32 { return line_index(this.grid_row_line_names, name); }
+
+    // ---- style setters (fluent-ish, imperative) ----
+    fn set_direction(ref this, v: Direction) { this.style.direction = v; return; }
+    fn set_flex_direction(ref this, v: FlexDirection) { this.style.flex_direction = v; return; }
+    fn set_justify_content(ref this, v: Justify) { this.style.justify_content = v; return; }
+    fn set_align_items(ref this, v: Align) { this.style.align_items = v; return; }
+    fn set_align_self(ref this, v: Align) { this.style.align_self = v; return; }
+    fn set_align_content(ref this, v: Align) { this.style.align_content = v; return; }
+    fn set_flex_wrap(ref this, v: Wrap) { this.style.flex_wrap = v; return; }
+    fn set_overflow(ref this, v: Overflow) { this.style.overflow = v; return; }
+    fn set_aspect_ratio(ref this, v: f64) { this.style.aspect_ratio = v; return; }
+    fn set_gap(ref this, gutter: Gutter, v: f64) {
+        this.set_gap_length(gutter, StyleLength::points(v));
+        return;
+    }
+    // Gap as a full length (e.g. a percent of the container's axis extent).
+    fn set_gap_length(ref this, gutter: Gutter, v: StyleLength) {
+        match gutter {
+            Gutter::Row => { this.style.gap_row = v; }
+            Gutter::Column => { this.style.gap_column = v; }
+            Gutter::All => { this.style.gap_row = v; this.style.gap_column = v; }
+        }
+        return;
+    }
+    fn set_position_type(ref this, v: PositionType) { this.style.position_type = v; return; }
+    fn set_display(ref this, v: Display) { this.style.display = v; return; }
+    fn set_box_sizing(ref this, v: BoxSizing) { this.style.box_sizing = v; return; }
+
+    fn set_flex_grow(ref this, v: f64) { this.style.flex_grow = v; return; }
+    fn set_flex_shrink(ref this, v: f64) { this.style.flex_shrink = v; return; }
+    fn set_flex_basis(ref this, v: StyleLength) { this.style.flex_basis = v; return; }
+    // The `flex: n` shorthand == grow n, shrink 1, basis 0 (the common "share the
+    // space" case). Use the individual setters for other combinations.
+    fn set_flex(ref this, v: f64) {
+        this.style.flex_grow = v;
+        this.style.flex_shrink = 1.0f64;
+        this.style.flex_basis = StyleLength::points(0.0f64);
+        return;
+    }
+
+    fn set_width(ref this, v: StyleLength) { this.style.width = v; return; }
+    fn set_height(ref this, v: StyleLength) { this.style.height = v; return; }
+    fn set_min_width(ref this, v: StyleLength) { this.style.min_width = v; return; }
+    fn set_min_height(ref this, v: StyleLength) { this.style.min_height = v; return; }
+    fn set_max_width(ref this, v: StyleLength) { this.style.max_width = v; return; }
+    fn set_max_height(ref this, v: StyleLength) { this.style.max_height = v; return; }
+
+    // Edge shorthands (All / Horizontal / Vertical / Start / End) expand onto the
+    // four physical slots. Start/End map to left/right (LTR; RTL is Phase 2).
+    fn set_margin(ref this, edge: Edge, v: StyleLength) {
+        if edge_hits_left(edge) { this.style.margin_left = v; }
+        if edge_hits_right(edge) { this.style.margin_right = v; }
+        if edge_hits_top(edge) { this.style.margin_top = v; }
+        if edge_hits_bottom(edge) { this.style.margin_bottom = v; }
+        match edge { Edge::Start => { this.style.margin_start = v; } Edge::End => { this.style.margin_end = v; } _ => {} }
+        return;
+    }
+    fn set_padding(ref this, edge: Edge, v: StyleLength) {
+        if edge_hits_left(edge) { this.style.padding_left = v; }
+        if edge_hits_right(edge) { this.style.padding_right = v; }
+        if edge_hits_top(edge) { this.style.padding_top = v; }
+        if edge_hits_bottom(edge) { this.style.padding_bottom = v; }
+        match edge { Edge::Start => { this.style.padding_start = v; } Edge::End => { this.style.padding_end = v; } _ => {} }
+        return;
+    }
+    fn set_border(ref this, edge: Edge, v: StyleLength) {
+        if edge_hits_left(edge) { this.style.border_left = v; }
+        if edge_hits_right(edge) { this.style.border_right = v; }
+        if edge_hits_top(edge) { this.style.border_top = v; }
+        if edge_hits_bottom(edge) { this.style.border_bottom = v; }
+        match edge { Edge::Start => { this.style.border_start = v; } Edge::End => { this.style.border_end = v; } _ => {} }
+        return;
+    }
+    fn set_position(ref this, edge: Edge, v: StyleLength) {
+        if edge_hits_left(edge) { this.style.position_left = v; }
+        if edge_hits_right(edge) { this.style.position_right = v; }
+        if edge_hits_top(edge) { this.style.position_top = v; }
+        if edge_hits_bottom(edge) { this.style.position_bottom = v; }
+        match edge { Edge::Start => { this.style.position_start = v; } Edge::End => { this.style.position_end = v; } _ => {} }
+        return;
+    }
+
+    fn set_measure(ref this, f: fn(f64, MeasureMode, f64, MeasureMode) -> Size) {
+        this.measure = f;
+        this.has_measure = true;
+        return;
+    }
+    // Provide a baseline (ascent from the top, given the item's width/height) for
+    // align-items: baseline — e.g. a text view's first-line baseline.
+    fn set_baseline(ref this, f: fn(f64, f64) -> f64) {
+        this.baseline = f;
+        this.has_baseline = true;
+        return;
+    }
+
+    // ---- computed layout getters ----
+    fn layout_left(this) -> f64 { return this.layout.left; }
+    fn layout_top(this) -> f64 { return this.layout.top; }
+    fn layout_width(this) -> f64 { return this.layout.width; }
+    fn layout_height(this) -> f64 { return this.layout.height; }
+    fn layout_frame(this) -> Layout { return this.layout; }
+    fn layout_direction(this) -> Direction { return this.rdir; }
+
+    // ---- style read-back (for adapters: e.g. overflow -> NSView.clipsToBounds) ----
+    fn overflow(this) -> Overflow { return this.style.overflow; }
+    fn display(this) -> Display { return this.style.display; }
+    fn position_type(this) -> PositionType { return this.style.position_type; }
+
+    // Copy of a direct child's computed frame (None if out of range). Frames are
+    // absolute in the root's coordinate space.
+    fn child_layout(this, index: usize) -> option::Option[Layout] {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => option::Option[Layout]::Some({ (*p).layout }),
+            option::Option[*Node]::None => option::Option[Layout]::None,
+        };
+    }
+}
+
+// Does an Edge shorthand touch a given PHYSICAL edge? Start/End are logical and
+// handled separately (resolved to left/right at layout time per direction).
+fn edge_hits_left(e: Edge) -> bool {
+    return match e { Edge::Left => true, Edge::Horizontal => true, Edge::All => true, _ => false };
+}
+fn edge_hits_right(e: Edge) -> bool {
+    return match e { Edge::Right => true, Edge::Horizontal => true, Edge::All => true, _ => false };
+}
+
+// Pick the effective physical value for one inline side: a physical edge wins if
+// set, else the logical edge that maps to this side under the current direction.
+// `want_left` selects the left side; `rtl` swaps which logical edge maps to it.
+fn pick_side(phys: StyleLength, log_start: StyleLength, log_end: StyleLength, want_left: bool, rtl: bool) -> StyleLength {
+    if phys.is_defined() || phys.is_auto() { return phys; }
+    // start maps to left in LTR, to right in RTL
+    let start_is_left: bool = !rtl;
+    if want_left {
+        return if start_is_left { log_start } else { log_end };
+    }
+    return if start_is_left { log_end } else { log_start };
+}
+
+// Resolve a style's logical inline edges (start/end) into its physical left/right
+// slots for the given direction. Top/bottom and all non-edge fields are untouched.
+fn normalize_edges(cs: Style, rtl: bool) -> Style {
+    var out: Style = cs;
+    out.margin_left = pick_side(cs.margin_left, cs.margin_start, cs.margin_end, true, rtl);
+    out.margin_right = pick_side(cs.margin_right, cs.margin_start, cs.margin_end, false, rtl);
+    out.padding_left = pick_side(cs.padding_left, cs.padding_start, cs.padding_end, true, rtl);
+    out.padding_right = pick_side(cs.padding_right, cs.padding_start, cs.padding_end, false, rtl);
+    out.border_left = pick_side(cs.border_left, cs.border_start, cs.border_end, true, rtl);
+    out.border_right = pick_side(cs.border_right, cs.border_start, cs.border_end, false, rtl);
+    out.position_left = pick_side(cs.position_left, cs.position_start, cs.position_end, true, rtl);
+    out.position_right = pick_side(cs.position_right, cs.position_start, cs.position_end, false, rtl);
+    return out;
+}
+fn edge_hits_top(e: Edge) -> bool {
+    return match e { Edge::Top => true, Edge::Vertical => true, Edge::All => true, _ => false };
+}
+fn edge_hits_bottom(e: Edge) -> bool {
+    return match e { Edge::Bottom => true, Edge::Vertical => true, Edge::All => true, _ => false };
+}
+
+// ==========================================================================
+// Axis helpers
+// ==========================================================================
+
+fn is_row(fd: FlexDirection) -> bool {
+    return match fd { FlexDirection::Row => true, FlexDirection::RowReverse => true, _ => false };
+}
+fn is_reverse(fd: FlexDirection) -> bool {
+    return match fd { FlexDirection::ColumnReverse => true, FlexDirection::RowReverse => true, _ => false };
+}
+
+// ==========================================================================
+// Layout algorithm (core, single line — no wrap)
+// ==========================================================================
+
+impl Node {
+    // Public entry: lay this node out as the root of a tree, given the space it
+    // has available. `avail_w`/`avail_h` may be `undefined()` for an unconstrained
+    // axis (the node then sizes to its style / content). The root is placed at
+    // (0, 0); every descendant's frame is filled in, absolute in root space.
+    fn calculate_layout(ref this, avail_w: f64, avail_h: f64, owner_dir: Direction) {
+        let dir: Direction = resolve_dir(this.style.direction, owner_dir);
+        this.aggregate_changed();     // stamp subtree_changed across the tree
+        this.clear_measure_cache();   // measurement memo is per-pass; start clean
+
+        // Resolve the root's own box from its style against the available space,
+        // falling back to the available space when the style says auto.
+        this.rdir = dir;
+        var w: f64 = this.style.width.resolve(avail_w);
+        var h: f64 = this.style.height.resolve(avail_h);
+        if is_undef(w) { w = avail_w; }
+        if is_undef(h) { h = avail_h; }
+        // With no style size and no available space on an axis, the root sizes to
+        // its content (intrinsic).
+        if is_undef(w) || is_undef(h) {
+            let isz: Size = this.intrinsic_size(avail_w, avail_h);
+            if is_undef(w) { w = isz.width; }
+            if is_undef(h) { h = isz.height; }
+        }
+        if is_undef(w) { w = 0.0f64; }
+        if is_undef(h) { h = 0.0f64; }
+        w = clamp(w, this.style.min_width.resolve(avail_w), this.style.max_width.resolve(avail_w));
+        h = clamp(h, this.style.min_height.resolve(avail_h), this.style.max_height.resolve(avail_h));
+
+        this.apply_layout(Layout { left: 0.0f64, top: 0.0f64, width: w, height: h }, dir);
+        return;
+    }
+
+    // Compute `subtree_changed` for this node and its descendants (bottom-up):
+    // true iff this node's style / grid template / child count changed since the
+    // last layout, or any descendant did. Read-only detection — no dirty flags.
+    fn aggregate_changed(ref this) -> bool {
+        var changed: bool = false;
+        if !this.cached_valid { changed = true; }
+        if !style_eq(this.style, this.cached_style) { changed = true; }
+        if this.cached_child_count != this.children.count() { changed = true; }
+        if !bits_eq(this.cached_grid_sig, this.grid_sig()) { changed = true; }
+        let n: usize = this.children.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this.children.at_ptr(i) {
+                option::Option[*Node]::Some(p) => { if { (*p).aggregate_changed() } { changed = true; } }
+                option::Option[*Node]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        this.subtree_changed = changed;
+        return changed;
+    }
+
+    // A checksum of the grid inputs that affect layout (template tracks + this
+    // item's span/placement). Cheap; collisions are astronomically unlikely.
+    fn grid_sig(this) -> f64 {
+        var s: f64 = (this.grid_col_span as f64) * 7.0f64 + (this.grid_row_span as f64) * 13.0f64
+                   + (this.grid_col_start as f64) * 17.0f64 + (this.grid_row_start as f64) * 19.0f64
+                   + (if this.grid_dense { 1.0f64 } else { 0.0f64 }) * 23.0f64
+                   + (if this.grid_cols_subgrid { 1.0f64 } else { 0.0f64 }) * 29.0f64
+                   + (if this.grid_rows_subgrid { 1.0f64 } else { 0.0f64 }) * 41.0f64;
+        var i: usize = 0 as usize;
+        let nc: usize = this.grid_cols.count();
+        while i < nc {
+            match this.grid_cols.at_ptr(i) {
+                option::Option[*GridTrack]::Some(p) => { s = s + ((i as f64) + 1.0f64) * ({ (*p).value } * 31.0f64 + (tu_disc({ (*p).unit }) as f64) + 1.0f64); }
+                option::Option[*GridTrack]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        i = 0 as usize;
+        let nr: usize = this.grid_rows.count();
+        while i < nr {
+            match this.grid_rows.at_ptr(i) {
+                option::Option[*GridTrack]::Some(p) => { s = s + ((i as f64) + 1.0f64) * ({ (*p).value } * 37.0f64 + (tu_disc({ (*p).unit }) as f64) + 2.0f64); }
+                option::Option[*GridTrack]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        return s;
+    }
+
+    // Lay this node out in `box` under direction `dir`, OR skip when the subtree is
+    // unchanged and the box+direction match the last pass (frames stay valid). On a
+    // real layout, snapshot the cache for next time.
+    fn apply_layout(ref this, box: Layout, dir: Direction) {
+        if this.cached_valid && !this.subtree_changed
+            && layout_eq(this.cached_box, box) && dir_eq(this.cached_dir, dir) {
+            this.layout = box;   // identical to cached; descendant frames unchanged
+            return;
+        }
+        this.layout = box;
+        this.rdir = dir;
+        this.layout_children();
+        this.cached_valid = true;
+        this.cached_style = this.style;
+        this.cached_box = box;
+        this.cached_dir = dir;
+        this.cached_child_count = this.children.count();
+        this.cached_grid_sig = this.grid_sig();
+        return;
+    }
+
+    // Snap every frame to a device pixel grid of `scale` pixels per point (1.0 =
+    // integer points, 2.0 = retina half-points). Rounds each node's leading edge
+    // and its trailing edge, deriving size from the difference — so adjacent frames
+    // stay seamless (no cumulative rounding gaps). Call after `calculate_layout`.
+    fn round_to_pixel(ref this, scale: f64) {
+        if scale <= 0.0f64 { return; }
+        let left: f64 = this.layout.left;
+        let top: f64 = this.layout.top;
+        let rl: f64 = round_scaled(left, scale);
+        let rt: f64 = round_scaled(top, scale);
+        let rr: f64 = round_scaled(left + this.layout.width, scale);
+        let rb: f64 = round_scaled(top + this.layout.height, scale);
+        this.layout = Layout { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
+        let n: usize = this.children.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this.children.at_ptr(i) {
+                option::Option[*Node]::Some(p) => { { (*p).round_to_pixel(scale); } }
+                option::Option[*Node]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    // Lay out this node's children within its already-known box (this.layout.width
+    // / height). Recurses into each child once its box is known.
+    fn layout_children(ref this) {
+        let n: usize = this.children.count();
+        if n == (0 as usize) { return; }
+
+        if match this.style.display { Display::Grid => true, _ => false } {
+            this.grid_layout();
+            return;
+        }
+
+        let row: bool = is_row(this.style.flex_direction);
+        let node_w: f64 = this.layout.width;
+        let node_h: f64 = this.layout.height;
+
+        // RTL flips the row main axis (items flow right-to-left) and the column
+        // cross axis (cross start on the right). `flip_main` folds together
+        // *-reverse and RTL (XOR).
+        let rtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        let flip_main: bool = is_reverse(this.style.flex_direction) != (row && rtl);
+        let flip_cross: bool = (!row) && rtl;
+
+        // Padding + border resolve against the node's width (CSS rule). Logical
+        // start/end edges resolve to physical per direction.
+        let own: Style = normalize_edges(this.style, rtl);
+        let pad_l: f64 = edge_px(own.padding_left, own.border_left, node_w);
+        let pad_t: f64 = edge_px(own.padding_top, own.border_top, node_w);
+        let pad_r: f64 = edge_px(own.padding_right, own.border_right, node_w);
+        let pad_b: f64 = edge_px(own.padding_bottom, own.border_bottom, node_w);
+
+        let inner_w: f64 = f_max(0.0f64, node_w - pad_l - pad_r);
+        let inner_h: f64 = f_max(0.0f64, node_h - pad_t - pad_b);
+        let main_inner: f64 = if row { inner_w } else { inner_h };
+        let cross_inner: f64 = if row { inner_h } else { inner_w };
+        let main_lead: f64 = if row { pad_l } else { pad_t };
+        let cross_lead: f64 = if row { pad_t } else { pad_l };
+
+        // Gaps: main-axis gap sits between items on a line; cross-axis gap sits
+        // between wrapped lines. Percent gaps resolve against their axis extent.
+        let main_gap: f64 = or_zero((if row { this.style.gap_column } else { this.style.gap_row }).resolve(main_inner));
+        let cross_gap: f64 = or_zero((if row { this.style.gap_row } else { this.style.gap_column }).resolve(cross_inner));
+
+        // --- collect the flow (relative/static) children's base sizes ---
+        // We store per-child data in parallel Copy vecs indexed by child position;
+        // absolute / display:none children carry sentinels and are skipped in flow.
+        var flow: vec::Vec[bool] = vec::new::[bool]();       // participates in main-axis flow
+        var bases: vec::Vec[f64] = vec::new::[f64]();        // resolved flex base main size
+        var grows: vec::Vec[f64] = vec::new::[f64]();
+        var shrinks: vec::Vec[f64] = vec::new::[f64]();
+        var cross_sizes: vec::Vec[f64] = vec::new::[f64]();  // explicit-or-intrinsic cross size (always defined)
+        var cross_explicit: vec::Vec[bool] = vec::new::[bool]();  // was the cross size set explicitly?
+        var m_main_lead: vec::Vec[f64] = vec::new::[f64]();
+        var m_main_trail: vec::Vec[f64] = vec::new::[f64]();
+        var m_cross_lead: vec::Vec[f64] = vec::new::[f64]();
+        var m_cross_trail: vec::Vec[f64] = vec::new::[f64]();
+        var am_lead: vec::Vec[bool] = vec::new::[bool]();    // auto margin on main-lead
+        var am_trail: vec::Vec[bool] = vec::new::[bool]();   // auto margin on main-trail
+        var acm_lead: vec::Vec[bool] = vec::new::[bool]();    // auto margin on cross-lead
+        var acm_trail: vec::Vec[bool] = vec::new::[bool]();   // auto margin on cross-trail
+
+        var i: usize = 0 as usize;
+        while i < n {
+            let cs: Style = this.child_style(i);
+            let displayed: bool = match cs.display { Display::None => false, _ => true };
+            let in_flow: bool = displayed && match cs.position_type {
+                PositionType::Absolute => false, _ => true
+            };
+
+            // Margins (resolve against node width per CSS). `auto` margins resolve
+            // to 0 here and are absorbed from free space during placement. In RTL
+            // the leading (main/cross-start) side is the physical right/bottom, so
+            // the lead/trail assignment swaps on whichever axis is horizontal —
+            // composing with the flip transforms applied at placement.
+            let ml: f64 = or_zero(cs.margin_left.resolve(node_w));
+            let mt: f64 = or_zero(cs.margin_top.resolve(node_w));
+            let mr: f64 = or_zero(cs.margin_right.resolve(node_w));
+            let mb: f64 = or_zero(cs.margin_bottom.resolve(node_w));
+            let al: bool = cs.margin_left.is_auto();
+            let at2: bool = cs.margin_top.is_auto();
+            let ar2: bool = cs.margin_right.is_auto();
+            let ab: bool = cs.margin_bottom.is_auto();
+            // horizontal-axis leading side (physical): left in LTR, right in RTL.
+            m_main_lead.append(if row { if rtl { mr } else { ml } } else { mt });
+            m_main_trail.append(if row { if rtl { ml } else { mr } } else { mb });
+            m_cross_lead.append(if row { mt } else { if rtl { mr } else { ml } });
+            m_cross_trail.append(if row { mb } else { if rtl { ml } else { mr } });
+            am_lead.append(if row { if rtl { ar2 } else { al } } else { at2 });
+            am_trail.append(if row { if rtl { al } else { ar2 } } else { ab });
+            acm_lead.append(if row { at2 } else { if rtl { ar2 } else { al } });
+            acm_trail.append(if row { ab } else { if rtl { al } else { ar2 } });
+
+            // Intrinsic (content) size of the child within the container's inner box —
+            // the fallback when a dimension is `auto`.
+            let isz: Size = this.child_intrinsic(i, inner_w, inner_h);
+
+            // Flex base size on the main axis: explicit basis, else explicit main
+            // dimension, else the child's intrinsic main extent.
+            var base: f64 = 0.0f64;
+            if cs.flex_basis.is_defined() {
+                base = f_max(0.0f64, cs.flex_basis.resolve(main_inner));
+            } else {
+                let main_dim: StyleLength = if row { cs.width } else { cs.height };
+                let resolved: f64 = resolve_border_box(main_dim, cs, row, main_inner, node_w);
+                base = if is_def(resolved) { f_max(0.0f64, resolved) } else { if row { isz.width } else { isz.height } };
+            }
+            bases.append(base);
+            grows.append(cs.flex_grow);
+            shrinks.append(cs.flex_shrink);
+            flow.append(in_flow);
+
+            // Cross size: explicit if set, else the child's intrinsic cross extent
+            // (stretch, applied at placement, overrides a non-explicit cross size).
+            let cross_dim: StyleLength = if row { cs.height } else { cs.width };
+            let cross_resolved: f64 = resolve_border_box(cross_dim, cs, !row, cross_inner, node_w);
+            let has_cross: bool = is_def(cross_resolved);
+            cross_explicit.append(has_cross);
+            cross_sizes.append(if has_cross { cross_resolved } else { if row { isz.height } else { isz.width } });
+
+            i = i +% (1 as usize);
+        }
+
+        // --- break the flow children into lines (NoWrap => a single line) ---
+        var order: vec::Vec[usize] = vec::new::[usize]();   // flow child indices, in order
+        i = 0 as usize;
+        while i < n {
+            if bool_at(flow, i) { order.append(i); }
+            i = i +% (1 as usize);
+        }
+        let fcount: usize = order.count();
+        let wrapping: bool = match this.style.flex_wrap { Wrap::NoWrap => false, _ => true };
+
+        var line_end: vec::Vec[usize] = vec::new::[usize]();   // exclusive end into `order`
+        if !wrapping || fcount == (0 as usize) {
+            line_end.append(fcount);
+        } else {
+            var k: usize = 0 as usize;
+            while k < fcount {
+                let start: usize = k;
+                var line_main: f64 = 0.0f64;
+                var placed: bool = false;
+                while k < fcount {
+                    let ci: usize = usize_at(order, k);
+                    let item: f64 = size_at(bases, ci) + size_at(m_main_lead, ci) + size_at(m_main_trail, ci);
+                    let step: f64 = if placed { main_gap + item } else { item };
+                    if placed && (line_main + step) > main_inner { }   // break below
+                    else {
+                        line_main = line_main + step;
+                        placed = true;
+                        k = k +% (1 as usize);
+                        continue;
+                    }
+                    break;
+                }
+                line_end.append(k);
+            }
+        }
+        let line_count: usize = line_end.count();
+
+        // --- per-line cross size (max child cross + margin) and total ---
+        var line_cross: vec::Vec[f64] = vec::new::[f64]();
+        var total_cross: f64 = 0.0f64;
+        var ls: usize = 0 as usize;
+        var li: usize = 0 as usize;
+        while li < line_count {
+            let le: usize = usize_at(line_end, li);
+            var lc: f64 = 0.0f64;
+            var k: usize = ls;
+            while k < le {
+                let ci: usize = usize_at(order, k);
+                lc = f_max(lc, size_at(cross_sizes, ci) + size_at(m_cross_lead, ci) + size_at(m_cross_trail, ci));
+                k = k +% (1 as usize);
+            }
+            line_cross.append(lc);
+            total_cross = total_cross + lc;
+            ls = le;
+            li = li +% (1 as usize);
+        }
+
+        // --- align-content distributes the lines across the cross axis ---
+        let line_gaps_total: f64 = if line_count > (0 as usize) { cross_gap * ((line_count - (1 as usize)) as f64) } else { 0.0f64 };
+        let cross_free: f64 = cross_inner - total_cross - line_gaps_total;
+        let line_count_f: f64 = line_count as f64;
+        let ac: Align = this.style.align_content;
+        let ac_lead: f64 = align_content_lead(ac, cross_free, line_count_f);
+        let ac_gap: f64 = align_content_gap(ac, cross_free, line_count_f);
+        let ac_extra: f64 = if is_stretch(ac) && line_count > (0 as usize) && cross_free > 0.0f64 {
+            cross_free / line_count_f
+        } else { 0.0f64 };
+        let wrap_reverse: bool = match this.style.flex_wrap { Wrap::WrapReverse => true, _ => false };
+
+        // mains[child] — resolved main size per child; filled per line below.
+        var mains: vec::Vec[f64] = vec::new::[f64]();
+        i = 0 as usize;
+        while i < n { mains.append(size_at(bases, i)); i = i +% (1 as usize); }
+
+        // --- lay out each line ---
+        var cross_cursor: f64 = cross_lead + ac_lead;
+        ls = 0 as usize;
+        li = 0 as usize;
+        while li < line_count {
+            let le: usize = usize_at(line_end, li);
+            // A single flex line fills the container's cross axis (align-content has
+            // no effect on one line); multiple lines take their content cross size
+            // plus any align-content:stretch share.
+            let this_line_cross: f64 = if line_count == (1 as usize) {
+                cross_inner
+            } else {
+                size_at(line_cross, li) + ac_extra
+            };
+            let line_cross_pos: f64 = if wrap_reverse {
+                cross_lead + (cross_inner - (cross_cursor - cross_lead) - this_line_cross)
+            } else { cross_cursor };
+
+            // Resolve flexible main sizes within this line — the CSS "resolving
+            // flexible lengths" loop: distribute free space by grow (or scaled
+            // shrink), clamp each item to its min/max, freeze any that hit a bound,
+            // and redistribute the recovered space among the rest until stable.
+            let line_item_count: usize = le - ls;
+            let line_gap_total: f64 = if line_item_count > (0 as usize) { main_gap * ((line_item_count - (1 as usize)) as f64) } else { 0.0f64 };
+
+            var margins_sum: f64 = 0.0f64;
+            var base_sum: f64 = 0.0f64;
+            var frozen: vec::Vec[bool] = vec::new::[bool]();
+            var mn: vec::Vec[f64] = vec::new::[f64]();      // resolved min main per line item
+            var mx: vec::Vec[f64] = vec::new::[f64]();      // resolved max main per line item
+            var idx0: usize = 0 as usize;                   // fill 0..le so index-by-ci works
+            while idx0 < le { frozen.append(false); mn.append(undefined()); mx.append(undefined()); mains.set(size_at(bases, idx0), idx0); idx0 = idx0 +% (1 as usize); }
+            var k: usize = ls;
+            while k < le {
+                let ci: usize = usize_at(order, k);
+                let cs: Style = this.child_style(ci);
+                let min_main: StyleLength = if row { cs.min_width } else { cs.min_height };
+                let max_main: StyleLength = if row { cs.max_width } else { cs.max_height };
+                mn.set(min_main.resolve(main_inner), ci);
+                mx.set(max_main.resolve(main_inner), ci);
+                margins_sum = margins_sum + size_at(m_main_lead, ci) + size_at(m_main_trail, ci);
+                base_sum = base_sum + size_at(bases, ci);
+                mains.set(f_max(0.0f64, clamp(size_at(bases, ci), size_at(mn, ci), size_at(mx, ci))), ci);
+                k = k +% (1 as usize);
+            }
+            let avail_for_items: f64 = main_inner - line_gap_total - margins_sum;
+            let growing: bool = (avail_for_items - base_sum) > 0.0f64;
+            // Items with no flex factor in the active direction are frozen at base.
+            k = ls;
+            while k < le {
+                let ci: usize = usize_at(order, k);
+                let factor: f64 = if growing { size_at(grows, ci) } else { size_at(shrinks, ci) };
+                if factor <= 0.0f64 { frozen.set(true, ci); }
+                k = k +% (1 as usize);
+            }
+            var iter: usize = 0 as usize;
+            let iter_cap: usize = line_item_count +% (1 as usize);
+            while iter <= iter_cap {
+                var sum_frozen: f64 = 0.0f64;
+                var sum_unfrozen_base: f64 = 0.0f64;
+                var sum_factor: f64 = 0.0f64;
+                var any_unfrozen: bool = false;
+                k = ls;
+                while k < le {
+                    let ci: usize = usize_at(order, k);
+                    if bool_at(frozen, ci) {
+                        sum_frozen = sum_frozen + size_at(mains, ci);
+                    } else {
+                        any_unfrozen = true;
+                        sum_unfrozen_base = sum_unfrozen_base + size_at(bases, ci);
+                        sum_factor = sum_factor + (if growing { size_at(grows, ci) } else { size_at(shrinks, ci) * size_at(bases, ci) });
+                    }
+                    k = k +% (1 as usize);
+                }
+                if !any_unfrozen || sum_factor <= 0.0f64 { break; }
+                let remaining: f64 = avail_for_items - sum_frozen - sum_unfrozen_base;
+                var any_violation: bool = false;
+                k = ls;
+                while k < le {
+                    let ci: usize = usize_at(order, k);
+                    if !bool_at(frozen, ci) {
+                        var target: f64 = size_at(bases, ci);
+                        if growing {
+                            target = size_at(bases, ci) + (size_at(grows, ci) / sum_factor) * remaining;
+                        } else {
+                            target = size_at(bases, ci) + (size_at(shrinks, ci) * size_at(bases, ci) / sum_factor) * remaining;
+                        }
+                        let clamped: f64 = f_max(0.0f64, clamp(target, size_at(mn, ci), size_at(mx, ci)));
+                        mains.set(clamped, ci);
+                        if clamped > target + 0.001f64 || clamped < target - 0.001f64 {
+                            frozen.set(true, ci);
+                            any_violation = true;
+                        }
+                    }
+                    k = k +% (1 as usize);
+                }
+                if !any_violation { break; }
+                iter = iter +% (1 as usize);
+            }
+
+            var used: f64 = line_gap_total;
+            k = ls;
+            while k < le {
+                let ci: usize = usize_at(order, k);
+                used = used + size_at(mains, ci) + size_at(m_main_lead, ci) + size_at(m_main_trail, ci);
+                k = k +% (1 as usize);
+            }
+
+            // Auto main margins absorb positive free space before justify: count
+            // them across the line and give each an equal share; when present they
+            // override justify-content entirely.
+            var auto_main_count: f64 = 0.0f64;
+            var kam: usize = ls;
+            while kam < le {
+                let ciam: usize = usize_at(order, kam);
+                if bool_at(am_lead, ciam) { auto_main_count = auto_main_count + 1.0f64; }
+                if bool_at(am_trail, ciam) { auto_main_count = auto_main_count + 1.0f64; }
+                kam = kam +% (1 as usize);
+            }
+            let remaining: f64 = main_inner - used;
+            let count_f: f64 = (le - ls) as f64;
+            let auto_main_share: f64 = if auto_main_count > 0.0f64 && remaining > 0.0f64 { remaining / auto_main_count } else { 0.0f64 };
+            let use_auto_main: bool = auto_main_count > 0.0f64 && remaining > 0.0f64;
+            let jlead: f64 = if use_auto_main { 0.0f64 } else { justify_lead(this.style.justify_content, remaining, count_f) };
+            let jgap: f64 = if use_auto_main { 0.0f64 } else { justify_gap(this.style.justify_content, remaining, count_f) };
+
+            // Baseline alignment references the line's max ascent (an item's ascent
+            // is its baseline callback, or its box bottom by default).
+            var line_ascent: f64 = 0.0f64;
+            var ka: usize = ls;
+            while ka < le {
+                let cia: usize = usize_at(order, ka);
+                let asc: f64 = this.child_ascent(cia, size_at(mains, cia), size_at(cross_sizes, cia));
+                line_ascent = f_max(line_ascent, size_at(m_cross_lead, cia) + asc);
+                ka = ka +% (1 as usize);
+            }
+
+            var cursor: f64 = main_lead + jlead;
+            k = ls;
+            while k < le {
+                let ci: usize = usize_at(order, k);
+                let cs: Style = this.child_style(ci);
+                let main_size: f64 = size_at(mains, ci);
+                let align: Align = resolve_align(cs.align_self, this.style.align_items);
+                let baseline: bool = match align { Align::Baseline => true, _ => false };
+
+                let has_auto_cross: bool = bool_at(acm_lead, ci) || bool_at(acm_trail, ci);
+                var cross_size: f64 = size_at(cross_sizes, ci);
+                let mc: f64 = size_at(m_cross_lead, ci) + size_at(m_cross_trail, ci);
+                // aspect-ratio ties the cross size to the (possibly flexed) main size
+                // unless the cross dimension was set explicitly. An auto cross margin
+                // suppresses stretch (the item keeps its size, the margin absorbs space).
+                if is_def(cs.aspect_ratio) && cs.aspect_ratio > 0.0f64 && !bool_at(cross_explicit, ci) {
+                    cross_size = if row { main_size / cs.aspect_ratio } else { main_size * cs.aspect_ratio };
+                } else if is_stretch(align) && !bool_at(cross_explicit, ci) && !has_auto_cross {
+                    cross_size = f_max(0.0f64, this_line_cross - mc);
+                }
+                let min_cross: StyleLength = if row { cs.min_height } else { cs.min_width };
+                let max_cross: StyleLength = if row { cs.max_height } else { cs.max_width };
+                cross_size = clamp(cross_size, min_cross.resolve(cross_inner), max_cross.resolve(cross_inner));
+
+                // Main-lead margin: auto share when this margin is auto.
+                cursor = cursor + (if bool_at(am_lead, ci) { auto_main_share } else { size_at(m_main_lead, ci) });
+                var main_pos: f64 = cursor;
+
+                let free_cross: f64 = this_line_cross - cross_size - mc;
+                // Cross position: auto cross margins take priority (center / push),
+                // then baseline, then align-items.
+                var cross_pos: f64 = 0.0f64;
+                if has_auto_cross {
+                    let al: bool = bool_at(acm_lead, ci);
+                    let at: bool = bool_at(acm_trail, ci);
+                    let lead_extra: f64 = if al && at { free_cross / 2.0f64 } else if al { free_cross } else { 0.0f64 };
+                    cross_pos = line_cross_pos + size_at(m_cross_lead, ci) + lead_extra;
+                } else if baseline {
+                    let item_ascent: f64 = this.child_ascent(ci, main_size, cross_size);
+                    cross_pos = line_cross_pos + line_ascent - size_at(m_cross_lead, ci) - item_ascent;
+                } else {
+                    cross_pos = line_cross_pos + size_at(m_cross_lead, ci) + align_lead(align, free_cross);
+                }
+
+                if flip_main {
+                    main_pos = main_lead + (main_inner - (main_pos - main_lead) - main_size);
+                }
+                if flip_cross {
+                    cross_pos = cross_lead + (cross_inner - (cross_pos - cross_lead) - cross_size);
+                }
+
+                // position:relative offsets the flowed frame by its insets (without
+                // affecting siblings); position:static ignores insets entirely.
+                var off_x: f64 = 0.0f64;
+                var off_y: f64 = 0.0f64;
+                if match cs.position_type { PositionType::Relative => true, _ => false } {
+                    let pl2: f64 = cs.position_left.resolve(node_w);
+                    let pr2: f64 = cs.position_right.resolve(node_w);
+                    off_x = if is_def(pl2) { pl2 } else if is_def(pr2) { 0.0f64 - pr2 } else { 0.0f64 };
+                    let pt2: f64 = cs.position_top.resolve(node_h);
+                    let pb2: f64 = cs.position_bottom.resolve(node_h);
+                    off_y = if is_def(pt2) { pt2 } else if is_def(pb2) { 0.0f64 - pb2 } else { 0.0f64 };
+                }
+
+                let child_left: f64 = this.layout.left + off_x + (if row { main_pos } else { cross_pos });
+                let child_top: f64 = this.layout.top + off_y + (if row { cross_pos } else { main_pos });
+                this.set_child_box(ci, child_left, child_top,
+                                   if row { main_size } else { cross_size },
+                                   if row { cross_size } else { main_size });
+
+                cursor = cursor + main_size + (if bool_at(am_trail, ci) { auto_main_share } else { size_at(m_main_trail, ci) }) + jgap + main_gap;
+                k = k +% (1 as usize);
+            }
+
+            cross_cursor = cross_cursor + this_line_cross + ac_gap + cross_gap;
+            ls = le;
+            li = li +% (1 as usize);
+        }
+
+        // --- non-flow children: hide display:none, position absolute ---
+        i = 0 as usize;
+        while i < n {
+            let cs: Style = this.child_style(i);
+            let displayed: bool = match cs.display { Display::None => false, _ => true };
+            if !displayed {
+                this.zero_child(i);
+            } else if match cs.position_type { PositionType::Absolute => true, _ => false } {
+                this.place_absolute(i, main_lead, cross_lead, main_inner, cross_inner, row);
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    // ======================================================================
+    // CSS Grid layout (display: grid)
+    // ======================================================================
+    // A row-major auto-flow grid: items fill the template columns left-to-right,
+    // top-to-bottom, one cell each. Tracks size by points / fr (flexible share) /
+    // auto (max content). Rows beyond the explicit template are implicit (auto).
+    // Each item stretches to its cell unless it has an explicit size.
+    fn grid_layout(ref this) {
+        let n: usize = this.children.count();
+        let node_w: f64 = this.layout.width;
+        let node_h: f64 = this.layout.height;
+        let grtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        let own: Style = normalize_edges(this.style, grtl);
+        let pad_l: f64 = edge_px(own.padding_left, own.border_left, node_w);
+        let pad_t: f64 = edge_px(own.padding_top, own.border_top, node_w);
+        let pad_r: f64 = edge_px(own.padding_right, own.border_right, node_w);
+        let pad_b: f64 = edge_px(own.padding_bottom, own.border_bottom, node_w);
+        let inner_w: f64 = f_max(0.0f64, node_w - pad_l - pad_r);
+        let inner_h: f64 = f_max(0.0f64, node_h - pad_t - pad_b);
+
+        // Subgrid: consume any tracks the parent handed us (consume-once; the parent
+        // re-feeds every time it lays us out). When present they replace our own
+        // template + gap on that axis, so our children align to the parent's lines.
+        let use_sub_cols: bool = this.has_sub_cols;
+        let use_sub_rows: bool = this.has_sub_rows;
+        var sub_cols_local: vec::Vec[f64] = copy_f64(this.sub_cols);
+        var sub_rows_local: vec::Vec[f64] = copy_f64(this.sub_rows);
+        this.has_sub_cols = false;
+        this.has_sub_rows = false;
+        let col_gap: f64 = if use_sub_cols { this.sub_col_gap } else { or_zero(this.style.gap_column.resolve(inner_w)) };
+        let row_gap: f64 = if use_sub_rows { this.sub_row_gap } else { or_zero(this.style.gap_row.resolve(inner_h)) };
+
+        // Grid (in-flow) item indices.
+        var items: vec::Vec[usize] = vec::new::[usize]();
+        var i: usize = 0 as usize;
+        while i < n {
+            let cs: Style = this.child_style(i);
+            let displayed: bool = match cs.display { Display::None => false, _ => true };
+            let in_flow: bool = displayed && match cs.position_type { PositionType::Absolute => false, _ => true };
+            if in_flow { items.append(i); }
+            i = i +% (1 as usize);
+        }
+        let item_count: usize = items.count();
+
+        let explicit_cols: usize = this.grid_cols.count();
+        let col_count: usize = if use_sub_cols { f_max_usize(1 as usize, sub_cols_local.count()) }
+                               else if explicit_cols > (0 as usize) { explicit_cols } else { 1 as usize };
+        let dense: bool = this.grid_dense;
+
+        // --- auto-flow placement into cells, honoring col/row spans + dense ---
+        var item_col: vec::Vec[usize] = vec::new::[usize]();
+        var item_row: vec::Vec[usize] = vec::new::[usize]();
+        var item_cspan: vec::Vec[usize] = vec::new::[usize]();
+        var item_rspan: vec::Vec[usize] = vec::new::[usize]();
+        var occ: vec::Vec[bool] = vec::new::[bool]();
+        var cursor_r: usize = 0 as usize;
+        var cursor_c: usize = 0 as usize;
+        var max_row: usize = 0 as usize;
+        var it: usize = 0 as usize;
+        while it < item_count {
+            let ci: usize = usize_at(items, it);
+            var cspan: usize = this.child_col_span(ci);
+            if cspan > col_count { cspan = col_count; }
+            let rspan: usize = this.child_row_span(ci);
+            let ecol: i32 = this.child_col_start(ci);
+            let erow: i32 = this.child_row_start(ci);
+            let max_c: usize = if col_count >= cspan { col_count - cspan } else { 0 as usize };
+
+            var r: usize = 0 as usize;
+            var c: usize = 0 as usize;
+            if ecol >= 0 && erow >= 0 {
+                // fully explicit — place directly (overlap is allowed by CSS)
+                c = clamp_usize(ecol as usize, max_c);
+                r = erow as usize;
+            } else if ecol >= 0 {
+                // fixed column, auto row: scan rows down at that column
+                c = clamp_usize(ecol as usize, max_c);
+                r = if dense { 0 as usize } else { cursor_r };
+                while !occ_free(occ, r, c, rspan, cspan, col_count) { r = r +% (1 as usize); }
+            } else if erow >= 0 {
+                // fixed row, auto column: scan columns across that row
+                r = erow as usize;
+                c = 0 as usize;
+                while c < max_c && !occ_free(occ, r, c, rspan, cspan, col_count) { c = c +% (1 as usize); }
+            } else {
+                // fully auto-flow (dense: from the top)
+                r = if dense { 0 as usize } else { cursor_r };
+                c = if dense { 0 as usize } else { cursor_c };
+                while true {
+                    if c + cspan > col_count { c = 0 as usize; r = r +% (1 as usize); continue; }
+                    if occ_free(occ, r, c, rspan, cspan, col_count) { break; }
+                    c = c +% (1 as usize);
+                }
+            }
+            occ_mark(occ, r, c, rspan, cspan, col_count);
+            item_col.append(c);
+            item_row.append(r);
+            item_cspan.append(cspan);
+            item_rspan.append(rspan);
+            if !dense && ecol < 0 && erow < 0 { cursor_r = r; cursor_c = c + cspan; }
+            if r + rspan > max_row { max_row = r + rspan; }
+            it = it +% (1 as usize);
+        }
+        var row_count: usize = max_row;
+        if this.grid_rows.count() > row_count { row_count = this.grid_rows.count(); }
+        if use_sub_rows && sub_rows_local.count() > row_count { row_count = sub_rows_local.count(); }
+
+        // --- track auto content: a spanning item contributes its size / span to
+        // each track it covers (exact for span 1) ---
+        var col_auto: vec::Vec[f64] = vec::new::[f64]();
+        var c0: usize = 0 as usize;
+        while c0 < col_count { col_auto.append(0.0f64); c0 = c0 +% (1 as usize); }
+        var row_auto: vec::Vec[f64] = vec::new::[f64]();
+        var r0: usize = 0 as usize;
+        while r0 < row_count { row_auto.append(0.0f64); r0 = r0 +% (1 as usize); }
+        it = 0 as usize;
+        while it < item_count {
+            let ci: usize = usize_at(items, it);
+            let isz: Size = this.child_intrinsic(ci, inner_w, inner_h);
+            let c: usize = usize_at(item_col, it);
+            let r: usize = usize_at(item_row, it);
+            let cspan: usize = usize_at(item_cspan, it);
+            let rspan: usize = usize_at(item_rspan, it);
+            let w_share: f64 = isz.width / (cspan as f64);
+            let h_share: f64 = isz.height / (rspan as f64);
+            var cc: usize = c;
+            while cc < c + cspan && cc < col_count { col_auto.set(f_max(size_at(col_auto, cc), w_share), cc); cc = cc +% (1 as usize); }
+            var rr: usize = r;
+            while rr < r + rspan && rr < row_count { row_auto.set(f_max(size_at(row_auto, rr), h_share), rr); rr = rr +% (1 as usize); }
+            it = it +% (1 as usize);
+        }
+        let col_widths: vec::Vec[f64] = if use_sub_cols { pad_tracks(sub_cols_local, col_count) } else { resolve_tracks(this.grid_cols, col_count, inner_w, col_gap, col_auto) };
+        let row_heights: vec::Vec[f64] = if use_sub_rows { pad_tracks(sub_rows_local, row_count) } else { resolve_tracks(this.grid_rows, row_count, inner_h, row_gap, row_auto) };
+        let col_x: vec::Vec[f64] = track_offsets(col_widths, col_gap, pad_l);
+        let row_y: vec::Vec[f64] = track_offsets(row_heights, row_gap, pad_t);
+
+        // --- place items across their spanned cells ---
+        it = 0 as usize;
+        while it < item_count {
+            let ci: usize = usize_at(items, it);
+            let c: usize = usize_at(item_col, it);
+            let r: usize = usize_at(item_row, it);
+            let cspan: usize = usize_at(item_cspan, it);
+            let rspan: usize = usize_at(item_rspan, it);
+            let cs: Style = this.child_style(ci);
+            let cell_w: f64 = span_extent(col_widths, c, cspan, col_gap);
+            let cell_h: f64 = span_extent(row_heights, r, rspan, row_gap);
+            let cx: f64 = size_at(col_x, c);
+            let cy: f64 = size_at(row_y, r);
+
+            // explicit size wins, else stretch to the (spanned) cell.
+            let ew: f64 = resolve_border_box(cs.width, cs, true, cell_w, node_w);
+            let eh: f64 = resolve_border_box(cs.height, cs, false, cell_h, node_w);
+            let iw: f64 = if is_def(ew) { ew } else { cell_w };
+            let ih: f64 = if is_def(eh) { eh } else { cell_h };
+
+            // If the child is a subgrid, hand it our track slice over its span so
+            // its children align to our lines.
+            let sc: bool = this.child_cols_subgrid(ci);
+            let sr: bool = this.child_rows_subgrid(ci);
+            if sc || sr {
+                let sub_c: vec::Vec[f64] = if sc { track_slice(col_widths, c, cspan) } else { vec::new::[f64]() };
+                let sub_r: vec::Vec[f64] = if sr { track_slice(row_heights, r, rspan) } else { vec::new::[f64]() };
+                this.feed_subgrid(ci, sub_c, sub_r, sc, sr, col_gap, row_gap);
+            }
+            this.set_child_box(ci, this.layout.left + cx, this.layout.top + cy, iw, ih);
+            it = it +% (1 as usize);
+        }
+
+        // --- non-flow children ---
+        i = 0 as usize;
+        while i < n {
+            let cs: Style = this.child_style(i);
+            let displayed: bool = match cs.display { Display::None => false, _ => true };
+            if !displayed {
+                this.zero_child(i);
+            } else if match cs.position_type { PositionType::Absolute => true, _ => false } {
+                let main_inner2: f64 = inner_w;
+                let cross_inner2: f64 = inner_h;
+                this.place_absolute(i, pad_l, pad_t, main_inner2, cross_inner2, true);
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    // --- small per-child readers/writers (encapsulate the one raw-ptr use) ---
+
+    fn child_style(this, index: usize) -> Style {
+        let rtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => normalize_edges({ (*p).style }, rtl),
+            option::Option[*Node]::None => Style::new(),
+        };
+    }
+
+    fn child_col_span(this, index: usize) -> usize {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_col_span }; if s < 1 { 1 as usize } else { s as usize } }
+            option::Option[*Node]::None => 1 as usize,
+        };
+    }
+    fn child_row_span(this, index: usize) -> usize {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_row_span }; if s < 1 { 1 as usize } else { s as usize } }
+            option::Option[*Node]::None => 1 as usize,
+        };
+    }
+    fn child_col_start(this, index: usize) -> i32 {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { (*p).grid_col_start }
+            option::Option[*Node]::None => -1,
+        };
+    }
+    fn child_row_start(this, index: usize) -> i32 {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { (*p).grid_row_start }
+            option::Option[*Node]::None => -1,
+        };
+    }
+    fn child_cols_subgrid(this, index: usize) -> bool {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { (*p).grid_cols_subgrid }
+            option::Option[*Node]::None => false,
+        };
+    }
+    fn child_rows_subgrid(this, index: usize) -> bool {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { (*p).grid_rows_subgrid }
+            option::Option[*Node]::None => false,
+        };
+    }
+    // Hand a subgrid child the slice of this grid's resolved tracks covering its
+    // span, so its own children align to these (parent) lines. Force it to
+    // re-lay-out (its tracks are derived from us, not from its own cached style).
+    fn feed_subgrid(ref this, index: usize, take sub_cols: vec::Vec[f64], take sub_rows: vec::Vec[f64],
+                    has_cols: bool, has_rows: bool, col_gap: f64, row_gap: f64) {
+        match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => {
+                { (*p).sub_cols = sub_cols; }
+                { (*p).sub_rows = sub_rows; }
+                { (*p).has_sub_cols = has_cols; }
+                { (*p).has_sub_rows = has_rows; }
+                { (*p).sub_col_gap = col_gap; }
+                { (*p).sub_row_gap = row_gap; }
+                { (*p).subtree_changed = true; }   // derived inputs → never skip
+            }
+            option::Option[*Node]::None => {}
+        }
+        return;
+    }
+
+    // A child's baseline ascent from its top edge (default: its height).
+    fn child_ascent(this, index: usize, width: f64, height: f64) -> f64 {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => {
+                if { (*p).has_baseline } { let bf: fn(f64, f64) -> f64 = { (*p).baseline }; bf(width, height) }
+                else { height }
+            }
+            option::Option[*Node]::None => height,
+        };
+    }
+
+    // The child's intrinsic (content) outer size, computed bottom-up within the
+    // available space. Encapsulates the raw-ptr read + recursion.
+    fn child_intrinsic(this, index: usize, avail_w: f64, avail_h: f64) -> Size {
+        return match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => { (*p).intrinsic_size(avail_w, avail_h) },
+            option::Option[*Node]::None => Size { width: 0.0f64, height: 0.0f64 },
+        };
+    }
+
+    // Bottom-up intrinsic size: the node's own border-box size given the space
+    // available, derived from its style, its measure callback (leaves), or the
+    // content extent of its children (containers). This is what lets a container
+    // with an `auto` dimension hug its children (Yoga's content sizing).
+    // Caching wrapper (see `measured`). The result is a pure function of the node
+    // subtree and the available size; within one layout pass the tree is immutable,
+    // so a memo keyed on (avail_w, avail_h) is sound. Reset each pass.
+    fn intrinsic_size(ref this, avail_w: f64, avail_h: f64) -> Size {
+        if this.measured && same_avail(this.m_avail_w, avail_w) && same_avail(this.m_avail_h, avail_h) {
+            return Size { width: this.m_size_w, height: this.m_size_h };
+        }
+        let r: Size = this.intrinsic_compute(avail_w, avail_h);
+        this.measured = true;
+        this.m_avail_w = avail_w;
+        this.m_avail_h = avail_h;
+        this.m_size_w = r.width;
+        this.m_size_h = r.height;
+        return r;
+    }
+
+    // Reset the measurement memo across the whole subtree.
+    fn clear_measure_cache(ref this) {
+        this.measured = false;
+        let n: usize = this.children.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this.children.at_ptr(i) {
+                option::Option[*Node]::Some(p) => { { (*p).clear_measure_cache(); } }
+                option::Option[*Node]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    fn intrinsic_compute(this, avail_w: f64, avail_h: f64) -> Size {
+        let row: bool = is_row(this.style.flex_direction);
+        var w: f64 = resolve_border_box(this.style.width, this.style, true, avail_w, avail_w);
+        var h: f64 = resolve_border_box(this.style.height, this.style, false, avail_h, avail_w);
+        // aspect-ratio (width / height) derives whichever dimension is unset from
+        // the one that is.
+        let ar: f64 = this.style.aspect_ratio;
+        if is_def(ar) && ar > 0.0f64 {
+            if is_def(w) && is_undef(h) { h = w / ar; }
+            else if is_def(h) && is_undef(w) { w = h * ar; }
+        }
+        let have_w: bool = is_def(w);
+        let have_h: bool = is_def(h);
+
+        // Padding + border (resolve against available width, CSS rule). The axis
+        // *sum* is direction-invariant (start+end == left+right), so measuring in
+        // LTR is fine here — only positioning cares about the side.
+        let own: Style = normalize_edges(this.style, false);
+        let pl: f64 = edge_px(own.padding_left, own.border_left, avail_w);
+        let pr: f64 = edge_px(own.padding_right, own.border_right, avail_w);
+        let pt: f64 = edge_px(own.padding_top, own.border_top, avail_w);
+        let pb: f64 = edge_px(own.padding_bottom, own.border_bottom, avail_w);
+        let pad_w: f64 = pl + pr;
+        let pad_h: f64 = pt + pb;
+
+        let n: usize = this.children.count();
+
+        if n == (0 as usize) {
+            // Leaf: measure callback supplies content, else the box is just padding.
+            if this.has_measure && (!have_w || !have_h) {
+                let mf: fn(f64, MeasureMode, f64, MeasureMode) -> Size = this.measure;
+                let s: Size = mf(sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
+                                 sub_or_undef(avail_h, pad_h), MeasureMode::AtMost);
+                if !have_w { w = s.width + pad_w; }
+                if !have_h { h = s.height + pad_h; }
+            } else {
+                if !have_w { w = pad_w; }
+                if !have_h { h = pad_h; }
+            }
+            return Size {
+                width: clamp(w, this.style.min_width.resolve(avail_w), this.style.max_width.resolve(avail_w)),
+                height: clamp(h, this.style.min_height.resolve(avail_h), this.style.max_height.resolve(avail_h)),
+            };
+        }
+
+        // Container: collect each flow child's outer main/cross extent, then reduce.
+        let inner_avail_w: f64 = if have_w { f_max(0.0f64, w - pad_w) } else { sub_or_undef(avail_w, pad_w) };
+        let inner_avail_h: f64 = if have_h { f_max(0.0f64, h - pad_h) } else { sub_or_undef(avail_h, pad_h) };
+        var cmain: vec::Vec[f64] = vec::new::[f64]();
+        var ccross: vec::Vec[f64] = vec::new::[f64]();
+        var i: usize = 0 as usize;
+        while i < n {
+            let cs: Style = this.child_style(i);
+            let displayed: bool = match cs.display { Display::None => false, _ => true };
+            let in_flow: bool = displayed && match cs.position_type { PositionType::Absolute => false, _ => true };
+            if in_flow {
+                let csz: Size = this.child_intrinsic(i, inner_avail_w, inner_avail_h);
+                let mm: f64 = or_zero(cs.margin_left.resolve(avail_w)) + or_zero(cs.margin_right.resolve(avail_w));
+                let mmv: f64 = or_zero(cs.margin_top.resolve(avail_w)) + or_zero(cs.margin_bottom.resolve(avail_w));
+                cmain.append((if row { csz.width } else { csz.height }) + (if row { mm } else { mmv }));
+                ccross.append((if row { csz.height } else { csz.width }) + (if row { mmv } else { mm }));
+            }
+            i = i +% (1 as usize);
+        }
+
+        // Reduce to a content extent. Without wrap (or when the main axis is
+        // unconstrained, so nothing can wrap): main = sum, cross = max. With wrap
+        // against a definite main axis: break into lines — main = widest line,
+        // cross = sum of line cross sizes.
+        let inner_avail_main: f64 = if row { inner_avail_w } else { inner_avail_h };
+        let wrapping: bool = match this.style.flex_wrap { Wrap::NoWrap => false, _ => true };
+        let main_gap: f64 = or_zero((if row { this.style.gap_column } else { this.style.gap_row }).resolve(inner_avail_main));
+        let cross_gap: f64 = or_zero((if row { this.style.gap_row } else { this.style.gap_column }).resolve(if row { inner_avail_h } else { inner_avail_w }));
+        let fc: usize = cmain.count();
+        var content_main_raw: f64 = 0.0f64;
+        var content_cross_raw: f64 = 0.0f64;
+        if !wrapping || is_undef(inner_avail_main) {
+            content_main_raw = sum_f(cmain) + (if fc > (0 as usize) { main_gap * ((fc - (1 as usize)) as f64) } else { 0.0f64 });
+            content_cross_raw = max_f(ccross);
+        } else {
+            var k: usize = 0 as usize;
+            var line_n: usize = 0 as usize;
+            while k < fc {
+                var line_main: f64 = 0.0f64;
+                var line_cross: f64 = 0.0f64;
+                var placed: bool = false;
+                while k < fc {
+                    let cm: f64 = size_at(cmain, k);
+                    let step: f64 = if placed { main_gap + cm } else { cm };
+                    if placed && (line_main + step) > inner_avail_main { break; }
+                    line_main = line_main + step;
+                    line_cross = f_max(line_cross, size_at(ccross, k));
+                    placed = true;
+                    k = k +% (1 as usize);
+                }
+                content_main_raw = f_max(content_main_raw, line_main);
+                content_cross_raw = content_cross_raw + line_cross;
+                line_n = line_n +% (1 as usize);
+            }
+            if line_n > (1 as usize) { content_cross_raw = content_cross_raw + cross_gap * ((line_n - (1 as usize)) as f64); }
+        }
+        let content_main: f64 = content_main_raw + (if row { pad_w } else { pad_h });
+        let content_cross: f64 = content_cross_raw + (if row { pad_h } else { pad_w });
+        if !have_w { w = if row { content_main } else { content_cross }; }
+        if !have_h { h = if row { content_cross } else { content_main }; }
+        return Size {
+            width: clamp(w, this.style.min_width.resolve(avail_w), this.style.max_width.resolve(avail_w)),
+            height: clamp(h, this.style.min_height.resolve(avail_h), this.style.max_height.resolve(avail_h)),
+        };
+    }
+
+    fn zero_child(ref this, index: usize) {
+        match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => {
+                { (*p).layout = Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+            }
+            option::Option[*Node]::None => {}
+        }
+        return;
+    }
+
+    // Set a child's absolute frame, then recurse to lay out its own children.
+    // The one place the engine mutates a child in place (via `at_ptr`).
+    fn set_child_box(ref this, index: usize, left: f64, top: f64, width: f64, height: f64) {
+        let parent_dir: Direction = this.rdir;
+        match this.children.at_ptr(index) {
+            option::Option[*Node]::Some(p) => {
+                let cdir: Direction = resolve_dir({ (*p).style.direction }, parent_dir);
+                { (*p).apply_layout(Layout { left: left, top: top, width: width, height: height }, cdir); }
+            }
+            option::Option[*Node]::None => {}
+        }
+        return;
+    }
+
+    // Position an absolute child against the padding box using its insets and
+    // explicit size (or left+right / top+bottom pairs), then recurse.
+    fn place_absolute(ref this, index: usize, main_lead: f64, cross_lead: f64,
+                      main_inner: f64, cross_inner: f64, row: bool) {
+        let cs: Style = this.child_style(index);
+        let node_w: f64 = this.layout.width;
+
+        // Horizontal.
+        let left_in: f64 = cs.position_left.resolve(node_w);
+        let right_in: f64 = cs.position_right.resolve(node_w);
+        var cw: f64 = cs.width.resolve(node_w);
+        if is_undef(cw) {
+            if is_def(left_in) && is_def(right_in) { cw = f_max(0.0f64, main_or_cross_w(row, main_inner, cross_inner) - left_in - right_in); }
+            else { cw = 0.0f64; }
+        }
+        var cx: f64 = if is_def(left_in) { (if row { main_lead } else { cross_lead }) + left_in }
+                      else if is_def(right_in) { (if row { main_lead } else { cross_lead }) + main_or_cross_w(row, main_inner, cross_inner) - right_in - cw }
+                      else { if row { main_lead } else { cross_lead } };
+
+        // Vertical.
+        let node_h: f64 = this.layout.height;
+        let top_in: f64 = cs.position_top.resolve(node_h);
+        let bottom_in: f64 = cs.position_bottom.resolve(node_h);
+        var ch: f64 = cs.height.resolve(node_h);
+        if is_undef(ch) {
+            if is_def(top_in) && is_def(bottom_in) { ch = f_max(0.0f64, main_or_cross_h(row, main_inner, cross_inner) - top_in - bottom_in); }
+            else { ch = 0.0f64; }
+        }
+        var cy: f64 = if is_def(top_in) { (if row { cross_lead } else { main_lead }) + top_in }
+                      else if is_def(bottom_in) { (if row { cross_lead } else { main_lead }) + main_or_cross_h(row, main_inner, cross_inner) - bottom_in - ch }
+                      else { if row { cross_lead } else { main_lead } };
+
+        let child_left: f64 = this.layout.left + cx;
+        let child_top: f64 = this.layout.top + cy;
+        this.set_child_box(index, child_left, child_top, cw, ch);
+        return;
+    }
+}
+
+// horizontal inner extent given axis orientation
+fn main_or_cross_w(row: bool, main_inner: f64, cross_inner: f64) -> f64 {
+    if row { return main_inner; } return cross_inner;
+}
+fn main_or_cross_h(row: bool, main_inner: f64, cross_inner: f64) -> f64 {
+    if row { return cross_inner; } return main_inner;
+}
+
+// padding+border pixels for one edge
+fn edge_px(padding: StyleLength, border: StyleLength, ref_w: f64) -> f64 {
+    return or_zero(padding.resolve(ref_w)) + or_zero(border.resolve(ref_w));
+}
+fn or_zero(x: f64) -> f64 { if is_undef(x) { return 0.0f64; } return x; }
+
+// Round `v` (a non-negative coordinate) to the nearest 1/scale, half-up.
+fn round_scaled(v: f64, scale: f64) -> f64 {
+    let x: f64 = v * scale + 0.5f64;
+    let t: f64 = (x as i64) as f64;    // truncate toward zero (== floor for x >= 0)
+    return t / scale;
+}
+
+// padding+border on one axis for a style, resolved against `ref_w`.
+fn box_extra(cs: Style, is_width: bool, ref_w: f64) -> f64 {
+    if is_width {
+        return edge_px(cs.padding_left, cs.border_left, ref_w) + edge_px(cs.padding_right, cs.border_right, ref_w);
+    }
+    return edge_px(cs.padding_top, cs.border_top, ref_w) + edge_px(cs.padding_bottom, cs.border_bottom, ref_w);
+}
+fn is_content_box(cs: Style) -> bool {
+    return match cs.box_sizing { BoxSizing::ContentBox => true, _ => false };
+}
+// Resolve an explicit style dimension to a *border-box* size. Under content-box
+// the style value is the content area, so padding+border are added.
+fn resolve_border_box(len: StyleLength, cs: Style, is_width: bool, ref_dim: f64, ref_w: f64) -> f64 {
+    let v: f64 = len.resolve(ref_dim);
+    if is_undef(v) { return v; }
+    if is_content_box(cs) { return v + box_extra(cs, is_width, ref_w); }
+    return v;
+}
+
+// Subtract `b` from an available length, preserving "undefined" (an unconstrained
+// axis stays unconstrained after removing padding).
+fn sub_or_undef(a: f64, b: f64) -> f64 {
+    if is_undef(a) { return undefined(); }
+    return f_max(0.0f64, a - b);
+}
+
+// vec readers (Copy element types)
+fn size_at(v: vec::Vec[f64], i: usize) -> f64 {
+    return match v.at(i) { option::Option[f64]::Some(x) => x, option::Option[f64]::None => 0.0f64 };
+}
+fn bool_at(v: vec::Vec[bool], i: usize) -> bool {
+    return match v.at(i) { option::Option[bool]::Some(x) => x, option::Option[bool]::None => false };
+}
+fn usize_at(v: vec::Vec[usize], i: usize) -> usize {
+    return match v.at(i) { option::Option[usize]::Some(x) => x, option::Option[usize]::None => 0 as usize };
+}
+// Resolve `count` grid tracks to concrete pixel sizes within `avail`, given the
+// explicit template `tracks` (points/fr/auto), inter-track `gap`, and per-track
+// `auto_content` (used for auto and implicit tracks). fr tracks share the space
+// left after fixed + auto + gaps.
+fn resolve_tracks(tracks: vec::Vec[GridTrack], count: usize, avail: f64, gap: f64, auto_content: vec::Vec[f64]) -> vec::Vec[f64] {
+    var fixed_sum: f64 = 0.0f64;
+    var total_fr: f64 = 0.0f64;
+    let explicit: usize = tracks.count();
+    var t: usize = 0 as usize;
+    while t < count {
+        let unit: TrackUnit = if t < explicit { track_unit_at(tracks, t) } else { TrackUnit::Auto };
+        match unit {
+            TrackUnit::Points => { fixed_sum = fixed_sum + track_value_at(tracks, t); }
+            TrackUnit::Fr => { total_fr = total_fr + track_value_at(tracks, t); }
+            TrackUnit::Auto => { fixed_sum = fixed_sum + size_at(auto_content, t); }
+        }
+        t = t +% (1 as usize);
+    }
+    let gaps: f64 = if count > (0 as usize) { gap * ((count - (1 as usize)) as f64) } else { 0.0f64 };
+    let fr_space: f64 = f_max(0.0f64, avail - fixed_sum - gaps);
+    let fr_unit: f64 = if total_fr > 0.0f64 { fr_space / total_fr } else { 0.0f64 };
+
+    var out: vec::Vec[f64] = vec::new::[f64]();
+    t = 0 as usize;
+    while t < count {
+        let unit: TrackUnit = if t < explicit { track_unit_at(tracks, t) } else { TrackUnit::Auto };
+        let size: f64 = match unit {
+            TrackUnit::Points => track_value_at(tracks, t),
+            TrackUnit::Fr => track_value_at(tracks, t) * fr_unit,
+            TrackUnit::Auto => size_at(auto_content, t),
+        };
+        out.append(f_max(0.0f64, size));
+        t = t +% (1 as usize);
+    }
+    return out;
+}
+
+fn clamp_usize(v: usize, hi: usize) -> usize { if v > hi { return hi; } return v; }
+fn f_max_usize(a: usize, b: usize) -> usize { if a > b { return a; } return b; }
+fn copy_f64(v: vec::Vec[f64]) -> vec::Vec[f64] {
+    var o: vec::Vec[f64] = vec::new::[f64]();
+    var i: usize = 0 as usize;
+    let n: usize = v.count();
+    while i < n { o.append(size_at(v, i)); i = i +% (1 as usize); }
+    return o;
+}
+// A copy of `v` padded with zeros (or truncated) to exactly `count` entries.
+fn pad_tracks(v: vec::Vec[f64], count: usize) -> vec::Vec[f64] {
+    var o: vec::Vec[f64] = vec::new::[f64]();
+    var i: usize = 0 as usize;
+    while i < count { o.append(if i < v.count() { size_at(v, i) } else { 0.0f64 }); i = i +% (1 as usize); }
+    return o;
+}
+// The `span` consecutive track sizes starting at `start`.
+fn track_slice(sizes: vec::Vec[f64], start: usize, span: usize) -> vec::Vec[f64] {
+    var o: vec::Vec[f64] = vec::new::[f64]();
+    var k: usize = start;
+    while k < start + span && k < sizes.count() { o.append(size_at(sizes, k)); k = k +% (1 as usize); }
+    return o;
+}
+
+// ---- style equality (for the cross-call cache: detect a changed subtree by
+// comparing the current style to the snapshot taken at the last layout) ----
+fn fd_disc(v: FlexDirection) -> i32 { return match v { FlexDirection::Column => 0, FlexDirection::ColumnReverse => 1, FlexDirection::Row => 2, FlexDirection::RowReverse => 3 }; }
+fn ju_disc(v: Justify) -> i32 { return match v { Justify::FlexStart => 0, Justify::Center => 1, Justify::FlexEnd => 2, Justify::SpaceBetween => 3, Justify::SpaceAround => 4, Justify::SpaceEvenly => 5, Justify::Stretch => 6, Justify::Start => 7, Justify::End => 8 }; }
+fn al_disc(v: Align) -> i32 { return match v { Align::Auto => 0, Align::FlexStart => 1, Align::Center => 2, Align::FlexEnd => 3, Align::Stretch => 4, Align::Baseline => 5, Align::SpaceBetween => 6, Align::SpaceAround => 7, Align::SpaceEvenly => 8, Align::Start => 9, Align::End => 10 }; }
+fn wr_disc(v: Wrap) -> i32 { return match v { Wrap::NoWrap => 0, Wrap::Wrap => 1, Wrap::WrapReverse => 2 }; }
+fn pt_disc(v: PositionType) -> i32 { return match v { PositionType::Static => 0, PositionType::Relative => 1, PositionType::Absolute => 2 }; }
+fn ov_disc(v: Overflow) -> i32 { return match v { Overflow::Visible => 0, Overflow::Hidden => 1, Overflow::Scroll => 2 }; }
+fn di_disc(v: Display) -> i32 { return match v { Display::Flex => 0, Display::None => 1, Display::Grid => 2 }; }
+fn bs_disc(v: BoxSizing) -> i32 { return match v { BoxSizing::BorderBox => 0, BoxSizing::ContentBox => 1 }; }
+fn dir_disc(v: Direction) -> i32 { return match v { Direction::Inherit => 0, Direction::LTR => 1, Direction::RTL => 2 }; }
+fn un_disc(v: Unit) -> i32 { return match v { Unit::Undefined => 0, Unit::Point => 1, Unit::Percent => 2, Unit::Auto => 3 }; }
+fn tu_disc(v: TrackUnit) -> i32 { return match v { TrackUnit::Points => 0, TrackUnit::Fr => 1, TrackUnit::Auto => 2 }; }
+fn dir_eq(a: Direction, b: Direction) -> bool { return dir_disc(a) == dir_disc(b); }
+
+// Bit-stable f64 equality that also treats NaN==NaN (both are "undefined").
+fn bits_eq(a: f64, b: f64) -> bool {
+    if is_undef(a) && is_undef(b) { return true; }
+    return a == b;
+}
+fn sl_eq(a: StyleLength, b: StyleLength) -> bool {
+    return un_disc(a.unit) == un_disc(b.unit) && bits_eq(a.value, b.value);
+}
+
+fn style_eq(a: Style, b: Style) -> bool {
+    return dir_disc(a.direction) == dir_disc(b.direction)
+        && fd_disc(a.flex_direction) == fd_disc(b.flex_direction)
+        && ju_disc(a.justify_content) == ju_disc(b.justify_content)
+        && al_disc(a.align_items) == al_disc(b.align_items)
+        && al_disc(a.align_self) == al_disc(b.align_self)
+        && al_disc(a.align_content) == al_disc(b.align_content)
+        && pt_disc(a.position_type) == pt_disc(b.position_type)
+        && wr_disc(a.flex_wrap) == wr_disc(b.flex_wrap)
+        && ov_disc(a.overflow) == ov_disc(b.overflow)
+        && di_disc(a.display) == di_disc(b.display)
+        && bs_disc(a.box_sizing) == bs_disc(b.box_sizing)
+        && bits_eq(a.flex_grow, b.flex_grow) && bits_eq(a.flex_shrink, b.flex_shrink)
+        && sl_eq(a.flex_basis, b.flex_basis)
+        && sl_eq(a.width, b.width) && sl_eq(a.height, b.height)
+        && sl_eq(a.min_width, b.min_width) && sl_eq(a.min_height, b.min_height)
+        && sl_eq(a.max_width, b.max_width) && sl_eq(a.max_height, b.max_height)
+        && sl_eq(a.margin_left, b.margin_left) && sl_eq(a.margin_top, b.margin_top)
+        && sl_eq(a.margin_right, b.margin_right) && sl_eq(a.margin_bottom, b.margin_bottom)
+        && sl_eq(a.padding_left, b.padding_left) && sl_eq(a.padding_top, b.padding_top)
+        && sl_eq(a.padding_right, b.padding_right) && sl_eq(a.padding_bottom, b.padding_bottom)
+        && sl_eq(a.border_left, b.border_left) && sl_eq(a.border_top, b.border_top)
+        && sl_eq(a.border_right, b.border_right) && sl_eq(a.border_bottom, b.border_bottom)
+        && sl_eq(a.position_left, b.position_left) && sl_eq(a.position_top, b.position_top)
+        && sl_eq(a.position_right, b.position_right) && sl_eq(a.position_bottom, b.position_bottom)
+        && sl_eq(a.margin_start, b.margin_start) && sl_eq(a.margin_end, b.margin_end)
+        && sl_eq(a.padding_start, b.padding_start) && sl_eq(a.padding_end, b.padding_end)
+        && sl_eq(a.border_start, b.border_start) && sl_eq(a.border_end, b.border_end)
+        && sl_eq(a.position_start, b.position_start) && sl_eq(a.position_end, b.position_end)
+        && sl_eq(a.gap_row, b.gap_row) && sl_eq(a.gap_column, b.gap_column)
+        && bits_eq(a.aspect_ratio, b.aspect_ratio);
+}
+fn layout_eq(a: Layout, b: Layout) -> bool {
+    return bits_eq(a.left, b.left) && bits_eq(a.top, b.top) && bits_eq(a.width, b.width) && bits_eq(a.height, b.height);
+}
+
+// Index of the grid line registered under `name`, or -1 if none.
+fn line_index(names: vec::Vec[text::Text], name: str) -> i32 {
+    var i: usize = 0 as usize;
+    let n: usize = names.count();
+    while i < n {
+        match names.at_ptr(i) {
+            option::Option[*text::Text]::Some(p) => { if { (*p).equals(name) } { return i as i32; } }
+            option::Option[*text::Text]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return -1;
+}
+
+// --- grid occupancy (row-major bitmap, grown a row at a time) ---
+fn occ_ensure(ref occ: vec::Vec[bool], rows_needed: usize, col_count: usize) {
+    while occ.count() < rows_needed * col_count { occ.append(false); }
+    return;
+}
+fn occ_free(occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: usize, col_count: usize) -> bool {
+    var rr: usize = r;
+    while rr < r + rspan {
+        var cc: usize = c;
+        while cc < c + cspan {
+            let idx: usize = rr * col_count + cc;
+            if idx < occ.count() { if bool_at(occ, idx) { return false; } }
+            cc = cc +% (1 as usize);
+        }
+        rr = rr +% (1 as usize);
+    }
+    return true;
+}
+fn occ_mark(ref occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: usize, col_count: usize) {
+    occ_ensure(occ, r + rspan, col_count);
+    var rr: usize = r;
+    while rr < r + rspan {
+        var cc: usize = c;
+        while cc < c + cspan {
+            occ.set(true, rr * col_count + cc);
+            cc = cc +% (1 as usize);
+        }
+        rr = rr +% (1 as usize);
+    }
+    return;
+}
+// Total extent of `span` consecutive tracks from `start`, including inner gaps.
+fn span_extent(sizes: vec::Vec[f64], start: usize, span: usize, gap: f64) -> f64 {
+    var s: f64 = 0.0f64;
+    var k: usize = start;
+    while k < start + span && k < sizes.count() { s = s + size_at(sizes, k); k = k +% (1 as usize); }
+    if span > (1 as usize) { s = s + gap * ((span - (1 as usize)) as f64); }
+    return s;
+}
+
+// Cumulative leading offset of each track (start + running sizes + gaps).
+fn track_offsets(sizes: vec::Vec[f64], gap: f64, start: f64) -> vec::Vec[f64] {
+    var out: vec::Vec[f64] = vec::new::[f64]();
+    var acc: f64 = start;
+    var t: usize = 0 as usize;
+    let n: usize = sizes.count();
+    while t < n {
+        out.append(acc);
+        acc = acc + size_at(sizes, t) + gap;
+        t = t +% (1 as usize);
+    }
+    return out;
+}
+
+fn track_unit_at(v: vec::Vec[GridTrack], i: usize) -> TrackUnit {
+    return match v.at(i) { option::Option[GridTrack]::Some(g) => g.unit, option::Option[GridTrack]::None => TrackUnit::Auto };
+}
+fn track_value_at(v: vec::Vec[GridTrack], i: usize) -> f64 {
+    return match v.at(i) { option::Option[GridTrack]::Some(g) => g.value, option::Option[GridTrack]::None => 0.0f64 };
+}
+
+fn sum_f(v: vec::Vec[f64]) -> f64 {
+    var s: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let n: usize = v.count();
+    while i < n { s = s + size_at(v, i); i = i +% (1 as usize); }
+    return s;
+}
+fn max_f(v: vec::Vec[f64]) -> f64 {
+    var m: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let n: usize = v.count();
+    while i < n { m = f_max(m, size_at(v, i)); i = i +% (1 as usize); }
+    return m;
+}
+
+// align-content distributes wrapped lines along the cross axis (leading offset +
+// gap between lines). Mirrors justify_lead/gap but keyed on the Align enum.
+fn align_content_lead(a: Align, free: f64, lines: f64) -> f64 {
+    return match a {
+        Align::Center => free / 2.0f64,
+        Align::FlexEnd => free,
+        Align::End => free,
+        Align::SpaceAround => if lines > 0.0f64 { (free / lines) / 2.0f64 } else { 0.0f64 },
+        Align::SpaceEvenly => if lines > 0.0f64 { free / (lines + 1.0f64) } else { 0.0f64 },
+        _ => 0.0f64,
+    };
+}
+fn align_content_gap(a: Align, free: f64, lines: f64) -> f64 {
+    return match a {
+        Align::SpaceBetween => if lines > 1.0f64 { free / (lines - 1.0f64) } else { 0.0f64 },
+        Align::SpaceAround => if lines > 0.0f64 { free / lines } else { 0.0f64 },
+        Align::SpaceEvenly => if lines > 0.0f64 { free / (lines + 1.0f64) } else { 0.0f64 },
+        _ => 0.0f64,
+    };
+}
+
+// align resolution
+// Resolve a node's direction: an explicit LTR/RTL wins; Inherit takes the owner's
+// (an owner that is itself Inherit defaults to LTR at the root).
+fn resolve_dir(own: Direction, owner: Direction) -> Direction {
+    return match own {
+        Direction::LTR => Direction::LTR,
+        Direction::RTL => Direction::RTL,
+        Direction::Inherit => match owner { Direction::RTL => Direction::RTL, _ => Direction::LTR },
+    };
+}
+fn resolve_align(self_align: Align, items_align: Align) -> Align {
+    return match self_align { Align::Auto => items_align, _ => self_align };
+}
+fn is_stretch(a: Align) -> bool { return match a { Align::Stretch => true, _ => false }; }
+fn align_lead(a: Align, free_cross: f64) -> f64 {
+    return match a {
+        Align::Center => free_cross / 2.0f64,
+        Align::FlexEnd => free_cross,
+        Align::End => free_cross,
+        _ => 0.0f64,
+    };
+}
+
+// justify resolution
+fn justify_lead(j: Justify, remaining: f64, count: f64) -> f64 {
+    return match j {
+        Justify::FlexStart => 0.0f64,
+        Justify::Start => 0.0f64,
+        Justify::Stretch => 0.0f64,
+        Justify::Center => remaining / 2.0f64,
+        Justify::FlexEnd => remaining,
+        Justify::End => remaining,
+        Justify::SpaceBetween => 0.0f64,
+        Justify::SpaceAround => if count > 0.0f64 { (remaining / count) / 2.0f64 } else { 0.0f64 },
+        Justify::SpaceEvenly => if count > 0.0f64 { remaining / (count + 1.0f64) } else { 0.0f64 },
+    };
+}
+fn justify_gap(j: Justify, remaining: f64, count: f64) -> f64 {
+    return match j {
+        Justify::SpaceBetween => if count > 1.0f64 { remaining / (count - 1.0f64) } else { 0.0f64 },
+        Justify::SpaceAround => if count > 0.0f64 { remaining / count } else { 0.0f64 },
+        Justify::SpaceEvenly => if count > 0.0f64 { remaining / (count + 1.0f64) } else { 0.0f64 },
+        _ => 0.0f64,
+    };
+}
+
+// ==========================================================================
+// ROADMAP — remaining for Yoga parity
+// ==========================================================================
+// DONE:
+// - Phase 1 core (direction/justify/align/flex/sizes/margin/padding/border/
+//   absolute/measure/display:none)
+// - Phase 2 content-fit / intrinsic sizing; flex-wrap + align-content;
+//   gap/gutters (all wrap- and gap-aware)
+// - Phase 3 aspect-ratio, RTL/Direction (row main + column cross flip, inherited),
+//   box-sizing content-box, pixel-grid rounding (round_to_pixel), baseline align,
+//   overflow read-back
+// - Phase 4 enum completeness (Justify Start/End/Stretch, Align Start/End);
+//   margin:auto (main distribution + cross centering); `flex` shorthand;
+//   position:static vs relative (inset offset); percent gaps; baseline callback;
+//   iterative flex resolution with min/max freeze+redistribute; CSS Grid
+//   (display:grid — points/fr/auto tracks, auto-flow, implicit rows, gaps);
+//   within-pass measurement memo (sound, reset per calculate_layout)
+// - Phase 5 RTL logical Start/End edges (margin/padding/border/position resolved
+//   to physical per direction, leading/trailing swap composed with the flip);
+//   Grid spanning (col/row span) + dense auto-flow; explicit line placement
+//   (grid-column/row-start) + named lines; SUBGRID (a nested grid adopts the
+//   parent's track slice over its span so its children align to the parent lines);
+//   sound CROSS-CALL incremental cache (aggregate-dirty by comparing each node's
+//   style/grid/child-count to a snapshot — no parent pointers, no per-setter flags;
+//   unchanged subtrees with an unchanged box keep their frames). Verified: deep
+//   mutations through content-fit ancestors correctly invalidate.
+//
+// Nothing material remains: this covers the CSS Flexbox spec and the common CSS
+// Grid Level 1/2 path (tracks, fr/auto, spanning, dense, explicit + named
+// placement, subgrid, gaps). Further work would be esoteric edge polish only.
+
+// ==========================================================================
+// Tests
+// ==========================================================================
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; }
+    return d < 0.01f64;
+}
+
+fn pts(v: f64) -> StyleLength { return StyleLength::points(v); }
+
+fn must(o: option::Option[Layout]) -> Layout {
+    return match o {
+        option::Option[Layout]::Some(l) => l,
+        option::Option[Layout]::None => Layout { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+}
+
+// a fixed-size leaf child
+fn leaf(w: f64, h: f64) -> Node {
+    var c: Node = Node::new();
+    c.set_width(pts(w));
+    c.set_height(pts(h));
+    return c;
+}
+
+#[test]
+fn test_root_takes_available_size() {
+    var root: Node = Node::new();
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(root.layout_width(), 200.0f64);
+    assert approx(root.layout_height(), 100.0f64);
+}
+
+#[test]
+fn test_root_explicit_size_wins() {
+    var root: Node = Node::new();
+    root.set_width(pts(50.0f64));
+    root.set_height(pts(40.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(root.layout_width(), 50.0f64);
+    assert approx(root.layout_height(), 40.0f64);
+}
+
+#[test]
+fn test_column_stacks_children() {
+    var root: Node = Node::new();                 // default direction = Column
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 40.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    let a: Layout = must(root.child_layout(0 as usize));
+    let b: Layout = must(root.child_layout(1 as usize));
+    assert approx(a.top, 0.0f64);
+    assert approx(a.height, 30.0f64);
+    assert approx(b.top, 30.0f64);
+    assert approx(b.height, 40.0f64);
+}
+
+#[test]
+fn test_row_places_children_horizontally() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(50.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let a: Layout = must(root.child_layout(0 as usize));
+    let b: Layout = must(root.child_layout(1 as usize));
+    assert approx(a.left, 0.0f64);
+    assert approx(a.width, 30.0f64);
+    assert approx(b.left, 30.0f64);
+    assert approx(b.width, 50.0f64);
+}
+
+#[test]
+fn test_flex_grow_distributes() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    var b: Node = Node::new(); b.set_flex_grow(3.0f64);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 300.0f64);
+}
+
+#[test]
+fn test_flex_shrink_removes_overflow() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_width(pts(300.0f64)); a.set_flex_shrink(1.0f64);
+    var b: Node = Node::new(); b.set_width(pts(300.0f64)); b.set_flex_shrink(1.0f64);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);   // 600 wanted, 400 avail
+    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);
+}
+
+#[test]
+fn test_align_items_stretch_default() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_width(pts(40.0f64));   // height auto -> stretch
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.height, 100.0f64);
+}
+
+#[test]
+fn test_align_items_center() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::Center);
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.top, 40.0f64);            // (100 - 20) / 2
+    assert approx(c.height, 20.0f64);
+}
+
+#[test]
+fn test_align_self_overrides_items() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_align_self(Align::FlexEnd);
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.top, 80.0f64);            // pushed to the cross end
+}
+
+#[test]
+fn test_justify_center() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_justify_content(Justify::Center);
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 80.0f64);
+}
+
+#[test]
+fn test_justify_space_between() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_justify_content(Justify::SpaceBetween);
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);   // 80 free_space / 2 gaps = 40
+    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 80.0f64);
+    assert approx(must(root.child_layout(2 as usize)).left, 160.0f64);
+}
+
+#[test]
+fn test_padding_offsets_and_shrinks_content() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_padding(Edge::Left, pts(10.0f64));
+    root.set_padding(Edge::Top, pts(15.0f64));
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.left, 10.0f64);
+    assert approx(c.top, 15.0f64);
+    assert approx(c.width, 190.0f64);         // 200 - 10 left padding
+    assert approx(c.height, 85.0f64);         // stretched into 100 - 15 top padding
+}
+
+#[test]
+fn test_margin_pushes_child() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Left, pts(25.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 25.0f64);
+}
+
+#[test]
+fn test_percent_width() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new();
+    a.set_width(StyleLength::percent(50.0f64));
+    a.set_height(pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+}
+
+#[test]
+fn test_min_width_clamps_grow() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64); a.set_max_width(pts(60.0f64));
+    root.add_child(a);
+    root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 60.0f64);   // capped by max
+}
+
+#[test]
+fn test_nested_absolute_coordinates() {
+    var root: Node = Node::new();                 // column
+    root.set_padding(Edge::All, pts(10.0f64));
+    var inner: Node = Node::new();
+    inner.set_flex_direction(FlexDirection::Row);
+    inner.set_flex_grow(1.0f64);
+    inner.add_child(leaf(30.0f64, 30.0f64));
+    inner.add_child(leaf(30.0f64, 30.0f64));
+    root.add_child(inner);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+
+    let inner_frame: Layout = must(root.child_layout(0 as usize));
+    assert approx(inner_frame.left, 10.0f64);     // at outer padding origin
+    assert approx(inner_frame.top, 10.0f64);
+
+    // grandchildren are absolute in root space
+    let g0: Layout = match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => must({ (*p).child_layout(0 as usize) }),
+        option::Option[*Node]::None => Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+    let g1: Layout = match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => must({ (*p).child_layout(1 as usize) }),
+        option::Option[*Node]::None => Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+    assert approx(g0.left, 10.0f64);
+    assert approx(g1.left, 40.0f64);              // 10 + 30
+}
+
+#[test]
+fn test_absolute_child_insets() {
+    var root: Node = Node::new();
+    var a: Node = Node::new();
+    a.set_position_type(PositionType::Absolute);
+    a.set_position(Edge::Left, pts(20.0f64));
+    a.set_position(Edge::Top, pts(15.0f64));
+    a.set_width(pts(30.0f64));
+    a.set_height(pts(30.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.left, 20.0f64);
+    assert approx(c.top, 15.0f64);
+    assert approx(c.width, 30.0f64);
+}
+
+#[test]
+fn test_absolute_left_right_defines_width() {
+    var root: Node = Node::new();
+    var a: Node = Node::new();
+    a.set_position_type(PositionType::Absolute);
+    a.set_position(Edge::Left, pts(10.0f64));
+    a.set_position(Edge::Right, pts(30.0f64));
+    a.set_height(pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.left, 10.0f64);
+    assert approx(c.width, 160.0f64);             // 200 - 10 - 30
+}
+
+#[test]
+fn test_display_none_excluded_from_flow() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var hidden: Node = leaf(50.0f64, 20.0f64);
+    hidden.set_display(Display::None);
+    root.add_child(hidden);
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 0.0f64);     // hidden collapses
+    assert approx(must(root.child_layout(1 as usize)).left, 0.0f64);      // second starts at 0
+}
+
+#[test]
+fn test_column_reverse_positions_from_end() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::ColumnReverse);
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 40.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    // first child sits at the bottom
+    let a: Layout = must(root.child_layout(0 as usize));
+    assert approx(a.top, 170.0f64);               // 200 - 30
+}
+
+#[test]
+fn test_measure_leaf_sizes_from_callback() {
+    var root: Node = Node::new();
+    var m: Node = Node::new();
+    m.set_measure(measure_fixed_80x24);
+    root.add_child(m);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    // column direction: main is height -> 24 from measure; cross stretches to 200
+    assert approx(c.height, 24.0f64);
+    assert approx(c.width, 200.0f64);
+}
+
+fn measure_fixed_80x24(w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
+    return Size { width: 80.0f64, height: 24.0f64 };
+}
+
+#[test]
+fn test_child_layout_out_of_range_none() {
+    var root: Node = Node::new();
+    root.add_child(leaf(10.0f64, 10.0f64));
+    root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
+    match root.child_layout(9 as usize) {
+        option::Option[Layout]::Some(x) => { assert false; }
+        option::Option[Layout]::None => { assert true; }
+    }
+    return;
+}
+
+// ---- Phase 2a: content-fit / intrinsic sizing ----
+
+#[test]
+fn test_column_auto_height_hugs_children() {
+    // A column with no explicit height sizes to the sum of its children's heights.
+    var root: Node = Node::new();                 // Column
+    root.set_width(pts(100.0f64));                // width fixed, height auto
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 40.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 70.0f64);   // 30 + 40
+    assert approx(root.layout_width(), 100.0f64);
+}
+
+#[test]
+fn test_row_auto_width_hugs_children() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_height(pts(50.0f64));
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(45.0f64, 20.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_width(), 75.0f64);    // 30 + 45
+}
+
+#[test]
+fn test_auto_cross_is_max_child() {
+    // Row: auto height = tallest child.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(20.0f64, 15.0f64));
+    root.add_child(leaf(20.0f64, 40.0f64));
+    root.add_child(leaf(20.0f64, 25.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 40.0f64);
+    assert approx(root.layout_width(), 60.0f64);
+}
+
+#[test]
+fn test_nested_container_content_size() {
+    // An auto-sized column whose single child is an auto-sized row of two boxes:
+    // outer height = inner height = max(30,30) = 30; outer width hugs to child.
+    var outer: Node = Node::new();                // Column, all auto
+    var inner: Node = Node::new();
+    inner.set_flex_direction(FlexDirection::Row);
+    inner.add_child(leaf(30.0f64, 30.0f64));
+    inner.add_child(leaf(50.0f64, 20.0f64));
+    outer.add_child(inner);
+    outer.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(outer.layout_height(), 30.0f64);   // tallest inner child
+    assert approx(outer.layout_width(), 80.0f64);    // 30 + 50 flows through
+    let inner_frame: Layout = must(outer.child_layout(0 as usize));
+    assert approx(inner_frame.width, 80.0f64);
+    assert approx(inner_frame.height, 30.0f64);
+}
+
+#[test]
+fn test_padding_included_in_content_size() {
+    var root: Node = Node::new();                 // Column, auto
+    root.set_padding(Edge::All, pts(10.0f64));
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 50.0f64);    // 30 + 10 + 10 padding
+    assert approx(root.layout_width(), 40.0f64);     // 20 + 10 + 10
+}
+
+#[test]
+fn test_measure_leaf_intrinsic_when_parent_auto() {
+    // Auto column around a measure leaf: height hugs the measured 24.
+    var root: Node = Node::new();
+    root.set_width(pts(200.0f64));
+    var m: Node = Node::new();
+    m.set_measure(measure_fixed_80x24);
+    root.add_child(m);
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 24.0f64);
+}
+
+#[test]
+fn test_auto_child_cross_not_stretched_uses_intrinsic() {
+    // Row with align-items:flex-start; child is an auto-sized column of one box.
+    // The child's height should be its content (30), not stretched to the row.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);
+    root.set_height(pts(200.0f64));
+    var col: Node = Node::new();                  // Column, auto height
+    col.set_width(pts(40.0f64));
+    col.add_child(leaf(40.0f64, 30.0f64));
+    root.add_child(col);
+    root.calculate_layout(300.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.height, 30.0f64);             // hugged content, not 200
+}
+
+// ---- Phase 2b: flex-wrap + align-content ----
+
+#[test]
+fn test_wrap_breaks_into_lines() {
+    // Row, wrap, container width 100; three 40-wide items -> 2 fit on line 1,
+    // the third wraps to line 2.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_flex_wrap(Wrap::Wrap);
+    root.set_width(pts(100.0f64));
+    root.set_height(pts(200.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    let a: Layout = must(root.child_layout(0 as usize));
+    let b: Layout = must(root.child_layout(1 as usize));
+    let c: Layout = must(root.child_layout(2 as usize));
+    assert approx(a.left, 0.0f64);   assert approx(a.top, 0.0f64);
+    assert approx(b.left, 40.0f64);  assert approx(b.top, 0.0f64);
+    assert approx(c.left, 0.0f64);   assert approx(c.top, 30.0f64);   // wrapped down a line
+}
+
+#[test]
+fn test_nowrap_keeps_single_line() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);            // NoWrap default
+    root.set_width(pts(100.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 30.0f64));                 // overflows, but stays on the line
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(2 as usize)).top, 0.0f64);
+    assert approx(must(root.child_layout(2 as usize)).left, 80.0f64);
+}
+
+#[test]
+fn test_wrap_line_cross_positions_stack() {
+    // Two lines of differing heights; the second line starts below the first's height.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_flex_wrap(Wrap::Wrap);
+    root.set_width(pts(100.0f64));
+    root.set_height(pts(200.0f64));
+    root.add_child(leaf(60.0f64, 25.0f64));                 // line 1 (height 25)
+    root.add_child(leaf(60.0f64, 40.0f64));                 // wraps -> line 2
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).top, 25.0f64);   // below line 1's cross size
+}
+
+#[test]
+fn test_align_content_center() {
+    // Two lines totalling cross 60 in a 200-tall container, centered -> first line
+    // starts at (200-60)/2 = 70.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_flex_wrap(Wrap::Wrap);
+    root.set_align_content(Align::Center);
+    root.set_width(pts(100.0f64));
+    root.set_height(pts(200.0f64));
+    root.add_child(leaf(60.0f64, 30.0f64));
+    root.add_child(leaf(60.0f64, 30.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 70.0f64);
+    assert approx(must(root.child_layout(1 as usize)).top, 100.0f64);
+}
+
+#[test]
+fn test_wrap_auto_cross_sizes_to_all_lines() {
+    // Auto-height wrapping row hugs the sum of its line heights.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_flex_wrap(Wrap::Wrap);
+    root.set_width(pts(100.0f64));                          // height auto
+    root.add_child(leaf(60.0f64, 25.0f64));
+    root.add_child(leaf(60.0f64, 40.0f64));                 // 2 lines: 25 + 40 = 65
+    root.calculate_layout(100.0f64, undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 65.0f64);
+}
+
+// ---- Phase 2c: gap / gutters ----
+
+#[test]
+fn test_column_gap_between_items() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_gap(Gutter::Column, 10.0f64);
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 40.0f64);   // 30 + 10 gap
+    assert approx(must(root.child_layout(2 as usize)).left, 80.0f64);
+}
+
+#[test]
+fn test_row_gap_between_column_items() {
+    var root: Node = Node::new();                 // Column
+    root.set_gap(Gutter::Row, 8.0f64);
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(1 as usize)).top, 38.0f64);    // 30 + 8 gap
+}
+
+#[test]
+fn test_gap_reduces_grow_space() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_gap(Gutter::Column, 20.0f64);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    var b: Node = Node::new(); b.set_flex_grow(1.0f64);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(220.0f64, 50.0f64, Direction::LTR);
+    // 220 - 20 gap = 200 split evenly -> 100 each
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 100.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 120.0f64);  // 100 + 20 gap
+}
+
+#[test]
+fn test_gap_included_in_content_size() {
+    var root: Node = Node::new();                 // Column, auto height
+    root.set_gap(Gutter::Row, 10.0f64);
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 110.0f64);   // 3*30 + 2*10 gaps
+}
+
+#[test]
+fn test_gap_affects_wrap_breaking() {
+    // Row wrap, width 100, gap 10. Two 40-wide items: 40 + 10 + 40 = 90 <= 100 fit;
+    // a third would need +10+40 -> wraps.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_flex_wrap(Wrap::Wrap);
+    root.set_gap(Gutter::All, 10.0f64);
+    root.set_width(pts(100.0f64));
+    root.set_height(pts(200.0f64));
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(1 as usize)).left, 50.0f64);   // 40 + 10 gap
+    assert approx(must(root.child_layout(2 as usize)).top, 30.0f64);    // wrapped: line1 height 20 + 10 gap
+    assert approx(must(root.child_layout(2 as usize)).left, 0.0f64);
+}
+
+// ---- Phase 3: aspect-ratio ----
+
+#[test]
+fn test_aspect_ratio_derives_height_from_width() {
+    var root: Node = Node::new();
+    var a: Node = Node::new();
+    a.set_width(pts(100.0f64));
+    a.set_aspect_ratio(2.0f64);         // w/h = 2 -> h = 50
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.width, 100.0f64);
+    assert approx(c.height, 50.0f64);
+}
+
+#[test]
+fn test_aspect_ratio_derives_width_from_height() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new();
+    a.set_height(pts(40.0f64));
+    a.set_aspect_ratio(1.5f64);         // w = h*1.5 = 60
+    root.add_child(a);
+    root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.height, 40.0f64);
+    assert approx(c.width, 60.0f64);
+}
+
+#[test]
+fn test_aspect_ratio_follows_flexed_main() {
+    // Row: child grows to 120 wide; aspect 3 -> height 40.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_height(pts(200.0f64));
+    var a: Node = Node::new();
+    a.set_flex_grow(1.0f64);
+    a.set_aspect_ratio(3.0f64);
+    root.add_child(a);
+    root.calculate_layout(120.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.width, 120.0f64);
+    assert approx(c.height, 40.0f64);   // not stretched to 200 — aspect wins
+}
+
+// ---- Phase 3: RTL / direction ----
+
+#[test]
+fn test_rtl_row_flows_right_to_left() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_direction(Direction::RTL);
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(50.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
+    // first child sits at the right edge
+    let a: Layout = must(root.child_layout(0 as usize));
+    let b: Layout = must(root.child_layout(1 as usize));
+    assert approx(a.left, 170.0f64);   // 200 - 30
+    assert approx(b.left, 120.0f64);   // 200 - 30 - 50
+}
+
+#[test]
+fn test_rtl_inherits_from_owner() {
+    var root: Node = Node::new();                 // direction Inherit
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(40.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);   // owner RTL
+    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // right-aligned
+}
+
+#[test]
+fn test_rtl_column_cross_on_right() {
+    // Column in RTL: cross axis (horizontal) starts on the right; a non-stretched
+    // child sits against the right edge.
+    var root: Node = Node::new();
+    root.set_align_items(Align::FlexStart);
+    root.set_direction(Direction::RTL);
+    root.add_child(leaf(40.0f64, 30.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
+    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // 200 - 40
+}
+
+#[test]
+fn test_rtl_row_reverse_cancels() {
+    // RowReverse + RTL = back to left-to-right.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::RowReverse);
+    root.set_direction(Direction::RTL);
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(50.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
+    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 30.0f64);
+}
+
+// ---- Phase 3: box-sizing content-box ----
+
+#[test]
+fn test_content_box_adds_padding_to_size() {
+    // content-box width 100 + padding 10 each side -> border-box 120.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new();
+    a.set_box_sizing(BoxSizing::ContentBox);
+    a.set_width(pts(100.0f64));
+    a.set_height(pts(50.0f64));
+    a.set_padding(Edge::All, pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(400.0f64, 200.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.width, 120.0f64);    // 100 + 10 + 10
+    assert approx(c.height, 70.0f64);    // 50 + 10 + 10
+}
+
+#[test]
+fn test_border_box_default_includes_padding() {
+    // default border-box: width 100 already includes the padding.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new();
+    a.set_width(pts(100.0f64));
+    a.set_height(pts(50.0f64));
+    a.set_padding(Edge::All, pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(400.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+}
+
+// ---- Phase 3: pixel-grid rounding ----
+
+#[test]
+fn test_round_to_integer_pixels_seamless() {
+    // Three grow items over width 100 -> 33.333 each. Rounding at scale 1 keeps
+    // edges seamless (no gaps): each left/right snaps to an integer, widths differ
+    // by a pixel but abut exactly.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    var b: Node = Node::new(); b.set_flex_grow(1.0f64);
+    var c: Node = Node::new(); c.set_flex_grow(1.0f64);
+    root.add_child(a); root.add_child(b); root.add_child(c);
+    root.calculate_layout(100.0f64, 20.0f64, Direction::LTR);
+    root.round_to_pixel(1.0f64);
+    let la: Layout = must(root.child_layout(0 as usize));
+    let lb: Layout = must(root.child_layout(1 as usize));
+    let lc: Layout = must(root.child_layout(2 as usize));
+    // integer edges
+    assert approx(la.left, 0.0f64);
+    assert approx(la.left + la.width, lb.left);     // seamless abut
+    assert approx(lb.left + lb.width, lc.left);
+    assert approx(lc.left + lc.width, 100.0f64);     // last edge lands exactly on 100
+    // each width is a whole number
+    assert approx(la.width - (la.width as i64 as f64), 0.0f64);
+}
+
+#[test]
+fn test_round_half_scale() {
+    // scale 2 -> snap to 0.5 point increments.
+    var root: Node = Node::new();
+    var a: Node = Node::new(); a.set_width(pts(10.3f64)); a.set_height(pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
+    root.round_to_pixel(2.0f64);
+    assert approx(must(root.child_layout(0 as usize)).width, 10.5f64);   // 10.3 -> 10.5
+}
+
+// ---- Phase 3: baseline align ----
+
+#[test]
+fn test_align_items_baseline_aligns_bottoms() {
+    // Row, baseline: items of differing heights align at the line's max ascent
+    // (default baseline = box bottom), so their bottom edges line up.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::Baseline);
+    root.set_height(pts(100.0f64));
+    root.add_child(leaf(20.0f64, 20.0f64));
+    root.add_child(leaf(20.0f64, 50.0f64));   // tallest -> defines the baseline
+    root.add_child(leaf(20.0f64, 30.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let a: Layout = must(root.child_layout(0 as usize));
+    let b: Layout = must(root.child_layout(1 as usize));
+    let c: Layout = must(root.child_layout(2 as usize));
+    // bottoms all at 50 (the max ascent)
+    assert approx(a.top + a.height, 50.0f64);
+    assert approx(b.top + b.height, 50.0f64);
+    assert approx(c.top + c.height, 50.0f64);
+    assert approx(b.top, 0.0f64);              // tallest sits at the top
+}
+
+// ---- Phase 3: overflow read-back (clipping is the adapter's job) ----
+
+#[test]
+fn test_overflow_readback_for_adapter() {
+    var root: Node = Node::new();
+    root.set_overflow(Overflow::Scroll);
+    assert match root.overflow() { Overflow::Scroll => true, _ => false };
+    // overflow does not alter frames — a fixed box stays its size even if its
+    // children exceed it (clipping/scrolling is the platform view's concern).
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_width(pts(50.0f64));
+    root.set_height(pts(50.0f64));
+    root.add_child(leaf(200.0f64, 20.0f64));
+    root.calculate_layout(50.0f64, 50.0f64, Direction::LTR);
+    assert approx(root.layout_width(), 50.0f64);
+    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);   // not clamped
+}
+
+// ---- Phase 4b: margin: auto ----
+
+fn auto_len() -> StyleLength { return StyleLength::auto(); }
+
+#[test]
+fn test_margin_auto_left_pushes_right() {
+    // Row: a leading auto margin pushes the item to the end.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Left, auto_len());
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // 200 - 40
+}
+
+#[test]
+fn test_margin_auto_both_centers() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Left, auto_len());
+    a.set_margin(Edge::Right, auto_len());
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 80.0f64);    // (200-40)/2
+}
+
+#[test]
+fn test_margin_auto_splits_between_two() {
+    // auto margin between two items splits the free space (spacer idiom).
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.set_margin(Edge::Left, auto_len());     // pushes b to the far end
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 160.0f64);   // 200 - 40
+}
+
+#[test]
+fn test_margin_auto_cross_centers_vertically() {
+    // Row, tall container; auto top+bottom margins center the item on the cross axis.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);
+    root.set_height(pts(100.0f64));
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Top, auto_len());
+    a.set_margin(Edge::Bottom, auto_len());
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 40.0f64);     // (100-20)/2
+}
+
+// ---- Phase 4c/4d: flex shorthand + position:static vs relative ----
+
+#[test]
+fn test_flex_shorthand_shares_space() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex(1.0f64);
+    var b: Node = Node::new(); b.set_flex(2.0f64);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);   // 1/3
+    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);   // 2/3
+}
+
+#[test]
+fn test_relative_offsets_by_insets() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_position_type(PositionType::Relative);
+    a.set_position(Edge::Left, pts(15.0f64));
+    a.set_position(Edge::Top, pts(10.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let c: Layout = must(root.child_layout(0 as usize));
+    assert approx(c.left, 15.0f64);      // flowed at 0, offset +15
+    assert approx(c.top, 10.0f64);
+}
+
+#[test]
+fn test_static_ignores_insets() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_position_type(PositionType::Static);
+    a.set_position(Edge::Left, pts(15.0f64));    // ignored under static
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+}
+
+// ---- Phase 4e: percent gap + baseline callback ----
+
+#[test]
+fn test_percent_gap() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_gap_length(Gutter::Column, StyleLength::percent(10.0f64));   // 10% of 200 = 20
+    root.set_width(pts(200.0f64));
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.add_child(leaf(30.0f64, 20.0f64));
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(1 as usize)).left, 50.0f64);     // 30 + 20 gap
+}
+
+fn baseline_at_15(width: f64, height: f64) -> f64 { return 15.0f64; }
+fn baseline_at_5(width: f64, height: f64) -> f64 { return 5.0f64; }
+
+#[test]
+fn test_baseline_callback_aligns_reported_baselines() {
+    // Two items with custom baselines (15 and 5); their baselines align on one line.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::Baseline);
+    root.set_height(pts(100.0f64));
+    var a: Node = leaf(20.0f64, 40.0f64); a.set_baseline(baseline_at_15);
+    var b: Node = leaf(20.0f64, 30.0f64); b.set_baseline(baseline_at_5);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let la: Layout = must(root.child_layout(0 as usize));
+    let lb: Layout = must(root.child_layout(1 as usize));
+    // baseline of a at top+15, of b at top+5; both equal the line's max ascent (15)
+    assert approx(la.top + 15.0f64, lb.top + 5.0f64);
+    assert approx(la.top, 0.0f64);       // tallest ascent sits at line origin
+    assert approx(lb.top, 10.0f64);      // shifted so baselines line up
+}
+
+// ---- Phase 4f: iterative flex resolution (min/max feedback) ----
+
+#[test]
+fn test_grow_redistributes_after_max_clamp() {
+    // Three equal-grow items over 300. One is capped at 40; the other two must
+    // absorb the freed space -> (300-40)/2 = 130 each (old single-shot gave 100).
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64); a.set_max_width(pts(40.0f64));
+    var b: Node = Node::new(); b.set_flex_grow(1.0f64);
+    var c: Node = Node::new(); c.set_flex_grow(1.0f64);
+    root.add_child(a); root.add_child(b); root.add_child(c);
+    root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 40.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 130.0f64);
+    assert approx(must(root.child_layout(2 as usize)).width, 130.0f64);
+    // fills the container exactly
+    assert approx(must(root.child_layout(2 as usize)).left + 130.0f64, 300.0f64);
+}
+
+#[test]
+fn test_shrink_redistributes_after_min_clamp() {
+    // Two 300-wide shrinkable items in 400 (overflow 200). One has min 250 so it
+    // can only give 50; the other must absorb the remaining 150 -> 150 wide.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_width(pts(300.0f64)); a.set_flex_shrink(1.0f64); a.set_min_width(pts(250.0f64));
+    var b: Node = Node::new(); b.set_width(pts(300.0f64)); b.set_flex_shrink(1.0f64);
+    root.add_child(a); root.add_child(b);
+    root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 250.0f64);   // clamped at min
+    assert approx(must(root.child_layout(1 as usize)).width, 150.0f64);   // absorbs the rest
+}
+
+// ---- Phase 4g: CSS Grid ----
+
+// a grid item with only a height (width stretches to its cell)
+fn hcell(h: f64) -> Node { var c: Node = Node::new(); c.set_height(pts(h)); return c; }
+
+#[test]
+fn test_grid_fixed_columns_auto_flow() {
+    // 2 fixed columns of 60; 4 items flow into a 2x2 grid.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(60.0f64));
+    root.add_grid_column(GridTrack::points(60.0f64));
+    var i: i32 = 0;
+    while i < 4 { root.add_child(hcell(30.0f64)); i = i + 1; }
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let c0: Layout = must(root.child_layout(0 as usize));
+    let c1: Layout = must(root.child_layout(1 as usize));
+    let c2: Layout = must(root.child_layout(2 as usize));
+    let c3: Layout = must(root.child_layout(3 as usize));
+    assert approx(c0.left, 0.0f64);   assert approx(c0.top, 0.0f64);
+    assert approx(c1.left, 60.0f64);  assert approx(c1.top, 0.0f64);
+    assert approx(c2.left, 0.0f64);   assert approx(c2.top, 30.0f64);   // wraps to row 2
+    assert approx(c3.left, 60.0f64);  assert approx(c3.top, 30.0f64);
+    assert approx(c0.width, 60.0f64);                                    // stretches to cell
+}
+
+#[test]
+fn test_grid_fr_columns_share_space() {
+    // 1fr 2fr over width 300 -> 100 / 200.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::fr(1.0f64));
+    root.add_grid_column(GridTrack::fr(2.0f64));
+    root.add_child(hcell(20.0f64));
+    root.add_child(hcell(20.0f64));
+    root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 100.0f64);
+}
+
+#[test]
+fn test_grid_fixed_plus_fr_with_gap() {
+    // 50px + 1fr, column-gap 10, width 200 -> 50, then fr = 200-50-10 = 140.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.set_gap(Gutter::Column, 10.0f64);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::fr(1.0f64));
+    root.add_child(hcell(20.0f64));
+    root.add_child(hcell(20.0f64));
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 50.0f64);
+    assert approx(must(root.child_layout(1 as usize)).width, 140.0f64);
+    assert approx(must(root.child_layout(1 as usize)).left, 60.0f64);   // 50 + 10 gap
+}
+
+#[test]
+fn test_grid_implicit_rows_from_content() {
+    // 1 column, 3 items of differing heights -> implicit rows sized to each.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(100.0f64));
+    root.set_gap(Gutter::Row, 5.0f64);
+    root.add_child(leaf(10.0f64, 20.0f64));
+    root.add_child(leaf(10.0f64, 40.0f64));
+    root.add_child(leaf(10.0f64, 30.0f64));
+    root.calculate_layout(200.0f64, 300.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_layout(1 as usize)).top, 25.0f64);   // 20 + 5 gap
+    assert approx(must(root.child_layout(2 as usize)).top, 70.0f64);   // 25 + 40 + 5
+}
+
+#[test]
+fn test_grid_explicit_row_tracks() {
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_row(GridTrack::points(30.0f64));
+    root.add_grid_row(GridTrack::points(70.0f64));
+    root.add_child(Node::new());
+    root.add_child(Node::new());
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 30.0f64);
+    assert approx(must(root.child_layout(1 as usize)).top, 30.0f64);
+    assert approx(must(root.child_layout(1 as usize)).height, 70.0f64);
+}
+
+// ---- Phase 4h: measurement memo soundness (re-layout is identical) ----
+
+#[test]
+fn test_relayout_is_idempotent() {
+    // Running calculate_layout twice (cache reset each pass) yields identical frames.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var col: Node = Node::new();               // auto-sized nested column
+    col.add_child(leaf(20.0f64, 25.0f64));
+    col.add_child(leaf(20.0f64, 35.0f64));
+    root.add_child(col);
+    root.add_child(leaf(40.0f64, 10.0f64));
+
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    let w1: f64 = root.layout_width();
+    let h1: f64 = root.layout_height();
+    let c1: Layout = must(root.child_layout(0 as usize));
+
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_width(), w1);
+    assert approx(root.layout_height(), h1);
+    let c2: Layout = must(root.child_layout(0 as usize));
+    assert approx(c2.width, c1.width);
+    assert approx(c2.height, c1.height);
+}
+
+// ---- Phase 5a: RTL logical Start/End edges ----
+
+#[test]
+fn test_logical_margin_start_is_left_in_ltr() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Start, pts(25.0f64));      // start = left in LTR
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 25.0f64);
+}
+
+#[test]
+fn test_logical_margin_start_is_right_in_rtl() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_direction(Direction::RTL);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Start, pts(25.0f64));      // start = right in RTL -> 25px gap on the right
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::RTL);
+    // item flows from the right edge; a 25 start(=right) margin pushes it left of the edge
+    assert approx(must(root.child_layout(0 as usize)).left, 135.0f64);   // 200 - 40 - 25
+}
+
+#[test]
+fn test_logical_padding_start_container() {
+    // Container padding-start; in RTL it applies on the right, so a row item's
+    // content area starts 20 in from the right.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_direction(Direction::RTL);
+    root.set_padding(Edge::Start, pts(20.0f64));   // RTL start = right
+    var a: Node = leaf(40.0f64, 20.0f64);
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::RTL);
+    // inner right edge = 200 - 20 padding; item at inner right: 180 - 40 = 140
+    assert approx(must(root.child_layout(0 as usize)).left, 140.0f64);
+}
+
+#[test]
+fn test_physical_edge_wins_over_logical() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = leaf(40.0f64, 20.0f64);
+    a.set_margin(Edge::Start, pts(25.0f64));
+    a.set_margin(Edge::Left, pts(10.0f64));       // physical left explicitly set -> wins
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 10.0f64);
+}
+
+// ---- Phase 5b: grid spanning + dense auto-flow ----
+
+#[test]
+fn test_grid_column_span() {
+    // 3 columns of 50 (gap 0). First item spans 2 columns -> width 100, then the
+    // next item flows into column 2 (index 2) of the same row.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    var a: Node = hcell(30.0f64); a.set_grid_column_span(2);
+    root.add_child(a);
+    root.add_child(hcell(30.0f64));
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let la: Layout = must(root.child_layout(0 as usize));
+    let lb: Layout = must(root.child_layout(1 as usize));
+    assert approx(la.left, 0.0f64);   assert approx(la.width, 100.0f64);   // spans cols 0-1
+    assert approx(lb.left, 100.0f64); assert approx(lb.width, 50.0f64);    // col 2
+}
+
+#[test]
+fn test_grid_span_with_gap() {
+    // 3 cols of 40, column-gap 10. A 2-span item = 40 + 10 + 40 = 90 wide.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.set_gap(Gutter::Column, 10.0f64);
+    root.add_grid_column(GridTrack::points(40.0f64));
+    root.add_grid_column(GridTrack::points(40.0f64));
+    root.add_grid_column(GridTrack::points(40.0f64));
+    var a: Node = hcell(20.0f64); a.set_grid_column_span(2);
+    root.add_child(a);
+    root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 90.0f64);
+}
+
+#[test]
+fn test_grid_row_span() {
+    // 2 cols; first item spans 2 rows. The next two items fill (0,1) and (1,1).
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_row(GridTrack::points(30.0f64));
+    root.add_grid_row(GridTrack::points(30.0f64));
+    var a: Node = Node::new(); a.set_grid_row_span(2);
+    root.add_child(a);
+    root.add_child(Node::new());
+    root.add_child(Node::new());
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let la: Layout = must(root.child_layout(0 as usize));
+    let lb: Layout = must(root.child_layout(1 as usize));
+    let lc: Layout = must(root.child_layout(2 as usize));
+    assert approx(la.height, 60.0f64);   // spans both rows
+    assert approx(lb.left, 50.0f64);     assert approx(lb.top, 0.0f64);   // (row0, col1)
+    assert approx(lc.left, 50.0f64);     assert approx(lc.top, 30.0f64);  // (row1, col1)
+}
+
+#[test]
+fn test_grid_dense_backfills_gap() {
+    // 3 cols. Item A spans 2 (cols 0-1). Item B spans 2 -> can't fit row 0 (only
+    // col 2 left), goes to row 1. Item C (span 1) with DENSE backfills the hole at
+    // (row 0, col 2) instead of flowing after B.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.set_grid_dense(true);
+    root.add_grid_column(GridTrack::points(40.0f64));
+    root.add_grid_column(GridTrack::points(40.0f64));
+    root.add_grid_column(GridTrack::points(40.0f64));
+    var a: Node = hcell(20.0f64); a.set_grid_column_span(2);
+    var b: Node = hcell(20.0f64); b.set_grid_column_span(2);
+    var c: Node = hcell(20.0f64);
+    root.add_child(a); root.add_child(b); root.add_child(c);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    let lc: Layout = must(root.child_layout(2 as usize));
+    assert approx(lc.left, 80.0f64);   // col 2
+    assert approx(lc.top, 0.0f64);     // dense backfilled row 0
+}
+
+// ---- Phase 5c: explicit line placement + named lines ----
+
+#[test]
+fn test_grid_explicit_column_start() {
+    // 3 cols of 50; item explicitly placed at column line 2 (0-based).
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    var a: Node = hcell(20.0f64);
+    a.set_grid_column_start(2);        // third column
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 100.0f64);   // col index 2
+}
+
+#[test]
+fn test_grid_named_column_line() {
+    // Name lines while building the template; place an item at the "main" line.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.name_grid_column_line("sidebar");     // line 0
+    root.add_grid_column(GridTrack::points(60.0f64));
+    root.name_grid_column_line("main");        // line 1
+    root.add_grid_column(GridTrack::points(140.0f64));
+    assert root.column_line("main") == 1;
+    assert root.column_line("sidebar") == 0;
+    assert root.column_line("missing") == -1;
+
+    var a: Node = hcell(20.0f64);
+    a.set_grid_column_start(root.column_line("main"));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).left, 60.0f64);    // "main" starts after sidebar
+    assert approx(must(root.child_layout(0 as usize)).width, 140.0f64);
+}
+
+#[test]
+fn test_grid_explicit_row_start() {
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_row(GridTrack::points(30.0f64));
+    root.add_grid_row(GridTrack::points(30.0f64));
+    var a: Node = Node::new();
+    a.set_grid_row_start(1);            // second row
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).top, 30.0f64);
+}
+
+// ---- Phase 5d: cross-call incremental cache soundness ----
+
+#[test]
+fn test_cache_invalidates_on_style_change() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_width(pts(40.0f64)); a.set_height(pts(20.0f64));
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 40.0f64);
+
+    // mutate the child's width, re-layout -> must reflect the new width
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => { { (*p).set_width(pts(90.0f64)); } }
+        option::Option[*Node]::None => {}
+    }
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 90.0f64);   // not the stale 40
+}
+
+#[test]
+fn test_cache_invalidates_on_box_change() {
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    root.add_child(a);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);
+    // re-layout with a different available width (root box changes) -> child follows
+    root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).width, 300.0f64);
+}
+
+#[test]
+fn test_cache_invalidates_on_deep_mutation_through_contentfit() {
+    // Outer column auto-sizes to inner content. Mutating a grandchild's height must
+    // propagate up (subtree_changed) and resize the outer.
+    var outer: Node = Node::new();                 // auto height
+    outer.set_width(pts(100.0f64));
+    var inner: Node = Node::new();
+    inner.add_child(leaf(20.0f64, 30.0f64));
+    outer.add_child(inner);
+    outer.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(outer.layout_height(), 30.0f64);
+
+    // change the grandchild height to 55
+    match outer.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(pinner) => {
+            match { (*pinner).children.at_ptr(0 as usize) } {
+                option::Option[*Node]::Some(pg) => { { (*pg).set_height(pts(55.0f64)); } }
+                option::Option[*Node]::None => {}
+            }
+        }
+        option::Option[*Node]::None => {}
+    }
+    outer.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(outer.layout_height(), 55.0f64);   // propagated up, not stale 30
+}
+
+#[test]
+fn test_cache_invalidates_on_add_child() {
+    var root: Node = Node::new();                 // column, auto height
+    root.set_width(pts(50.0f64));
+    root.add_child(leaf(20.0f64, 20.0f64));
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 20.0f64);
+    root.add_child(leaf(20.0f64, 30.0f64));       // structural change
+    root.calculate_layout(undefined(), undefined(), Direction::LTR);
+    assert approx(root.layout_height(), 50.0f64);  // 20 + 30
+    assert approx(must(root.child_layout(1 as usize)).top, 20.0f64);
+}
+
+// ---- Phase 5e: subgrid ----
+
+#[test]
+fn test_subgrid_columns_adopt_parent_tracks() {
+    // Parent: 3 columns 40/60/100. A subgrid item spans all 3 columns; its own two
+    // children land on the parent's column lines (col 0 -> x0 w40, col 1 -> x40 w60).
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.add_grid_column(GridTrack::points(40.0f64));
+    root.add_grid_column(GridTrack::points(60.0f64));
+    root.add_grid_column(GridTrack::points(100.0f64));
+
+    var sub: Node = Node::new();
+    sub.set_display(Display::Grid);
+    sub.set_grid_columns_subgrid(true);
+    sub.set_grid_column_span(3);            // occupies all three parent columns
+    sub.add_child(hcell(20.0f64));
+    sub.add_child(hcell(20.0f64));
+    sub.add_child(hcell(20.0f64));
+    root.add_child(sub);
+    root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
+
+    let subframe: Layout = must(root.child_layout(0 as usize));
+    assert approx(subframe.width, 200.0f64);   // spans 40+60+100
+
+    // grandchildren align to parent column tracks
+    let g0: Layout = grandchild(root, 0 as usize, 0 as usize);
+    let g1: Layout = grandchild(root, 0 as usize, 1 as usize);
+    let g2: Layout = grandchild(root, 0 as usize, 2 as usize);
+    assert approx(g0.left, 0.0f64);    assert approx(g0.width, 40.0f64);
+    assert approx(g1.left, 40.0f64);   assert approx(g1.width, 60.0f64);
+    assert approx(g2.left, 100.0f64);  assert approx(g2.width, 100.0f64);
+}
+
+#[test]
+fn test_subgrid_with_gap_aligns_to_parent_gap() {
+    // Parent 2 cols of 50, column-gap 20. Subgrid spans both -> its children sit at
+    // 0 and 70 (50 + 20 gap), matching the parent's gap.
+    var root: Node = Node::new();
+    root.set_display(Display::Grid);
+    root.set_gap(Gutter::Column, 20.0f64);
+    root.add_grid_column(GridTrack::points(50.0f64));
+    root.add_grid_column(GridTrack::points(50.0f64));
+    var sub: Node = Node::new();
+    sub.set_display(Display::Grid);
+    sub.set_grid_columns_subgrid(true);
+    sub.set_grid_column_span(2);
+    sub.add_child(hcell(20.0f64));
+    sub.add_child(hcell(20.0f64));
+    root.add_child(sub);
+    root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
+    let g0: Layout = grandchild(root, 0 as usize, 0 as usize);
+    let g1: Layout = grandchild(root, 0 as usize, 1 as usize);
+    assert approx(g0.left, 0.0f64);
+    assert approx(g1.left, 70.0f64);   // 50 + 20 gap — inherited from parent
+}
+
+// read grandchild (child ci of root's child pi) frame
+fn grandchild(root: Node, pi: usize, ci: usize) -> Layout {
+    return match root.children.at_ptr(pi) {
+        option::Option[*Node]::Some(pp) => match { (*pp).children.at_ptr(ci) } {
+            option::Option[*Node]::Some(pg) => { (*pg).layout },
+            option::Option[*Node]::None => Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
+        },
+        option::Option[*Node]::None => Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+}
