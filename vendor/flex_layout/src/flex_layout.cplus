@@ -651,18 +651,18 @@ impl Node {
     // Lay this node out in `box` under direction `dir`, OR skip when the subtree is
     // unchanged and the box+direction match the last pass (frames stay valid). On a
     // real layout, snapshot the cache for next time.
-    fn apply_layout(ref this, box: Layout, dir: Direction) {
+    fn apply_layout(ref this, frame: Layout, dir: Direction) {
         if this.cached_valid && !this.subtree_changed
-            && layout_eq(this.cached_box, box) && dir_eq(this.cached_dir, dir) {
-            this.layout = box;   // identical to cached; descendant frames unchanged
+            && layout_eq(this.cached_box, frame) && dir_eq(this.cached_dir, dir) {
+            this.layout = frame;   // identical to cached; descendant frames unchanged
             return;
         }
-        this.layout = box;
+        this.layout = frame;
         this.rdir = dir;
         this.layout_children();
         this.cached_valid = true;
         this.cached_style = this.style;
-        this.cached_box = box;
+        this.cached_box = frame;
         this.cached_dir = dir;
         this.cached_child_count = this.children.count();
         this.cached_grid_sig = this.grid_sig();
@@ -1966,6 +1966,63 @@ fn justify_gap(j: Justify, remaining: f64, count: f64) -> f64 {
 // Nothing material remains: this covers the CSS Flexbox spec and the common CSS
 // Grid Level 1/2 path (tracks, fr/auto, spanning, dense, explicit + named
 // placement, subgrid, gaps). Further work would be esoteric edge polish only.
+
+// ==========================================================================
+// @flex DSL — contextual builder block (import this package as `flex`)
+// ==========================================================================
+// The whole DSL is this small because C+'s `@name { }` is compiler-owned: it only
+// needs a `Builder` (new/add/finish), container functions, leaf constructors, and
+// modifiers-as-methods. Everything delegates to the engine above; the existing
+// `set_*` setters already work as modifiers, so only a few short aliases are added.
+//
+//   import "flex_layout/flex_layout" as flex;
+//   var ui: flex::Node = @flex {                 // the block is a column
+//       row {                                    // a nested row container
+//           box().width(200.0)                   // sidebar
+//           box().grow(1.0).padding(8.0)         // content fills the rest
+//       }
+//   };
+//   ui.calculate_layout(1024.0f64, 768.0f64, flex::Direction::LTR);
+//
+// `if` / `for` work as Flutter-style collection flow control inside the block.
+
+struct Builder {
+    node: Node,
+}
+impl Builder {
+    fn new() -> Builder { return Builder { node: Node::new() }; }
+    fn add(ref this, take item: Node) { this.node.add_child(item); return; }
+    fn finish(take this) -> Node { let Builder { node } = this; return node; }
+}
+
+// Containers — a bare `row { ... }` / `column { ... }` inside a `@flex` block.
+fn column(take b: Builder) -> Node { let Builder { node } = b; return node; }   // default axis
+fn row(take b: Builder) -> Node {
+    let Builder { node } = b;
+    var n: Node = node;
+    n.set_flex_direction(FlexDirection::Row);
+    return n;
+}
+// Leaf — an empty node; give it size / flex / content (measure) via modifiers.
+fn box() -> Node { return Node::new(); }
+
+// Ergonomic modifiers — fluent (`take this -> Node`), so they chain on one line:
+//   box().width(200.0).grow(1.0).padding(8.0)
+// The full `set_*` setters remain for non-DSL use.
+impl Node {
+    fn grow(take this, v: f64) -> Node { var n: Node = this; n.style.flex_grow = v; return n; }
+    fn shrink(take this, v: f64) -> Node { var n: Node = this; n.style.flex_shrink = v; return n; }
+    fn width(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::points(v); return n; }
+    fn height(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::points(v); return n; }
+    fn width_pct(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::percent(v); return n; }
+    fn height_pct(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::percent(v); return n; }
+    fn padding(take this, v: f64) -> Node { var n: Node = this; n.set_padding(Edge::All, StyleLength::points(v)); return n; }
+    fn margin(take this, v: f64) -> Node { var n: Node = this; n.set_margin(Edge::All, StyleLength::points(v)); return n; }
+    fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, v); return n; }
+    fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
+    fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
+    fn wrap(take this, v: Wrap) -> Node { var n: Node = this; n.style.flex_wrap = v; return n; }
+}
 
 // ==========================================================================
 // Tests
