@@ -1,4 +1,7 @@
 {
-  "_comment": "cpc-bindgen naming overrides for AppKit. Add `types` / `methods` / `skip` entries to refine the mechanical snake_case names.",
-  "methods": {}
+  "_comment": "cpc-bindgen naming overrides for AppKit. `types`/`methods` refine snake_case names; `skip` drops selectors that can't be bound safely. NSUserActivity -init is API_DEPRECATED/obsoleted (macOS 10.12) and throws NSInvalidArgumentException at runtime with no static signal, so it is skipped — initWithActivityType: becomes the primary new(activity_type).",
+  "methods": {},
+  "skip": {
+    "NSUserActivity": ["init"]
+  }
 }

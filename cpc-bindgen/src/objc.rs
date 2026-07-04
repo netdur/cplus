@@ -107,6 +107,35 @@ pub struct ObjcEmitter {
     // Delegate-arg collection bridge helpers (`cplus_darg_arr_text` ...) emitted in
     // this module. Deduped module-wide, shared across protocols.
     emitted_bridges: HashSet<String>,
+    // ObjC class -> its direct superclass name (`NSButton` -> `NSControl`), read
+    // from each `ObjCInterfaceDecl`'s `super` field. Drives the typed upcast
+    // (`as_view`/`as_control`/`as_responder`): every bound ancestor of a class gets
+    // an `as_<ancestor>(this) -> Ancestor` method, so a `TextField` reaches the whole
+    // `NSView` surface without an unsafe `View::from_raw(x.raw())` reinterpret.
+    superclasses: HashMap<String, String>,
+    // ObjC class -> its own `initWithFrame:` method decl, for classes that declare
+    // one (`NSView`, `NSControl`, …). A non-owning subclass (`NSStackView`/`NSBox`/
+    // `NSButton` — no init of its own) inherits this: it supplies the frame param type
+    // for a synthesized `new_with_frame(rect)`.
+    class_frame_init: HashMap<String, serde_json::Value>,
+    // ObjC classes that declare ANY initializer of their own (`init`/`initWith*`) —
+    // i.e. the owning classes. A non-owning subclass whose chain reaches one of these
+    // is CONSTRUCTIBLE: it gets a synthesized no-arg `new()` (bare `-init`), so a
+    // widget (`NSStackView`) or a gesture recognizer (`NSClickGestureRecognizer`,
+    // whose owning ancestor declares `initWithTarget:action:` — not a view) can be
+    // built without a raw `rt::alloc_init` + `from_raw`. Broader than `class_frame_init`
+    // (which is view-only); this is the general "has an owning-init ancestor" signal.
+    class_has_init: HashSet<String>,
+    // Classes for which a synthesized bare `new()` (via `-init`) is UNSAFE, so it is
+    // suppressed even when the chain is otherwise constructible:
+    //  - SINGLETONS (`NSApplication`: a `shared*` class accessor) — `[[NSApplication
+    //    alloc] init]` ABORTS at runtime ("more than one Application"). The one real
+    //    crash found by testing `-init` across every candidate class.
+    //  - `-init NS_UNAVAILABLE` classes (`NSTouchBarItem`: designated init is
+    //    `initWithIdentifier:`) — `-init` doesn't crash but yields a broken, identifier-
+    //    less object; Apple marks it unavailable, so honor that.
+    // Checked over self + the ancestor chain (a subclass inherits the hazard).
+    class_no_bare_init: HashSet<String>,
 }
 
 // A delegate-callback return kind: how the value-returning IMP is shaped.
@@ -371,6 +400,10 @@ impl ObjcEmitter {
             used_struct_shapes: HashSet::new(),
             emitted_addmethod: HashSet::new(),
             emitted_bridges: HashSet::new(),
+            superclasses: HashMap::new(),
+            class_frame_init: HashMap::new(),
+            class_has_init: HashSet::new(),
+            class_no_bare_init: HashSet::new(),
         }
     }
 
@@ -511,6 +544,17 @@ impl ObjcEmitter {
             {
                 continue;
             }
+            // Record the superclass link for EVERY interface clang emitted — home or
+            // not, before the home/included filters below — so the ancestor chain
+            // stays walkable even through an intermediate class we don't bind.
+            if kind == Some("ObjCInterfaceDecl") {
+                if let (Some(name), Some(sup)) = (
+                    decl.get("name").and_then(|v| v.as_str()),
+                    decl.get("super").and_then(|s| s.get("name")).and_then(|v| v.as_str()),
+                ) {
+                    self.superclasses.entry(name.to_string()).or_insert_with(|| sup.to_string());
+                }
+            }
             if !self.merge && decl.get("loc").map(loc_included).unwrap_or(false) {
                 continue;
             }
@@ -606,6 +650,48 @@ impl ObjcEmitter {
                 let ty = self.cplus_type_name(pname);
                 self.known_types.insert(ty.clone());
                 self.non_owning_types.insert(ty);
+            }
+        }
+        // Record, BEFORE any body emits (so a subclass emitted before its ancestor
+        // still resolves): every class's own `initWithFrame:` decl (for a synthesized
+        // `new_with_frame`), and which classes declare ANY init (the owning classes a
+        // non-owning subclass can inherit a bare `new()` from).
+        for itf in &deduped {
+            let cls = itf.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let cats: &[serde_json::Value] =
+                categories.get(cls).map(|v| v.as_slice()).unwrap_or(&[]);
+            for m in std::iter::once(itf).chain(cats.iter()).flat_map(|src| {
+                src.get("inner").and_then(|v| v.as_array()).into_iter().flatten()
+            }) {
+                if m.get("kind").and_then(|k| k.as_str()) != Some("ObjCMethodDecl") {
+                    continue;
+                }
+                let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                // A `shared*` CLASS accessor (`+sharedApplication`) marks a singleton:
+                // suppress a synthesized `new()` (its `-init` aborts at runtime).
+                if m.get("instance") == Some(&serde_json::Value::Bool(false))
+                    && name.starts_with("shared")
+                {
+                    self.class_no_bare_init.insert(cls.to_string());
+                }
+                match name {
+                    "initWithFrame:" => {
+                        self.class_frame_init.entry(cls.to_string()).or_insert_with(|| m.clone());
+                        self.class_has_init.insert(cls.to_string());
+                    }
+                    "init" => {
+                        self.class_has_init.insert(cls.to_string());
+                        // `- init NS_UNAVAILABLE;`: the class demands a designated init,
+                        // so a synthesized bare `new()` is wrong for its subclasses.
+                        if method_marks_unavailable(m) {
+                            self.class_no_bare_init.insert(cls.to_string());
+                        }
+                    }
+                    sel if sel.starts_with("initWith") => {
+                        self.class_has_init.insert(cls.to_string());
+                    }
+                    _ => {}
+                }
             }
         }
         for itf in &deduped {
@@ -1191,6 +1277,16 @@ impl ObjcEmitter {
             self.seen_methods.insert("drop".to_string());
         }
 
+        // Typed upcast: one `as_<ancestor>(this) -> Ancestor` per bound superclass, so
+        // a concrete subclass reaches its inherited surface (`NSView`'s layout API,
+        // `NSResponder`'s events) without an unsafe `View::from_raw(x.raw())`
+        // reinterpret. The upcast goes THROUGH the ancestor's `from_raw` so it obeys
+        // the same ownership rule as any other handle: an owning ancestor retains
+        // (the returned wrapper is +1 and releases on drop), a non-owning one wraps
+        // bare (a plain typed borrow). Names are reserved before the real methods are
+        // planned so a (vanishingly rare) real `asView`-style selector can't collide.
+        self.emit_upcasts(&objc_name, &ty);
+
         // Every `init`/`initWith*` becomes a named constructor. The primary — the
         // no-arg `init` if the class has one, else the first init in AST order —
         // keeps the plain `new` name; each further variant is `new_with_<selector>`
@@ -1199,11 +1295,28 @@ impl ObjcEmitter {
         // no-arg `init` then collided on `new` and was DROPPED ("extra constructor").
         // Making `new` the no-arg constructor recovers it (and reads correctly —
         // `Foo::new()` is the empty init, `Foo::new_with_frame(f)` the parameterized).
+        // Init selectors that bind as a constructor: init-family, NOT `NS_UNAVAILABLE`
+        // (dynamic dispatch ignores the annotation, so `-init` aborts/breaks at
+        // runtime — `NSApplication`/`NSDataAsset`), and NOT curated-skipped in the
+        // overrides (`NSUserActivity`'s deprecated-obsoleted `-init`, a runtime throw
+        // with no static signal). Precomputed as an owned set so it survives the later
+        // mutable borrow of `self`. A skipped/unavailable init never claims `new`, is
+        // never reserved, and is never emitted — the next usable init becomes primary.
+        let bindable_inits: HashSet<String> = methods
+            .iter()
+            .filter_map(|m| m.get("name").and_then(|v| v.as_str()).map(|s| (s, m)))
+            .filter(|(s, m)| {
+                (*s == "init" || s.starts_with("initWith"))
+                    && !method_marks_unavailable(m)
+                    && !self.is_skipped(&objc_name, s)
+            })
+            .map(|(s, _)| s.to_string())
+            .collect();
         let primary_init: Option<String> = {
             let inits: Vec<&str> = methods
                 .iter()
                 .filter_map(|m| m.get("name").and_then(|v| v.as_str()))
-                .filter(|s| *s == "init" || s.starts_with("initWith"))
+                .filter(|s| bindable_inits.contains(*s))
                 .collect();
             inits.iter().find(|s| **s == "init").or_else(|| inits.first()).map(|s| s.to_string())
         };
@@ -1217,20 +1330,33 @@ impl ObjcEmitter {
         }
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if sel == "init" || sel.starts_with("initWith") {
-                if primary_init.as_deref() == Some(sel) {
-                    reserved.insert("new".to_string());
-                } else {
-                    reserved.insert(ctor_name(sel));
-                }
+            if !bindable_inits.contains(sel) {
+                continue;
+            }
+            if primary_init.as_deref() == Some(sel) {
+                reserved.insert("new".to_string());
+            } else {
+                reserved.insert(ctor_name(sel));
             }
         }
         self.method_plan = plan_method_names(&methods, &reserved);
 
         for m in &methods {
             let sel = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let is_init = sel == "init" || sel.starts_with("initWith");
-            let ctor: Option<String> = if is_init {
+            let is_init_family = sel == "init" || sel.starts_with("initWith");
+            // An init that doesn't bind as a constructor (`NS_UNAVAILABLE` or a curated
+            // overrides skip) would abort / throw / return a broken object at runtime —
+            // note it and move on, so it never becomes a callable `new()`.
+            if is_init_family && !bindable_inits.contains(&sel) {
+                let why = if method_marks_unavailable(&m) {
+                    "`NS_UNAVAILABLE` init, not a constructor"
+                } else {
+                    "init not bound (curated overrides skip)"
+                };
+                self.body.push_str(&format!("    // SKIPPED `{sel}`: {why}\n"));
+                continue;
+            }
+            let ctor: Option<String> = if is_init_family {
                 if primary_init.as_deref() == Some(sel.as_str()) {
                     Some("new".to_string())
                 } else {
@@ -1239,7 +1365,32 @@ impl ObjcEmitter {
             } else {
                 None
             };
-            self.emit_method(m, &objc_name, &ty, is_init, owned, ctor.as_deref());
+            self.emit_method(m, &objc_name, &ty, is_init_family, owned, ctor.as_deref());
+        }
+
+        // A non-owning subclass of a real owning class inherits a constructor. Two
+        // families: a VIEW subclass (`NSStackView`/`NSBox`/`NSButton` under `NSView`)
+        // and a non-view owning-object subclass (`NSClickGestureRecognizer` under
+        // `NSGestureRecognizer`, whose designated init is `initWithTarget:action:`).
+        // Both get a synthesized no-arg `new()` (bare `-init` — runtime-verified to
+        // work for both); a view subclass additionally gets `new_with_frame(rect)`.
+        // Gated on an ancestor declaring an init, so it never fires for a plain
+        // factory/singleton (chain reaches only NSObject). Emitted +0 (autoreleased)
+        // via the non-owning init path, so the widget/recognizer builds without a raw
+        // `rt::alloc_init` + `from_raw` and no ownership reclassification is needed.
+        if !owned && self.has_init_ancestor(&objc_name) && !self.bare_new_forbidden(&objc_name) {
+            // `-init` is not declared on any home interface (it lives on NSObject), so
+            // synthesize a minimal decl for the shared init emit path.
+            let init_decl = serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": "init", "instance": true,
+                "returnType": { "qualType": "instancetype" }, "inner": []
+            });
+            self.emit_method(&init_decl, &objc_name, &ty, true, false, Some("new"));
+            // `new_with_frame(rect)` — the ancestor's actual `initWithFrame:` decl (view
+            // subclasses only), so the frame param type (NSRect/CGRect -> rt::Rect) is exact.
+            if let Some(frame_init) = self.nearest_frame_init(&objc_name) {
+                self.emit_method(&frame_init, &objc_name, &ty, true, false, Some("new_with_frame"));
+            }
         }
 
         if has_action {
@@ -1250,6 +1401,104 @@ impl ObjcEmitter {
             self.body.push_str("    fn drop(ref this) {\n        rt::release(this._obj);\n    }\n");
         }
         self.body.push_str("}\n\n");
+    }
+
+    // The nearest ancestor's `initWithFrame:` decl, walking the `super` chain — the
+    // signal that `objc_name` is a view (and the source of the frame param type for a
+    // synthesized `new_with_frame`). None for a non-view class. Starts at the direct
+    // superclass: a class that declares its own `initWithFrame:` is owning and emits
+    // that constructor through the normal path, so it never reaches here.
+    fn nearest_frame_init(&self, objc_name: &str) -> Option<serde_json::Value> {
+        let mut cur = self.superclasses.get(objc_name).cloned();
+        let mut depth = 0;
+        while let Some(anc) = cur {
+            depth += 1;
+            if depth > 32 {
+                break;
+            }
+            if let Some(fi) = self.class_frame_init.get(&anc) {
+                return Some(fi.clone());
+            }
+            cur = self.superclasses.get(&anc).cloned();
+        }
+        None
+    }
+
+    // Whether an ancestor of `objc_name` declares an initializer — i.e. `objc_name`
+    // is a non-owning subclass of a real owning class (`NSStackView`/`NSButton` under
+    // `NSView`, `NSClickGestureRecognizer` under `NSGestureRecognizer`), so a bare
+    // `new()` (via `-init`) is meaningful. A class whose chain reaches only NSObject
+    // (not a home interface, no declared init) is factory/singleton — not constructible.
+    fn has_init_ancestor(&self, objc_name: &str) -> bool {
+        let mut cur = self.superclasses.get(objc_name).cloned();
+        let mut depth = 0;
+        while let Some(anc) = cur {
+            depth += 1;
+            if depth > 32 {
+                break;
+            }
+            if self.class_has_init.contains(&anc) {
+                return true;
+            }
+            cur = self.superclasses.get(&anc).cloned();
+        }
+        false
+    }
+
+    // Whether a synthesized bare `new()` is unsafe for `objc_name` — a singleton
+    // (`NSApplication`) or an `-init NS_UNAVAILABLE` class (`NSTouchBarItem`) anywhere
+    // on self + the ancestor chain (a subclass inherits the hazard).
+    fn bare_new_forbidden(&self, objc_name: &str) -> bool {
+        let mut cur = Some(objc_name.to_string());
+        let mut depth = 0;
+        while let Some(c) = cur {
+            depth += 1;
+            if depth > 33 {
+                break;
+            }
+            if self.class_no_bare_init.contains(&c) {
+                return true;
+            }
+            cur = self.superclasses.get(&c).cloned();
+        }
+        false
+    }
+
+    // Emit `as_<ancestor>(this) -> Ancestor` for each bound superclass of `objc_name`,
+    // walking the `super` chain. The upcast reinterprets the same object as its parent
+    // type THROUGH the parent's `from_raw`, so ownership stays coherent: an owning
+    // parent retains (the returned +1 wrapper releases on drop, balancing the retain),
+    // a non-owning parent wraps bare. Only same-module bound classes are targets — a
+    // foreign (cross-package) or unbound ancestor is skipped (the chain walks past it).
+    fn emit_upcasts(&mut self, objc_name: &str, ty: &str) {
+        // Walk up from the direct superclass; cap the depth as a cycle backstop
+        // (ObjC single inheritance can't cycle, but a malformed AST shouldn't hang).
+        let mut cur = self.superclasses.get(objc_name).cloned();
+        let mut depth = 0;
+        while let Some(anc) = cur {
+            depth += 1;
+            if depth > 32 {
+                break;
+            }
+            cur = self.superclasses.get(&anc).cloned();
+            if self.is_foreign(&anc) {
+                continue;
+            }
+            let anc_ty = self.cplus_type_name(&anc);
+            // Only upcast to a class we actually bind a wrapper (with `from_raw`) for,
+            // and never to self (`ty`) — and don't shadow a real selector's method.
+            if anc_ty == ty || !self.known_types.contains(&anc_ty) {
+                continue;
+            }
+            let m = format!("as_{}", snake(&anc_ty));
+            if !self.seen_methods.insert(m.clone()) {
+                continue;
+            }
+            self.body.push_str(&format!(
+                "    // Upcast to `{anc}` (superclass). Safe typed reinterpret.\n\
+                 \x20   fn {m}(this) -> {anc_ty} {{ return {anc_ty}::from_raw(this._obj); }}\n\n"
+            ));
+        }
     }
 
     // A non-delegate protocol (an object the user CALLS — MTLDevice, MTLBuffer,
@@ -1836,19 +2085,6 @@ impl ObjcEmitter {
         let sig_param = sig_parts.join(", ");
 
         // Constructors: alloc + send the init selector, wrap in Self.
-        // A param whose value is built by the general-path prologue (arr_<pname> /
-        // dict_<pname>). The returns-self and collection-return paths don't build it,
-        // so pairing one with such a param would dangle -> skip those combos.
-        let has_collection_param = args.iter().any(|a| {
-            matches!(
-                a,
-                Arg::IdArray { .. }
-                    | Arg::DictMap { .. }
-                    | Arg::TextSetParam { .. }
-                    | Arg::ObjectSetParam { .. }
-                    | Arg::NumberArrayParam { .. }
-            )
-        });
         if is_init {
             let send = self.send_expr("alloced", &sel, &Ret::Object(None), &args);
             let send = match send {
@@ -1867,8 +2103,15 @@ impl ObjcEmitter {
             // An `initWith…:` taking an NSArray<id> param builds the NSMutableArray
             // between alloc and init (same borrow-read prologue as the general path).
             let prologue = build_id_array_prologue(&args);
+            // An init produces a +1 object. An OWNING wrapper keeps it (its `drop`
+            // releases the +1). A NON-owning wrapper has no `drop`, so a +1 would
+            // leak — the only non-owning inits are the INHERITED `new`/`new_with_frame`
+            // synthesized for view subclasses (`NSStackView`/`NSBox`/`NSButton`), so
+            // autorelease the +1 to hand back a +0 (pool-owned) handle, consistent
+            // with the class's +0 factories (`label_with_string`, `button_with_title`).
+            let handle = if owned { send } else { format!("rt::autorelease({send})") };
             self.body.push_str(&format!(
-                "    fn {ctor}({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n{prologue}        return {ty} {{ _obj: {send} }};\n    }}\n\n"
+                "    fn {ctor}({header}) -> {ty} {{\n        let cls: *u8 = rt::get_class(#str_ptr(\"{objc_class}\\0\"));\n        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr(\"alloc\\0\")));\n{prologue}        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
             ));
             return;
         }
@@ -1904,11 +2147,16 @@ impl ObjcEmitter {
         // we `retain` it to balance `drop`.
         let (ret_base, ret_nullable) = strip_nullability(ret_qt);
         let returns_self = !is_instance
-            && !has_collection_param // the prologue is built only in the general path
             && matches!(ret, Ret::Object(_) | Ret::ObjectOption(_))
             && (ret_base.trim() == "instancetype" || ret_base.trim() == format!("{objc_class} *"));
         if returns_self {
             if let Some(send) = self.send_expr(&recv, &sel, &Ret::Object(None), &args) {
+                // A factory taking a collection param (`+stackViewWithViews:`) builds
+                // the `arr_/dict_/set_<pname>` locals the `send` references first — a
+                // no-op when there is no collection param — so the typed factory
+                // return composes with a bridged collection arg (else `instancetype`
+                // degrades to a bare `*u8` on the general path, the StackView bug).
+                let prologue = build_id_array_prologue(&args);
                 // A factory returning Self hands back a +0 (autoreleased) object
                 // unless it is a +1 retaining-family / `ns_returns_retained`
                 // method (`+new`, `+copyFoo`, …). Retain a +0 so the wrapper owns
@@ -1922,12 +2170,12 @@ impl ObjcEmitter {
                         format!("{ty} {{ _obj: obj }}")
                     };
                     self.body.push_str(&format!(
-                        "    fn {name}({sig_param}) -> option::Option[{ty}] {{\n        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{ty}]::None;\n        }}\n        return option::some({wrapped});\n    }}\n\n"
+                        "    fn {name}({sig_param}) -> option::Option[{ty}] {{\n{prologue}        let obj: *u8 = {send};\n        if obj == {{ 0 as *u8 }} {{\n            return option::Option[{ty}]::None;\n        }}\n        return option::some({wrapped});\n    }}\n\n"
                     ));
                 } else {
                     let handle = if retain_self { format!("rt::retain({send})") } else { send };
                     self.body.push_str(&format!(
-                        "    fn {name}({sig_param}) -> {ty} {{\n        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
+                        "    fn {name}({sig_param}) -> {ty} {{\n{prologue}        return {ty} {{ _obj: {handle} }};\n    }}\n\n"
                     ));
                 }
                 return;
@@ -3372,6 +3620,16 @@ fn interface_is_owned(itf: &serde_json::Value, categories: &[serde_json::Value])
                 && m.get("name").and_then(|v| v.as_str())
                     .is_some_and(|sel| sel == "init" || sel.starts_with("initWith"))
         })
+    })
+}
+
+// `NS_UNAVAILABLE` / `__attribute__((unavailable))` on a method decl — clang emits
+// an `UnavailableAttr` child. Such an initializer must NOT be bound as a constructor:
+// dynamic `objc_msgSend` ignores the compile-time annotation, so calling it at runtime
+// either aborts (`NSApplication`) or yields a broken object (`NSDataAsset`).
+fn method_marks_unavailable(m: &serde_json::Value) -> bool {
+    m.get("inner").and_then(|v| v.as_array()).is_some_and(|attrs| {
+        attrs.iter().any(|a| a.get("kind").and_then(|k| k.as_str()) == Some("UnavailableAttr"))
     })
 }
 
@@ -5443,6 +5701,238 @@ mod tests {
         assert!(out.contains("fn register_class(this, cls: *u8)"), "Class<P> param -> *u8:\n{out}");
         assert!(out.contains("fn visible_items(this) -> vec::Vec[View]"), "protocol-qualified element -> Vec[View]:\n{out}");
         assert!(!out.contains("// SKIPPED `readableClass`") && !out.contains("// SKIPPED `visibleItems`"), "no skips:\n{out}");
+    }
+
+    #[test]
+    fn subclass_upcasts_to_each_bound_ancestor() {
+        // NSButton : NSControl : NSView : NSResponder. Every bound ancestor gets an
+        // `as_<ancestor>` on the subclass, walking the whole `super` chain, so a
+        // `Button` reaches `NSView`'s layout surface without an unsafe `from_raw`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSResponder", "loc": { "file": "test.h" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" },
+                  "super": { "name": "NSResponder" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "addSubview:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "v", "type": { "qualType": "NSView * _Nonnull" } }] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSControl", "loc": { "file": "test.h" },
+                  "super": { "name": "NSView" }, "inner": [] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSButton", "loc": { "file": "test.h" },
+                  "super": { "name": "NSControl" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setTitle:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "t", "type": { "qualType": "NSString * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // NSButton reaches all three ancestors, each an owning-aware `from_raw` upcast.
+        assert!(out.contains("fn as_control(this) -> Control { return Control::from_raw(this._obj); }"),
+            "Button -> as_control:\n{out}");
+        assert!(out.contains("fn as_view(this) -> View { return View::from_raw(this._obj); }"),
+            "Button -> as_view:\n{out}");
+        assert!(out.contains("fn as_responder(this) -> Responder { return Responder::from_raw(this._obj); }"),
+            "Button -> as_responder:\n{out}");
+        // NSView (owning: has init) still reaches its own bound ancestor NSResponder,
+        // and never upcasts to itself: `as_view` appears only on the two subclasses
+        // (Control, Button), never inside View's own impl.
+        assert!(out.contains("fn as_responder(this) -> Responder"), "View -> as_responder:\n{out}");
+        assert_eq!(out.matches("fn as_view(this) -> View").count(), 2, "as_view only on Control+Button, not self:\n{out}");
+    }
+
+    #[test]
+    fn upcast_skips_unbound_ancestor_and_self() {
+        // NSFoo : NSObject — NSObject is not bound in this TU, so NSFoo gets NO
+        // `as_object`, and never an `as_foo` self-upcast.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSFoo", "loc": { "file": "test.h" },
+                  "super": { "name": "NSObject" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "bar", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" }, "inner": [] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(!out.contains("fn as_object("), "no upcast to unbound NSObject:\n{out}");
+        assert!(!out.contains("fn as_foo("), "no self-upcast:\n{out}");
+    }
+
+    #[test]
+    fn non_owning_view_subclass_inherits_new_and_new_with_frame() {
+        // NSStackView : NSView. NSView declares `initWithFrame:` (owning); NSStackView
+        // declares no init of its own (non-owning). The subclass must inherit a plain
+        // `new()` and a `new_with_frame(rect)`, emitted +0 (autoreleased) so the
+        // non-owning wrapper doesn't leak — no raw `alloc_init` needed.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithFrame:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "frameRect", "type": { "qualType": "NSRect" } }] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSStackView", "loc": { "file": "test.h" },
+                  "super": { "name": "NSView" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setSpacing:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "s", "type": { "qualType": "double" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // StackView is non-owning (opaque, no drop) yet gains autoreleased ctors.
+        assert!(out.contains("struct StackView {\n    opaque _obj: *u8,"), "StackView stays non-owning:\n{out}");
+        let sv = &out[out.find("struct StackView").unwrap()..];
+        assert!(sv.contains("fn new() -> StackView"), "inherited new():\n{sv}");
+        assert!(sv.contains("fn new_with_frame(frame_rect: rt::Rect) -> StackView"), "inherited new_with_frame:\n{sv}");
+        assert!(sv.contains("rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr(\"init\\0\"))))"),
+            "new() is +0 autoreleased:\n{sv}");
+        assert!(sv.contains("rt::autorelease(rt::msg_id_rect(alloced, rt::sel(#str_ptr(\"initWithFrame:\\0\")), frame_rect))"),
+            "new_with_frame is +0 autoreleased:\n{sv}");
+    }
+
+    #[test]
+    fn non_view_class_does_not_inherit_frame_constructors() {
+        // NSScanner : NSObject — no `initWithFrame:` anywhere in the chain, so it is
+        // NOT view-like and must NOT get a synthesized `new()`/`new_with_frame`
+        // (where `-init` could be NS_UNAVAILABLE).
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSScanner", "loc": { "file": "test.h" },
+                  "super": { "name": "NSObject" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "scanInt:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "BOOL" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "p", "type": { "qualType": "int *" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        let sc = &out[out.find("struct Scanner").unwrap()..];
+        assert!(!sc.contains("fn new_with_frame"), "non-view must not get new_with_frame:\n{sc}");
+        assert!(!sc.contains("rt::autorelease(rt::msg_id(alloced"), "non-view must not get synthesized new():\n{sc}");
+    }
+
+    #[test]
+    fn non_view_owning_subclass_inherits_bare_new_only() {
+        // NSClickGestureRecognizer : NSGestureRecognizer. The base declares
+        // `initWithTarget:action:` (owning, NOT a view — no `initWithFrame:`); the
+        // subclass declares no init of its own (non-owning). It must inherit a bare
+        // `new()` (via `-init`, runtime-verified) but NOT a `new_with_frame`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSGestureRecognizer", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithTarget:action:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "target", "type": { "qualType": "id" } },
+                        { "kind": "ParmVarDecl", "name": "action", "type": { "qualType": "SEL" } } ] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSClickGestureRecognizer", "loc": { "file": "test.h" },
+                  "super": { "name": "NSGestureRecognizer" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "setNumberOfClicksRequired:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "n", "type": { "qualType": "NSInteger" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        let cg = &out[out.find("struct ClickGestureRecognizer").unwrap()..];
+        assert!(cg.contains("fn new() -> ClickGestureRecognizer"), "inherited bare new():\n{cg}");
+        assert!(cg.contains("rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr(\"init\\0\"))))"),
+            "new() is +0 autoreleased:\n{cg}");
+        assert!(!cg.contains("fn new_with_frame"), "non-view must NOT get new_with_frame:\n{cg}");
+        // The subclass stays non-owning (no ownership reclassification).
+        assert!(out.contains("struct ClickGestureRecognizer {\n    opaque _obj: *u8,"),
+            "ClickGestureRecognizer stays non-owning:\n{out}");
+    }
+
+    #[test]
+    fn bare_new_suppressed_for_singleton_and_ns_unavailable_init() {
+        // A singleton (`+sharedApplication` class accessor — `-init` aborts at runtime)
+        // and an `-init NS_UNAVAILABLE` class (`NSTouchBarItem`) must NOT get a
+        // synthesized `new()`, even though their non-owning subclasses are otherwise
+        // constructible. Their subclasses inherit the suppression.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSResponder", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] } ] },
+                // Singleton: declares a `+sharedApplication` class accessor + a subclass.
+                { "kind": "ObjCInterfaceDecl", "name": "NSApplication", "loc": { "file": "test.h" },
+                  "super": { "name": "NSResponder" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "sharedApplication", "instance": false, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "NSApplication *" }, "inner": [] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSColorSampler", "loc": { "file": "test.h" },
+                  "super": { "name": "NSApplication" }, "inner": [] },
+                // NS_UNAVAILABLE: base marks `-init` unavailable + a subclass.
+                { "kind": "ObjCInterfaceDecl", "name": "NSTouchBarItem", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "initWithIdentifier:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "identifier", "type": { "qualType": "id" } }] },
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "UnavailableAttr" }] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSCustomTouchBarItem", "loc": { "file": "test.h" },
+                  "super": { "name": "NSTouchBarItem" }, "inner": [] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // The singleton itself and its subclass: no synthesized bare new().
+        assert!(!out.contains("fn new() -> Application"), "singleton NSApplication: no new():\n{out}");
+        assert!(!out.contains("fn new() -> ColorSampler"), "singleton subclass: no new():\n{out}");
+        // The NS_UNAVAILABLE-init subclass: no synthesized bare new().
+        assert!(!out.contains("fn new() -> CustomTouchBarItem"), "NS_UNAVAILABLE subclass: no new():\n{out}");
+    }
+
+    #[test]
+    fn owning_class_ns_unavailable_init_not_bound_as_constructor() {
+        // NSDataAsset is owning (declares `initWithName:`) but marks `-init`
+        // NS_UNAVAILABLE. The bindgen owning-init path must NOT bind that `-init` as a
+        // throwing `new()`; the usable `initWithName:` becomes the primary `new`.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSDataAsset", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "UnavailableAttr" }] },
+                    { "kind": "ObjCMethodDecl", "name": "initWithName:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "name", "type": { "qualType": "NSString *" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        let da = &out[out.find("struct DataAsset").unwrap()..];
+        // No no-arg new() from the NS_UNAVAILABLE -init; it is SKIPPED.
+        assert!(!da.contains("fn new() -> DataAsset"), "NS_UNAVAILABLE -init must not bind as new():\n{da}");
+        assert!(da.contains("// SKIPPED `init`: `NS_UNAVAILABLE`"), "unavailable init noted as skipped:\n{da}");
+        // The usable initWithName: becomes the primary `new(name)`.
+        assert!(da.contains("fn new(name: str) -> DataAsset"), "initWithName: -> primary new(name):\n{da}");
+    }
+
+    #[test]
+    fn factory_with_collection_param_returns_typed_self_not_raw() {
+        // `+stackViewWithViews:` takes an `NSArray<NSView *>` and returns
+        // `instancetype`. The typed factory-return path must compose with the
+        // collection-arg prologue: the return is `StackView` (retained +0), NOT a
+        // degraded `*u8`, and the `arr_views` local is built before the send.
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCInterfaceDecl", "name": "NSView", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] } ] },
+                { "kind": "ObjCInterfaceDecl", "name": "NSStackView", "loc": { "file": "test.h" },
+                  "super": { "name": "NSView" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" }, "inner": [] },
+                    { "kind": "ObjCMethodDecl", "name": "stackViewWithViews:", "instance": false, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "instancetype" },
+                      "inner": [{ "kind": "ParmVarDecl", "name": "views", "type": { "qualType": "NSArray<NSView *> * _Nonnull" } }] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        assert!(out.contains("fn stack_view_with_views(views: vec::Vec[View]) -> StackView"),
+            "typed factory return (not *u8):\n{out}");
+        assert!(!out.contains("fn stack_view_with_views(views: vec::Vec[View]) -> *u8"),
+            "must not degrade to *u8:\n{out}");
+        // The bridged-array local is built before the send that consumes it.
+        let body = &out[out.find("fn stack_view_with_views").unwrap()..];
+        assert!(body[..400].contains("arr_views"), "collection prologue built:\n{}", &body[..400]);
     }
 
     #[test]

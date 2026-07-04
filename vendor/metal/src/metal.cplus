@@ -4633,6 +4633,9 @@ impl StructType {
 
     fn from_raw(ptr: *u8) -> StructType { return StructType { _obj: ptr }; }
 
+    // Upcast to `MTLType` (superclass). Safe typed reinterpret.
+    fn as_type(this) -> Type { return Type::from_raw(this._obj); }
+
     fn member_by_name(this, name: str) -> option::Option[StructMember] {
         let obj: *u8 = rt::msg_id_id(this._obj, rt::sel(#str_ptr("memberByName:\0")), bridge::nsstring(name));
         if obj == { 0 as *u8 } {
@@ -4665,6 +4668,9 @@ impl ArrayType {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> ArrayType { return ArrayType { _obj: ptr }; }
+
+    // Upcast to `MTLType` (superclass). Safe typed reinterpret.
+    fn as_type(this) -> Type { return Type::from_raw(this._obj); }
 
     fn element_struct_type(this) -> option::Option[StructType] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementStructType\0")));
@@ -4734,6 +4740,9 @@ impl TextureReferenceType {
 
     fn from_raw(ptr: *u8) -> TextureReferenceType { return TextureReferenceType { _obj: ptr }; }
 
+    // Upcast to `MTLType` (superclass). Safe typed reinterpret.
+    fn as_type(this) -> Type { return Type::from_raw(this._obj); }
+
     fn texture_data_type(this) -> DataType {
         return data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("textureDataType\0"))));
     }
@@ -4761,6 +4770,9 @@ impl PointerType {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> PointerType { return PointerType { _obj: ptr }; }
+
+    // Upcast to `MTLType` (superclass). Safe typed reinterpret.
+    fn as_type(this) -> Type { return Type::from_raw(this._obj); }
 
     fn element_struct_type(this) -> option::Option[StructType] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("elementStructType\0")));
@@ -4809,6 +4821,9 @@ impl TensorReferenceType {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> TensorReferenceType { return TensorReferenceType { _obj: ptr }; }
+
+    // Upcast to `MTLType` (superclass). Safe typed reinterpret.
+    fn as_type(this) -> Type { return Type::from_raw(this._obj); }
 
     fn tensor_data_type(this) -> TensorDataType {
         return tensor_data_type_from_raw(rt::msg_i64(this._obj, rt::sel(#str_ptr("tensorDataType\0"))));
@@ -5036,6 +5051,9 @@ impl IntersectionFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> IntersectionFunctionDescriptor { return IntersectionFunctionDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLFunctionDescriptor` (superclass). Safe typed reinterpret.
+    fn as_function_descriptor(this) -> FunctionDescriptor { return FunctionDescriptor::from_raw(this._obj); }
 
 }
 
@@ -5624,6 +5642,9 @@ impl MTL4RenderPipelineDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4RenderPipelineDescriptor { return MTL4RenderPipelineDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4PipelineDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_pipeline_descriptor(this) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor::from_raw(this._obj); }
+
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
@@ -5776,6 +5797,9 @@ impl MTL4ComputePipelineDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4ComputePipelineDescriptor { return MTL4ComputePipelineDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4PipelineDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_pipeline_descriptor(this) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor::from_raw(this._obj); }
+
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
@@ -5888,6 +5912,9 @@ impl MTL4MachineLearningPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4MachineLearningPipelineDescriptor { return MTL4MachineLearningPipelineDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4PipelineDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_pipeline_descriptor(this) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor::from_raw(this._obj); }
 
     fn set_input_dimensions(this, dimensions: TensorExtents, at_buffer_index: i64) {
         rt::msg_void_id_i64(this._obj, rt::sel(#str_ptr("setInputDimensions:atBufferIndex:\0")), dimensions.raw(), at_buffer_index);
@@ -8824,6 +8851,9 @@ impl RenderPassColorAttachmentDescriptor {
 
     fn from_raw(ptr: *u8) -> RenderPassColorAttachmentDescriptor { return RenderPassColorAttachmentDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLRenderPassAttachmentDescriptor` (superclass). Safe typed reinterpret.
+    fn as_render_pass_attachment_descriptor(this) -> RenderPassAttachmentDescriptor { return RenderPassAttachmentDescriptor::from_raw(this._obj); }
+
     fn clear_color(this) -> ClearColor {
         return objc_msg_ClearColor(this._obj, rt::sel(#str_ptr("clearColor\0")));
     }
@@ -8843,6 +8873,9 @@ impl RenderPassDepthAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> RenderPassDepthAttachmentDescriptor { return RenderPassDepthAttachmentDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLRenderPassAttachmentDescriptor` (superclass). Safe typed reinterpret.
+    fn as_render_pass_attachment_descriptor(this) -> RenderPassAttachmentDescriptor { return RenderPassAttachmentDescriptor::from_raw(this._obj); }
 
     fn clear_depth(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("clearDepth\0")));
@@ -8871,6 +8904,9 @@ impl RenderPassStencilAttachmentDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> RenderPassStencilAttachmentDescriptor { return RenderPassStencilAttachmentDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLRenderPassAttachmentDescriptor` (superclass). Safe typed reinterpret.
+    fn as_render_pass_attachment_descriptor(this) -> RenderPassAttachmentDescriptor { return RenderPassAttachmentDescriptor::from_raw(this._obj); }
 
     fn clear_stencil(this) -> u32 {
         return rt::msg_u32(this._obj, rt::sel(#str_ptr("clearStencil\0")));
@@ -10146,6 +10182,9 @@ impl PrimitiveAccelerationStructureDescriptor {
 
     fn from_raw(ptr: *u8) -> PrimitiveAccelerationStructureDescriptor { return PrimitiveAccelerationStructureDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
+
     fn descriptor() -> PrimitiveAccelerationStructureDescriptor {
         return PrimitiveAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLPrimitiveAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
     }
@@ -10229,6 +10268,9 @@ impl AccelerationStructureTriangleGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructureTriangleGeometryDescriptor { return AccelerationStructureTriangleGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn descriptor() -> AccelerationStructureTriangleGeometryDescriptor {
         return AccelerationStructureTriangleGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureTriangleGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
@@ -10346,6 +10388,9 @@ impl AccelerationStructureBoundingBoxGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> AccelerationStructureBoundingBoxGeometryDescriptor { return AccelerationStructureBoundingBoxGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn descriptor() -> AccelerationStructureBoundingBoxGeometryDescriptor {
         return AccelerationStructureBoundingBoxGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureBoundingBoxGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
     }
@@ -10433,6 +10478,9 @@ impl AccelerationStructureMotionTriangleGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructureMotionTriangleGeometryDescriptor { return AccelerationStructureMotionTriangleGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn descriptor() -> AccelerationStructureMotionTriangleGeometryDescriptor {
         return AccelerationStructureMotionTriangleGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionTriangleGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
@@ -10558,6 +10606,9 @@ impl AccelerationStructureMotionBoundingBoxGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> AccelerationStructureMotionBoundingBoxGeometryDescriptor { return AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn descriptor() -> AccelerationStructureMotionBoundingBoxGeometryDescriptor {
         return AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionBoundingBoxGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
     }
@@ -10617,6 +10668,9 @@ impl AccelerationStructureCurveGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructureCurveGeometryDescriptor { return AccelerationStructureCurveGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn descriptor() -> AccelerationStructureCurveGeometryDescriptor {
         return AccelerationStructureCurveGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureCurveGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
@@ -10781,6 +10835,9 @@ impl AccelerationStructureMotionCurveGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AccelerationStructureMotionCurveGeometryDescriptor { return AccelerationStructureMotionCurveGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLAccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_geometry_descriptor(this) -> AccelerationStructureGeometryDescriptor { return AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn descriptor() -> AccelerationStructureMotionCurveGeometryDescriptor {
         return AccelerationStructureMotionCurveGeometryDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLAccelerationStructureMotionCurveGeometryDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
@@ -10962,6 +11019,9 @@ impl InstanceAccelerationStructureDescriptor {
 
     fn from_raw(ptr: *u8) -> InstanceAccelerationStructureDescriptor { return InstanceAccelerationStructureDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
+
     fn descriptor() -> InstanceAccelerationStructureDescriptor {
         return InstanceAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLInstanceAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
     }
@@ -11101,6 +11161,9 @@ impl IndirectInstanceAccelerationStructureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> IndirectInstanceAccelerationStructureDescriptor { return IndirectInstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
 
     fn descriptor() -> IndirectInstanceAccelerationStructureDescriptor {
         return IndirectInstanceAccelerationStructureDescriptor { _obj: rt::msg_id(rt::get_class(#str_ptr("MTLIndirectInstanceAccelerationStructureDescriptor\0")), rt::sel(#str_ptr("descriptor\0"))) };
@@ -11965,6 +12028,9 @@ impl MTL4AccelerationStructureDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureDescriptor { return MTL4AccelerationStructureDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
+
 }
 
 // `MTL4AccelerationStructureGeometryDescriptor` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -12046,6 +12112,12 @@ impl MTL4PrimitiveAccelerationStructureDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4PrimitiveAccelerationStructureDescriptor { return MTL4PrimitiveAccelerationStructureDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_descriptor(this) -> MTL4AccelerationStructureDescriptor { return MTL4AccelerationStructureDescriptor::from_raw(this._obj); }
+
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
+
     fn geometry_descriptors(this) -> vec::Vec[MTL4AccelerationStructureGeometryDescriptor] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("geometryDescriptors\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -12126,6 +12198,9 @@ impl MTL4AccelerationStructureTriangleGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureTriangleGeometryDescriptor { return MTL4AccelerationStructureTriangleGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn vertex_buffer(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("vertexBuffer\0")));
     }
@@ -12202,6 +12277,9 @@ impl MTL4AccelerationStructureBoundingBoxGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureBoundingBoxGeometryDescriptor { return MTL4AccelerationStructureBoundingBoxGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn bounding_box_buffer(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("boundingBoxBuffer\0")));
     }
@@ -12237,6 +12315,9 @@ impl MTL4AccelerationStructureMotionTriangleGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionTriangleGeometryDescriptor { return MTL4AccelerationStructureMotionTriangleGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn vertex_buffers(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("vertexBuffers\0")));
@@ -12314,6 +12395,9 @@ impl MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor { return MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn bounding_box_buffers(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("boundingBoxBuffers\0")));
     }
@@ -12349,6 +12433,9 @@ impl MTL4AccelerationStructureCurveGeometryDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureCurveGeometryDescriptor { return MTL4AccelerationStructureCurveGeometryDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
 
     fn control_point_buffer(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("controlPointBuffer\0")));
@@ -12474,6 +12561,9 @@ impl MTL4AccelerationStructureMotionCurveGeometryDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4AccelerationStructureMotionCurveGeometryDescriptor { return MTL4AccelerationStructureMotionCurveGeometryDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureGeometryDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_geometry_descriptor(this) -> MTL4AccelerationStructureGeometryDescriptor { return MTL4AccelerationStructureGeometryDescriptor::from_raw(this._obj); }
+
     fn control_point_buffers(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("controlPointBuffers\0")));
     }
@@ -12598,6 +12688,12 @@ impl MTL4InstanceAccelerationStructureDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4InstanceAccelerationStructureDescriptor { return MTL4InstanceAccelerationStructureDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4AccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_descriptor(this) -> MTL4AccelerationStructureDescriptor { return MTL4AccelerationStructureDescriptor::from_raw(this._obj); }
+
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
+
     fn instance_descriptor_buffer(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
     }
@@ -12681,6 +12777,12 @@ impl MTL4IndirectInstanceAccelerationStructureDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4IndirectInstanceAccelerationStructureDescriptor { return MTL4IndirectInstanceAccelerationStructureDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4AccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_acceleration_structure_descriptor(this) -> MTL4AccelerationStructureDescriptor { return MTL4AccelerationStructureDescriptor::from_raw(this._obj); }
+
+    // Upcast to `MTLAccelerationStructureDescriptor` (superclass). Safe typed reinterpret.
+    fn as_acceleration_structure_descriptor(this) -> AccelerationStructureDescriptor { return AccelerationStructureDescriptor::from_raw(this._obj); }
 
     fn instance_descriptor_buffer(this) -> MTL4BufferRange {
         return objc_msg_MTL4BufferRange(this._obj, rt::sel(#str_ptr("instanceDescriptorBuffer\0")));
@@ -12782,6 +12884,9 @@ impl MTL4LibraryFunctionDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4LibraryFunctionDescriptor { return MTL4LibraryFunctionDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4FunctionDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_function_descriptor(this) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor::from_raw(this._obj); }
+
     fn name(this) -> option::Option[text::Text] {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("name\0")));
         return bridge::to_text_option(ns);
@@ -12814,6 +12919,9 @@ impl MTL4SpecializedFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4SpecializedFunctionDescriptor { return MTL4SpecializedFunctionDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4FunctionDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_function_descriptor(this) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor::from_raw(this._obj); }
 
     fn function_descriptor(this) -> option::Option[MTL4FunctionDescriptor] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionDescriptor\0")));
@@ -12859,6 +12967,9 @@ impl MTL4StitchedFunctionDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4StitchedFunctionDescriptor { return MTL4StitchedFunctionDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4FunctionDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_function_descriptor(this) -> MTL4FunctionDescriptor { return MTL4FunctionDescriptor::from_raw(this._obj); }
 
     fn function_graph(this) -> option::Option[FunctionStitchingGraph] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("functionGraph\0")));
@@ -13202,6 +13313,9 @@ impl MTL4TileRenderPipelineDescriptor {
 
     fn from_raw(ptr: *u8) -> MTL4TileRenderPipelineDescriptor { return MTL4TileRenderPipelineDescriptor { _obj: ptr }; }
 
+    // Upcast to `MTL4PipelineDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_pipeline_descriptor(this) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor::from_raw(this._obj); }
+
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));
     }
@@ -13281,6 +13395,9 @@ impl MTL4MeshRenderPipelineDescriptor {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MTL4MeshRenderPipelineDescriptor { return MTL4MeshRenderPipelineDescriptor { _obj: ptr }; }
+
+    // Upcast to `MTL4PipelineDescriptor` (superclass). Safe typed reinterpret.
+    fn as_m_t_l4_pipeline_descriptor(this) -> MTL4PipelineDescriptor { return MTL4PipelineDescriptor::from_raw(this._obj); }
 
     fn reset(this) {
         rt::msg_void(this._obj, rt::sel(#str_ptr("reset\0")));

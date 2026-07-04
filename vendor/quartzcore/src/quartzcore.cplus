@@ -1022,7 +1022,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:colorSpace:options:\0")), cglctx, pixel_format, color_space, dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:colorSpace:options:\0")), cglctx, pixel_format, color_space, dict_options)) };
     }
 
     fn context_with_c_g_l_context(cglctx: *u8, pixel_format: *u8, options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1045,7 +1045,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:options:\0")), cglctx, pixel_format, dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGLContext:pixelFormat:options:\0")), cglctx, pixel_format, dict_options)) };
     }
 
     fn context_with_c_g_context(cgctx: *u8, options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1068,7 +1068,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGContext:options:\0")), cgctx, dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithCGContext:options:\0")), cgctx, dict_options)) };
     }
 
     fn context_with_options(options: string_map::StringMap[AnyObject]) -> CIContext {
@@ -1091,7 +1091,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithOptions:\0")), dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithOptions:\0")), dict_options)) };
     }
 
     fn context() -> CIContext {
@@ -1153,7 +1153,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLDevice:options:\0")), device.raw(), dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLDevice:options:\0")), device.raw(), dict_options)) };
     }
 
     fn context_with_m_t_l_command_queue(command_queue: MTLCommandQueue) -> CIContext {
@@ -1180,7 +1180,7 @@ impl CIContext {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIContext::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLCommandQueue:options:\0")), command_queue.raw(), dict_options));
+        return CIContext { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIContext\0")), rt::sel(#str_ptr("contextWithMTLCommandQueue:options:\0")), command_queue.raw(), dict_options)) };
     }
 
     fn draw_image(this, image: CIImage, at_point: rt::Point, from_rect: rt::Rect) {
@@ -1313,7 +1313,7 @@ impl CIContext {
         if obj == { 0 as *u8 } {
             return option::Option[CIContext]::None;
         }
-        return option::some(CIContext::from_raw(obj));
+        return option::some(CIContext { _obj: rt::retain(obj) });
     }
 
     fn t_i_f_f_representation_of_image(this, image: CIImage, format: i32, color_space: *u8, options: string_map::StringMap[AnyObject]) -> option::Option[NSData] {
@@ -1869,7 +1869,7 @@ impl CIFilter {
         if obj == { 0 as *u8 } {
             return option::Option[CIFilter]::None;
         }
-        return option::some(CIFilter::from_raw(obj));
+        return option::some(CIFilter { _obj: obj });
     }
 
     fn filter_names_in_category(category: str) -> vec::Vec[text::Text] {
@@ -2050,7 +2050,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImage:options:\0")), image, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImage:options:\0")), image, dict_options)) };
     }
 
     fn image_with_c_g_image_source(source: *u8, index: u64, options: string_map::StringMap[AnyObject]) -> CIImage {
@@ -2073,7 +2073,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_u64_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImageSource:index:options:\0")), source, index, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_u64_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGImageSource:index:options:\0")), source, index, dict_options)) };
     }
 
     fn image_with_c_g_layer(layer: *u8) -> CIImage {
@@ -2100,7 +2100,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGLayer:options:\0")), layer, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCGLayer:options:\0")), layer, dict_options)) };
     }
 
     fn image_with_bitmap_data(data: NSData, bytes_per_row: u64, size: rt::Size, format: i32, color_space: *u8) -> CIImage {
@@ -2131,7 +2131,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(objc_msg_id_u32_size_i8_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithTexture:size:flipped:options:\0")), name, size, flipped as i8, dict_options));
+        return CIImage { _obj: rt::retain(objc_msg_id_u32_size_i8_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithTexture:size:flipped:options:\0")), name, size, flipped as i8, dict_options)) };
     }
 
     fn image_with_m_t_l_texture(texture: MTLTexture, options: string_map::StringMap[AnyObject]) -> option::Option[CIImage] {
@@ -2158,7 +2158,7 @@ impl CIImage {
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
-        return option::some(CIImage::from_raw(obj));
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_contents_of_u_r_l(url: NSURL) -> option::Option[CIImage] {
@@ -2193,7 +2193,7 @@ impl CIImage {
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
-        return option::some(CIImage::from_raw(obj));
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_data(data: NSData) -> option::Option[CIImage] {
@@ -2228,7 +2228,7 @@ impl CIImage {
         if obj == { 0 as *u8 } {
             return option::Option[CIImage]::None;
         }
-        return option::some(CIImage::from_raw(obj));
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_c_v_image_buffer(image_buffer: *u8) -> CIImage {
@@ -2255,7 +2255,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVImageBuffer:options:\0")), image_buffer, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVImageBuffer:options:\0")), image_buffer, dict_options)) };
     }
 
     fn image_with_c_v_pixel_buffer(pixel_buffer: *u8) -> CIImage {
@@ -2282,7 +2282,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVPixelBuffer:options:\0")), pixel_buffer, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithCVPixelBuffer:options:\0")), pixel_buffer, dict_options)) };
     }
 
     fn image_with_i_o_surface(surface: *u8) -> CIImage {
@@ -2309,7 +2309,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithIOSurface:options:\0")), surface, dict_options));
+        return CIImage { _obj: rt::retain(rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithIOSurface:options:\0")), surface, dict_options)) };
     }
 
     fn image_with_color(color: CIColor) -> CIImage {
@@ -2951,7 +2951,7 @@ impl CIImage {
         return CIImage { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithDepthData:\0")), data.raw()) };
     }
 
-    fn image_with_depth_data_options(data: AVDepthData, options: string_map::StringMap[AnyObject]) -> *u8 {
+    fn image_with_depth_data_options(data: AVDepthData, options: string_map::StringMap[AnyObject]) -> option::Option[CIImage] {
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
         let dcap_options: usize = options.slot_capacity();
@@ -2971,7 +2971,11 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithDepthData:options:\0")), data.raw(), dict_options);
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithDepthData:options:\0")), data.raw(), dict_options);
+        if obj == { 0 as *u8 } {
+            return option::Option[CIImage]::None;
+        }
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_depth_data(data: AVDepthData) -> option::Option[CIImage] {
@@ -3017,7 +3021,7 @@ impl CIImage {
         return CIImage { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithPortaitEffectsMatte:\0")), matte.raw()) };
     }
 
-    fn image_with_portait_effects_matte_options(matte: AVPortraitEffectsMatte, options: string_map::StringMap[AnyObject]) -> *u8 {
+    fn image_with_portait_effects_matte_options(matte: AVPortraitEffectsMatte, options: string_map::StringMap[AnyObject]) -> option::Option[CIImage] {
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
         let dcap_options: usize = options.slot_capacity();
@@ -3037,7 +3041,11 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithPortaitEffectsMatte:options:\0")), matte.raw(), dict_options);
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithPortaitEffectsMatte:options:\0")), matte.raw(), dict_options);
+        if obj == { 0 as *u8 } {
+            return option::Option[CIImage]::None;
+        }
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_portait_effects_matte(matte: AVPortraitEffectsMatte) -> option::Option[CIImage] {
@@ -3083,7 +3091,7 @@ impl CIImage {
         return CIImage { _obj: rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithSemanticSegmentationMatte:\0")), matte.raw()) };
     }
 
-    fn image_with_semantic_segmentation_matte_options(matte: AVSemanticSegmentationMatte, options: string_map::StringMap[AnyObject]) -> *u8 {
+    fn image_with_semantic_segmentation_matte_options(matte: AVSemanticSegmentationMatte, options: string_map::StringMap[AnyObject]) -> option::Option[CIImage] {
         let dict_options: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
         let dset_options: *u8 = rt::sel(#str_ptr("setObject:forKey:\0"));
         let dcap_options: usize = options.slot_capacity();
@@ -3103,7 +3111,11 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithSemanticSegmentationMatte:options:\0")), matte.raw(), dict_options);
+        let obj: *u8 = rt::msg_id_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithSemanticSegmentationMatte:options:\0")), matte.raw(), dict_options);
+        if obj == { 0 as *u8 } {
+            return option::Option[CIImage]::None;
+        }
+        return option::some(CIImage { _obj: rt::retain(obj) });
     }
 
     fn image_with_semantic_segmentation_matte(matte: AVSemanticSegmentationMatte) -> option::Option[CIImage] {
@@ -3138,7 +3150,7 @@ impl CIImage {
             }
             dsi_options = dsi_options +% (1 as usize);
         }
-        return CIImage::from_raw(objc_msg_id_id_u64_u64_i32_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithImageProvider:size::format:colorSpace:options:\0")), provider, size, height, format, color_space, dict_options));
+        return CIImage { _obj: rt::retain(objc_msg_id_id_u64_u64_i32_id_id(rt::get_class(#str_ptr("CIImage\0")), rt::sel(#str_ptr("imageWithImageProvider:size::format:colorSpace:options:\0")), provider, size, height, format, color_space, dict_options)) };
     }
 
     fn new_with_image_provider_size_format_color_space_options(provider: *u8, width: u64, height: u64, format: i32, color_space: *u8, options: string_map::StringMap[AnyObject]) -> CIImage {
@@ -3266,6 +3278,9 @@ impl CIColorKernel {
 
     fn from_raw(ptr: *u8) -> CIColorKernel { return CIColorKernel { _obj: ptr }; }
 
+    // Upcast to `CIKernel` (superclass). Safe typed reinterpret.
+    fn as_c_i_kernel(this) -> CIKernel { return CIKernel::from_raw(this._obj); }
+
     fn kernel_with_string(string: str) -> option::Option[CIColorKernel] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("CIColorKernel\0")), rt::sel(#str_ptr("kernelWithString:\0")), bridge::nsstring(string));
         if obj == { 0 as *u8 } {
@@ -3305,6 +3320,9 @@ impl CIWarpKernel {
 
     fn from_raw(ptr: *u8) -> CIWarpKernel { return CIWarpKernel { _obj: ptr }; }
 
+    // Upcast to `CIKernel` (superclass). Safe typed reinterpret.
+    fn as_c_i_kernel(this) -> CIKernel { return CIKernel::from_raw(this._obj); }
+
     fn kernel_with_string(string: str) -> option::Option[CIWarpKernel] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("CIWarpKernel\0")), rt::sel(#str_ptr("kernelWithString:\0")), bridge::nsstring(string));
         if obj == { 0 as *u8 } {
@@ -3325,6 +3343,12 @@ impl CIBlendKernel {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> CIBlendKernel { return CIBlendKernel { _obj: ptr }; }
+
+    // Upcast to `CIColorKernel` (superclass). Safe typed reinterpret.
+    fn as_c_i_color_kernel(this) -> CIColorKernel { return CIColorKernel::from_raw(this._obj); }
+
+    // Upcast to `CIKernel` (superclass). Safe typed reinterpret.
+    fn as_c_i_kernel(this) -> CIKernel { return CIKernel::from_raw(this._obj); }
 
     fn kernel_with_string(string: str) -> option::Option[CIBlendKernel] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("CIBlendKernel\0")), rt::sel(#str_ptr("kernelWithString:\0")), bridge::nsstring(string));
@@ -3681,6 +3705,9 @@ impl CIRAWFilter {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> CIRAWFilter { return CIRAWFilter { _obj: ptr }; }
+
+    // Upcast to `CIFilter` (superclass). Safe typed reinterpret.
+    fn as_c_i_filter(this) -> CIFilter { return CIFilter::from_raw(this._obj); }
 
     fn filter_with_image_u_r_l(url: NSURL) -> option::Option[CIRAWFilter] {
         let obj: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("CIRAWFilter\0")), rt::sel(#str_ptr("filterWithImageURL:\0")), url.raw());
@@ -5157,6 +5184,9 @@ impl PropertyAnimation {
 
     fn from_raw(ptr: *u8) -> PropertyAnimation { return PropertyAnimation { _obj: ptr }; }
 
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
+
     fn animation_with_key_path(path: str) -> PropertyAnimation {
         return PropertyAnimation { _obj: rt::msg_id_id(rt::get_class(#str_ptr("CAPropertyAnimation\0")), rt::sel(#str_ptr("animationWithKeyPath:\0")), bridge::nsstring(path)) };
     }
@@ -5210,6 +5240,12 @@ impl BasicAnimation {
 
     fn from_raw(ptr: *u8) -> BasicAnimation { return BasicAnimation { _obj: ptr }; }
 
+    // Upcast to `CAPropertyAnimation` (superclass). Safe typed reinterpret.
+    fn as_property_animation(this) -> PropertyAnimation { return PropertyAnimation::from_raw(this._obj); }
+
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
+
     fn from_value(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("fromValue\0")));
         return bridge::obj_option(obj);
@@ -5248,6 +5284,12 @@ impl KeyframeAnimation {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> KeyframeAnimation { return KeyframeAnimation { _obj: ptr }; }
+
+    // Upcast to `CAPropertyAnimation` (superclass). Safe typed reinterpret.
+    fn as_property_animation(this) -> PropertyAnimation { return PropertyAnimation::from_raw(this._obj); }
+
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
 
     fn values(this) -> option::Option[NSArray] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("values\0")));
@@ -5456,6 +5498,15 @@ impl SpringAnimation {
 
     fn from_raw(ptr: *u8) -> SpringAnimation { return SpringAnimation { _obj: rt::retain(ptr) }; }
 
+    // Upcast to `CABasicAnimation` (superclass). Safe typed reinterpret.
+    fn as_basic_animation(this) -> BasicAnimation { return BasicAnimation::from_raw(this._obj); }
+
+    // Upcast to `CAPropertyAnimation` (superclass). Safe typed reinterpret.
+    fn as_property_animation(this) -> PropertyAnimation { return PropertyAnimation::from_raw(this._obj); }
+
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
+
     fn new(perceptual_duration: f64, bounce: f64) -> SpringAnimation {
         let cls: *u8 = rt::get_class(#str_ptr("CASpringAnimation\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -5529,6 +5580,9 @@ impl Transition {
 
     fn from_raw(ptr: *u8) -> Transition { return Transition { _obj: ptr }; }
 
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
+
     fn type_(this) -> text::Text {
         let ns: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("type\0")));
         return bridge::to_text(ns);
@@ -5582,6 +5636,9 @@ impl AnimationGroup {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> AnimationGroup { return AnimationGroup { _obj: ptr }; }
+
+    // Upcast to `CAAnimation` (superclass). Safe typed reinterpret.
+    fn as_animation(this) -> Animation { return Animation::from_raw(this._obj); }
 
     fn animations(this) -> vec::Vec[Animation] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("animations\0")));
@@ -5781,7 +5838,7 @@ impl EDRMetadata {
         return EDRMetadata { _obj: rt::msg_id(rt::get_class(#str_ptr("CAEDRMetadata\0")), rt::sel(#str_ptr("new\0"))) };
     }
 
-    // SKIPPED `init`: `new` already defined (extra constructor)
+    // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn h_d_r10_metadata_with_display_info(display_data: NSData, content_info: NSData, optical_output_scale: f32) -> EDRMetadata {
         return EDRMetadata { _obj: rt::retain(objc_msg_id_id_id_f32(rt::get_class(#str_ptr("CAEDRMetadata\0")), rt::sel(#str_ptr("HDR10MetadataWithDisplayInfo:contentInfo:opticalOutputScale:\0")), display_data.raw(), content_info.raw(), optical_output_scale)) };
     }
@@ -5816,6 +5873,9 @@ impl MetalLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> MetalLayer { return MetalLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn next_drawable(this) -> option::Option[MetalDrawable] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("nextDrawable\0")));
@@ -5936,6 +5996,12 @@ impl MetalLayer {
 
     fn residency_set(this) -> MTLResidencySet {
         return MTLResidencySet::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("residencySet\0"))));
+    }
+
+    fn new() -> MetalLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAMetalLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return MetalLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
     }
 
 }
@@ -6374,6 +6440,9 @@ impl EmitterLayer {
 
     fn from_raw(ptr: *u8) -> EmitterLayer { return EmitterLayer { _obj: ptr }; }
 
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
+
     fn emitter_cells(this) -> vec::Vec[EmitterCell] {
         let arr: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("emitterCells\0")));
         let n: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
@@ -6517,6 +6586,12 @@ impl EmitterLayer {
         rt::msg_void_u32(this._obj, rt::sel(#str_ptr("setSeed:\0")), seed);
     }
 
+    fn new() -> EmitterLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAEmitterLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return EmitterLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CAGradientLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -6528,6 +6603,9 @@ impl GradientLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> GradientLayer { return GradientLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn colors(this) -> option::Option[NSArray] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("colors\0")));
@@ -6598,6 +6676,12 @@ impl GradientLayer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setType:\0")), bridge::nsstring(type_));
     }
 
+    fn new() -> GradientLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAGradientLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return GradientLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CAOpenGLLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -6609,6 +6693,9 @@ impl OpenGLLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> OpenGLLayer { return OpenGLLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn can_draw_in_c_g_l_context(this, ctx: *u8, pixel_format: *u8, for_layer_time: f64, display_time: *u8) -> bool {
         return rt::msg_i8_id_id_f64_id(this._obj, rt::sel(#str_ptr("canDrawInCGLContext:pixelFormat:forLayerTime:displayTime:\0")), ctx, pixel_format, for_layer_time, display_time) != (0 as i8);
@@ -6657,6 +6744,12 @@ impl OpenGLLayer {
 
     fn set_wants_extended_dynamic_range_content(this, wants_extended_dynamic_range_content: bool) {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setWantsExtendedDynamicRangeContent:\0")), wants_extended_dynamic_range_content as i8);
+    }
+
+    fn new() -> OpenGLLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAOpenGLLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return OpenGLLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
     }
 
 }
@@ -6800,6 +6893,9 @@ impl ReplicatorLayer {
 
     fn from_raw(ptr: *u8) -> ReplicatorLayer { return ReplicatorLayer { _obj: ptr }; }
 
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
+
     fn instance_count(this) -> i64 {
         return rt::msg_i64(this._obj, rt::sel(#str_ptr("instanceCount\0")));
     }
@@ -6873,6 +6969,12 @@ impl ReplicatorLayer {
         rt::msg_void_f32(this._obj, rt::sel(#str_ptr("setInstanceAlphaOffset:\0")), instance_alpha_offset);
     }
 
+    fn new() -> ReplicatorLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAReplicatorLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ReplicatorLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CAScrollLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -6884,6 +6986,9 @@ impl ScrollLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> ScrollLayer { return ScrollLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn scroll_to_point(this, p: rt::Point) {
         rt::msg_void_point(this._obj, rt::sel(#str_ptr("scrollToPoint:\0")), p);
@@ -6902,6 +7007,12 @@ impl ScrollLayer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setScrollMode:\0")), bridge::nsstring(scroll_mode));
     }
 
+    fn new() -> ScrollLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAScrollLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ScrollLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CAShapeLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -6913,6 +7024,9 @@ impl ShapeLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> ShapeLayer { return ShapeLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn path(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("path\0")));
@@ -7040,6 +7154,12 @@ impl ShapeLayer {
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setLineDashPattern:\0")), arr_line_dash_pattern);
     }
 
+    fn new() -> ShapeLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CAShapeLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return ShapeLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CATextLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -7051,6 +7171,9 @@ impl TextLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> TextLayer { return TextLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn string(this) -> option::Option[*u8] {
         let obj: *u8 = rt::msg_id(this._obj, rt::sel(#str_ptr("string\0")));
@@ -7121,6 +7244,12 @@ impl TextLayer {
         rt::msg_void_i8(this._obj, rt::sel(#str_ptr("setAllowsFontSubpixelQuantization:\0")), allows_font_subpixel_quantization as i8);
     }
 
+    fn new() -> TextLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CATextLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TextLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
+
 }
 
 // `CATiledLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -7132,6 +7261,9 @@ impl TiledLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> TiledLayer { return TiledLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
 
     fn fade_duration() -> f64 {
         return rt::msg_f64(rt::get_class(#str_ptr("CATiledLayer\0")), rt::sel(#str_ptr("fadeDuration\0")));
@@ -7159,6 +7291,12 @@ impl TiledLayer {
 
     fn set_tile_size(this, tile_size: rt::Size) {
         rt::msg_void_size(this._obj, rt::sel(#str_ptr("setTileSize:\0")), tile_size);
+    }
+
+    fn new() -> TiledLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CATiledLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TiledLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
     }
 
 }
@@ -7250,6 +7388,15 @@ impl TransformLayer {
     fn raw(this) -> *u8 { return this._obj; }
 
     fn from_raw(ptr: *u8) -> TransformLayer { return TransformLayer { _obj: ptr }; }
+
+    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
+    fn as_layer(this) -> Layer { return Layer::from_raw(this._obj); }
+
+    fn new() -> TransformLayer {
+        let cls: *u8 = rt::get_class(#str_ptr("CATransformLayer\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return TransformLayer { _obj: rt::autorelease(rt::msg_id(alloced, rt::sel(#str_ptr("init\0")))) };
+    }
 
 }
 
