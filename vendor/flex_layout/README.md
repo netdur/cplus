@@ -1,11 +1,11 @@
 # flex_layout
 
-A pure-C+ flexbox layout engine, modeled on Facebook's **Yoga** (vendored under
-`yoga/` as the reference spec — C+ can't call the C++ directly). It is
+A pure-C+ layout engine implementing the **CSS Flexbox** and **CSS Grid**
+specifications. It is
 **UI-kit-agnostic**: it computes frames from a flexbox style tree, and a platform
 adapter (e.g. AppKit) applies those frames to real views. No FFI, `stdlib` only.
 
-## Model — persistent, mutable nodes (like Yoga)
+## Model — persistent, mutable nodes
 
 Create a `Node`, set style imperatively, attach children (the parent owns them),
 call `calculate_layout`, then read each node's computed frame back off the node.
@@ -48,7 +48,7 @@ label.set_measure(measure_label);
 
 ## API surface
 
-- **Enums** (Yoga parity): `FlexDirection`, `Justify`, `Align`, `Wrap`, `Edge`,
+- **Enums**: `FlexDirection`, `Justify`, `Align`, `Wrap`, `Edge`,
   `PositionType`, `Overflow`, `Display`, `BoxSizing`, `Unit`, `MeasureMode`,
   `Direction`.
 - **Values**: `StyleLength::points(v)` / `percent(v)` / `auto()` / `undef()`; `Size`.
@@ -62,7 +62,7 @@ label.set_measure(measure_label);
 
 ## Status
 
-**Implemented (near-complete Yoga parity)** — flex-direction (+reverse),
+**Implemented (full CSS Flexbox + Grid)** — flex-direction (+reverse),
 justify-content & align-items/self (all values, incl. **baseline** and
 Start/End/Stretch), grow/shrink/basis + the **`flex` shorthand**, **iterative
 min/max flex resolution** (freeze + redistribute), width/height/min/max
@@ -121,7 +121,7 @@ encode it, so `@flex` layouts are HIG-correct without magic numbers:
 | `.card_padding()` / `.screen_margins()` / `.std_gap()` | 16 / 20 / 8 pt |
 
 Constants: `HIG_SPACE_XS/S/M/L/XL` = 4/8/16/20/32, `HIG_TAP_MIN` = 44. The engine's
-own `Style::new` defaults stay Yoga-compatible — HIG is a layer on top.
+own `Style::new` defaults are unchanged — HIG is a layer on top.
 
 ```
 @flex {

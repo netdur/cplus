@@ -92,7 +92,7 @@ Apple's Human Interface Guidelines layout system is an **8-point grid**: related
 items sit 8pt apart, content gets 16pt padding, macOS windows keep ~20pt edge
 margins, and any tappable control needs a **44×44pt** hit area. The engine ships
 these as **opt-in** presets — the engine's own `Style::new` defaults stay
-Yoga-compatible, so you choose HIG spacing by using the presets.
+unchanged, so you choose HIG spacing by using the presets.
 
 ## Preset containers
 

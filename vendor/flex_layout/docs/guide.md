@@ -10,7 +10,7 @@ frame.
 var n: flex::Node = flex::Node::new();   // default: a Column, align-items stretch
 ```
 
-Yoga's defaults are used, so a fresh node is a **column** container with
+A fresh node is a **column** container with
 `align-items: stretch`, `flex-shrink: 0`, and all sizes `auto`.
 
 Build the tree with `add_child` (which consumes the child):

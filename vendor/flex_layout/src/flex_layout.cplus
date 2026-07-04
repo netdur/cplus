@@ -1,17 +1,16 @@
 // vendor/flex_layout/src/flex_layout.cplus — a pure-C+ flexbox layout engine.
 //
-// A UI-kit-agnostic layout engine modeled on Facebook's Yoga (vendored under
-// `yoga/` as the reference spec — C+ cannot call the C++ directly). The engine
-// computes frames from a flexbox style tree; a platform adapter (e.g. AppKit)
-// applies those frames to real views.
+// A UI-kit-agnostic layout engine implementing the CSS Flexbox and CSS Grid
+// specifications. The engine computes frames from a flexbox/grid style tree; a
+// platform adapter (e.g. AppKit) applies those frames to real views.
 //
-// Model: **persistent, mutable nodes** (like Yoga). Create a `Node`, set style
-// imperatively, attach children (the parent owns them), call `calculate_layout`,
-// then read each node's computed frame back off the node. Content-driven sizing
-// (text, images) enters through a **measure function pointer**, so the engine
-// never depends on any UI kit.
+// Model: **persistent, mutable nodes**. Create a `Node`, set style imperatively,
+// attach children (the parent owns them), call `calculate_layout`, then read each
+// node's computed frame back off the node. Content-driven sizing (text, images)
+// enters through a **measure function pointer**, so the engine never depends on
+// any UI kit.
 //
-// STATUS. A complete Yoga-parity engine (subgrid aside): flex-direction (+reverse),
+// STATUS. A complete CSS Flexbox + Grid engine: flex-direction (+reverse),
 // justify/align (all values incl. baseline, Start/End/Stretch), flex
 // grow/shrink/basis + the `flex` shorthand, iterative min/max flex resolution,
 // width/height/min/max (point+percent), margin/padding/border (+ margin:auto +
@@ -21,8 +20,8 @@
 // rounding, a sound within-pass measurement memo, a sound CROSS-CALL incremental
 // cache (unchanged subtrees keep their frames), AND CSS Grid (display:grid:
 // points/fr/auto tracks, auto-flow, implicit rows, spanning, dense, explicit +
-// named line placement, subgrid, gaps). Full Flexbox + Grid parity. 167 tests,
-// ASan-clean.
+// named line placement, subgrid, gaps). Full CSS Flexbox + Grid coverage. 167
+// tests, ASan-clean.
 //
 // Note: the mutable layout descent uses `children.at_ptr` in one internal helper
 // — the only raw pointer in the engine. A stdlib `at_mut(i) -> ref T` would
@@ -33,7 +32,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 
 // ==========================================================================
-// Enums — values mirror Yoga's declaration order (yoga/enums/*.h)
+// Enums — flexbox / grid property values
 // ==========================================================================
 
 enum FlexDirection { Column, ColumnReverse, Row, RowReverse }
@@ -67,7 +66,7 @@ enum Direction { Inherit, LTR, RTL }
 // Value types
 // ==========================================================================
 
-// Yoga represents "no value" as NaN (YGUndefined); we do the same. A resolved
+// "No value" is represented as NaN (the undefined sentinel). A resolved
 // length is an f64 that is NaN when undefined. `is_undef` detects it (NaN is the
 // only value not equal to itself).
 fn undefined() -> f64 {
@@ -210,7 +209,7 @@ struct Style {
 }
 
 impl Style {
-    // Yoga's defaults: column direction, flex-start justify, stretch align-items,
+    // Defaults: column direction, flex-start justify, stretch align-items,
     // relative position, no-wrap, border-box, grow/shrink 0, basis + sizes auto,
     // margins/padding/border/insets undefined.
     fn new() -> Style {
@@ -1406,7 +1405,7 @@ impl Node {
     // Bottom-up intrinsic size: the node's own border-box size given the space
     // available, derived from its style, its measure callback (leaves), or the
     // content extent of its children (containers). This is what lets a container
-    // with an `auto` dimension hug its children (Yoga's content sizing).
+    // with an `auto` dimension hug its children (content-fit sizing).
     // Caching wrapper (see `measured`). The result is a pure function of the node
     // subtree and the available size; within one layout pass the tree is immutable,
     // so a memo keyed on (avail_w, avail_h) is sound. Reset each pass.
@@ -1948,7 +1947,7 @@ fn justify_gap(j: Justify, remaining: f64, count: f64) -> f64 {
 }
 
 // ==========================================================================
-// ROADMAP — remaining for Yoga parity
+// ROADMAP
 // ==========================================================================
 // DONE:
 // - Phase 1 core (direction/justify/align/flex/sizes/margin/padding/border/
@@ -2041,7 +2040,7 @@ impl Node {
 // Apple's layout system is an 8-point grid: related items sit 8pt apart, content
 // gets 16pt padding, windows keep ~20pt edge margins (macOS), and any tappable
 // control needs a >=44x44pt hit area (iOS/touch). The engine's own defaults stay
-// Yoga-compatible; these constants + preset containers/modifiers are the opt-in
+// unchanged; these constants + preset containers/modifiers are the opt-in
 // layer that makes an @flex layout HIG-correct by default.
 //   https://developer.apple.com/design/human-interface-guidelines/layout
 

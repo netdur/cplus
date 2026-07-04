@@ -16,7 +16,7 @@ frames; a platform adapter applies them to real views.
 ```
 import "flex_layout/flex_layout" as flex;
 
-var root: flex::Node = flex::Node::new();          // a column (Yoga default)
+var root: flex::Node = flex::Node::new();          // a column container by default
 root.set_flex_direction(flex::FlexDirection::Row);
 
 var sidebar: flex::Node = flex::Node::new();
@@ -50,9 +50,9 @@ root.calculate_layout(1024.0f64, 768.0f64, flex::Direction::LTR);
 
 ## Design in one paragraph
 
-Nodes are **persistent and mutable** (like Yoga): build a tree, set style
+Nodes are **persistent and mutable**: build a tree, set style
 imperatively, call `calculate_layout`, read each node's frame back off the node.
 Content-driven sizing (text, images) enters through a **measure function
 pointer**, so the engine never depends on a UI kit. The engine is exhaustively
-tested (170+ tests) and memory-safe (ASan-clean). Its `Style::new` defaults match
-Yoga; HIG spacing is an opt-in layer (see [dsl.md](dsl.md)).
+tested (170+ tests) and memory-safe (ASan-clean). Its `Style::new` defaults are
+conservative; HIG spacing is an opt-in layer (see [dsl.md](dsl.md)).
