@@ -1,0 +1,202 @@
+// facet_appkit test root — the [[bin]] entry whose import closure pulls the
+// whole package (and its facet / appkit_flex deps) into `cpc test`. `main` is
+// a leak harness: repeated describe -> mount -> apply -> drop cycles; run
+// `leaks --atExit -- ./target/debug/facet_appkit_tests` to verify no
+// per-cycle growth.
+
+import "objc/runtime" as rt;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "facet/facet" as facet;
+import "./facet_appkit" as fak;
+
+fn harness_click(sender: *u8, ctx: *u8) { return; }
+
+fn main() -> i32 {
+    let rc: i32 = probe();
+    if rc != 0 { return rc; }
+    let rc2: i32 = app_click_cycles();
+    if rc2 != 0 { return rc2; }
+    for k in 0..50 {
+        let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+        var root: facet::Node = @facet {
+            card {
+                label("Iris", size: 28.0f64, bold: true)
+                wrap_label("Create a new project or open an existing one.", secondary: true)
+                hstack {
+                    button("New", primary: true).on_click(harness_click, ctx: 1 as *u8)
+                    button("Open").on_click(harness_click, ctx: 2 as *u8)
+                }
+            }
+        };
+        let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    }
+    return 0;
+}
+
+// Debug probe: 0 = healthy; otherwise the counter label's char count (or 100
+// when the widget lookup failed) for diagnosing the app runtime.
+fn probe() -> i32 {
+    fak::COUNT = 9;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    fak::app_bind(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
+    fak::refresh();
+    let lp: *u8 = fak::nth_widget(content.raw(), 0 as usize);
+    if lp == (0 as *u8) { return 100; }
+    let l0 = ak::TextField::from_raw(lp);
+    let n: i32 = l0.as_control().string_value().count() as i32;
+    if n == 7 { return 0; }
+    return n;
+}
+
+// Leak-harness segment for the app runtime: one bind, then 50 full
+// click -> handler -> re-render cycles through the real target/action.
+fn app_click_cycles() -> i32 {
+    fak::COUNT = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    fak::app_bind(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
+    fak::refresh();
+    for k in 0..50 {
+        let bp: *u8 = fak::nth_widget(content.raw(), 1 as usize);
+        if bp == (0 as *u8) { return 90; }
+        fak::click(bp);
+    }
+    if fak::COUNT != 50 { return 91; }
+    fak::APP_CONTENT = 0 as *u8;
+    return 0;
+}
+
+// ============================================================================
+// Component examples (brainstorm -> living documentation)
+// ============================================================================
+
+// ---- Option 1: a component is a plain function returning a description ----
+// Props are named params with defaults; composition is a function call in any
+// @facet block. Two construction forms:
+//
+//   (a) DSL form — reads best; the @facet root adds a wrapper column.
+//   (b) Builder form — exact shape, no wrapper; for tight subtrees.
+
+fn chip(text_: str, ok: bool = true) -> facet::Node {
+    // (b): exact hstack, no wrapper.
+    var b: facet::Builder = facet::Builder::new();
+    if ok { b.add(facet::label("[ok]", secondary: true)); }
+    else  { b.add(facet::label("[--]", secondary: true)); }
+    b.add(facet::label(text_));
+    return facet::hstack(b);
+}
+
+fn chips_panel() -> facet::Node {
+    // (a): DSL form composing the component like any item.
+    return @facet {
+        vstack {
+            chip("clang")
+            chip("cpc")
+            chip("git", ok: false)
+        }
+    };
+}
+
+#[test]
+fn component_fns_compose_in_blocks() {
+    var root: facet::Node = chips_panel();
+    // root column -> vstack -> 3 chips (each an hstack of 2 labels).
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*facet::Node]::Some(v) => {
+            assert { (*v).children.count() } == (3 as usize);
+            match { (*v).children.at_ptr(2 as usize) } {
+                option::Option[*facet::Node]::Some(c) => {
+                    assert { (*c).kind } == facet::kind_row();
+                    assert { (*c).children.count() } == (2 as usize);
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    };
+}
+
+// ---- Option 2: scoped state = a state struct passed by pointer -------------
+// The SAME component fn, two state slices -> two independent widgets. The
+// click ctx IS the state slice, so identity and state are one thing; the app
+// model stays the single owner.
+
+struct CounterState {
+    count: i32,
+}
+
+static COUNTER_A: CounterState = CounterState { count: 0 };
+static COUNTER_B: CounterState = CounterState { count: 0 };
+
+fn counter_bump(sender: *u8, ctx: *u8) {
+    let s: *CounterState = ctx as *CounterState;
+    (*s).count = { (*s).count } + 1;
+    return;
+}
+
+fn counter_row(s: *CounterState, name: str) -> facet::Node {
+    let c: i32 = { (*s).count };
+    let t: text::Text = "${c}";
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label(name, secondary: true));
+    b.add(facet::label(t.view(), bold: true));
+    b.add(facet::button("+1").on_click(counter_bump, ctx: s as *u8));
+    return facet::hstack(b);
+}
+
+fn two_counters_view() -> facet::Node {
+    return @facet {
+        vstack {
+            counter_row(#addr_of(COUNTER_A), "a")
+            counter_row(#addr_of(COUNTER_B), "b")
+        }
+    };
+}
+
+// content -> vstack synth -> row synth[r] -> widget[i].
+fn row_widget(content_ptr: *u8, r: usize, i: usize) -> *u8 {
+    let content: ak::View = ak::View::from_raw(content_ptr);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(stackv) => {
+            var rows: vec::Vec[ak::View] = { (*stackv).subviews() };
+            match rows.at_ptr(r) {
+                option::Option[*ak::View]::Some(rowv) => {
+                    var ws: vec::Vec[ak::View] = { (*rowv).subviews() };
+                    match ws.at_ptr(i) {
+                        option::Option[*ak::View]::Some(w) => { return { (*w).raw() }; }
+                        option::Option[*ak::View]::None => { }
+                    }
+                }
+                option::Option[*ak::View]::None => { }
+            }
+        }
+        option::Option[*ak::View]::None => { }
+    }
+    return 0 as *u8;
+}
+
+#[test]
+fn component_state_slices_are_independent() {
+    COUNTER_A.count = 0;
+    COUNTER_B.count = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 200.0 });
+    fak::app_bind(two_counters_view, content.raw(), 400.0f64, 200.0f64);
+    fak::refresh();
+
+    // Click a's +1 twice, b's once — through the real target/action.
+    fak::click(row_widget(content.raw(), 0 as usize, 2 as usize));
+    fak::click(row_widget(content.raw(), 0 as usize, 2 as usize));
+    fak::click(row_widget(content.raw(), 1 as usize, 2 as usize));
+
+    assert COUNTER_A.count == 2;
+    assert COUNTER_B.count == 1;
+
+    // And the UI followed: a's count label reads "2" (1 char).
+    let la: ak::TextField = ak::TextField::from_raw(row_widget(content.raw(), 0 as usize, 1 as usize));
+    assert la.as_control().string_value().count() == (1 as usize);
+    fak::APP_CONTENT = 0 as *u8;
+}

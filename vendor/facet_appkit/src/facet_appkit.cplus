@@ -1,104 +1,492 @@
-// facet_appkit — the AppKit construction renderer for facet.
+// facet_appkit — the AppKit `Renderer` for facet, over appkit_flex.
 //
-// `render` walks a `facet::Node` and materializes the native NSView tree.
-// `run` opens the Application + Window and mounts the rendered root.
+// facet owns the tree walk (`facet::mount`) and all layout; this package
+// supplies the three leaf ops of the `Renderer` vtable by delegating to
+// appkit_flex's widget constructors (typed binding underneath, view owned
+// by the node's payload slot, clicks wired with identity), plus `run` — a
+// window host that mounts a description tree and enters the event loop.
 //
-// SPIKE LIMITATIONS: views leak their initial +1 (no balanced release);
-// button click callbacks are not yet wired (no target/action bridge yet).
+// Replaces the FACET.1 spike wholesale: views no longer leak (payload
+// ownership), clicks are wired (action-with-userdata companion), and layout
+// is the shared flex engine instead of NSStackView.
 
+import "objc/runtime" as rt;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
-import "objc/runtime" as rt;
-import "objc/bridge" as bridge;
-import "appkit/application" as application;
-import "appkit/window" as window;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "appkit_flex/appkit_flex" as ui;
 import "facet/facet" as facet;
 
-// Convert the text field of a Node to an NSString.
-// Borrows the text field via raw pointer; c_str() borrows self so no move.
-fn node_text_to_ns(np: *facet::Node) -> *u8 {
+// ---- the three vtable ops ---------------------------------------------------
+// Each reads the node's config and returns an appkit_flex node (NSView in the
+// payload, measure wired). The node's Text is borrowed via c_str inside the
+// match arm; the widget copies it into an NSString before the borrow ends.
+
+fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var size: f64 = { (*np).font_size };
+    if size <= 0.0f64 { size = 13.0f64; }
     let tp: *text::Text = { #addr_of((*np).text) };
-    var ns: *u8 = bridge::nsstring("");
     match (*tp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            ns = bridge::nsstring(sv);
+            return ui::label(sv, size: size, bold: { (*np).bold }, secondary: { (*np).secondary });
         }
-        option::Option[text::CString]::None => {}
-    }
-    return ns;
+        option::Option[text::CString]::None => { }
+    };
+    return ui::label("", size: size);
 }
 
-// alloc + initWithFrame: for an ObjC view class named by `class`.
-fn make_view(class: *u8, w: f64, h: f64) -> *u8 {
-    let cls: *u8 = rt::get_class(class);
-    let a: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
-    return rt::msg_id_rect(a, rt::sel(#str_ptr("initWithFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
-}
-
-// Walk a node into a native NSView; returns its raw pointer.
-fn render(np: *facet::Node) -> *u8 {
-    let k: u32 = { (*np).kind };
-
-    if k == facet::kind_label() {
-        let v: *u8 = make_view(#str_ptr("NSTextField\0"), 220.0, 24.0);
-        rt::msg_void_i8(v, rt::sel(#str_ptr("setEditable:\0")), 0 as i8);
-        rt::msg_void_i8(v, rt::sel(#str_ptr("setSelectable:\0")), 0 as i8);
-        rt::msg_void_i8(v, rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
-        rt::msg_void_i8(v, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8);
-        rt::msg_void_id(v, rt::sel(#str_ptr("setStringValue:\0")), node_text_to_ns(np));
-        return v;
-    }
-
-    if k == facet::kind_button() {
-        let v: *u8 = make_view(#str_ptr("NSButton\0"), 220.0, 32.0);
-        rt::msg_void_id(v, rt::sel(#str_ptr("setTitle:\0")), node_text_to_ns(np));
-        // click callback wiring deferred (needs target/action bridge).
-        return v;
-    }
-
-    // stack (vertical): NSStackView with arranged subviews.
-    let sv: *u8 = make_view(#str_ptr("NSStackView\0"), 300.0, 400.0);
-    rt::msg_void_i64(sv, rt::sel(#str_ptr("setOrientation:\0")), 1 as i64);
-    rt::msg_void_f64(sv, rt::sel(#str_ptr("setSpacing:\0")), 8.0);
-    let n: usize = { (*np).children.count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match { (*np).children.at_ptr(i) } {
-            option::Option[*facet::Node]::Some(cp) => {
-                let cv: *u8 = render(cp);
-                rt::msg_void_id(sv, rt::sel(#str_ptr("addArrangedSubview:\0")), cv);
-            }
-            option::Option[*facet::Node]::None => {}
+fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var size: f64 = { (*np).font_size };
+    if size <= 0.0f64 { size = 13.0f64; }
+    let tp: *text::Text = { #addr_of((*np).text) };
+    match (*tp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            return ui::wrap_label(sv, size: size, secondary: { (*np).secondary });
         }
-        i = i +% (1 as usize);
-    }
-    return sv;
+        option::Option[text::CString]::None => { }
+    };
+    return ui::wrap_label("", size: size);
 }
 
-// Open a window, mount the rendered tree, run the event loop (blocks).
-fn run(take root: facet::Node) {
-    let app: application::Application = application::Application::shared_application();
-    let _: bool = app.set_activation_policy(application::ApplicationActivationPolicy::Regular);
+fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = flex::Node::new();
+    let tp: *text::Text = { #addr_of((*np).text) };
+    match (*tp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            n = ui::button_view(sv, primary: { (*np).primary });
+        }
+        option::Option[text::CString]::None => {
+            n = ui::button_view("", primary: { (*np).primary });
+        }
+    };
+    // Wire the action exactly once (a replaced target strands its creation
+    // reference — never rewire). App mode (renderer ctx = 1) adds the
+    // re-render hook after the handler: the MVU rule.
+    let b: ak::Button = ak::Button::from_raw(n.payload());
+    if ctx != (0 as *u8) {
+        akx::set_control_action_ctx_then(b.as_control(), { (*np).click }, { (*np).click_ctx }, refresh);
+    } else {
+        akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
+    }
+    return n;
+}
 
-    let style: u64 = window::window_style_mask_titled
-        | window::window_style_mask_closable
-        | window::window_style_mask_miniaturizable
-        | window::window_style_mask_resizable;
-    let win: window::Window = window::Window::new(
-        rt::Rect { x: 0.0, y: 0.0, w: 480.0, h: 320.0 },
+// The vtable value. Stateless for now (`ctx` unused); a future backend
+// context (theme, window) rides in `ctx`.
+fn renderer() -> facet::Renderer {
+    return facet::Renderer {
+        ctx: 0 as *u8,
+        label: ak_label,
+        wrap_label: ak_wrap_label,
+        button: ak_button,
+    };
+}
+
+// Description tree -> flex tree with AppKit widgets in the payloads.
+fn mount(np: *facet::Node) -> flex::Node {
+    return facet::mount(np, renderer());
+}
+
+// Mount + lay out + apply into an existing view, in one step. Returns the
+// content height (useful when the caller sizes the window to fit).
+fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
+    var tree: flex::Node = mount(np);
+    tree.calculate_layout(width, height, flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    ui::apply(#addr_of(tree), view_ptr, false);
+    let f: flex::Layout = tree.layout_frame();
+    return f.height;
+}
+
+// ---- the app runtime: state -> view, events re-render -----------------------
+//
+// MVU with the update step in the handlers, per the app's own state:
+//
+//     static COUNT: i32 = 0;
+//     fn on_inc(sender: *u8, ctx: *u8) { COUNT = COUNT + 1; return; }
+//     fn view() -> facet::Node {
+//         let t: text::Text = "count ${COUNT}";
+//         return @facet {
+//             vstack {
+//                 label(t.view(), size: 20.0f64)
+//                 button("+1").on_click(on_inc)
+//             }
+//         };
+//     }
+//     fn main() -> i32 { fak::run_app(view); return 0; }
+//
+// One rule, no hidden machinery: after an event handler returns, the runtime
+// calls `view()` again and re-renders. State lives wherever the app puts it
+// (statics, or anything reachable from a click ctx).
+
+static APP_VIEW: *u8 = #zero::[*u8]();     // fn() -> facet::Node, stored erased
+static APP_CONTENT: *u8 = #zero::[*u8]();  // the window's content view
+static APP_W: f64 = #zero::[f64]();
+static APP_H: f64 = #zero::[f64]();
+
+// The app-mode Renderer: same leaf ops, ctx = 1 flags buttons to wire the
+// re-render hook.
+fn app_renderer() -> facet::Renderer {
+    return facet::Renderer {
+        ctx: 1 as *u8,
+        label: ak_label,
+        wrap_label: ak_wrap_label,
+        button: ak_button,
+    };
+}
+
+// Bind the view fn + host view without opening a window (run_app does this;
+// tests drive refresh directly against any NSView).
+fn app_bind(view: fn() -> facet::Node, content_ptr: *u8, width: f64, height: f64) {
+    APP_VIEW = view as *u8;
+    APP_CONTENT = content_ptr;
+    APP_W = width;
+    APP_H = height;
+    return;
+}
+
+// Re-render: drop the previous widget views, rebuild the description from
+// the view fn, mount, lay out, apply. Runs once at startup and after every
+// event handler.
+fn refresh() {
+    if APP_CONTENT == (0 as *u8) { return; }
+    let content: ak::View = ak::View::from_raw(APP_CONTENT);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    let cnt: usize = subs.count();
+    for i in 0..(cnt as i32) {
+        match subs.at_ptr(i as usize) {
+            option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
+            option::Option[*ak::View]::None => { }
+        }
+    }
+    let vf: fn() -> facet::Node = APP_VIEW as fn() -> facet::Node;
+    var root: facet::Node = vf();
+    var tree: flex::Node = facet::mount(#addr_of(root), app_renderer());
+    tree.calculate_layout(APP_W, APP_H, flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    ui::apply(#addr_of(tree), APP_CONTENT, false);
+    return;
+}
+
+// Open a window and run `view` as an app: initial render, then re-render
+// after every event handler. Blocks in the event loop.
+fn run_app(view: fn() -> facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
+    let app: ak::Application = ak::Application::shared_application();
+    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+
+    let style: u64 = ak::window_style_mask_titled
+        | ak::window_style_mask_closable
+        | ak::window_style_mask_miniaturizable
+        | ak::window_style_mask_resizable;
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
         style,
-        window::BackingStoreType::NSBackingStoreBuffered,
+        ak::BackingStoreType::NSBackingStoreBuffered,
         false,
     );
-    win.set_title("facet");
+    rt::retain(win.raw());
+    win.set_title(title);
 
-    let rv: *u8 = render({ #addr_of(root) });
-    win.set_content_view(rv);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+
+    app_bind(view, content.raw(), width, height);
+    refresh();
 
     win.center();
     win.make_key_and_order_front(0 as *u8);
     app.activate_ignoring_other_apps(true);
     app.run();
     return;
+}
+
+// Open a window, mount the tree, run the event loop (blocks).
+fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
+    let app: ak::Application = ak::Application::shared_application();
+    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+
+    let style: u64 = ak::window_style_mask_titled
+        | ak::window_style_mask_closable
+        | ak::window_style_mask_miniaturizable
+        | ak::window_style_mask_resizable;
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
+        style,
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    rt::retain(win.raw());
+    win.set_title(title);
+
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    app.activate_ignoring_other_apps(true);
+    app.run();
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+// The literal `@facet` surface works in this module (facet is an import), so
+// the whole description -> widget pipeline is tested here; `run` itself only
+// adds the window + event loop on top of `mount_into`.
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; }
+    return d < 0.01f64;
+}
+
+fn t_noop(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn label_op_builds_textfield_with_config() {
+    let d: facet::Node = facet::label("Hello", size: 28.0f64, bold: true);
+    let n: flex::Node = ak_label(0 as *u8, #addr_of(d));
+    assert n.has_payload();
+    let tf: ak::TextField = ak::TextField::from_raw(n.payload());
+    let t = tf.as_control().string_value();
+    assert t.count() == (5 as usize);
+}
+
+#[test]
+fn button_op_wires_title_and_click_identity() {
+    CLICKS = 0;
+    let d: facet::Node = facet::button("del", primary: true).on_click(t_click, ctx: 7 as *u8);
+    let n: flex::Node = ak_button(0 as *u8, #addr_of(d));
+    let bp: *u8 = n.payload();
+    let b: ak::Button = ak::Button::from_raw(bp);
+    let t = b.title();
+    assert t.count() == (3 as usize);
+    // Fire through the wired target/action pair, as a click would.
+    let tgt: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("target\0")));
+    let act: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("action\0")));
+    assert tgt != (0 as *u8);
+    rt::msg_void_id(tgt, act, bp);
+    assert CLICKS == 1;
+    assert CLICK_CTX == (7 as i64);
+}
+
+static CLICKS: i32 = 0;
+static CLICK_CTX: i64 = 0;
+
+fn t_click(sender: *u8, ctx: *u8) {
+    CLICKS = CLICKS + 1;
+    CLICK_CTX = ctx as i64;
+    return;
+}
+
+#[test]
+fn facet_block_mounts_into_views() {
+    // The full pipeline: @facet description -> mount -> layout -> NSViews.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var root: facet::Node = @facet {
+        card {
+            label("Iris", size: 28.0f64, bold: true)
+            hstack {
+                button("New", primary: true).on_click(t_click)
+                button("Open")
+            }
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    assert h > 0.0f64;
+    // content -> card (synthesized container view) -> label + hstack.
+    let subs = content.subviews();
+    assert subs.count() == (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(cardv) => {
+            let inner = { (*cardv).subviews() };
+            assert inner.count() == (2 as usize);   // label view + hstack view
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+}
+
+#[test]
+fn spacer_pushes_button_to_the_edge() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 60.0 });
+    var root: facet::Node = @facet {
+        row {
+            label("t").width(50.0f64).height(20.0f64)
+            spacer()
+            button("ok").width(80.0f64).height(20.0f64)
+        }
+    };
+    var tree: flex::Node = mount(#addr_of(root));
+    tree.set_width(flex::StyleLength::points(400.0f64));
+    tree.set_height(flex::StyleLength::points(60.0f64));
+    tree.calculate_layout(400.0f64, 60.0f64, flex::Direction::LTR);
+    // root column -> row -> [label, spacer, button]; the button hugs the right.
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            let bf: flex::Layout = must_layout({ (*rp).child_layout(2 as usize) });
+            assert approx(bf.left, 320.0f64);   // 400 - 80
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
+
+fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
+    return match o {
+        option::Option[flex::Layout]::Some(l) => l,
+        option::Option[flex::Layout]::None => flex::Layout { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
+    };
+}
+
+// -- the app runtime: the counter story --------------------------------------
+// State in a static, a handler that mutates it, a view that reads it — the
+// runtime keeps the UI in step. Digit-width assertions ("count 9" = 7 chars,
+// "count 10" = 8) avoid depending on str equality.
+
+static COUNT: i32 = 0;
+
+fn count_inc(sender: *u8, ctx: *u8) {
+    COUNT = COUNT + 1;
+    return;
+}
+
+fn counter_view() -> facet::Node {
+    let t: text::Text = "count ${COUNT}";
+    return @facet {
+        vstack {
+            label(t.view(), size: 20.0f64)
+            button("+1").on_click(count_inc)
+        }
+    };
+}
+
+// content -> root column view? No: the @facet root column is the mounted
+// ROOT node itself, so apply hangs its children directly under content.
+// content -> vstack (synthesized) -> [label view, button view].
+fn nth_widget(content_ptr: *u8, i: usize) -> *u8 {
+    let content: ak::View = ak::View::from_raw(content_ptr);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(stackv) => {
+            var inner: vec::Vec[ak::View] = { (*stackv).subviews() };
+            match inner.at_ptr(i) {
+                option::Option[*ak::View]::Some(w) => { return { (*w).raw() }; }
+                option::Option[*ak::View]::None => { }
+            }
+        }
+        option::Option[*ak::View]::None => { }
+    }
+    return 0 as *u8;
+}
+
+fn click(button_ptr: *u8) {
+    let tgt: *u8 = rt::msg_id(button_ptr, rt::sel(#str_ptr("target\0")));
+    let act: *u8 = rt::msg_id(button_ptr, rt::sel(#str_ptr("action\0")));
+    rt::msg_void_id(tgt, act, button_ptr);
+    return;
+}
+
+#[test]
+fn app_counter_label_follows_state() {
+    COUNT = 9;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    app_bind(counter_view, content.raw(), 300.0f64, 200.0f64);
+    refresh();
+
+    // Initial render: "count 9" — 7 characters.
+    let l0: ak::TextField = ak::TextField::from_raw(nth_widget(content.raw(), 0 as usize));
+    assert l0.as_control().string_value().count() == (7 as usize);
+
+    // Click the button: handler mutates state, runtime re-renders.
+    click(nth_widget(content.raw(), 1 as usize));
+    assert COUNT == 10;
+
+    // The (rebuilt) label now reads "count 10" — 8 characters.
+    let l1: ak::TextField = ak::TextField::from_raw(nth_widget(content.raw(), 0 as usize));
+    assert l1.as_control().string_value().count() == (8 as usize);
+    APP_CONTENT = 0 as *u8;   // unbind for the other tests
+}
+
+// -- the app runtime: a removable list ----------------------------------------
+
+static REMOVED: i64 = 0;
+
+fn list_kept(i: i32) -> bool {
+    return (REMOVED & ((1 as i64) << (i as i64))) == (0 as i64);
+}
+
+fn list_remove(sender: *u8, ctx: *u8) {
+    REMOVED = REMOVED | ((1 as i64) << (ctx as i64));
+    return;
+}
+
+fn list_view() -> facet::Node {
+    return @facet {
+        vstack {
+            for i in 0..4 {
+                if list_kept(i) {
+                    button("x").on_click(list_remove, ctx: (i as usize) as *u8)
+                }
+            }
+        }
+    };
+}
+
+#[test]
+fn app_list_reflows_on_remove() {
+    REMOVED = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    app_bind(list_view, content.raw(), 300.0f64, 200.0f64);
+    refresh();
+
+    let content_v: ak::View = ak::View::from_raw(content.raw());
+    var subs0: vec::Vec[ak::View] = content_v.subviews();
+    match subs0.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            assert { (*sv).subviews().count() } == (4 as usize);
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+
+    // Remove row 2: its handler flips the bit, the runtime reflows.
+    click(nth_widget(content.raw(), 2 as usize));
+    assert list_kept(2) == false;
+
+    var subs1: vec::Vec[ak::View] = content_v.subviews();
+    match subs1.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            assert { (*sv).subviews().count() } == (3 as usize);
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    APP_CONTENT = 0 as *u8;
+}
+
+// -- the after-hook fires in order ---------------------------------------------
+
+static ORDER: i32 = 0;
+
+fn order_handler(sender: *u8, ctx: *u8) {
+    if ORDER == 0 { ORDER = 1; }
+    return;
+}
+
+fn order_after() {
+    if ORDER == 1 { ORDER = 2; }
+    return;
+}
+
+#[test]
+fn action_then_runs_handler_before_after_hook() {
+    ORDER = 0;
+    let b = ak::Button::new();
+    akx::set_control_action_ctx_then(b.as_control(), order_handler, 0 as *u8, order_after);
+    click(b.raw());
+    assert ORDER == 2;   // handler first, then the hook — in order
 }
