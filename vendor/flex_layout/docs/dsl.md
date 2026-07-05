@@ -51,6 +51,37 @@ box().width(200.0).height(44.0).padding(8.0)
 box().grow(1.0).align(flex::Align::Center)
 ```
 
+Containers take the same fluent chain, written after the closing `}` on the
+same line:
+
+```
+column {
+    box().width(40.0)
+    box().width(40.0)
+}.gap(8.0).grow(1.0)
+```
+
+The line position is the rule:
+
+- **Same line** (after a leaf call or a container's `}`): the chain is part of
+  the item expression. Fluent modifiers (`take this -> Node`, value to value)
+  belong here.
+- **Own leading-dot line**: a modifier statement applied to the item in place.
+  Use the mutating `set_*` setters here (`.set_align_items(...)`,
+  `.set_padding(...)`); they return nothing, so each line stands alone.
+
+```
+column {
+    box().grow(1.0)
+}.gap(8.0)                                  // fluent: same line
+    .set_align_items(flex::Align::Center)   // set_*: its own line
+```
+
+A consuming fluent modifier on its own leading-dot line is a use-after-move
+(the statement would consume the item before it is added); the error's
+"value moved here" note points at the offending line. Put it on the chain
+instead, or use the `set_*` form.
+
 | Modifier | Effect |
 |---|---|
 | `.width(v)` / `.height(v)` | fixed size in points |
@@ -61,7 +92,7 @@ box().grow(1.0).align(flex::Align::Center)
 | `.justify(j)` / `.align(a)` / `.wrap(w)` | justify-content / align-items / flex-wrap |
 
 Any of the engine's `set_*` setters also work as modifiers (they mutate in place;
-use them on their own leading-dot line).
+use them on their own leading-dot line, as above).
 
 ## Flow control
 

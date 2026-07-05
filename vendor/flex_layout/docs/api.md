@@ -102,6 +102,22 @@ The callback's first argument is the node's context. An adapter stores the
 backing view there so one `fn` can size any view (cast `ctx` back, ask for its
 fitting size). The engine never frees the context — the adapter owns it.
 
+### Owned payload
+
+| Method | Signature |
+|---|---|
+| `set_payload` | `(ref this, p: *u8, release: fn(*u8))` — the node takes ownership |
+| `payload` | `(this) -> *u8` — `0` when none |
+| `has_payload` | `(this) -> bool` |
+| `clear_payload` | `(ref this)` — releases now, leaves the node payload-free |
+
+The owning counterpart to `set_context`: the engine calls `release(p)` exactly
+once, when the node drops or when a later `set_payload`/`clear_payload`
+replaces the value. An adapter keeps the borrowed measure context and the
+owned payload on the same node (typically the same view pointer: retain it
+into the payload, release in the release fn). The engine never reads through
+the pointer, so it stays UI-kit agnostic.
+
 ### Grid (container / item)
 
 | Method | Signature |

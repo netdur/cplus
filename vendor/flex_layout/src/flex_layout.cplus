@@ -252,6 +252,54 @@ impl Style {
 }
 
 // ==========================================================================
+// Payload — an owned opaque pointer + its release fn
+// ==========================================================================
+//
+// A node can own one opaque payload (an adapter's view handle, for
+// example). The engine never reads through the pointer; it only promises
+// to call the release fn exactly once — when the owning node drops, or
+// when the payload is replaced or cleared. This is the owning
+// counterpart to `node_ctx`, which stays a borrowed context for the
+// measure/baseline callbacks.
+
+fn release_none(p: *u8) { return; }
+
+struct Payload {
+    // Owned by contract: released through `_release` in `drop`. The
+    // release goes through a fn pointer, which the raw-pointer
+    // accountability check cannot prove, hence the `opaque` marker.
+    opaque _ptr: *u8,
+    _release: fn(*u8),
+    _armed: bool,
+}
+
+impl Payload {
+    fn none() -> Payload {
+        return Payload { _ptr: 0 as *u8, _release: release_none, _armed: false };
+    }
+
+    fn own(p: *u8, release: fn(*u8)) -> Payload {
+        return Payload { _ptr: p, _release: release, _armed: true };
+    }
+
+    fn get(this) -> *u8 {
+        if this._armed { return this._ptr; }
+        return 0 as *u8;
+    }
+
+    fn armed(this) -> bool { return this._armed; }
+
+    fn drop(ref this) {
+        if this._armed {
+            let f: fn(*u8) = this._release;
+            f(this._ptr);
+            this._armed = false;
+        }
+        return;
+    }
+}
+
+// ==========================================================================
 // Node — persistent, mutable
 // ==========================================================================
 
@@ -270,6 +318,7 @@ struct Node {
     baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
     has_baseline: bool,
     opaque node_ctx: *u8,            // borrowed context for measure/baseline (adapter owns it)
+    node_payload: Payload,           // owned opaque payload (released on drop/replace)
     grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
     grid_rows: vec::Vec[GridTrack],  // grid-template-rows
     grid_col_span: i32,              // how many columns this item spans (>=1)
@@ -323,6 +372,7 @@ impl Node {
             baseline: baseline_none,
             has_baseline: false,
             node_ctx: 0 as *u8,
+            node_payload: Payload::none(),
             grid_cols: vec::new::[GridTrack](),
             grid_rows: vec::new::[GridTrack](),
             grid_col_span: 1,
@@ -479,6 +529,17 @@ impl Node {
     // specific view. Pass `0 as *u8` to clear.
     fn set_context(ref this, ctx: *u8) { this.node_ctx = ctx; return; }
     fn context(this) -> *u8 { return this.node_ctx; }
+
+    // Owned opaque payload (an adapter's view handle). The node releases
+    // it through `release` exactly once: on node drop, or when a
+    // replacement/clear overwrites it (assignment drops the old payload).
+    fn set_payload(ref this, p: *u8, release: fn(*u8)) {
+        this.node_payload = Payload::own(p, release);
+        return;
+    }
+    fn payload(this) -> *u8 { return this.node_payload.get(); }
+    fn has_payload(this) -> bool { return this.node_payload.armed(); }
+    fn clear_payload(ref this) { this.node_payload = Payload::none(); return; }
 
     fn set_measure(ref this, f: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size) {
         this.measure = f;
@@ -3558,4 +3619,85 @@ fn test_measure_context_distinguishes_nodes() {
     assert approx(must(root.child_layout(0 as usize)).width, 60.0f64);
     assert approx(must(root.child_layout(1 as usize)).width, 120.0f64);
     assert approx(must(root.child_layout(0 as usize)).height, 24.0f64);
+}
+
+// ---- owned payload ----
+
+static PAYLOAD_RELEASES: i32 = 0;
+static PAYLOAD_LAST: i64 = 0;
+
+fn counting_release(p: *u8) {
+    PAYLOAD_RELEASES = PAYLOAD_RELEASES + 1;
+    PAYLOAD_LAST = p as i64;
+    return;
+}
+
+#[test]
+fn test_payload_default_none() {
+    var n: Node = Node::new();
+    assert n.has_payload() == false;
+    assert (n.payload() as i64) == (0 as i64);
+}
+
+#[test]
+fn test_payload_released_once_on_drop() {
+    PAYLOAD_RELEASES = 0;
+    {
+        var n: Node = Node::new();
+        n.set_payload(7 as *u8, counting_release);
+        assert n.has_payload();
+        assert (n.payload() as i64) == (7 as i64);
+        assert PAYLOAD_RELEASES == 0;   // owned, not yet released
+    }
+    assert PAYLOAD_RELEASES == 1;       // exactly once, at node drop
+    assert PAYLOAD_LAST == (7 as i64);
+}
+
+#[test]
+fn test_payload_replace_releases_old() {
+    PAYLOAD_RELEASES = 0;
+    {
+        var n: Node = Node::new();
+        n.set_payload(7 as *u8, counting_release);
+        n.set_payload(9 as *u8, counting_release);   // replaces: releases 7
+        assert PAYLOAD_RELEASES == 1;
+        assert PAYLOAD_LAST == (7 as i64);
+        assert (n.payload() as i64) == (9 as i64);
+    }
+    assert PAYLOAD_RELEASES == 2;        // 9 released at drop
+    assert PAYLOAD_LAST == (9 as i64);
+}
+
+#[test]
+fn test_payload_clear_releases_and_disarms() {
+    PAYLOAD_RELEASES = 0;
+    {
+        var n: Node = Node::new();
+        n.set_payload(7 as *u8, counting_release);
+        n.clear_payload();
+        assert PAYLOAD_RELEASES == 1;
+        assert n.has_payload() == false;
+        assert (n.payload() as i64) == (0 as i64);
+    }
+    assert PAYLOAD_RELEASES == 1;        // nothing further at drop
+}
+
+#[test]
+fn test_payload_travels_with_child_into_parent() {
+    PAYLOAD_RELEASES = 0;
+    {
+        var root: Node = Node::new();
+        var c: Node = Node::new();
+        c.set_payload(11 as *u8, counting_release);
+        root.add_child(c);               // node moves in; payload rides along
+        assert PAYLOAD_RELEASES == 0;
+        match root.children.at_ptr(0 as usize) {
+            option::Option[*Node]::Some(p) => {
+                assert ({ (*p).payload() } as i64) == (11 as i64);
+            }
+            option::Option[*Node]::None => { assert false; }
+        }
+    }
+    assert PAYLOAD_RELEASES == 1;        // released when the tree drops
+    assert PAYLOAD_LAST == (11 as i64);
 }
