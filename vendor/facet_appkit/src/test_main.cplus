@@ -382,3 +382,52 @@ fn flipped_view_reports_flipped() {
     let flipped: i8 = rt::msg_i8(v.raw(), rt::sel(#str_ptr("isFlipped\0")));
     assert flipped == (1 as i8);
 }
+
+// ---- coverage proof: ANY binding view enters through the escape hatches ----
+// None of these widgets exist in the @ui vocabulary — they come straight from
+// the generated binding (NSSlider / NSProgressIndicator / NSPopUpButton) and
+// enter the layout as ordinary nodes via view()/fixed_view(). This is the
+// coverage model: the binding is the coverage; @ui wraps only the everyday
+// widgets; everything else needs zero wrapper code.
+
+#[test]
+fn any_binding_view_enters_via_escape_hatches() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 120.0 });
+
+    let s = ak::Slider::new();
+    s.as_control().set_double_value(0.5f64);
+    let sp: *u8 = s.raw();
+
+    let p = ak::ProgressIndicator::new();
+    p.set_indeterminate(false);
+    let pp: *u8 = p.as_view().raw();
+
+    let pop = ak::PopUpButton::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, false);
+    pop.add_item_with_title("One");
+    pop.add_item_with_title("Two");
+    let popp: *u8 = pop.as_view().raw();
+
+    var tree: flex::Node = @ui {
+        vstack {
+            fixed_view(s.as_view()).height(24.0f64)
+            fixed_view(p.as_view()).height(16.0f64)
+            view(pop.as_view())
+        }
+    };
+    tree.set_width(flex::StyleLength::points(400.0f64));
+    tree.calculate_layout(400.0f64, 120.0f64, flex::Direction::LTR);
+    ui::apply(#addr_of(tree), content.raw(), false);
+
+    // All three landed in the view tree with frames from the flex pass.
+    let sf: rt::Rect = ak::View::from_raw(sp).frame();
+    assert sf.w > 0.0f64;
+    assert sf.h == 24.0f64;
+    let pf: rt::Rect = ak::View::from_raw(pp).frame();
+    assert pf.h == 16.0f64;
+    match ak::View::from_raw(popp).superview() {
+        option::Option[ak::View]::Some(sv) => { assert sv.raw() != (0 as *u8); }
+        option::Option[ak::View]::None => { assert false; }
+    };
+    // And the popup still behaves like the binding object it is.
+    assert pop.number_of_items() == (2 as i64);
+}
