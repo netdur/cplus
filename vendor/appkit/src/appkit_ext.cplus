@@ -1,0 +1,43 @@
+// vendor/appkit/src/appkit_ext.cplus — hand-written companion to the generated
+// AppKit binding. It does NOT edit `appkit.cplus` (which is machine-generated);
+// it only composes the existing runtime + synthesis helpers to add the things the
+// generator can't know to emit. Import it as `appkit/appkit_ext`.
+//
+// Currently: a flipped NSView (top-left origin). `NSView.isFlipped` is
+// override-only in AppKit, so the standard fix is a one-method subclass whose
+// isFlipped returns YES — which is exactly what this builds at runtime.
+
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "appkit/appkit" as ak;
+
+// `class_addMethod` for a `BOOL (self, _cmd)` method (isFlipped). This shape isn't
+// in objc/synthesis yet, so declare it locally — the generated binding declares
+// its own delegate shims the same way (`#[link_name = "class_addMethod"]`).
+#[link_name = "class_addMethod"]
+extern fn add_method_bool_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+// The override: -[isFlipped] -> YES.
+fn flipped_is_flipped_imp(self_obj: *u8, cmd: *u8) -> i8 { return 1 as i8; }
+
+// The NSView subclass whose isFlipped is YES. Registered once; reused thereafter
+// (`get_class` returns null until the pair is registered).
+fn flipped_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FlexFlippedView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), #str_ptr("FlexFlippedView\0"), 0 as usize);
+    add_method_bool_0(cls, rt::sel(#str_ptr("isFlipped\0")), flipped_is_flipped_imp, #str_ptr("c@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// A flipped view (top-left origin), constructible like any other view. Use it as
+// a scroll view's document view — the first row then sits at the top by
+// construction, with no manual scroll-to-top afterwards.
+fn new_flipped_view(frame: rt::Rect) -> ak::View {
+    let alloced: *u8 = rt::msg_id(flipped_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    // `from_raw` retains; autorelease balances the +1 from `alloc`, so the returned
+    // View owns exactly one reference (released by its `drop`).
+    return ak::View::from_raw(rt::autorelease(inited));
+}
