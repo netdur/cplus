@@ -105,26 +105,31 @@ fn wrap_label(text: str, size: f64 = 13.0f64, secondary: bool = false) -> flex::
     return wrap_view(l.as_view());
 }
 
-// A push button firing `on(sender)`.
-fn button(title: str, on: fn(*u8), primary: bool = false) -> flex::Node {
+// A styled push button with NO action wired — for backends that wire their
+// own target/action exactly once (a replaced target strands its creation
+// reference; wire once, never rewire).
+fn button_view(title: str, primary: bool = false) -> flex::Node {
     let b = ak::Button::new();
     b.set_title(title);
     b.set_bezel_style(ak::BezelStyle::Rounded);
     if primary { b.set_tint_prominence(ak::TintProminence::Primary); }
-    b.as_control().set_on_action(on);
     return view(b.as_view());
+}
+
+// A push button firing `on(sender)`.
+fn button(title: str, on: fn(*u8), primary: bool = false) -> flex::Node {
+    let n: flex::Node = button_view(title, primary: primary);
+    ak::Button::from_raw(n.payload()).as_control().set_on_action(on);
+    return n;
 }
 
 // A push button firing `on(sender, ctx)` — per-item identity without the
 // setTag workaround. The caller owns `ctx` (an index smuggled as a pointer
 // needs no ownership at all).
 fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false) -> flex::Node {
-    let b = ak::Button::new();
-    b.set_title(title);
-    b.set_bezel_style(ak::BezelStyle::Rounded);
-    if primary { b.set_tint_prominence(ak::TintProminence::Primary); }
-    akx::set_control_action_ctx(b.as_control(), on, ctx);
-    return view(b.as_view());
+    let n: flex::Node = button_view(title, primary: primary);
+    akx::set_control_action_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx);
+    return n;
 }
 
 // A borderless image-only button (SF Symbol by name) firing `on(sender)`.
