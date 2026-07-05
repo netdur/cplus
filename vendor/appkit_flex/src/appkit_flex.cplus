@@ -1,0 +1,501 @@
+// appkit_flex — the view-bearing AppKit layer over the flex_layout engine,
+// and a `@`-DSL context in which layout containers and widgets are peers:
+//
+//   import "appkit_flex/appkit_flex" as ui;
+//
+//   var tree: flex::Node = @ui {
+//       screen {
+//           label("Iris", size: 28.0f64, bold: true)
+//           hstack {
+//               button("New Project", on: cb, primary: true)
+//               button("Open Project", on: cb)
+//           }
+//       }
+//   };
+//   tree.calculate_layout(800.0f64, flex::undefined(), flex::Direction::LTR);
+//   ui::apply(#addr_of(tree), content.raw(), false);
+//
+// Every widget constructor returns a `flex::Node` that OWNS its NSView
+// through the engine's payload slot (released exactly once when the node
+// drops or is replaced); content sizing goes through the engine's measure
+// callback. `apply` builds a real nested NSView tree from the computed
+// frames, converting flex's absolute top-down coordinates into AppKit's
+// superview-relative bottom-up ones. `fill_scroll` packages the two-phase
+// scroll layout (outer pass sizes the viewport, second pass lays rows into
+// a flipped document view).
+
+import "objc/runtime" as rt;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+
+// ==========================================================================
+// Payload + measure plumbing
+// ==========================================================================
+
+// The payload release: the node's owned +1 on its backing view.
+fn release_view(p: *u8) { rt::release(p); return; }
+
+// Measure a leaf through its backing view's fittingSize. `ctx` is the raw
+// view pointer (borrowed; the same node's payload owns it).
+fn measure_view(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
+    let s: rt::Size = ak::View::from_raw(ctx).fitting_size();
+    return flex::Size { width: s.w, height: s.h };
+}
+
+// Measure wrapping text: constrain preferredMaxLayoutWidth to the flexed
+// width first, so fittingSize reports the wrapped height.
+fn measure_wrap(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
+    let tf: ak::TextField = ak::TextField::from_raw(ctx);
+    if avail_w > 0.0f64 { tf.set_preferred_max_layout_width(avail_w); }
+    let s: rt::Size = tf.as_view().fitting_size();
+    return flex::Size { width: s.w, height: s.h };
+}
+
+// ---- escape hatches: wrap any NSView as a node ----
+
+// A content leaf measured through the view (labels, buttons).
+fn view(take v: ak::View) -> flex::Node {
+    let p: *u8 = rt::retain(v.raw());
+    var n: flex::Node = flex::Node::new();
+    n.set_payload(p, release_view);
+    n.set_context(p);
+    n.set_measure(measure_view);
+    return n;
+}
+
+// A wrapping-text leaf (height follows the flexed width).
+fn wrap_view(take v: ak::View) -> flex::Node {
+    let p: *u8 = rt::retain(v.raw());
+    var n: flex::Node = flex::Node::new();
+    n.set_payload(p, release_view);
+    n.set_context(p);
+    n.set_measure(measure_wrap);
+    return n;
+}
+
+// An unmeasured leaf; size it with `.width()` / `.height()` / `.grow()`.
+fn fixed_view(take v: ak::View) -> flex::Node {
+    let p: *u8 = rt::retain(v.raw());
+    var n: flex::Node = flex::Node::new();
+    n.set_payload(p, release_view);
+    return n;
+}
+
+// ==========================================================================
+// Widgets — leaf constructors (config through named params + defaults)
+// ==========================================================================
+
+// A single-line text label.
+fn label(text: str, size: f64 = 13.0f64, bold: bool = false, secondary: bool = false) -> flex::Node {
+    let l = ak::TextField::label_with_string(text);
+    if bold { l.as_control().set_font(ak::Font::bold_system_font_of_size(size)); }
+    else    { l.as_control().set_font(ak::Font::system_font_of_size(size)); }
+    if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
+    return view(l.as_view());
+}
+
+// A multi-line label that wraps to its flexed width.
+fn wrap_label(text: str, size: f64 = 13.0f64, secondary: bool = false) -> flex::Node {
+    let l = ak::TextField::wrapping_label_with_string(text);
+    l.as_control().set_font(ak::Font::system_font_of_size(size));
+    if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
+    return wrap_view(l.as_view());
+}
+
+// A push button firing `on(sender)`.
+fn button(title: str, on: fn(*u8), primary: bool = false) -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title(title);
+    b.set_bezel_style(ak::BezelStyle::Rounded);
+    if primary { b.set_tint_prominence(ak::TintProminence::Primary); }
+    b.as_control().set_on_action(on);
+    return view(b.as_view());
+}
+
+// A push button firing `on(sender, ctx)` — per-item identity without the
+// setTag workaround. The caller owns `ctx` (an index smuggled as a pointer
+// needs no ownership at all).
+fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false) -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title(title);
+    b.set_bezel_style(ak::BezelStyle::Rounded);
+    if primary { b.set_tint_prominence(ak::TintProminence::Primary); }
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
+    return view(b.as_view());
+}
+
+// A borderless image-only button (SF Symbol by name) firing `on(sender)`.
+fn icon_button(symbol_name: str, on: fn(*u8)) -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title("");
+    b.set_bordered(false);
+    match ak::Image::image_with_system_symbol_name(symbol_name, "") {
+        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+        option::Option[ak::Image]::None => { }
+    };
+    b.set_image_position(ak::CellImagePosition::NSImageOnly);
+    b.as_control().set_on_action(on);
+    return view(b.as_view());
+}
+
+// The ctx-carrying variant of `icon_button`.
+fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8) -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title("");
+    b.set_bordered(false);
+    match ak::Image::image_with_system_symbol_name(symbol_name, "") {
+        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+        option::Option[ak::Image]::None => { }
+    };
+    b.set_image_position(ak::CellImagePosition::NSImageOnly);
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
+    return view(b.as_view());
+}
+
+// An SF Symbol at a fixed side length.
+fn symbol(name: str, side: f64, secondary: bool = false) -> flex::Node {
+    var img: ak::Image = ak::Image::new(rt::Size { w: side, h: side });
+    match ak::Image::image_with_system_symbol_name(name, "") {
+        option::Option[ak::Image]::Some(found) => { img = found; }
+        option::Option[ak::Image]::None => { }
+    };
+    let iv = ak::ImageView::image_view_with_image(img);
+    if secondary { iv.set_content_tint_color(ak::Color::secondary_label_color()); }
+    else         { iv.set_content_tint_color(ak::Color::label_color()); }
+    var n: flex::Node = fixed_view(iv.as_view());
+    n.set_width(flex::StyleLength::points(side));
+    n.set_height(flex::StyleLength::points(side));
+    return n;
+}
+
+// An image from a file path, scaled proportionally. Size it with
+// `.width()` / `.height()`.
+fn image(path: str) -> flex::Node {
+    let iv = ak::ImageView::image_view_with_image(ak::Image::new_with_contents_of_file(path));
+    iv.set_image_scaling(ak::ImageScaling::NSImageScaleProportionallyUpOrDown);
+    return fixed_view(iv.as_view());
+}
+
+// A hairline separator. Give it `.width(1.0)` in a row or `.height(1.0)`
+// in a column.
+fn divider() -> flex::Node {
+    let b = ak::Box::new();
+    b.set_box_type(ak::BoxType::NSBoxSeparator);
+    return fixed_view(b.as_view());
+}
+
+// Flexible empty space (no view).
+fn spacer() -> flex::Node {
+    return flex::Node::new().grow(1.0f64);
+}
+
+// A bare layout box (no view); size or grow it via modifiers.
+fn box() -> flex::Node {
+    return flex::Node::new();
+}
+
+// The viewport leaf for an NSScrollView: place it in the outer tree (give
+// it `.grow(1.0)` or a size), run the outer layout + apply, then hand the
+// row content to `fill_scroll`.
+fn scroll_view(s: ak::ScrollView) -> flex::Node {
+    return fixed_view(s.as_view());
+}
+
+// ==========================================================================
+// Builder protocol + containers (the `@ui` context)
+// ==========================================================================
+
+struct Builder {
+    node: flex::Node,
+}
+
+impl Builder {
+    fn new() -> Builder { return Builder { node: flex::Node::new() }; }
+    fn add(ref this, take item: flex::Node) { this.node.add_child(item); return; }
+    fn finish(take this) -> flex::Node { let Builder { node } = this; return node; }
+}
+
+// A vertical stack (the engine's default axis).
+fn column(take b: Builder) -> flex::Node { let Builder { node } = b; return node; }
+
+// A horizontal stack.
+fn row(take b: Builder) -> flex::Node {
+    let Builder { node } = b;
+    var n: flex::Node = node;
+    n.set_flex_direction(flex::FlexDirection::Row);
+    return n;
+}
+
+// HIG presets, mirroring the engine's own `@flex` containers: 8pt between
+// related items, 16pt card padding, 20pt screen margins.
+fn vstack(take b: Builder) -> flex::Node {
+    var n: flex::Node = column(b);
+    n.set_gap(flex::Gutter::Row, flex::HIG_SPACE_S);
+    return n;
+}
+
+fn hstack(take b: Builder) -> flex::Node {
+    var n: flex::Node = row(b);
+    n.set_gap(flex::Gutter::Column, flex::HIG_SPACE_S);
+    return n;
+}
+
+fn screen(take b: Builder) -> flex::Node {
+    var n: flex::Node = column(b);
+    n.set_padding(flex::Edge::All, flex::StyleLength::points(flex::HIG_SPACE_L));
+    n.set_gap(flex::Gutter::Row, flex::HIG_SPACE_S);
+    return n;
+}
+
+fn card(take b: Builder) -> flex::Node {
+    var n: flex::Node = column(b);
+    n.set_padding(flex::Edge::All, flex::StyleLength::points(flex::HIG_SPACE_M));
+    n.set_gap(flex::Gutter::Row, flex::HIG_SPACE_S);
+    return n;
+}
+
+// ==========================================================================
+// Apply — computed frames -> a real nested NSView tree
+// ==========================================================================
+//
+// flex yields absolute, top-down frames. A leaf node contributes its
+// payload view; a view-less container gets a fresh transparent NSView so
+// its children nest inside it (per-row operations like "remove this row"
+// then have a real superview to act on). `root_flipped` says whether
+// `root_view` has a top-left origin (a flipped scroll document) or the
+// standard bottom-left one.
+
+fn apply(root: *flex::Node, root_view: *u8, root_flipped: bool) {
+    apply_nested(root, root_view, (*root).layout_frame(), root_flipped);
+}
+
+fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, parent_flipped: bool) {
+    let kc: usize = (*node).child_count();
+    for i in 0..(kc as i32) {
+        match (*node).children.at_ptr(i as usize) {
+            option::Option[*flex::Node]::Some(cn) => {
+                let cf: flex::Layout = (*cn).layout_frame();   // absolute
+                let x: f64 = cf.left - parent_abs.left;        // relative to parent
+                let y: f64 = if parent_flipped { cf.top - parent_abs.top } else { parent_abs.height - (cf.top - parent_abs.top) - cf.height };
+                let rect = rt::Rect { x: x, y: y, w: cf.width, h: cf.height };
+                let cp: *u8 = (*cn).payload();
+                if cp != (0 as *u8) {
+                    let v: ak::View = ak::View::from_raw(cp);
+                    v.set_frame(rect);
+                    ak::View::from_raw(parent_ptr).add_subview(v);
+                    apply_nested(cn, cp, cf, false);   // payload views are non-flipped
+                } else if (*cn).child_count() > (0 as usize) {
+                    let bv: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+                    let bp: *u8 = bv.raw();
+                    bv.set_frame(rect);
+                    ak::View::from_raw(parent_ptr).add_subview(ak::View::from_raw(bp));
+                    apply_nested(cn, bp, cf, false);   // fresh container, non-flipped
+                }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+    }
+}
+
+// ==========================================================================
+// Scroll — the two-phase pattern, packaged
+// ==========================================================================
+//
+// A scroll document can't be laid out until the outer pass has sized the
+// viewport. After the outer layout + apply, hand the row content here: it
+// is laid out at the viewport width, applied into a fresh FLIPPED document
+// view (rows read top-down, list opens at the top), and installed as the
+// scroll's document. Returns the document height. The row tree is consumed;
+// its views live on under the document view.
+
+fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
+    let sf: rt::Rect = s.as_view().frame();
+    var r: flex::Node = rows;
+    r.calculate_layout(sf.w, flex::undefined(), flex::Direction::LTR);
+    r.round_to_pixel(2.0f64);
+    let rf: flex::Layout = r.layout_frame();
+    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: sf.w, h: rf.height });
+    apply(#addr_of(r), doc.raw(), true);
+    s.set_document_view(ak::View::from_raw(doc.raw()));
+    return rf.height;
+}
+
+// ==========================================================================
+// Tests — the builder protocol, widget wiring, apply math, and scroll fill.
+// These call the protocol functions directly (exactly what a `@ui` block
+// desugars to); the literal `@ui` syntax runs in src/test_main.cplus, whose
+// import closure pulls this module in.
+// ==========================================================================
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; }
+    return d < 0.01f64;
+}
+
+#[test]
+fn test_label_owns_view_and_measures() {
+    let n: flex::Node = label("hello", size: 13.0f64);
+    assert n.has_payload();
+    let tf: ak::TextField = ak::TextField::from_raw(n.payload());
+    let t = tf.as_control().string_value();
+    assert t.count() == (5 as usize);
+}
+
+#[test]
+fn test_button_wires_title_and_view() {
+    let n: flex::Node = button("OK", on: test_noop_action);
+    assert n.has_payload();
+    let b: ak::Button = ak::Button::from_raw(n.payload());
+    let t = b.title();
+    assert t.count() == (2 as usize);
+}
+
+fn test_noop_action(sender: *u8) { return; }
+
+static CTX_FIRES: i32 = 0;
+static CTX_SEEN: i64 = 0;
+
+fn test_ctx_action(sender: *u8, ctx: *u8) {
+    CTX_FIRES = CTX_FIRES + 1;
+    CTX_SEEN = ctx as i64;
+    return;
+}
+
+#[test]
+fn test_button_ctx_delivers_userdata() {
+    CTX_FIRES = 0;
+    let n: flex::Node = button_ctx("del", on: test_ctx_action, ctx: 5 as *u8);
+    let bp: *u8 = n.payload();
+    // Fire through the wired target/action, as a click would.
+    let t: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("target\0")));
+    assert t != (0 as *u8);
+    rt::msg_void_id(t, akx::action_ctx_sel(), bp);
+    assert CTX_FIRES == 1;
+    assert CTX_SEEN == (5 as i64);
+}
+
+#[test]
+fn test_containers_follow_hig_presets() {
+    // vstack: column + 8pt row gap; card adds 16pt padding.
+    var b: Builder = Builder::new();
+    b.add(box().width(10.0f64).height(10.0f64));
+    b.add(box().width(10.0f64).height(10.0f64));
+    var v: flex::Node = vstack(b);
+    v.calculate_layout(100.0f64, flex::undefined(), flex::Direction::LTR);
+    let f: flex::Layout = v.layout_frame();
+    assert approx(f.height, 28.0f64);   // 10 + 8 gap + 10
+
+    var cb: Builder = Builder::new();
+    cb.add(box().width(10.0f64).height(10.0f64));
+    var c: flex::Node = card(cb);
+    c.calculate_layout(100.0f64, flex::undefined(), flex::Direction::LTR);
+    let cfr: flex::Layout = c.layout_frame();
+    assert approx(cfr.height, 42.0f64);  // 16 pad + 10 + 16 pad
+}
+
+#[test]
+fn test_apply_builds_nested_views_with_flip() {
+    // row [ leaf 50x20, leaf 50x20 ] inside a 100x100 root view. Flex puts
+    // both at top 0; AppKit (bottom-up) puts them at y = 100 - 20 = 80.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    var b: Builder = Builder::new();
+    let va = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let vb = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let pa: *u8 = va.raw();
+    let pb: *u8 = vb.raw();
+    b.add(fixed_view(va).width(50.0f64).height(20.0f64));
+    b.add(fixed_view(vb).width(50.0f64).height(20.0f64));
+    var tree: flex::Node = row(b);
+    tree.set_width(flex::StyleLength::points(100.0f64));
+    tree.set_height(flex::StyleLength::points(100.0f64));
+    tree.calculate_layout(100.0f64, 100.0f64, flex::Direction::LTR);
+    apply(#addr_of(tree), content.raw(), false);
+
+    let subs: vec::Vec[ak::View] = content.subviews();
+    assert subs.count() == (2 as usize);
+    let fa: rt::Rect = ak::View::from_raw(pa).frame();
+    assert approx(fa.x, 0.0f64);
+    assert approx(fa.y, 80.0f64);
+    assert approx(fa.w, 50.0f64);
+    assert approx(fa.h, 20.0f64);
+    let fb: rt::Rect = ak::View::from_raw(pb).frame();
+    assert approx(fb.x, 50.0f64);
+    assert approx(fb.y, 80.0f64);
+}
+
+#[test]
+fn test_apply_synthesizes_container_views() {
+    // column [ row [ leaf ] ] — the row has no payload, so apply gives it
+    // a fresh NSView and nests the leaf inside.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 60.0, h: 60.0 });
+    let leaf_view = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let lp: *u8 = leaf_view.raw();
+
+    var inner: Builder = Builder::new();
+    inner.add(fixed_view(leaf_view).width(30.0f64).height(10.0f64));
+    var outer: Builder = Builder::new();
+    outer.add(row(inner));
+    var tree: flex::Node = column(outer);
+    tree.set_width(flex::StyleLength::points(60.0f64));
+    tree.set_height(flex::StyleLength::points(60.0f64));
+    tree.calculate_layout(60.0f64, 60.0f64, flex::Direction::LTR);
+    apply(#addr_of(tree), content.raw(), false);
+
+    // One synthesized container under content; the leaf under it.
+    let subs: vec::Vec[ak::View] = content.subviews();
+    assert subs.count() == (1 as usize);
+    match ak::View::from_raw(lp).superview() {
+        option::Option[ak::View]::Some(sv) => {
+            assert sv.raw() != content.raw();   // nested, not flat
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_payload_views_survive_tree_drop() {
+    // The node's +1 releases with the tree, but the applied superview
+    // keeps the widget alive: its frame stays readable afterwards.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    var lp: *u8 = 0 as *u8;
+    {
+        let lv = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+        lp = lv.raw();
+        var b: Builder = Builder::new();
+        b.add(fixed_view(lv).width(40.0f64).height(40.0f64));
+        var tree: flex::Node = row(b);
+        tree.set_width(flex::StyleLength::points(100.0f64));
+        tree.set_height(flex::StyleLength::points(40.0f64));
+        tree.calculate_layout(100.0f64, 40.0f64, flex::Direction::LTR);
+        apply(#addr_of(tree), content.raw(), false);
+    }
+    let f: rt::Rect = ak::View::from_raw(lp).frame();
+    assert approx(f.w, 40.0f64);
+    assert approx(f.h, 40.0f64);
+}
+
+#[test]
+fn test_fill_scroll_installs_flipped_document() {
+    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 80.0 });
+    var rows: Builder = Builder::new();
+    rows.add(box().width(100.0f64).height(30.0f64));
+    rows.add(box().width(100.0f64).height(30.0f64));
+    rows.add(box().width(100.0f64).height(30.0f64));
+    rows.add(box().width(100.0f64).height(30.0f64));
+    rows.add(box().width(100.0f64).height(30.0f64));
+    let h: f64 = fill_scroll(s, column(rows));
+    assert approx(h, 150.0f64);
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            let flipped: i8 = rt::msg_i8(doc.raw(), rt::sel(#str_ptr("isFlipped\0")));
+            assert flipped == (1 as i8);
+            let df: rt::Rect = doc.frame();
+            assert approx(df.h, 150.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+}
