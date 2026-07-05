@@ -41,3 +41,63 @@ fn new_flipped_view(frame: rt::Rect) -> ak::View {
     // View owns exactly one reference (released by its `drop`).
     return ak::View::from_raw(rt::autorelease(inited));
 }
+
+// ---- target/action with userdata ------------------------------------------
+//
+// The generated binding's `set_on_action` carries a bare `fn(*u8)` (sender
+// only), which forces per-item state into side channels (`setTag:` + a
+// global). This companion adds the ctx-carrying variant: the handler
+// receives `(sender, ctx)`, where `ctx` is an opaque pointer chosen at wiring
+// time. The caller owns `ctx` (an integer index smuggled as a pointer needs
+// no ownership at all); the target object itself is pinned to the control via
+// an associated reference, so it lives exactly as long as the control.
+
+// Associated-object keys. Any unique addresses work; the generated binding
+// uses 28672/28673, so this module takes the next block.
+fn action_ctx_handler_key() -> *u8 { return { 28680 as *u8 }; }
+fn action_ctx_userdata_key() -> *u8 { return { 28681 as *u8 }; }
+fn action_ctx_pin_key() -> *u8 { return { 28682 as *u8 }; }
+
+fn action_ctx_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, action_ctx_handler_key()) as fn(*u8, *u8) };
+    let ctx: *u8 = synth::get_associated(self_obj, action_ctx_userdata_key());
+    f(sender, ctx);
+    return;
+}
+
+// The selector our target answers. Exposed so a caller can wire the pair
+// onto anything that takes target/action (gesture recognizers, menu items).
+fn action_ctx_sel() -> *u8 { return rt::sel(#str_ptr("cplusActionCtx:\0")); }
+
+// A fresh autoreleased target answering `action_ctx_sel()` with `handler`
+// and `ctx` attached. The caller must keep it alive (pin it to the owning
+// object) — `set_control_action_ctx` below does both steps.
+fn action_ctx_target(handler: fn(*u8, *u8), ctx: *u8) -> *u8 {
+    let name: *u8 = #str_ptr("CplusExt_ActionCtxTarget\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let added: i8 = cplus_ext_add_action_method(cls, action_ctx_sel(), action_ctx_imp, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    let t: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(t, action_ctx_handler_key(), { handler as *u8 });
+    synth::set_associated(t, action_ctx_userdata_key(), ctx);
+    return t;
+}
+
+// Wire a control to `handler(sender, ctx)`: build the target, pin it to the
+// control, and set target/action.
+fn set_control_action_ctx(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8) {
+    let t: *u8 = action_ctx_target(handler, ctx);
+    synth::retain_associated(control.raw(), action_ctx_pin_key(), t);
+    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setTarget:\0")), t);
+    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setAction:\0")), action_ctx_sel());
+    return;
+}
+
+// `class_addMethod` for the `void (self, _cmd, id)` action shape — declared
+// locally, exactly as the generated binding declares its shims.
+#[link_name = "class_addMethod"]
+extern fn cplus_ext_add_action_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
