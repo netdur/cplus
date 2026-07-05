@@ -1,8 +1,14 @@
-// facet_appkit — the AppKit `Renderer` for facet, over appkit_flex.
+// facet_appkit — facet's AppKit backend.
+//
+// Two modules: `./ui` (the `@ui` contextual-builder layer: widgets +
+// containers over flex_layout and the typed appkit binding) and this one
+// (the facet `Renderer` ops, the mount/apply hosts, and the MVU app
+// runtime). Import "facet_appkit/ui" for direct `@ui` apps; import
+// "facet_appkit/facet_appkit" for `@facet` + run_app.
 //
 // facet owns the tree walk (`facet::mount`) and all layout; this package
 // supplies the three leaf ops of the `Renderer` vtable by delegating to
-// appkit_flex's widget constructors (typed binding underneath, view owned
+// the ui module's widget constructors (typed binding underneath, view owned
 // by the node's payload slot, clicks wired with identity), plus `run` — a
 // window host that mounts a description tree and enters the event loop.
 //
@@ -17,11 +23,11 @@ import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
-import "appkit_flex/appkit_flex" as ui;
+import "./ui" as ui;
 import "facet/facet" as facet;
 
 // ---- the three vtable ops ---------------------------------------------------
-// Each reads the node's config and returns an appkit_flex node (NSView in the
+// Each reads the node's config and returns a ui-module node (NSView in the
 // payload, measure wired). The node's Text is borrowed via c_str inside the
 // match arm; the widget copies it into an NSString before the borrow ends.
 

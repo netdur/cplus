@@ -1,7 +1,7 @@
-// appkit_flex — the view-bearing AppKit layer over the flex_layout engine,
+// facet_appkit/ui — the view-bearing AppKit layer over the flex_layout engine,
 // and a `@`-DSL context in which layout containers and widgets are peers:
 //
-//   import "appkit_flex/appkit_flex" as ui;
+//   import "facet_appkit/ui" as ui;
 //
 //   var tree: flex::Node = @ui {
 //       screen {

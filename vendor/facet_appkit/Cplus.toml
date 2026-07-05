@@ -3,10 +3,11 @@ name    = "facet_appkit"
 version = "0.0.2"
 edition = "2026"
 
-# facet_appkit — the AppKit `Renderer` for facet, over appkit_flex: three leaf
-# vtable ops (label / wrap_label / button) delegating to the typed widget
-# constructors, plus `mount_into` and the `run` window host. facet owns the
-# tree walk and all layout (shared flex engine).
+# facet_appkit — facet's AppKit backend, two modules:
+#   ui           the `@ui` contextual-builder layer (widgets + containers over
+#                flex_layout and the typed appkit binding), usable standalone
+#   facet_appkit the facet Renderer ops + mount/run hosts + MVU app runtime
+# facet owns the tree walk and all layout (shared flex engine).
 
 # Test root doubles as the leak harness (`leaks --atExit`).
 [[bin]]
@@ -19,5 +20,4 @@ objc        = "*"
 quartzcore  = "*"
 appkit      = "*"
 flex_layout = "*"
-appkit_flex = "*"
 facet       = "*"
