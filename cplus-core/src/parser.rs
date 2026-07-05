@@ -2821,7 +2821,17 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
-        let mut e = self.parse_primary()?;
+        let e = self.parse_primary()?;
+        self.parse_postfix_chain(e)
+    }
+
+    /// Continue a postfix chain (`.name`, `(args)`, `[index]`, turbofish)
+    /// onto an already-parsed head expression. Split from `parse_postfix`
+    /// so a bare container element can chain same-line postfix after its
+    /// closing `}` (`hstack { ... }.gap(8.0)`) exactly as a leaf item
+    /// does; under `stop_line_dot` a line-leading opener still ends the
+    /// chain (it begins a modifier line).
+    fn parse_postfix_chain(&mut self, mut e: Expr) -> Result<Expr, ParseError> {
         loop {
             // v0.0.22 DSL.1: inside a builder-block entry, a line-leading
             // postfix opener ends the entry expression — the `.` begins a
@@ -3052,7 +3062,12 @@ impl Parser {
                 // container element of the same context (not a struct
                 // literal): an identifier immediately followed by `{`.
                 TokenKind::Ident(_) if matches!(self.peek_kind_n(1), TokenKind::LBrace) => {
-                    let expr = self.parse_builder_container()?;
+                    let container = self.parse_builder_container()?;
+                    // Same-line postfix after the closing `}` chains onto
+                    // the container item (`hstack { ... }.gap(8.0)`), the
+                    // same rule as a leaf item's same-line chain; a
+                    // line-leading `.` still begins a modifier line.
+                    let expr = self.with_stop_line_dot(|p| p.parse_postfix_chain(container))?;
                     entries.push(BuilderEntry::Item {
                         expr,
                         modifiers: Vec::new(),
@@ -6015,6 +6030,44 @@ mod tests {
         };
         assert_eq!(name.name, "vstack");
         assert_eq!(inner_body.entries.len(), 1);
+    }
+
+    #[test]
+    fn builder_block_container_same_line_chain_stays_on_item() {
+        // A same-line postfix chain after a container's closing `}` is
+        // part of the item expression (`vstack { ... }.gap(8.0)`), the
+        // same rule as a leaf's same-line chain; a line-leading dot on
+        // the next line is still a modifier line.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        vstack {\n            text(1)\n        }.gap(g).grow(1)\n            .align = center\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 1);
+        let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        // Item is `<container>.gap(g).grow(1)` — the container block sits
+        // at the head of the chain.
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            panic!("expected chained call, got {:?}", expr.kind);
+        };
+        let ExprKind::Field { receiver, name } = &callee.kind else {
+            panic!("expected .grow field, got {:?}", callee.kind);
+        };
+        assert_eq!(name.name, "grow");
+        let ExprKind::Call { callee: inner, .. } = &receiver.kind else {
+            panic!("expected .gap call, got {:?}", receiver.kind);
+        };
+        let ExprKind::Field { receiver: head, name } = &inner.kind else {
+            panic!("expected .gap field, got {:?}", inner.kind);
+        };
+        assert_eq!(name.name, "gap");
+        let ExprKind::BuilderBlock { container, .. } = &head.kind else {
+            panic!("expected container head, got {:?}", head.kind);
+        };
+        assert_eq!(container.as_ref().unwrap().name, "vstack");
+        // The next-line leading dot is still a modifier line.
+        assert_eq!(modifiers.len(), 1);
+        assert_eq!(modifiers[0].name.name, "align");
     }
 
     #[test]

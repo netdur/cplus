@@ -2221,19 +2221,16 @@ fn contextualize_entries(
                 }
             }
             BuilderEntry::Item { expr, modifiers } => {
-                if let ExprKind::BuilderBlock {
-                    context: cctx,
-                    container: Some(_),
-                    ..
-                } = &mut expr.kind
-                {
-                    // Container element: inherit the enclosing context so its
-                    // later arm builds `ctx::name` and resolves its children
-                    // in `ctx`. Its own entries are contextualized then.
-                    if cctx.is_empty() {
-                        *cctx = context.to_vec();
-                    }
-                } else {
+                // Container element (possibly at the head of a same-line
+                // postfix chain, `hstack { ... }.gap(8.0)`): inherit the
+                // enclosing context so its later arm builds `ctx::name`
+                // and resolves its children in `ctx`. Its own entries are
+                // contextualized then.
+                fill_container_context(expr, context);
+                if !matches!(expr.kind, ExprKind::BuilderBlock { .. }) {
+                    // Chain args and ordinary items contextualize here;
+                    // the walk stops at the container head (it owns its
+                    // own scope/context).
                     contextualize_builder_idents(expr, context, &locals, ctx);
                 }
                 for m in modifiers {
@@ -2266,6 +2263,29 @@ fn contextualize_entries(
                 contextualize_entries(body, context, &body_locals, ctx);
             }
         }
+    }
+}
+
+/// v0.0.22 DSL.4: a bare container element may sit at the head of a
+/// same-line postfix chain (`hstack { ... }.gap(8.0)`). Descend through
+/// `Call`/`Field`/`Index` receivers to that head and give an
+/// empty-context container the enclosing block's context. A root
+/// `@`-block head keeps its own context (its `context` is never empty).
+fn fill_container_context(e: &mut Expr, context: &[Ident]) {
+    match &mut e.kind {
+        ExprKind::BuilderBlock {
+            context: cctx,
+            container: Some(_),
+            ..
+        } => {
+            if cctx.is_empty() {
+                *cctx = context.to_vec();
+            }
+        }
+        ExprKind::Call { callee, .. } => fill_container_context(callee, context),
+        ExprKind::Field { receiver, .. } => fill_container_context(receiver, context),
+        ExprKind::Index { receiver, .. } => fill_container_context(receiver, context),
+        _ => {}
     }
 }
 

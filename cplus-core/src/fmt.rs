@@ -825,6 +825,21 @@ mod tests {
     }
 
     #[test]
+    fn builder_block_container_chain_idempotent() {
+        // A same-line postfix chain after a container's `}` round-trips
+        // unchanged (`vstack { ... }.gap(8.0)` + a following modifier line).
+        let src = "fn f() -> i32 {\n    let v = @view {\n        vstack {\n            text(1)\n        }.gap(g).grow(1)\n            .align = center\n        hstack { text(2) }.pad(p)\n    };\n    return 0;\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("}.gap(g).grow(1)"), "got: {out}");
+        assert!(out.contains("}.pad(p)"), "got: {out}");
+        assert_eq!(
+            fmt(&out),
+            out,
+            "format must be idempotent on chained containers"
+        );
+    }
+
+    #[test]
     fn collapses_runs_of_blank_lines() {
         let src = "fn f() -> i32 {\n\n\n\n    return 0;\n}\n";
         let out = fmt(src);

@@ -18006,6 +18006,142 @@ fn builder_block_containers_and_flow_control_run() {
     assert_eq!(out.status.code(), Some(42));
 }
 
+/// The non-Copy variant of the builder test package: `Item` has a `drop`
+/// impl, so it moves instead of copying — the shape where consuming
+/// fluent modifiers used to E0335. `boosted` is the fluent
+/// (`take this -> Item`) modifier; the rest mirrors DSL_GROUP_PACKAGE.
+const DSL_GROUP_NONCOPY_PACKAGE: &str = "struct Item {\n\
+     \x20   value: i32,\n\
+     \x20   weight: i32,\n\
+     }\n\
+     \n\
+     fn leaf(v: i32) -> Item {\n\
+     \x20   return Item { value: v, weight: 1 };\n\
+     }\n\
+     \n\
+     impl Item {\n\
+     \x20   // Owns a notional resource: `drop` makes Item non-Copy.\n\
+     \x20   fn drop(ref this) { return; }\n\
+     \n\
+     \x20   fn boosted(take this, by: i32) -> Item {\n\
+     \x20       return Item { value: this.value, weight: this.weight + by };\n\
+     \x20   }\n\
+     }\n\
+     \n\
+     struct Builder {\n\
+     \x20   sum: i32,\n\
+     }\n\
+     \n\
+     impl Builder {\n\
+     \x20   fn new() -> Builder {\n\
+     \x20       return Builder { sum: 0 };\n\
+     \x20   }\n\
+     \n\
+     \x20   fn add(ref this, take item: Item) {\n\
+     \x20       this.sum = this.sum + item.value * item.weight;\n\
+     \x20       return;\n\
+     \x20   }\n\
+     \n\
+     \x20   fn finish(take this) -> Item {\n\
+     \x20       return Item { value: this.sum, weight: 1 };\n\
+     \x20   }\n\
+     }\n\
+     \n\
+     fn nest(take b: Builder) -> Item {\n\
+     \x20   return Item { value: b.sum, weight: 1 };\n\
+     }\n";
+
+/// Same-line postfix after a container's `}` chains onto the container
+/// item, so consuming fluent modifiers (`take this -> Self`) work on
+/// containers exactly as they do on leaves — on a NON-Copy item, the
+/// shape that used to E0335 before the chain fix.
+#[test]
+fn builder_block_container_fluent_chain_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bc\"\n\n[[bin]]\nname = \"bc\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_NONCOPY_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       leaf(2)\n\
+         \x20       nest {\n\
+         \x20           leaf(5)\n\
+         \x20       }.boosted(3)\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/bc"))
+        .output()
+        .expect("run binary");
+    // leaf(2) adds 2. nest folds leaf(5) -> Item{5,1}; .boosted(3) lifts
+    // its weight to 4; add contributes 5*4 = 20. tree.value = 22.
+    assert_eq!(out.status.code(), Some(22));
+}
+
+/// A consuming fluent modifier on its OWN leading-dot line stays a
+/// use-after-move (modifier lines are discard statements over the item
+/// temp) — and the E0335 now anchors a "value moved here" note at the
+/// moving modifier line.
+#[test]
+fn builder_block_fluent_modifier_line_e0335_with_moved_note() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bm\"\n\n[[bin]]\nname = \"bm\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_NONCOPY_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       nest {\n\
+         \x20           leaf(5)\n\
+         \x20       }\n\
+         \x20           .boosted(3)\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "own-line fluent modifier must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0335"),
+        "expected use-after-move: {stderr}"
+    );
+    assert!(
+        stderr.contains("value moved here") && stderr.contains("main.cplus:8:"),
+        "E0335 must anchor the moved-here note at the modifier line: {stderr}"
+    );
+}
+
 /// v0.0.22 DSL.4: a nested `@`-DSL block is rejected with a message that
 /// points at the bare-container alternative; the error sits at the inner
 /// `@` line.

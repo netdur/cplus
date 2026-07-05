@@ -454,6 +454,12 @@ struct LocalInfo {
     /// binding produce E0335. Move tracking is linear within the body in
     /// Phase 3; flow-sensitive merging across branches is Phase 5 work.
     moved: bool,
+    /// Where the consuming move happened, when one was recorded with a
+    /// span (`mark_moved_through_wrappers`). Diagnostics metadata only:
+    /// E0335 attaches it as a "value moved here" label. Best-effort —
+    /// loop pre-pass and branch-union moves leave it unset/stale, and it
+    /// is only read while `moved` is true.
+    moved_at: Option<ByteSpan>,
     /// True iff this binding has been assigned a value at the current
     /// program point. `let x: T = expr;` starts true; `let x: T;` starts
     /// false. Each subsequent `x = ...` flips it to true. Reads of a
@@ -757,6 +763,7 @@ fn check_with_files_inner<'a>(
         designated_string_struct: None,
         type_aliases: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
+        fnptr_field_names: None,
         scopes: Vec::new(),
         current_return: Ty::Error,
         current_fn_is_async: false,
@@ -1039,6 +1046,13 @@ struct SemaCx<'a> {
     /// `type A = B; type B = A;` fires E0510 when the second resolve
     /// re-enters the same name.
     resolving_aliases: std::collections::HashSet<String>,
+    /// Every field name that is `fn`-pointer-typed on ANY struct, keyed
+    /// by the `structs` length it was built at — the cheap pre-filter for
+    /// the struct-of-callbacks call probe in `check_call`. Without this
+    /// filter the probe would type-check every method call's receiver
+    /// twice, double-marking moves inside it (false E0335 on
+    /// `eat(s).grow(2)` chains).
+    fnptr_field_names: Option<(usize, std::collections::HashSet<String>)>,
     scopes: Vec<HashMap<String, LocalInfo>>,
     current_return: Ty,
     /// v0.0.3 Phase 5 Slice 5E.2: tracks whether the function being
@@ -1368,6 +1382,28 @@ impl SemaCx<'_> {
             message: msg,
             primary,
             labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+    }
+
+    /// Like `err`, but attaches secondary labels (rendered as anchored
+    /// `note:` lines with their own snippet). Used where the error has a
+    /// partner location — E0335's "value moved here".
+    fn err_with_labels(
+        &mut self,
+        code: &'static str,
+        msg: String,
+        span: ByteSpan,
+        labels: Vec<crate::diagnostics::Label>,
+    ) {
+        let primary = self.primary_for(span);
+        self.sink.emit(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode(code),
+            message: msg,
+            primary,
+            labels,
             notes: Vec::new(),
             suggestions: Vec::new(),
         });
@@ -3250,6 +3286,7 @@ impl SemaCx<'_> {
                     ty: Ty::Enum(enum_id),
                     mutable,
                     moved: false,
+                    moved_at: None,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
                     // `take this` owns the value inside the body; `this` / `ref
@@ -3292,6 +3329,7 @@ impl SemaCx<'_> {
                     ty: psig.ty.clone(),
                     mutable: param.mutable,
                     moved: false,
+                    moved_at: None,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
                     // A by-value or `take` parameter owns its value; a bare
@@ -3397,6 +3435,7 @@ impl SemaCx<'_> {
                     ty: Ty::Struct(struct_id),
                     mutable,
                     moved: false,
+                    moved_at: None,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
                     // `take this` owns the value inside the body; `this` / `ref
@@ -3453,6 +3492,7 @@ impl SemaCx<'_> {
                     ty: psig.ty.clone(),
                     mutable: param.mutable,
                     moved: false,
+                    moved_at: None,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
                     // A by-value or `take` parameter owns its value; a bare
@@ -5149,6 +5189,7 @@ impl SemaCx<'_> {
                     ty: psig.ty.clone(),
                     mutable: param.mutable,
                     moved: false,
+                    moved_at: None,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
                     // A by-value or `take` parameter owns its value; a bare
@@ -5481,6 +5522,7 @@ impl SemaCx<'_> {
                                         ty: fty,
                                         mutable: *mutable,
                                         moved: false,
+                                        moved_at: None,
                                         assigned: true,
                                         borrow_roots: BTreeSet::new(),
                                         owns_value: true,
@@ -5610,6 +5652,7 @@ impl SemaCx<'_> {
                         ty: final_ty,
                         mutable: *mutable,
                         moved: false,
+                        moved_at: None,
                         assigned,
                         borrow_roots,
                         // A `let` local owns its initializer's value.
@@ -5804,6 +5847,7 @@ impl SemaCx<'_> {
                             ty: Ty::I32,
                             mutable: false,
                             moved: false,
+                            moved_at: None,
                             assigned: true,
                             borrow_roots: BTreeSet::new(),
                             owns_value: true, // loop index (Copy)
@@ -5841,6 +5885,7 @@ impl SemaCx<'_> {
                         ty: elem_ty,
                         mutable: false,
                         moved: false,
+                        moved_at: None,
                         assigned: true,
                         borrow_roots: BTreeSet::new(),
                         // The loop owns each yielded element.
@@ -7827,6 +7872,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ty: Ty::Enum(enum_id),
                         mutable: false,
                         moved: false,
+                        moved_at: None,
                         assigned: true,
                         borrow_roots: BTreeSet::new(),
                         owns_value: scrutinee_owned,
@@ -7937,6 +7983,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                                     ty: pty.clone(),
                                     mutable: false,
                                     moved: false,
+                                    moved_at: None,
                                     assigned: true,
                                     borrow_roots: BTreeSet::new(),
                                     owns_value: scrutinee_owned,
@@ -8617,6 +8664,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
+    /// Is `name` a fn-pointer-typed field on ANY struct? Cheap pre-filter
+    /// for the struct-of-callbacks call probe in `check_call`. Built
+    /// lazily and rebuilt whenever `structs` has grown since — a generic
+    /// instantiation (`Holder[fn(i32)]`) can introduce a concrete FnPtr
+    /// field whose template field type was a bare type param.
+    fn is_fnptr_field_name(&mut self, name: &str) -> bool {
+        let fresh = matches!(&self.fnptr_field_names, Some((n, _)) if *n == self.structs.len());
+        if !fresh {
+            let mut set = std::collections::HashSet::new();
+            for st in &self.structs {
+                for (fname, fty, _) in &st.fields {
+                    if matches!(fty, Ty::FnPtr { .. }) {
+                        set.insert(fname.clone());
+                    }
+                }
+            }
+            self.fnptr_field_names = Some((self.structs.len(), set));
+        }
+        match &self.fnptr_field_names {
+            Some((_, set)) => set.contains(name),
+            None => false,
+        }
+    }
+
     fn check_call(
         &mut self,
         callee: &Expr,
@@ -8707,12 +8778,44 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         }
         // Slice 11.FN_PTR: when the callee is a Field expression and the
-        // field's type is FnPtr, this is an indirect call through a struct
-        // field — the struct-of-callbacks pattern. Try field-as-FnPtr
-        // first; if the name isn't a field (or isn't FnPtr-typed), fall
-        // through to method dispatch.
-        if let ExprKind::Field { receiver, name } = &callee.kind {
+        // field's type is FnPtr, this is an indirect call through a
+        // struct field — the struct-of-callbacks pattern. Try
+        // field-as-FnPtr first; if the name isn't a field (or isn't
+        // FnPtr-typed), fall through to method dispatch.
+        //
+        // The probe type-checks the receiver, and method dispatch below
+        // checks it AGAIN — so any move inside the receiver (`eat(s).m()`)
+        // would be marked twice and the second pass would false-positive
+        // E0335, with the diagnostics duplicated per chain level. Two
+        // guards keep the probe effect-free: it only runs at all when
+        // `name` is a fn-pointer field name somewhere in the program
+        // (`is_fnptr_field_name`), and when it runs but does NOT take the
+        // fn-pointer branch, its scope mutations and diagnostics are
+        // rolled back before falling through.
+        if matches!(callee.kind, ExprKind::Field { .. })
+            && self.is_fnptr_field_name(match &callee.kind {
+                ExprKind::Field { name, .. } => &name.name,
+                _ => unreachable!(),
+            })
+        {
+            let ExprKind::Field { receiver, name } = &callee.kind else {
+                unreachable!();
+            };
+            let saved_scopes = self.scopes.clone();
+            let sink_mark = self.sink.len();
             let recv_ty = self.check_expr(receiver, None);
+            let takes_fnptr_branch = match &recv_ty {
+                Ty::Struct(id) => matches!(
+                    self.structs[id.0 as usize].field_with_pub(&name.name),
+                    Some((_, Ty::FnPtr { .. }, _))
+                ),
+                _ => false,
+            };
+            if !takes_fnptr_branch {
+                self.scopes = saved_scopes;
+                self.sink.truncate(sink_mark);
+            }
+            if takes_fnptr_branch {
             if let Ty::Struct(id) = &recv_ty {
                 let sdef = &self.structs[id.0 as usize];
                 if let Some((_, ft, _)) = sdef.field_with_pub(&name.name) {
@@ -8763,6 +8866,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         return *return_type;
                     }
                 }
+            }
             }
         }
         match &callee.kind {
@@ -12233,18 +12337,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         let mut leaves: Vec<&Expr> = Vec::new();
         collect_value_leaves(e, &mut leaves);
-        // Collect names first — the leaves borrow `e`, not `self`.
-        let names: Vec<String> = leaves
+        // Collect names first — the leaves borrow `e`, not `self`. Each
+        // leaf's span is the move site, recorded for E0335's
+        // "value moved here" label.
+        let names: Vec<(String, ByteSpan)> = leaves
             .iter()
             .filter_map(|l| match &l.kind {
-                ExprKind::Ident(n) => Some(n.clone()),
+                ExprKind::Ident(n) => Some((n.clone(), l.span)),
                 _ => None,
             })
             .collect();
-        for n in names {
+        for (n, sp) in names {
             for scope in self.scopes.iter_mut().rev() {
                 if let Some(info) = scope.get_mut(&n) {
                     info.moved = true;
+                    info.moved_at = Some(sp);
                     break;
                 }
             }
@@ -13058,6 +13165,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 for scope in self.scopes.iter_mut().rev() {
                     if let Some(info) = scope.get_mut(name) {
                         info.moved = false;
+                        info.moved_at = None;
                         break;
                     }
                 }
@@ -14294,9 +14402,28 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if let Some(info) = self.lookup_local(name) {
             let ty = info.ty.clone();
             let moved = info.moved;
+            let moved_at = info.moved_at;
             let assigned = info.assigned;
             if moved {
-                self.err("E0335", format!("use of moved value `{name}`"), span);
+                // Attach the recorded move site as a "value moved here"
+                // label so both ends of the conflict are visible — for a
+                // desugared builder block this points at the consuming
+                // modifier line, not just the item line.
+                let labels = moved_at
+                    .filter(|m| *m != span)
+                    .map(|m| {
+                        vec![crate::diagnostics::Label {
+                            span: self.primary_for(m),
+                            message: "value moved here".to_string(),
+                        }]
+                    })
+                    .unwrap_or_default();
+                self.err_with_labels(
+                    "E0335",
+                    format!("use of moved value `{name}`"),
+                    span,
+                    labels,
+                );
             } else if !assigned {
                 self.err(
                     "E0345",
@@ -16774,6 +16901,77 @@ mod tests {
         assert_has_code(
             "fn dup_bug[T](x: T) -> T { let y: T = x; return x; }",
             "E0335",
+        );
+    }
+
+    #[test]
+    fn chained_method_on_consuming_call_no_false_e0335() {
+        // `eat(s).grow(2)` — the struct-of-callbacks probe used to
+        // type-check the method receiver a first time (marking `s`
+        // moved), then method dispatch checked it again and
+        // false-positived E0335. The probe now runs only for known
+        // fn-pointer field names and rolls back its effects otherwise.
+        assert_clean(
+            "struct S { opaque v: *u8 }\n\
+             impl S { fn drop(ref this) { return; } }\n\
+             struct N { k: i32 }\n\
+             impl N {\n\
+                 fn grow(take this, v: i32) -> N { return N { k: this.k + v }; }\n\
+             }\n\
+             fn eat(take s: S) -> N { return N { k: 1 }; }\n\
+             fn main() -> i32 {\n\
+                 let s: S = S { v: 0 as *u8 };\n\
+                 let n: N = eat(s).grow(2);\n\
+                 return n.k - 3;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn fnptr_field_call_with_moving_receiver_arg_still_works() {
+        // The probe's rollback must not break the actual
+        // struct-of-callbacks pattern, including through a receiver
+        // that itself contains a move.
+        assert_clean(
+            "struct H { cb: fn(i32) -> i32 }\n\
+             struct S { opaque v: *u8 }\n\
+             impl S { fn drop(ref this) { return; } }\n\
+             fn mk(take s: S) -> H { return H { cb: dbl }; }\n\
+             fn dbl(x: i32) -> i32 { return x +% x; }\n\
+             fn main() -> i32 {\n\
+                 let s: S = S { v: 0 as *u8 };\n\
+                 return mk(s).cb(21) - 42;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn e0335_carries_moved_here_label() {
+        // The use-after-move diagnostic anchors a "value moved here"
+        // label at the consuming site — for a desugared builder block
+        // this is what points at the moving modifier line instead of
+        // only the (span-reused) item line.
+        let diags = check_src(
+            "struct S { v: *u8 }\n\
+             impl S { fn drop(ref this) { return; } }\n\
+             fn eat(take s: S) { return; }\n\
+             fn main() -> i32 {\n\
+                 let s: S = S { v: 0 as *u8 };\n\
+                 eat(s);\n\
+                 eat(s);\n\
+                 return 0;\n\
+             }",
+        );
+        let e = diags
+            .iter()
+            .find(|d| d.code.0 == "E0335")
+            .expect("expected E0335");
+        assert_eq!(e.labels.len(), 1, "expected one moved-here label: {e:#?}");
+        assert_eq!(e.labels[0].message, "value moved here");
+        // The move happened on the earlier line than the erroring use.
+        assert!(
+            e.labels[0].span.start.line < e.primary.start.line,
+            "label must anchor at the earlier consuming site: {e:#?}"
         );
     }
 
