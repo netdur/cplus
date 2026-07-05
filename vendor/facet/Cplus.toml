@@ -1,12 +1,20 @@
 [package]
 name    = "facet"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2026"
 
 # facet — the platform-free UI description + the `@facet { }` builder context.
-# A `Node` tree is built declaratively via the shipped contextual-builder DSL;
-# a per-platform renderer (facet_appkit, ...) turns it into native widgets.
-# FACET.1 discovery spike: label / button / stack + an `.on_click` modifier.
+# A `Node` tree is built declaratively via the contextual-builder DSL; `mount`
+# turns it into a flex_layout tree through a small per-platform `Renderer`
+# vtable (facet_appkit, ...) — containers and layout are write-once here, only
+# leaf widgets go through the vtable.
+
+# Test root: its import closure covers the package, so `cpc test` runs the
+# literal `@facet`-syntax tests plus the module tests.
+[[bin]]
+name = "facet_tests"
+path = "src/test_main.cplus"
 
 [dependencies]
-stdlib = "*"
+stdlib      = "*"
+flex_layout = "*"

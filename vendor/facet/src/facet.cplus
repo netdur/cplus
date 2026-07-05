@@ -1,50 +1,146 @@
 // facet — platform-free UI description + the `@facet { }` builder context.
 //
-// A `@facet { ... }` block (the shipped contextual-builder DSL) desugars to
-// `facet::Builder::new()` + `.add(item)` per element + `.finish()`. Bare leaf
-// names resolve against this package (`label` -> `facet::label`), a bare
-// container `stack { ... }` calls `facet::stack(builder)`, and a leading-dot
-// line like `.on_click(h)` calls the method on the just-built node.
+// A `@facet { ... }` block (the compiler's contextual-builder DSL) desugars
+// to `facet::Builder::new()` + `.add(item)` + `.finish()`. Bare leaf names
+// resolve against this package (`label` -> `facet::label`), a bare container
+// (`vstack { ... }`) calls the container fn, and modifiers follow the
+// flex_layout line rule: same line = fluent chain (`take this -> Node`),
+// own leading-dot line = in-place `set_*`.
 //
-// The result is a `Node` tree — pure data, no native types — that a renderer
-// (facet_appkit) walks. FACET.1 discovery scope: label, button, vstack.
+// The result is a `Node` tree — pure data, no native types. `mount` turns it
+// into a `flex_layout` node tree through a small per-platform `Renderer`
+// vtable. Containers, spacing, and every layout prop are applied HERE,
+// write-once; only leaf widgets (label / wrap_label / button) go through the
+// vtable. A platform package (facet_appkit, ...) supplies those fns over its
+// typed binding, then lays the flex tree out and applies the frames.
 //
-// The leaf/container value IS a `Node` (no `Item` wrapper): the DSL's `add`
-// moves a whole owned value into the accumulator. `finish`/`stack` hand the
-// accumulated `Vec` back out by DESTRUCTURING the `Builder`
-// (`let Builder { children } = this;`) — a zero-copy whole-value move, sound
-// where a bare field move is E0509-rejected. (The first FACET.1 spike had to
-// deep-clone here; struct destructuring was added to the language to remove it.)
+// The leaf/container value IS a `Node` (no wrapper): the DSL's `add` moves a
+// whole owned value into the accumulator, and `finish`/containers hand the
+// accumulated `Vec` back out by destructuring the `Builder` — a zero-copy
+// whole-value move.
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+
+// ---- node kinds --------------------------------------------------------
 
 fn kind_label() -> u32 { return 0 as u32; }
-fn kind_button() -> u32 { return 1 as u32; }
-fn kind_stack() -> u32 { return 2 as u32; }
+fn kind_wrap_label() -> u32 { return 1 as u32; }
+fn kind_button() -> u32 { return 2 as u32; }
+fn kind_spacer() -> u32 { return 3 as u32; }
+fn kind_column() -> u32 { return 4 as u32; }
+fn kind_row() -> u32 { return 5 as u32; }
 
 // Default click handler — a no-op, so `click` is never a null fn-pointer.
-fn noop(_w: *u8) { return; }
+fn noop(sender: *u8, ctx: *u8) { return; }
 
-// One node of the view tree. `text` is the label/title; `click` fires for a
-// button; `children` holds a stack's elements (empty for leaves). The leaf/
-// container constructors return `Node` directly — it doubles as the DSL "item".
+// ---- the description tree ----------------------------------------------
+
+// One node. Widget config (text, font, prominence, click) is read by the
+// platform's leaf ops; the `_`-prefixed layout props are applied by `mount`
+// and never cross the package boundary.
 struct Node {
     kind: u32,
     text: text::Text,
-    click: fn(*u8),
+    click: fn(*u8, *u8),    // (sender, ctx) — wired by the backend's button op
+    opaque click_ctx: *u8,  // borrowed identity value; the app owns it
+    font_size: f64,         // 0 = platform default
+    bold: bool,
+    secondary: bool,
+    primary: bool,
+    _grow: f64,
+    _gap: f64,
+    _padding: f64,
+    _width: f64,            // -1 = auto
+    _height: f64,           // -1 = auto
     children: vec::Vec[Node],
 }
 
+fn blank(kind: u32) -> Node {
+    return Node {
+        kind: kind,
+        text: text::from_str(""),
+        click: noop,
+        click_ctx: 0 as *u8,
+        font_size: 0.0f64,
+        bold: false,
+        secondary: false,
+        primary: false,
+        _grow: 0.0f64,
+        _gap: 0.0f64,
+        _padding: 0.0f64,
+        _width: -1.0f64,
+        _height: -1.0f64,
+        children: vec::new::[Node](),
+    };
+}
+
+// ---- leaves --------------------------------------------------------------
+
+fn label(s: str, size: f64 = 0.0f64, bold: bool = false, secondary: bool = false) -> Node {
+    var n: Node = blank(kind_label());
+    n.text = text::from_str(s);
+    n.font_size = size;
+    n.bold = bold;
+    n.secondary = secondary;
+    return n;
+}
+
+// A multi-line label that wraps to its flexed width.
+fn wrap_label(s: str, size: f64 = 0.0f64, secondary: bool = false) -> Node {
+    var n: Node = blank(kind_wrap_label());
+    n.text = text::from_str(s);
+    n.font_size = size;
+    n.secondary = secondary;
+    return n;
+}
+
+fn button(s: str, primary: bool = false) -> Node {
+    var n: Node = blank(kind_button());
+    n.text = text::from_str(s);
+    n.primary = primary;
+    return n;
+}
+
+// Flexible empty space.
+fn spacer() -> Node {
+    var n: Node = blank(kind_spacer());
+    n._grow = 1.0f64;
+    return n;
+}
+
+// ---- modifiers -------------------------------------------------------------
+// Fluent (chain on the item line) + `set_*` (own leading-dot line), the same
+// two-form convention as flex_layout.
+
 impl Node {
-    // Modifier: `button("Save").on_click(save)`.
-    fn on_click(ref this, cb: fn(*u8)) {
+    fn grow(take this, v: f64) -> Node { var n: Node = this; n._grow = v; return n; }
+    fn gap(take this, v: f64) -> Node { var n: Node = this; n._gap = v; return n; }
+    fn padding(take this, v: f64) -> Node { var n: Node = this; n._padding = v; return n; }
+    fn width(take this, v: f64) -> Node { var n: Node = this; n._width = v; return n; }
+    fn height(take this, v: f64) -> Node { var n: Node = this; n._height = v; return n; }
+    fn on_click(take this, cb: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+        var n: Node = this;
+        n.click = cb;
+        n.click_ctx = ctx;
+        return n;
+    }
+
+    fn set_grow(ref this, v: f64) { this._grow = v; return; }
+    fn set_gap(ref this, v: f64) { this._gap = v; return; }
+    fn set_padding(ref this, v: f64) { this._padding = v; return; }
+    fn set_width(ref this, v: f64) { this._width = v; return; }
+    fn set_height(ref this, v: f64) { this._height = v; return; }
+    fn set_on_click(ref this, cb: fn(*u8, *u8), ctx: *u8 = 0 as *u8) {
         this.click = cb;
+        this.click_ctx = ctx;
         return;
     }
 }
 
-// ---- the DSL builder contract -----------------------------------------------
+// ---- the DSL builder contract ----------------------------------------------
 
 struct Builder {
     children: vec::Vec[Node],
@@ -55,77 +151,289 @@ impl Builder {
         return Builder { children: vec::new::[Node]() };
     }
 
-    // Whole-node move into the accumulator. `take` consumes the node (a bare
-    // param would only borrow it); pushing then moves the owned value in.
     fn add(ref this, take item: Node) {
         this.children.append(item);
         return;
     }
 
-    // The block's value: an implicit vertical stack of its top-level items.
-    // Destructure to move the accumulated children out of the Builder (no copy).
+    // The block's value: a plain column of its top-level items.
     fn finish(take this) -> Node {
         let Builder { children } = this;
-        return Node { kind: kind_stack(), text: text::from_str(""), click: noop, children: children };
+        var n: Node = blank(kind_column());
+        n.children = children;
+        return n;
     }
 }
 
-// ---- leaves -----------------------------------------------------------------
+// ---- containers --------------------------------------------------------------
+// The HIG presets mirror flex_layout's: 8pt between related items, 16pt card
+// padding, 20pt screen margins.
 
-fn label(s: str) -> Node {
-    return Node { kind: kind_label(), text: text::from_str(s), click: noop, children: vec::new::[Node]() };
-}
-
-fn button(s: str) -> Node {
-    return Node { kind: kind_button(), text: text::from_str(s), click: noop, children: vec::new::[Node]() };
-}
-
-// ---- containers -------------------------------------------------------------
-
-// Bare `stack { ... }` inside a `@facet` block: a vertical stack of `b`'s items.
-fn stack(take b: Builder) -> Node {
+fn column(take b: Builder) -> Node {
     let Builder { children } = b;
-    return Node { kind: kind_stack(), text: text::from_str(""), click: noop, children: children };
+    var n: Node = blank(kind_column());
+    n.children = children;
+    return n;
 }
 
-// ---- tests ------------------------------------------------------------------
+fn row(take b: Builder) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_row());
+    n.children = children;
+    return n;
+}
 
-#[test]
-fn facet_label_kind() {
-    let n: Node = label("Hello");
-    assert(n.kind == kind_label());
+fn vstack(take b: Builder) -> Node {
+    var n: Node = column(b);
+    n._gap = flex::HIG_SPACE_S;
+    return n;
+}
+
+fn hstack(take b: Builder) -> Node {
+    var n: Node = row(b);
+    n._gap = flex::HIG_SPACE_S;
+    return n;
+}
+
+fn screen(take b: Builder) -> Node {
+    var n: Node = column(b);
+    n._gap = flex::HIG_SPACE_S;
+    n._padding = flex::HIG_SPACE_L;
+    return n;
+}
+
+fn card(take b: Builder) -> Node {
+    var n: Node = column(b);
+    n._gap = flex::HIG_SPACE_S;
+    n._padding = flex::HIG_SPACE_M;
+    return n;
+}
+
+// ---- the Renderer vtable + mount ---------------------------------------------
+// Write-once walk: containers and layout props are pure flex_layout, built
+// here; only the three leaf widget kinds dispatch through the vtable. Each op
+// receives the backend context and the node (for its text/config/click) and
+// returns a flex node whose payload is the native widget.
+
+struct Renderer {
+    opaque ctx: *u8,
+    label: fn(*u8, *Node) -> flex::Node,
+    wrap_label: fn(*u8, *Node) -> flex::Node,
+    button: fn(*u8, *Node) -> flex::Node,
+}
+
+fn mount(np: *Node, r: Renderer) -> flex::Node {
+    let k: u32 = { (*np).kind };
+    var n: flex::Node = flex::Node::new();
+    if k == kind_label() {
+        let f: fn(*u8, *Node) -> flex::Node = r.label;
+        n = f(r.ctx, np);
+    } else if k == kind_wrap_label() {
+        let f: fn(*u8, *Node) -> flex::Node = r.wrap_label;
+        n = f(r.ctx, np);
+    } else if k == kind_button() {
+        let f: fn(*u8, *Node) -> flex::Node = r.button;
+        n = f(r.ctx, np);
+    } else if k == kind_spacer() {
+        // pure layout; `_grow = 1` from the constructor applies below.
+    } else {
+        if k == kind_row() { n.set_flex_direction(flex::FlexDirection::Row); }
+        let cnt: usize = { (*np).children.count() };
+        for i in 0..(cnt as i32) {
+            match { (*np).children.at_ptr(i as usize) } {
+                option::Option[*Node]::Some(cp) => { n.add_child(mount(cp, r)); }
+                option::Option[*Node]::None => { }
+            }
+        }
+    }
+    // Layout props — applied uniformly, whatever built the node.
+    if { (*np)._grow } > 0.0f64 { n.set_flex_grow({ (*np)._grow }); }
+    if { (*np)._gap } > 0.0f64 { n.set_gap(flex::Gutter::All, { (*np)._gap }); }
+    if { (*np)._padding } > 0.0f64 {
+        n.set_padding(flex::Edge::All, flex::StyleLength::points({ (*np)._padding }));
+    }
+    if { (*np)._width } >= 0.0f64 { n.set_width(flex::StyleLength::points({ (*np)._width })); }
+    if { (*np)._height } >= 0.0f64 { n.set_height(flex::StyleLength::points({ (*np)._height })); }
+    return n;
+}
+
+// ---- tests -------------------------------------------------------------------
+// Pure C+ throughout — a fake Renderer stands in for a platform, so the whole
+// description -> flex pipeline is testable everywhere. The literal `@facet`
+// surface runs in src/test_main.cplus (a module cannot be its own context).
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return (0.0f64 - d) < 0.01f64; }
+    return d < 0.01f64;
 }
 
 #[test]
-fn facet_button_kind() {
-    let n: Node = button("OK");
-    assert(n.kind == kind_button());
+fn facet_leaf_ctors_set_kind_and_config() {
+    let l: Node = label("Hello", size: 28.0f64, bold: true);
+    assert l.kind == kind_label();
+    assert approx(l.font_size, 28.0f64);
+    assert l.bold;
+    assert l.secondary == false;
+
+    let b: Node = button("OK", primary: true);
+    assert b.kind == kind_button();
+    assert b.primary;
+
+    let s: Node = spacer();
+    assert s.kind == kind_spacer();
+    assert approx(s._grow, 1.0f64);
 }
 
 #[test]
-fn facet_stack_holds_children() {
+fn facet_presets_carry_hig_props() {
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    let v: Node = vstack(b);
+    assert v.kind == kind_column();
+    assert approx(v._gap, 8.0f64);
+
+    var cb: Builder = Builder::new();
+    cb.add(label("y"));
+    let c: Node = card(cb);
+    assert approx(c._gap, 8.0f64);
+    assert approx(c._padding, 16.0f64);
+
+    var sb: Builder = Builder::new();
+    sb.add(label("z"));
+    let s: Node = screen(sb);
+    assert approx(s._padding, 20.0f64);
+}
+
+#[test]
+fn facet_builder_accumulates_and_finishes_as_column() {
     var b: Builder = Builder::new();
     b.add(label("A"));
     b.add(button("B"));
     let root: Node = b.finish();
-    assert(root.kind == kind_stack());
-    assert(root.children.count() == (2 as usize));
+    assert root.kind == kind_column();
+    assert root.children.count() == (2 as usize);
+}
+
+fn click_a(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn facet_modifiers_fluent_and_set_agree() {
+    let f: Node = label("x").grow(2.0f64).padding(4.0f64).width(50.0f64);
+    assert approx(f._grow, 2.0f64);
+    assert approx(f._padding, 4.0f64);
+    assert approx(f._width, 50.0f64);
+
+    var m: Node = label("y");
+    m.set_grow(2.0f64);
+    m.set_padding(4.0f64);
+    m.set_width(50.0f64);
+    assert approx(m._grow, f._grow);
+    assert approx(m._padding, f._padding);
+    assert approx(m._width, f._width);
 }
 
 #[test]
-fn facet_stack_fn_holds_children() {
+fn facet_on_click_carries_identity() {
+    let n: Node = button("del").on_click(click_a, ctx: 7 as *u8);
+    assert n.click != noop;
+    assert (n.click_ctx as i64) == (7 as i64);
+    // ctx defaults to null when omitted.
+    let m: Node = button("ok").on_click(click_a);
+    assert (m.click_ctx as i64) == (0 as i64);
+}
+
+// -- mount, against a fake renderer --
+
+static FAKE_LABELS: i32 = 0;
+static FAKE_BUTTONS: i32 = 0;
+static FAKE_LAST_CTX: i64 = 0;
+
+fn fake_label(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_LABELS = FAKE_LABELS + 1;
+    // A fixed intrinsic size stands in for text measurement.
+    return flex::Node::new().width(40.0f64).height(10.0f64);
+}
+
+fn fake_button(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_BUTTONS = FAKE_BUTTONS + 1;
+    FAKE_LAST_CTX = { (*np).click_ctx } as i64;
+    return flex::Node::new().width(60.0f64).height(20.0f64);
+}
+
+fn fake_renderer() -> Renderer {
+    return Renderer { ctx: 0 as *u8, label: fake_label, wrap_label: fake_label, button: fake_button };
+}
+
+#[test]
+fn mount_dispatches_leaves_and_builds_containers() {
+    FAKE_LABELS = 0;
+    FAKE_BUTTONS = 0;
     var b: Builder = Builder::new();
-    b.add(label("X"));
-    let n: Node = stack(b);
-    assert(n.kind == kind_stack());
-    assert(n.children.count() == (1 as usize));
+    b.add(label("t"));
+    var inner: Builder = Builder::new();
+    inner.add(button("ok").on_click(click_a, ctx: 9 as *u8));
+    inner.add(spacer());
+    inner.add(label("r"));
+    b.add(hstack(inner));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_LABELS == 2;
+    assert FAKE_BUTTONS == 1;
+    assert FAKE_LAST_CTX == (9 as i64);   // the button op sees the identity
+    assert tree.child_count() == (2 as usize);
 }
 
-fn test_handler(_w: *u8) { return; }
+#[test]
+fn mount_applies_layout_props_and_lays_out() {
+    // row [ label 40x10, spacer, button 60x20 ] in 200pt: the spacer absorbs
+    // 100pt, the button ends at the right edge.
+    var inner: Builder = Builder::new();
+    inner.add(label("t"));
+    inner.add(spacer());
+    inner.add(button("ok"));
+    var b: Builder = Builder::new();
+    b.add(row(inner));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 40.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            let bf: flex::Layout = must_layout({ (*rp).child_layout(2 as usize) });
+            assert approx(bf.left, 140.0f64);   // 200 - 60
+            assert approx(bf.width, 60.0f64);
+            let sf: flex::Layout = must_layout({ (*rp).child_layout(1 as usize) });
+            assert approx(sf.width, 100.0f64);  // spacer absorbed the slack
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
 
 #[test]
-fn facet_on_click_sets_handler() {
-    var n: Node = button("Click me");
-    n.on_click(test_handler);
-    assert(n.click != noop);
+fn mount_applies_preset_gap_and_padding() {
+    var cb: Builder = Builder::new();
+    cb.add(label("a"));
+    cb.add(label("b"));
+    var b: Builder = Builder::new();
+    b.add(card(cb));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, flex::undefined(), flex::Direction::LTR);
+    match tree.child_layout(0 as usize) {
+        option::Option[flex::Layout]::Some(f) => {
+            // 16 pad + 10 + 8 gap + 10 + 16 pad = 60 tall.
+            assert approx(f.height, 60.0f64);
+        }
+        option::Option[flex::Layout]::None => { assert false; }
+    };
+}
+
+fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
+    return match o {
+        option::Option[flex::Layout]::Some(l) => l,
+        option::Option[flex::Layout]::None => flex::Layout { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
+    };
 }

@@ -1,0 +1,81 @@
+// facet test root. `cpc test` uses this [[bin]] entry so the literal
+// `@facet { }` surface runs here — a module cannot be its own `@`-context.
+// The protocol- and mount-level tests live in facet.cplus.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as facet;
+
+fn main() -> i32 { return 0; }
+
+fn noop2(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn dsl_block_builds_description_tree() {
+    let show = true;
+    var root: facet::Node = @facet {
+        vstack {
+            label("Iris", size: 28.0f64, bold: true)
+            hstack {
+                button("New", primary: true)
+                button("Open")
+            }
+            for i in 0..3 {
+                label("row")
+            }
+            if show {
+                label("footer", secondary: true)
+            }
+        }
+    };
+    // The block finishes as a column holding the vstack.
+    assert root.kind == facet::kind_column();
+    assert root.children.count() == (1 as usize);
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*facet::Node]::Some(v) => {
+            // 1 label + hstack + 3 rows + footer = 6.
+            assert { (*v).kind } == facet::kind_column();
+            assert { (*v).children.count() } == (6 as usize);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    };
+}
+
+#[test]
+fn dsl_fluent_chain_and_modifier_lines() {
+    var root: facet::Node = @facet {
+        hstack {
+            label("x")
+            spacer()
+            button("del").on_click(noop2, ctx: 3 as *u8)
+        }.padding(4.0f64)
+            .set_gap(2.0f64)
+    };
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*facet::Node]::Some(h) => {
+            assert { (*h).kind } == facet::kind_row();
+            assert { (*h).children.count() } == (3 as usize);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    };
+}
+
+#[test]
+fn dsl_tree_mounts_to_flex() {
+    var root: facet::Node = @facet {
+        row {
+            label("a")
+            spacer()
+            label("b")
+        }
+    };
+    var tree: flex::Node = facet::mount(#addr_of(root), facet::fake_renderer());
+    assert tree.child_count() == (1 as usize);
+    tree.calculate_layout(300.0f64, 50.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            assert { (*rp).child_count() } == (3 as usize);
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
