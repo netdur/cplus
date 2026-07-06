@@ -4030,6 +4030,14 @@ fn write_preamble(out: &mut String) {
     out.push_str(
         "@.fmt_str_nl = private unnamed_addr constant [6 x i8] c\"%.*s\\0A\\00\", align 1\n",
     );
+    // A valid zero-length buffer for `Text`→`str` coercions of an empty
+    // `Text`, whose never-allocated `_ptr` is null. The coerced view must
+    // carry a valid pointer (the invariant `Text::view` provides) or every
+    // empty owned string reaching C/ObjC becomes a (NULL, 0) pair that
+    // APIs like `NSString stringWithBytes:` abort on.
+    out.push_str(
+        "@.cplus.str.empty = private unnamed_addr constant [1 x i8] zeroinitializer, align 1\n",
+    );
     out.push_str("\n");
     out.push_str("declare i32 @printf(ptr noundef, ...)\n");
     // Phase 8 slice 8.STR.3: byte-level string comparison.
@@ -15540,6 +15548,17 @@ impl<'a> FnState<'a> {
         ));
         let pv = self.next_tmp();
         self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::U8)), &pptr);
+        // An empty `Text` (e.g. `text::new()`, a parsed `""`) holds a null
+        // `_ptr` — it never allocated. The coerced `str` must still carry a
+        // valid pointer, matching `Text::view`'s empty-case guard; a raw
+        // field copy here shipped (NULL, 0) views straight into C/ObjC
+        // (the iris empty-JSON-name launch crash).
+        let isnull = self.next_tmp();
+        self.emit(&format!("{isnull} = icmp eq ptr {pv}, null"));
+        let safe = self.next_tmp();
+        self.emit(&format!(
+            "{safe} = select i1 {isnull}, ptr @.cplus.str.empty, ptr {pv}"
+        ));
         let lptr = self.next_tmp();
         self.emit(&format!(
             "{lptr} = getelementptr inbounds {llvm_text}, ptr {slot}, i32 0, i32 1"
@@ -15547,7 +15566,7 @@ impl<'a> FnState<'a> {
         let lv = self.next_tmp();
         self.gen_load(&lv, &Ty::Usize, &lptr);
         let t1 = self.next_tmp();
-        self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {pv}, 0"));
+        self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {safe}, 0"));
         let t2 = self.next_tmp();
         self.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {lv}, 1"));
         (t2, Ty::Str)

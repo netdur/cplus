@@ -19165,3 +19165,58 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
         .expect("run genopt");
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
+
+#[test]
+fn empty_text_coerces_to_valid_str_view() {
+    // 2026-07-06 (bugs/empty-json-string-null-cstring-crash.md): an empty
+    // `Text` holds a null `_ptr` (never allocated), and the `Text`→`str`
+    // coercion copied the fields raw — every empty owned string coerced to a
+    // (NULL, 0) view. `Text::view()` guards this case; the coercion must
+    // match it (gen_text_to_str now selects a module-level 1-byte constant
+    // for the null case). Downstream, `+[NSString stringWithBytes:]` aborts
+    // on NULL, which took down iris at launch from one empty JSON field.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"etc\"\n\n[[bin]]\nname = \"etc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = text::new();\n\
+             let s: str = { t };\n\
+             if #str_len(s) != (0 as usize) { return 1; }\n\
+             if { #addr(#str_ptr(s)) } == (0 as usize) { return 2; }\n\
+             let u: text::Text = text::from_str(\"\");\n\
+             let v: str = { u };\n\
+             if #str_len(v) != (0 as usize) { return 3; }\n\
+             if { #addr(#str_ptr(v)) } == (0 as usize) { return 4; }\n\
+             let w: text::Text = text::from_str(\"hi\");\n\
+             let x: str = { w };\n\
+             if #str_len(x) != (2 as usize) { return 5; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "coercion program must compile");
+    let run = Command::new(dir.join("target/debug/etc")).status().expect("run etc");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "empty Text must coerce to a zero-length str with a VALID pointer (1/3=len wrong, 2/4=null ptr)"
+    );
+}

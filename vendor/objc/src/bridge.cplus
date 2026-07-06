@@ -22,6 +22,12 @@ extern fn objc_msg_u64_u64(recv: *u8, sel: *u8, arg: u64) -> u64;
 fn nsstring(s: str) -> *u8 {
     let cls: *u8 = rt::get_class(#str_ptr("NSString\0"));
     let selector: *u8 = rt::sel(#str_ptr("stringWithBytes:length:encoding:\0"));
+    // A zero-length view may carry any pointer — FFI-built views can be
+    // (NULL, 0), and `stringWithBytes:` aborts on a NULL cString. Route the
+    // empty case through the empty literal's valid static pointer.
+    if #str_len(s) == (0 as usize) {
+        return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(""), 0 as usize, ns_utf8()) };
+    }
     return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
 }
 
@@ -81,4 +87,45 @@ fn obj_option(p: *u8) -> option::Option[*u8] {
         return option::Option[*u8]::None;
     }
     return option::some(p);
+}
+
+// ====================================================================
+// Tests
+// ====================================================================
+
+#[test]
+fn nsstring_roundtrips_content() {
+    let ns: *u8 = nsstring("hola");
+    let t: text::Text = to_text(ns);
+    assert t.view() == "hola";
+}
+
+#[test]
+fn nsstring_empty_literal_roundtrips() {
+    let ns: *u8 = nsstring("");
+    let t: text::Text = to_text(ns);
+    assert t.count() == (0 as usize);
+}
+
+#[test]
+fn nsstring_null_backed_empty_view_is_safe() {
+    // An FFI-built zero-length view may be (NULL, 0). `stringWithBytes:`
+    // raises NSInvalidArgumentException on a NULL cString, so the bridge
+    // must route the empty case through a valid pointer.
+    let z: str = { #str_from_raw_parts({ 0 as *u8 }, 0 as usize) };
+    let ns: *u8 = nsstring(z);
+    let t: text::Text = to_text(ns);
+    assert t.count() == (0 as usize);
+}
+
+#[test]
+fn nsstring_coerced_empty_text_is_safe() {
+    // The compiler's `Text`->`str` coercion must hand over a valid pointer
+    // for an empty `Text` (its never-allocated `_ptr` is null) — a raw field
+    // copy here crashed any UI showing a parsed empty string (the iris
+    // empty-JSON-name launch abort).
+    let t: text::Text = text::new();
+    let ns: *u8 = nsstring({ t });
+    let back: text::Text = to_text(ns);
+    assert back.count() == (0 as usize);
 }
