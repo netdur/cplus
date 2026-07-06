@@ -19090,3 +19090,78 @@ fn float_ne_is_unordered_for_nan() {
     // nan != nan (+1), !(nan == nan) (+2), ordered-safe NaN test (+4) = 7.
     assert_eq!(run.code(), Some(7), "x != x must be true for NaN; got {:?}", run.code());
 }
+
+#[test]
+fn gen_fn_protocol_survives_nested_option_instantiation() {
+    // 2026-07-06: codegen recovers a gen fn's `next()` protocol enum by
+    // mangled NAME (`lookup_option_ty`). The old match accepted any
+    // qualified name ending in `.Option__usize` — which the NESTED
+    // instantiation `Option[Option[usize]]` (mangled
+    // `...option.Option__vendor.stdlib.src.option.Option__usize`) also
+    // satisfies. `enum_by_name` is a HashMap, so whenever both are
+    // instantiated the winner was per-process RANDOM: builds failed ~half
+    // the time with an LLVM type mismatch (`fn(i64)` handed an
+    // `Option[usize]` payload) and could silently pick wrong bodies.
+    // Found combining facet_appkit + agent_core; reduced to this shape.
+    // Eight fresh compiles make a pre-fix pass vanishingly unlikely.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"genopt\"\n\n[[bin]]\nname = \"genopt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as iterator;\n\
+         import \"stdlib/option\" as option;\n\
+         \n\
+         fn keep_big(v: usize) -> bool { return v > (1 as usize); }\n\
+         \n\
+         gen fn nums() -> usize {\n\
+             yield (1 as usize);\n\
+             yield (2 as usize);\n\
+             yield (3 as usize);\n\
+             return;\n\
+         }\n\
+         \n\
+         // Pins the AMBIGUOUS name: Option[Option[usize]] must coexist with\n\
+         // the gen-fn protocol's Option[usize] without stealing its lookup.\n\
+         fn nested_none() -> option::Option[option::Option[usize]] {\n\
+             return option::Option[option::Option[usize]]::None;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let _pin: option::Option[option::Option[usize]] = nested_none();\n\
+             var acc: usize = 0 as usize;\n\
+             for v in nums().filter(keep_big) {\n\
+                 acc = acc + v;\n\
+             }\n\
+             return (acc as i32) - 5;\n\
+         }\n",
+    )
+    .unwrap();
+    for round in 0..8 {
+        let out = Command::new(cpc)
+            .arg("build")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc build");
+        assert!(
+            out.status.success(),
+            "gen-fn protocol lookup must be deterministic (round {round}): {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+    let run = Command::new(dir.join("target/debug/genopt"))
+        .status()
+        .expect("run genopt");
+    assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
+}

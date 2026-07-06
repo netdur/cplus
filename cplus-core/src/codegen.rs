@@ -526,6 +526,26 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
     }
 }
 
+/// Whether a fully-qualified mangled type name denotes the same
+/// instantiation as a (possibly package-unqualified) mangled `target`.
+/// Exact match, or `name` = `<dotted module path>.<target>` where the
+/// path prefix contains no `__`. The prefix restriction is what makes
+/// the tail test sound: a `__` before the tail means the matched text
+/// sits inside another instantiation's *argument list*, not at a
+/// template boundary — `Option__vendor.stdlib.src.option.Option__usize`
+/// (`Option[Option[usize]]`) also ends with `.Option__usize`, and
+/// accepting it handed gen-fn bodies the wrong `next()` protocol enum
+/// (nondeterministically, since one caller iterates a HashMap).
+fn mangled_name_matches(name: &str, target: &str) -> bool {
+    if name == target {
+        return true;
+    }
+    match name.strip_suffix(target) {
+        Some(prefix) => prefix.ends_with('.') && !prefix.contains("__"),
+        None => false,
+    }
+}
+
 /// v0.0.3 Phase 5 Slice 5B: emit one trampoline definition per unique
 /// `O` registered during function-body codegen. The trampoline is the
 /// `start_routine` handed to `pthread_create`; it reads the user's
@@ -700,9 +720,8 @@ fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
         "Future__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
-    let dotted = format!(".{target}");
     for (idx, d) in types.struct_defs.iter().enumerate() {
-        if d.name == target || d.name.ends_with(&dotted) {
+        if mangled_name_matches(&d.name, &target) {
             return Ty::Struct(StructId(idx as u32));
         }
     }
@@ -715,9 +734,8 @@ fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
         "Iterator__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
-    let dotted = format!(".{target}");
     for (idx, d) in types.struct_defs.iter().enumerate() {
-        if d.name == target || d.name.ends_with(&dotted) {
+        if mangled_name_matches(&d.name, &target) {
             return Ty::Struct(StructId(idx as u32));
         }
     }
@@ -832,16 +850,18 @@ fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
         return Ty::Param(inner_suffix.to_string());
     }
 
-    let dotted = format!(".{suffix}");
-    // Prefer an EXACT name match over a suffix (`ends_with`) match. The mono
+    // Prefer an EXACT name match over a qualified-tail match. The mono
     // suffix is the exact name sema mangled the type argument to — SHORT for a
     // root-module type, fully-qualified for an imported one. When two packages
     // define the same short-named type (NSLayoutManager and CALayoutManager
     // both strip to `LayoutManager`), the exact match is the one sema intended;
-    // the `ends_with` fallback would otherwise pick whichever qualified type
+    // the tail fallback would otherwise pick whichever qualified type
     // happens to come first in `struct_defs`, diverging from sema and producing
     // a wrong-instantiation miscompile. The fallback still resolves a short
-    // suffix that only exists in qualified form.
+    // suffix that only exists in qualified form; `mangled_name_matches` keeps
+    // it from landing inside another instantiation's argument list, and the
+    // enum pass picks the smallest matching name so a multi-candidate tie
+    // resolves the same way every build (`enum_by_name` is a HashMap).
     for (idx, d) in types.struct_defs.iter().enumerate() {
         if d.name == suffix {
             return Ty::Struct(StructId(idx as u32));
@@ -853,14 +873,20 @@ fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
         }
     }
     for (idx, d) in types.struct_defs.iter().enumerate() {
-        if d.name.ends_with(&dotted) {
+        if mangled_name_matches(&d.name, suffix) {
             return Ty::Struct(StructId(idx as u32));
         }
     }
+    let mut best_enum: Option<(&String, EnumId)> = None;
     for (name, id) in &types.enum_by_name {
-        if name.ends_with(&dotted) {
-            return Ty::Enum(*id);
+        if mangled_name_matches(name, suffix)
+            && best_enum.map_or(true, |(bn, _)| name < bn)
+        {
+            best_enum = Some((name, *id));
         }
+    }
+    if let Some((_, id)) = best_enum {
+        return Ty::Enum(id);
     }
 
     Ty::Error
@@ -13754,9 +13780,8 @@ impl<'a> FnState<'a> {
             "JoinHandle__{}",
             mangle_o_for_tramp_with_types(o_ty, Some(self.types))
         );
-        let dotted = format!(".{target}");
         for (idx, d) in self.types.struct_defs.iter().enumerate() {
-            if d.name == target || d.name.ends_with(&dotted) {
+            if mangled_name_matches(&d.name, &target) {
                 return Ty::Struct(StructId(idx as u32));
             }
         }
@@ -15080,11 +15105,22 @@ impl<'a> FnState<'a> {
             "Option__{}",
             mangle_o_for_tramp_with_types(inner, Some(self.types))
         );
-        let dotted = format!(".{target}");
+        // `enum_by_name` is a HashMap, so scan ALL entries and break ties by
+        // smallest name — a first-match return here resolved `Option__usize`
+        // to `Option[Option[usize]]` (whose qualified name also ends with
+        // `.Option__usize`) on whichever runs hashed it first: a
+        // NONDETERMINISTIC wrong-protocol body for every gen fn over T.
+        // `mangled_name_matches` rejects that shape outright; the tie-break
+        // keeps genuinely duplicated short names (two packages each defining
+        // an `Option`) stable across builds.
+        let mut best: Option<(&String, EnumId)> = None;
         for (name, id) in &self.types.enum_by_name {
-            if name == &target || name.ends_with(&dotted) {
-                return Ty::Enum(*id);
+            if mangled_name_matches(name, &target) && best.map_or(true, |(bn, _)| name < bn) {
+                best = Some((name, *id));
             }
+        }
+        if let Some((_, id)) = best {
+            return Ty::Enum(id);
         }
         // Name-mangling can diverge for cross-package element types (a foreign
         // wrapper mangles with its full package path in one pass and not the
@@ -15092,6 +15128,7 @@ impl<'a> FnState<'a> {
         // instantiation exists. Fall back to a STRUCTURAL match: the `Option__*`
         // enum whose `Some` payload is exactly `inner`. Robust to how the
         // instantiation happened to be named.
+        let mut best: Option<(&String, EnumId)> = None;
         for (name, id) in &self.types.enum_by_name {
             if name.contains("Option__")
                 && self.types.enum_defs[id.0 as usize]
@@ -15099,9 +15136,13 @@ impl<'a> FnState<'a> {
                     .first()
                     .map(|p| p.as_slice())
                     == Some(std::slice::from_ref(inner))
+                && best.map_or(true, |(bn, _)| name < bn)
             {
-                return Ty::Enum(*id);
+                best = Some((name, *id));
             }
+        }
+        if let Some((_, id)) = best {
+            return Ty::Enum(id);
         }
         // Genuinely not instantiated — an upstream bug. Fail loud rather than
         // silently returning `EnumId(0)`, whose variants are unrelated (that
