@@ -35,7 +35,7 @@
 
 use crate::ast::*;
 use crate::lexer::Span;
-use crate::sema::{EnumId, MonoInfo, StructId, Ty};
+use crate::sema::{BoundMethodRefInfo, EnumId, MonoInfo, StructId, Ty};
 
 /// Slice 7GEN.5c carry-forward (2026-05-13): generic-instantiation
 /// lookup re-keyed by *mangled argument names* (vs sema's Vec<Ty> form).
@@ -289,10 +289,200 @@ pub fn monomorphize(
             origin_file: info.template_origin_file.clone(),
         });
     }
+    // 2026-07-06 bound method references: synthesize one erased bridge per
+    // unique bridge name. The bridge's parameter types are CLONED from the
+    // method's own (already-rewritten) AST in its impl block, so no
+    // Ty→Type reconstruction is needed:
+    //
+    //     fn __cplus_bound_S__m(p0: T0, .., __bctx: *u8) -> R {
+    //         let __r: *S = __bctx as *S;
+    //         return (*__r).m(p0, ..);
+    //     }
+    if !mono.bound_method_refs.is_empty() {
+        let mut seen: std::collections::BTreeMap<&str, &BoundMethodRefInfo> =
+            std::collections::BTreeMap::new();
+        for br in mono.bound_method_refs.values() {
+            seen.entry(br.bridge_name.as_str()).or_insert(br);
+        }
+        let bridges: Vec<Item> = seen
+            .values()
+            .filter_map(|br| synth_bound_bridge(br, &out_items))
+            .collect();
+        out_items.extend(bridges);
+    }
     Program {
         items: out_items,
         imports: program.imports,
     }
+}
+
+/// Bound-method-reference ctx argument: `(#addr_of(RECV)) as *u8`.
+fn bound_ref_ctx_arg(br: &BoundMethodRefInfo, span: Span) -> Expr {
+    let addr = Expr {
+        kind: ExprKind::Intrinsic {
+            name: "addr_of".to_string(),
+            type_args: Vec::new(),
+            args: vec![br.receiver.clone()],
+            ret_ty: None,
+        },
+        span,
+    };
+    Expr {
+        kind: ExprKind::Cast {
+            expr: Box::new(addr),
+            ty: Type {
+                kind: TypeKind::RawPtr(Box::new(Type {
+                    kind: TypeKind::Path("u8".to_string()),
+                    span,
+                })),
+                span,
+            },
+        },
+        span,
+    }
+}
+
+/// Synthesize the erased bridge fn for one bound method reference. Finds
+/// the method's AST in the (rewritten) impl blocks of `items` — inherent
+/// or interface impl — and returns `None` only if it vanished (sema
+/// validated it exists, so a miss means a pass regression upstream; the
+/// resulting undefined-fn reference will fail loudly at codegen).
+fn synth_bound_bridge(br: &BoundMethodRefInfo, items: &[Item]) -> Option<Item> {
+    let method = items.iter().find_map(|it| {
+        let ItemKind::Impl(b) = &it.kind else {
+            return None;
+        };
+        if b.target.name != br.struct_name {
+            return None;
+        }
+        b.methods.iter().find(|m| m.name.name == br.method_name)
+    })?;
+    let span = method.name.span;
+    let u8_ptr = Type {
+        kind: TypeKind::RawPtr(Box::new(Type {
+            kind: TypeKind::Path("u8".to_string()),
+            span,
+        })),
+        span,
+    };
+    let recv_ptr_ty = Type {
+        kind: TypeKind::RawPtr(Box::new(Type {
+            kind: TypeKind::Path(br.struct_name.clone()),
+            span,
+        })),
+        span,
+    };
+    let mut params: Vec<Param> = method.params.clone();
+    params.push(Param {
+        name: Ident {
+            name: "__bctx".to_string(),
+            span,
+        },
+        ty: u8_ptr,
+        mutable: false,
+        move_: false,
+        restrict: false,
+        borrow_: false,
+        default: None,
+        span,
+    });
+    // let __r: *S = __bctx as *S;
+    let let_stmt = Stmt {
+        kind: StmtKind::Let {
+            mutable: false,
+            name: Ident {
+                name: "__r".to_string(),
+                span,
+            },
+            ty: Some(recv_ptr_ty.clone()),
+            init: Some(Expr {
+                kind: ExprKind::Cast {
+                    expr: Box::new(Expr {
+                        kind: ExprKind::Ident("__bctx".to_string()),
+                        span,
+                    }),
+                    ty: recv_ptr_ty,
+                },
+                span,
+            }),
+        },
+        span,
+    };
+    // (*__r).m(p0, ..)
+    let call = Expr {
+        kind: ExprKind::Call {
+            callee: Box::new(Expr {
+                kind: ExprKind::Field {
+                    receiver: Box::new(Expr {
+                        kind: ExprKind::Unary {
+                            op: UnaryOp::Deref,
+                            operand: Box::new(Expr {
+                                kind: ExprKind::Ident("__r".to_string()),
+                                span,
+                            }),
+                        },
+                        span,
+                    }),
+                    name: Ident {
+                        name: br.method_name.clone(),
+                        span,
+                    },
+                },
+                span,
+            }),
+            args: method
+                .params
+                .iter()
+                .map(|p| Expr {
+                    kind: ExprKind::Ident(p.name.name.clone()),
+                    span: p.name.span,
+                })
+                .collect(),
+            type_args: Vec::new(),
+            arg_labels: Vec::new(),
+        },
+        span,
+    };
+    let mut stmts = vec![let_stmt];
+    if method.return_type.is_some() {
+        stmts.push(Stmt {
+            kind: StmtKind::Return(Some(call)),
+            span,
+        });
+    } else {
+        stmts.push(Stmt {
+            kind: StmtKind::Expr(call),
+            span,
+        });
+        stmts.push(Stmt {
+            kind: StmtKind::Return(None),
+            span,
+        });
+    }
+    Some(Item {
+        kind: ItemKind::Function(Function {
+            name: Ident {
+                name: br.bridge_name.clone(),
+                span,
+            },
+            params,
+            return_type: method.return_type.clone(),
+            body: Block {
+                stmts,
+                tail: None,
+                span,
+            },
+            is_extern: false,
+            is_variadic: false,
+            is_pub: false,
+            attributes: Vec::new(),
+            generic_params: Vec::new(),
+            is_async: false,
+            is_gen: false,
+        }),
+        span,
+        origin_file: None,
+    })
 }
 
 /// v0.0.6 Slice 1B helper: render a lane scalar `Ty` to its source name
@@ -1643,6 +1833,18 @@ fn rewrite_item_calls(
             }
             ItemKind::Enum(e)
         }
+        // Statics-id-drift fix (2026-07-06): a `static` with a Generic-typed
+        // annotation (e.g. `static R: vec::Vec[Item]`) must have that
+        // annotation rewritten to the mangled Path, exactly like fn
+        // signatures and struct fields — codegen re-derives the static's
+        // type from this AST annotation by name (`emit_statics`), because
+        // sema's `StaticInfo.ty` carries sema-table struct ids that drift
+        // from codegen's table whenever sema materializes a type codegen
+        // never emits.
+        ItemKind::Static(mut s) => {
+            s.ty = subst_type_ast(&s.ty, &empty_subst, type_name_of, struct_lookup);
+            ItemKind::Static(s)
+        }
         other => other,
     };
     Item {
@@ -2186,7 +2388,7 @@ fn rewrite_expr(
                     struct_lookup,
                 ),
             };
-            let new_args: Vec<Expr> = args
+            let mut new_args: Vec<Expr> = args
                 .iter()
                 .map(|a| {
                     rewrite_expr(
@@ -2200,6 +2402,21 @@ fn rewrite_expr(
                     )
                 })
                 .collect();
+            // 2026-07-06 bound method references: an arg sema recorded as
+            // `recv.method` in handler position becomes the erased bridge
+            // fn, and the FOLLOWING arg slot (the spliced ctx default —
+            // sema guaranteed it exists) becomes `#addr_of(recv) as *u8`.
+            for (i, a) in args.iter().enumerate() {
+                if let Some(br) = mono.bound_method_refs.get(&a.span) {
+                    new_args[i] = Expr {
+                        kind: ExprKind::Ident(br.bridge_name.clone()),
+                        span: a.span,
+                    };
+                    if i + 1 < new_args.len() {
+                        new_args[i + 1] = bound_ref_ctx_arg(br, a.span);
+                    }
+                }
+            }
             // Substitute type-parameter references in turbofish type_args
             // through the active subst map. Without this, `size_of::[T]()`
             // (or any future intrinsic taking a type arg) inside a generic

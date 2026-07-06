@@ -547,6 +547,23 @@ pub fn check(program: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
 /// bodies; `call_monos` maps each generic-fn call site (keyed by the
 /// `Call` expression's span) to its concrete arg list, so monomorphize
 /// can rewrite each callee to the mangled name.
+/// 2026-07-06 bound method references: one record per `recv.method`
+/// handler argument. Sema validates the shape (receiver kind, signature
+/// against the expected fn-pointer, the defaulted `*u8` ctx slot);
+/// monomorphize consumes the map — it rewrites the argument to
+/// `bridge_name` and the following ctx slot to `#addr_of(receiver) as *u8`,
+/// and synthesizes one bridge fn per unique `bridge_name`.
+#[derive(Debug, Clone)]
+pub struct BoundMethodRefInfo {
+    pub bridge_name: String,
+    /// Resolver-qualified struct name (the bridge's cast target and the
+    /// key to find the method's AST in an impl block).
+    pub struct_name: String,
+    pub method_name: String,
+    /// The receiver PLACE expression, cloned post-resolver.
+    pub receiver: Expr,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MonoInfo {
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
@@ -557,6 +574,9 @@ pub struct MonoInfo {
     /// disambiguates itself). Turbofish calls don't consult this map —
     /// they mangle directly from the AST type-args (collision-free).
     pub call_monos: HashMap<ByteSpan, Vec<Ty>>,
+    /// 2026-07-06 bound method references, keyed by the handler-argument
+    /// expression's span. See [`BoundMethodRefInfo`].
+    pub bound_method_refs: HashMap<ByteSpan, BoundMethodRefInfo>,
     /// Slice 7GEN.5c: generic-struct instantiations. Maps
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
@@ -764,6 +784,8 @@ fn check_with_files_inner<'a>(
         type_aliases: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
+        bound_method_refs: HashMap::new(),
+        bound_ref_arg_spans: std::collections::HashSet::new(),
         scopes: Vec::new(),
         current_return: Ty::Error,
         current_fn_is_async: false,
@@ -993,6 +1015,7 @@ fn check_with_files_inner<'a>(
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         assoc_method_dispatches: std::mem::take(&mut cx.assoc_method_dispatches),
+        bound_method_refs: std::mem::take(&mut cx.bound_method_refs),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
@@ -1053,6 +1076,14 @@ struct SemaCx<'a> {
     /// twice, double-marking moves inside it (false E0335 on
     /// `eat(s).grow(2)` chains).
     fnptr_field_names: Option<(usize, std::collections::HashSet<String>)>,
+    /// 2026-07-06 bound method references: `recv.method` passed where a
+    /// fn-pointer is expected. Keyed by the argument expression's span;
+    /// monomorphize rewrites the arg to the synthesized bridge fn and
+    /// fills the following ctx slot with the receiver's address.
+    bound_method_refs: HashMap<ByteSpan, BoundMethodRefInfo>,
+    /// Arg spans validated as bound references — `check_arg_with_move`
+    /// skips them (as Field exprs they would fail "unknown field").
+    bound_ref_arg_spans: std::collections::HashSet<ByteSpan>,
     scopes: Vec<HashMap<String, LocalInfo>>,
     current_return: Ty,
     /// v0.0.3 Phase 5 Slice 5E.2: tracks whether the function being
@@ -3279,7 +3310,10 @@ impl SemaCx<'_> {
         self.current_fn_is_async = m.is_async;
         self.scopes.push(HashMap::new());
         if let Some(rcv) = sig.receiver {
-            let mutable = matches!(rcv, Receiver::Mut);
+            // `ref this` mutates the caller's value; `take this` owns the
+            // value, so writing to it is legal too (mirrors the generic
+            // path — the two method-check paths must agree).
+            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
@@ -3423,12 +3457,13 @@ impl SemaCx<'_> {
             }
         }
 
-        // Register the receiver binding if there's a receiver. `ref this` makes
-        // it a mutable binding (enables `this.x = ...`); other forms don't.
-        // `take this` is read-only inside the body — consumption happens at
-        // the call site, not from within.
+        // Register the receiver binding if there's a receiver. `ref this`
+        // mutates the caller's value; `take this` OWNS the value inside the
+        // body, so writing to it is legal too (mirrors the generic path —
+        // the two method-check paths must agree). Bare `this` stays
+        // read-only.
         if let Some(rcv) = sig.receiver {
-            let mutable = matches!(rcv, Receiver::Mut);
+            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
@@ -9134,6 +9169,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 call_span,
             );
         }
+        // 2026-07-06: `f(recv.method)` handler args become bridge + ctx.
+        self.try_bound_method_refs(args, &sig.params, call_span);
         for (a, expected) in args.iter().zip(sig.params.iter()) {
             self.check_arg_with_move(a, expected);
         }
@@ -9851,6 +9888,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         args: &[Expr],
         display_ty: &str,
+        call_span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
             self.err(
@@ -9863,6 +9901,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 ),
                 name.span,
             );
+        }
+        // 2026-07-06: `m(recv.method)` handler args become bridge + ctx.
+        // Only for the concrete case — a Self-substituted signature can't
+        // carry the fn-pointer handler shape anyway.
+        if subst.is_empty() {
+            self.try_bound_method_refs(args, &sig.params, call_span);
         }
         let mut idx = 0;
         for psig in &sig.params {
@@ -10122,7 +10166,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let mut subst = HashMap::new();
                 subst.insert("Self".to_string(), recv_ty.clone());
                 return self
-                    .check_method_args_and_return(name, &msig, &subst, type_args, args, pname);
+                    .check_method_args_and_return(name, &msig, &subst, type_args, args, pname, call_span);
             }
         }
         let Ty::Struct(id) = recv_ty else {
@@ -10208,6 +10252,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             type_args,
             args,
             &struct_name,
+            call_span,
         )
     }
 
@@ -10255,7 +10300,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // A concrete enum-method sig carries no `Self` placeholder, so an
         // empty subst / type-arg list is a no-op.
-        self.check_method_args_and_return(name, sig, &HashMap::new(), &[], args, enum_name)
+        self.check_method_args_and_return(name, sig, &HashMap::new(), &[], args, enum_name, call_span)
     }
 
     /// Slice 7GEN.5e: type-check a generic-method call.
@@ -11941,6 +11986,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 type_args,
                 args,
                 &type_seg.name,
+                call_span,
             );
         }
         // Enums: a call shape `Name::Variant(args)` constructs a tagged
@@ -12180,7 +12226,257 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ///     out of struct fields or array slots are deferred to Phase 5/6.
     /// `Copy`-typed arguments are unaffected — the `take` marker on a Copy
     /// parameter is redundant (a future E0336 lint will suggest removing it).
+    /// Quiet place typing for bound-method-reference RECEIVERS. Like
+    /// `place_ty_quiet` but also resolves statics (the usual home of a
+    /// wired component) — kept separate so the partial-move checker's
+    /// helper keeps its exact behavior. No diagnostics, no move marking.
+    fn bound_ref_place_ty(&self, e: &Expr) -> Option<Ty> {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                if let Some(info) = self.lookup_local(name) {
+                    return Some(info.ty.clone());
+                }
+                if let Some(si) = self.statics_table.get(name.as_str()) {
+                    return Some(si.ty.clone());
+                }
+                None
+            }
+            ExprKind::Field { receiver, name } => {
+                let rt = self.bound_ref_place_ty(receiver)?;
+                let Ty::Struct(id) = rt else {
+                    return None;
+                };
+                self.structs[id.0 as usize]
+                    .fields
+                    .iter()
+                    .find(|(n, _, _)| n == &name.name)
+                    .map(|(_, t, _)| t.clone())
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => match self.bound_ref_place_ty(operand)? {
+                Ty::RawPtr(inner) => Some(*inner),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Bound-reference writability: a place rooted at a static (always
+    /// mutable since v0.0.24 #9) or reached through a raw-ptr deref.
+    fn bound_ref_place_rooted_writable(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(n) => self.statics_table.contains_key(n.as_str()),
+            ExprKind::Field { receiver, .. } => self.bound_ref_place_rooted_writable(receiver),
+            ExprKind::Unary {
+                op: UnaryOp::Deref, ..
+            } => true,
+            _ => false,
+        }
+    }
+
+    /// 2026-07-06 bound method references: `f(recv.method)` where the
+    /// parameter expects a fn-pointer and `recv`'s struct has a METHOD (not
+    /// a field) of that name. The reference names both halves of a wired
+    /// handler at once — the erased fn AND its ctx — so the compiler pairs
+    /// them: the arg becomes a synthesized bridge (`fn(..., ctx: *u8)` that
+    /// casts ctx back and calls the method) and the callee's following
+    /// defaulted `*u8` parameter is filled with `#addr_of(recv)`. The user
+    /// never writes a cast or a ctx.
+    ///
+    /// Shape rules (violations are errors, not fallthroughs — once the name
+    /// resolves to a method, the user meant a bound reference):
+    ///   - receiver method is `this` or `ref this` (E0822: `take this`
+    ///     consumes; a bound handler fires many times), non-generic, with
+    ///     plain borrow params only;
+    ///   - the expected fn-pointer is the method's params plus ONE trailing
+    ///     `*u8` (the ctx wire slot), same return type (E0823);
+    ///   - the callee declares a defaulted `*u8` parameter right after the
+    ///     handler, and the call does not fill it explicitly (E0824).
+    fn try_bound_method_refs(&mut self, args: &[Expr], params: &[ParamSig], call_span: ByteSpan) {
+        for i in 0..args.len().min(params.len()) {
+            let Ty::FnPtr {
+                params: fp,
+                param_takes,
+                param_refs,
+                return_type,
+            } = &params[i].ty
+            else {
+                continue;
+            };
+            let ExprKind::Field { receiver, name } = &args[i].kind else {
+                continue;
+            };
+            let Some(rty) = self.bound_ref_place_ty(receiver) else {
+                continue;
+            };
+            let Ty::Struct(sid) = rty else {
+                continue;
+            };
+            let sdef = &self.structs[sid.0 as usize];
+            if sdef.fields.iter().any(|(n, _, _)| n == &name.name) {
+                continue; // a real fn-ptr field — the normal path handles it
+            }
+            let Some(msig) = sdef.methods.get(&name.name) else {
+                continue; // no such method — the normal path reports the unknown field
+            };
+            let msig = msig.clone();
+            let struct_name = sdef.name.clone();
+            let fp = fp.clone();
+            let ret = (**return_type).clone();
+            let takes_any = param_takes.iter().any(|t| *t) || param_refs.iter().any(|r| *r);
+            // From here on this IS a bound method reference: mark the arg
+            // as handled either way, so a shape error above produces ONE
+            // precise diagnostic instead of also dragging the generic
+            // unknown-field error out of the normal checking path.
+            self.bound_ref_arg_spans.insert(args[i].span);
+            match msig.receiver {
+                Some(Receiver::Read) => {}
+                Some(Receiver::Mut) => {
+                    // Statics are always mutable (v0.0.24 #9), and a place
+                    // reached through a raw-ptr deref is runtime-writable;
+                    // `is_writable_place_quiet` covers locals (`var` yes,
+                    // `let` no).
+                    if !(self.is_writable_place_quiet(receiver)
+                        || self.bound_ref_place_rooted_writable(receiver))
+                    {
+                        self.err(
+                            "E0823",
+                            format!(
+                                "bound reference to `ref this` method `{}::{}` needs a writable receiver place",
+                                struct_name, name.name
+                            ),
+                            args[i].span,
+                        );
+                        continue;
+                    }
+                }
+                Some(Receiver::Move) => {
+                    self.err(
+                        "E0822",
+                        format!(
+                            "cannot bind `take this` method `{}::{}` as a handler — it would consume the receiver on first fire",
+                            struct_name, name.name
+                        ),
+                        args[i].span,
+                    );
+                    continue;
+                }
+                None => {
+                    self.err(
+                        "E0822",
+                        format!(
+                            "`{}::{}` has no receiver; pass the fn directly instead of a bound reference",
+                            struct_name, name.name
+                        ),
+                        args[i].span,
+                    );
+                    continue;
+                }
+            }
+            if !msig.generic_params.is_empty()
+                || msig.params.iter().any(|p| p.move_ || p.mutable)
+                || takes_any
+            {
+                self.err(
+                    "E0822",
+                    format!(
+                        "bound reference to `{}::{}`: generic methods and `take`/`ref` parameters are not supported",
+                        struct_name, name.name
+                    ),
+                    args[i].span,
+                );
+                continue;
+            }
+            let shape_ok = fp.len() == msig.params.len() + 1
+                && fp
+                    .iter()
+                    .zip(msig.params.iter())
+                    .all(|(f, m)| *f == m.ty)
+                && matches!(fp.last(), Some(Ty::RawPtr(inner)) if **inner == Ty::U8)
+                && ret == msig.return_type;
+            if !shape_ok {
+                self.err(
+                    "E0823",
+                    format!(
+                        "bound reference `{}::{}` does not fit the expected fn-pointer: the handler type must be the method's parameters plus a trailing `*u8` ctx, with the same return type",
+                        struct_name, name.name
+                    ),
+                    args[i].span,
+                );
+                continue;
+            }
+            let ctx_param_ok = matches!(
+                params.get(i + 1),
+                Some(p) if matches!(&p.ty, Ty::RawPtr(inner) if **inner == Ty::U8) && !p.move_
+            );
+            if !ctx_param_ok {
+                self.err(
+                    "E0824",
+                    format!(
+                        "bound reference `{}::{}` needs the callee to declare a defaulted `*u8` context parameter right after the handler",
+                        struct_name, name.name
+                    ),
+                    args[i].span,
+                );
+                continue;
+            }
+            match args.get(i + 1) {
+                Some(ca)
+                    if ca.span.file == call_span.file
+                        && ca.span.start >= call_span.start
+                        && ca.span.end <= call_span.end =>
+                {
+                    // The ctx slot holds an expression written AT the call
+                    // site — the user passed it explicitly, and the bound
+                    // reference would silently clobber it.
+                    self.err(
+                        "E0824",
+                        "explicit context argument conflicts with a bound method reference — remove it; the receiver's address fills this slot".to_string(),
+                        ca.span,
+                    );
+                    continue;
+                }
+                Some(_) => {} // the spliced default — monomorphize replaces it
+                None => {
+                    self.err(
+                        "E0824",
+                        format!(
+                            "bound reference `{}::{}` needs a defaulted `*u8` context parameter after the handler (so the call may omit it)",
+                            struct_name, name.name
+                        ),
+                        args[i].span,
+                    );
+                    continue;
+                }
+            }
+            let sanitized: String = struct_name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let bridge_name = format!("__cplus_bound_{}__{}", sanitized, name.name);
+            self.bound_method_refs.insert(
+                args[i].span,
+                BoundMethodRefInfo {
+                    bridge_name,
+                    struct_name,
+                    method_name: name.name.clone(),
+                    receiver: (**receiver).clone(),
+                },
+            );
+            self.bound_ref_arg_spans.insert(args[i].span);
+        }
+    }
+
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
+        // Bound method reference: already validated against the fn-pointer
+        // param by `try_bound_method_refs`; monomorphize rewrites it to the
+        // bridge fn. Skip normal checking (as a Field expr it would fail
+        // with an unknown-field diagnostic).
+        if self.bound_ref_arg_spans.contains(&arg.span) {
+            return;
+        }
         // TEXT.R1c: a string literal where an *owned* `Text` is expected
         // constructs an owned Text (an rvalue — nothing to consume). Scoped to
         // owning, implicit-move params (not `ref`/`take`): those are

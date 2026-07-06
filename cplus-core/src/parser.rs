@@ -514,9 +514,9 @@ impl Parser {
             let pname = self.expect_ident()?;
             let mut bounds = Vec::new();
             if self.eat(&TokenKind::Colon) {
-                bounds.push(self.expect_ident()?);
+                bounds.push(self.parse_ident_path()?);
                 while self.eat(&TokenKind::Plus) {
-                    bounds.push(self.expect_ident()?);
+                    bounds.push(self.parse_ident_path()?);
                 }
             }
             let pspan = pname.span;
@@ -652,7 +652,7 @@ impl Parser {
         let target = self.expect_ident()?;
         let target_generic_params = self.parse_optional_generic_params()?;
         let interface_name = if self.eat(&TokenKind::Colon) {
-            Some(self.expect_ident()?)
+            Some(self.parse_ident_path()?)
         } else if self.at(&TokenKind::For) {
             // Rust habit: `impl T for I`. Point at the C+ spelling.
             return Err(self.err_at_peek(
@@ -1417,6 +1417,23 @@ impl Parser {
     /// `+`-separated list of bound identifiers. Trailing commas
     /// admitted. Empty `[]` rejected (parse error — would create an
     /// ambiguous syntactic placeholder for no purpose).
+    /// An identifier optionally extended with `::segment`s, stored as one
+    /// `Ident` whose name keeps the `::` separators verbatim (the same
+    /// convention type paths use — the resolver rewrites to the qualified
+    /// target). Used where an INTERFACE is named outside type position:
+    /// `impl T: mod::Interface` and generic-param bounds `[C: mod::I]`.
+    fn parse_ident_path(&mut self) -> Result<Ident, ParseError> {
+        let mut id = self.expect_ident()?;
+        while matches!(self.peek_kind(), TokenKind::ColonColon) {
+            self.bump();
+            let seg = self.expect_ident()?;
+            id.name.push_str("::");
+            id.name.push_str(&seg.name);
+            id.span = id.span.merge(seg.span);
+        }
+        Ok(id)
+    }
+
     fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
         if !self.at(&TokenKind::LBracket) {
             return Ok(Vec::new());
@@ -1427,9 +1444,9 @@ impl Parser {
             let pname = self.expect_ident()?;
             let mut bounds = Vec::new();
             if self.eat(&TokenKind::Colon) {
-                bounds.push(self.expect_ident()?);
+                bounds.push(self.parse_ident_path()?);
                 while self.eat(&TokenKind::Plus) {
-                    bounds.push(self.expect_ident()?);
+                    bounds.push(self.parse_ident_path()?);
                 }
             }
             let span = bounds
@@ -4870,6 +4887,39 @@ mod tests {
         assert!(b.interface_name.is_some());
         assert_eq!(b.interface_name.as_ref().unwrap().name, "Ord");
         assert_eq!(b.methods.len(), 1);
+    }
+
+    #[test]
+    fn impl_conformance_accepts_qualified_interface_path() {
+        // 2026-07-06: `impl T: mod::Interface` — the interface may live in
+        // an imported module. Stored verbatim with `::`; the resolver
+        // rewrites to the qualified target (same convention as type paths).
+        let p = parse_src(
+            "struct Point { x: i32 }\n\
+             impl Point: ui::Ord { fn compare(this, other: Point) -> i32 { return 0; } }",
+        )
+        .unwrap();
+        let ItemKind::Impl(b) = &p.items[1].kind else {
+            panic!()
+        };
+        assert_eq!(b.interface_name.as_ref().unwrap().name, "ui::Ord");
+    }
+
+    #[test]
+    fn generic_bounds_accept_qualified_interface_paths() {
+        // 2026-07-06: `[C: mod::Component]` — bounds resolve through the
+        // same machinery, so the path form must survive parsing.
+        let p = parse_src("fn f[C: ui::Component + Copy](x: C) -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!()
+        };
+        assert_eq!(f.generic_params.len(), 1);
+        let bounds: Vec<&str> = f.generic_params[0]
+            .bounds
+            .iter()
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(bounds, vec!["ui::Component", "Copy"]);
     }
 
     #[test]

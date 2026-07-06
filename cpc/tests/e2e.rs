@@ -5280,6 +5280,600 @@ fn main() -> i32 {
 }
 
 #[test]
+fn interface_bound_satisfied_in_package_mode() {
+    // Bound-qualification regression (2026-07-06, found building the facet
+    // component prototype): the resolver qualified interface DECLARATIONS
+    // and impl-block interface names to module scope, but never rewrote
+    // generic-param BOUND names — `[B: Backend]` kept bare "Backend" while
+    // interface_impls held ("src.main.Backend", "src.main.Mac"), so EVERY
+    // user-interface bound failed E0502 in package mode. Single-file mode
+    // qualifies nothing (both sides bare), which is why the single-file
+    // e2e passed while the identical package failed. Resolver now
+    // qualifies bounds at all generic_params sites (fn, method, struct,
+    // enum, impl).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bp\"\n\n[[bin]]\nname = \"bp\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "interface Backend { fn flush(this) -> i32; }\n\
+         struct Mac { fd: i32 }\n\
+         impl Mac: Backend { fn flush(this) -> i32 { return this.fd; } }\n\
+         struct App[B: Backend] { backend: B }\n\
+         impl App[B: Backend] { fn run(this) -> i32 { return this.backend.flush(); } }\n\
+         fn render[B: Backend](b: B) -> i32 { return b.flush(); }\n\
+         fn render_ptr[B: Backend](p: *B) -> i32 { return { (*p).flush() }; }\n\
+         fn main() -> i32 {\n\
+             let byval: i32 = render(Mac { fd: 5 });\n\
+             var m: Mac = Mac { fd: 3 };\n\
+             let byptr: i32 = render_ptr(#addr_of(m));\n\
+             let a: App[Mac] = App[Mac] { backend: Mac { fd: 7 } };\n\
+             return byval + byptr + a.run();\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        status.success(),
+        "interface bounds must satisfy in package mode (bound-name qualification)"
+    );
+    let run = Command::new(dir.join("target/debug/bp"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(15), "5 + 3 + 7");
+}
+
+#[test]
+fn str_view_cannot_outlive_owner() {
+    // Rule E-VIEW (2026-07-06): a borrow-receiver method returning `str`
+    // or a slice ties its result to the receiver. Moving the owner while
+    // the view is live is rejected; using the view before the move is fine.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vw\"\n\n[[bin]]\nname = \"vw\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let bad = "import \"stdlib/text\" as text;\n\
+         fn consume(take t: text::Text) { return; }\n\
+         fn peek(x: str) -> i32 { return 0; }\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"hello\";\n\
+             let s: str = t.view();\n\
+             consume(t);\n\
+             return peek(s);\n\
+         }\n";
+    std::fs::write(dir.join("src/main.cplus"), bad).unwrap();
+    let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "view must not outlive its owner");
+    assert!(all.contains("E0372"), "expected E0372, got: {all}");
+
+    // Positive: a view used while the owner stays put is legal (borrows
+    // are lexical — the owner is pinned for the view's scope, so the
+    // no-move form is the sanctioned idiom).
+    let ok = bad.replace("consume(t);\nreturn peek(s);", "return peek(s);");
+    assert_ne!(ok, bad, "replace must rewrite the program");
+    std::fs::write(dir.join("src/main.cplus"), ok).unwrap();
+    let st = Command::new(cpc).arg("check").current_dir(&dir).status().expect("cpc");
+    assert!(st.success(), "a view with a live owner must stay legal");
+}
+
+#[test]
+fn memory_model_aliasing_hardening() {
+    // 2026-07-06 memory-model audit fixes, three checks in one package:
+    //  (a) `h.poke(h)` — a non-Copy receiver passed again as a borrow arg
+    //      in the SAME call aliases the receiver's noalias pointer → E0381
+    //      (previously compiled: receiver was not an intra-call claim).
+    //  (b) method `ref` args are now flag-checked (method calls used to run
+    //      the intra-call walk with no flags at all).
+    //  (c) `ref`-on-Copy params may alias BY DESIGN (§2.9: local
+    //      mutability, not a borrow) — codegen no longer emits `noalias`
+    //      for them, so `bump2(x, x)` is defined and runs.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let bad = dir.join("bad.cplus");
+    std::fs::write(
+        &bad,
+        "struct R { opaque p: *u8 }\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
+         struct H { r: R }\n\
+         impl H {\n\
+             fn poke(ref this, other: H) { return; }\n\
+             fn set2(ref this, ref a: R, b: R) { return; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var h: H = H { r: R { p: malloc(8 as usize) } };\n\
+             h.poke(h);\n\
+             var v: R = R { p: malloc(8 as usize) };\n\
+             h.set2(v, v);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&bad).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "receiver/method-arg aliasing must reject");
+    assert!(all.contains("E0381"), "expected E0381, got: {all}");
+
+    let ok = dir.join("ok.cplus");
+    std::fs::write(
+        &ok,
+        "fn bump2(ref a: i32, ref b: i32) { a = a + 1; b = b + 1; return; }\n\
+         fn main() -> i32 { var x: i32 = 0; bump2(x, x); return x; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ok");
+    let st = Command::new(cpc).arg(&ok).arg("-o").arg(&bin).status().expect("cpc");
+    assert!(st.success(), "Copy ref aliasing is legal (Section 2.9)");
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(run.status.code(), Some(2), "aliased increments are DEFINED");
+    let ll = Command::new(cpc).arg("--emit-ll").arg(&ok).output().expect("ll");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    let bump_line = ir.lines().find(|l| l.contains("define") && l.contains("bump2")).unwrap();
+    assert!(
+        !bump_line.contains("noalias"),
+        "Copy ref params must not promise noalias: {bump_line}"
+    );
+}
+
+#[test]
+fn moved_binding_heals_on_reassignment_in_branch() {
+    // 2026-07-06 memory-model completeness: `if c { consume(v); v = mk(); }
+    // use(v)` is sound — the reassignment inside the branch makes `v`
+    // definitely live at the join, so E0371 no longer fires. Verified at
+    // runtime with drop counters on both branch outcomes. The
+    // conditional-move-then-reassign-AFTER-the-join form must KEEP firing:
+    // codegen has no drop flags, so `v = mk()` on a maybe-moved binding
+    // can't decide statically whether to drop the old value.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let good = dir.join("good.cplus");
+    std::fs::write(
+        &good,
+        "static MADE: i32 = 0;\n\
+         static DROPS: i32 = 0;\n\
+         struct R { opaque p: *u8 }\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         extern fn time(p: *u8) -> i64;\n\
+         impl R { fn drop(ref this) { DROPS = DROPS + 1; { free(this.p); } return; } }\n\
+         fn consume(take r: R) { return; }\n\
+         fn mk() -> R { MADE = MADE + 1; return R { p: malloc(8 as usize) }; }\n\
+         fn scenario(c: bool) -> i32 {\n\
+             MADE = 0;\n\
+             DROPS = 0;\n\
+             var v: R = mk();\n\
+             if c {\n\
+                 consume(v);\n\
+                 v = mk();\n\
+             }\n\
+             consume(v);\n\
+             if c {\n\
+                 if MADE == 2 { if DROPS == 2 { return 0; } }\n\
+                 return DROPS * 10 + MADE;\n\
+             }\n\
+             if MADE == 1 { if DROPS == 1 { return 0; } }\n\
+             return DROPS * 10 + MADE;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let taken: bool = time(0 as *u8) > 0 as i64;\n\
+             let skipped: bool = time(0 as *u8) < 0 as i64;\n\
+             let a: i32 = scenario(taken);\n\
+             let b: i32 = scenario(skipped);\n\
+             return a * 100 + b;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("good");
+    let st = Command::new(cpc).arg(&good).arg("-o").arg(&bin).status().expect("cpc");
+    assert!(st.success(), "reassignment in the moved branch must heal E0371");
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "drop counts must balance on both branch outcomes"
+    );
+
+    let bad = dir.join("bad.cplus");
+    std::fs::write(
+        &bad,
+        "struct R { opaque p: *u8 }\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
+         fn consume(take r: R) { return; }\n\
+         fn mk() -> R { return R { p: malloc(8 as usize) }; }\n\
+         fn main() -> i32 {\n\
+             var v: R = mk();\n\
+             let c: bool = true;\n\
+             if c {\n\
+                 consume(v);\n\
+             }\n\
+             v = mk();\n\
+             consume(v);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&bad).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "maybe-moved reassignment must stay rejected");
+    assert!(all.contains("E0371"), "expected E0371, got: {all}");
+}
+
+#[test]
+fn take_this_receiver_is_writable() {
+    // 2026-07-06 two-paths completeness: a `take this` receiver OWNS the
+    // value, so writing to it is legal — the concrete method path now
+    // matches the generic path (which always allowed it). Verified at
+    // runtime: the reassigned field is freed exactly once by the
+    // receiver's scope-exit drop. Bare `this` stays read-only.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let good = dir.join("good.cplus");
+    std::fs::write(
+        &good,
+        "static DROPS: i32 = 0;\n\
+         struct R { opaque p: *u8, tag: i32 }\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         impl R { fn drop(ref this) { DROPS = DROPS + 1; { free(this.p); } return; } }\n\
+         impl R {\n\
+             fn eat(take this) -> i32 {\n\
+                 free(this.p);\n\
+                 this.p = malloc(4 as usize);\n\
+                 this.tag = this.tag + 40;\n\
+                 return this.tag;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let r: R = R { p: malloc(8 as usize), tag: 2 };\n\
+             let got: i32 = r.eat();\n\
+             if got == 42 { if DROPS == 1 { return 0; } }\n\
+             return got;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("good");
+    let st = Command::new(cpc).arg(&good).arg("-o").arg(&bin).status().expect("cpc");
+    assert!(st.success(), "writing through `take this` must be legal");
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(run.status.code(), Some(0), "owned-receiver write + single drop");
+
+    let bad = dir.join("bad.cplus");
+    std::fs::write(
+        &bad,
+        "struct S { tag: i32 }\n\
+         impl S { fn poke(this) { this.tag = 1; return; } }\n\
+         fn main() -> i32 { let s: S = S { tag: 0 }; s.poke(); return s.tag; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&bad).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "bare `this` must stay read-only");
+    assert!(all.contains("E0305"), "expected E0305, got: {all}");
+}
+
+#[test]
+fn str_view_coercion_and_free_fn_ties() {
+    // Rule E-VIEW residuals closed (2026-07-06): the two view-producing
+    // forms that bypass method calls now tie to their owner too —
+    //  (a) bare coercion: `let s: str = t;` (owner → view, no call);
+    //  (b) free-fn views: `fn head(t: Text) -> str` returns a view of its
+    //      non-Copy borrow param (Rule E-VIEW-FN).
+    // Moving the owner while either view is live is E0372; both forms
+    // stay legal while the owner lives.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vc\"\n\n[[bin]]\nname = \"vc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let check = |src: &str| -> (bool, String) {
+        std::fs::write(dir.join("src/main.cplus"), src).unwrap();
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), all)
+    };
+
+    let (ok, all) = check(
+        "import \"stdlib/text\" as text;\n\
+         fn consume(take t: text::Text) { return; }\n\
+         fn peek(x: str) -> i32 { return 0; }\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"hello\";\n\
+             let s: str = t;\n\
+             consume(t);\n\
+             return peek(s);\n\
+         }\n",
+    );
+    assert!(!ok, "bare-coercion view must not outlive its owner");
+    assert!(all.contains("E0372"), "expected E0372, got: {all}");
+
+    let (ok, all) = check(
+        "import \"stdlib/text\" as text;\n\
+         fn head(t: text::Text) -> str { return t.view(); }\n\
+         fn consume(take t: text::Text) { return; }\n\
+         fn peek(x: str) -> i32 { return 0; }\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"hello\";\n\
+             let s: str = head(t);\n\
+             consume(t);\n\
+             return peek(s);\n\
+         }\n",
+    );
+    assert!(!ok, "free-fn view must not outlive its owner");
+    assert!(all.contains("E0372"), "expected E0372, got: {all}");
+
+    let (ok, all) = check(
+        "import \"stdlib/text\" as text;\n\
+         fn head(t: text::Text) -> str { return t.view(); }\n\
+         fn peek(x: str) -> i32 { return 0; }\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"hello\";\n\
+             let s: str = t;\n\
+             let h: str = head(t);\n\
+             let a: i32 = peek(s);\n\
+             let b: i32 = peek(h);\n\
+             return a + b;\n\
+         }\n",
+    );
+    assert!(ok, "views with a live owner must stay legal: {all}");
+}
+
+#[test]
+fn bound_method_reference_wires_handler_and_ctx() {
+    // 2026-07-06 bound method references: `f(recv.method)` in handler
+    // position becomes (synthesized erased bridge, ctx = #addr_of(recv))
+    // — the callee's defaulted `*u8` param right after the handler is
+    // auto-filled. Covers free-fn position, METHOD position (the facet
+    // `on_click` shape: `take this` fluent + defaulted ctx), a `ref this`
+    // mutating handler, and a RETURNING bound method (the mount/render
+    // shape `fn(*u8) -> i64`).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"br\"\n\n[[bin]]\nname = \"br\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct Counter { count: i32 }\n\
+         impl Counter {\n\
+             fn on_inc(ref this, sender: *u8) { this.count = this.count +% 1; return; }\n\
+             fn render(this) -> i64 { return this.count as i64; }\n\
+         }\n\
+         static COUNTER: Counter = #zero::[Counter]();\n\
+         struct Btn { h: fn(*u8, *u8), opaque hctx: *u8 }\n\
+         fn noop(sender: *u8, ctx: *u8) { return; }\n\
+         fn btn() -> Btn { return Btn { h: noop, hctx: 0 as *u8 }; }\n\
+         impl Btn {\n\
+             fn on_click(take this, h: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Btn {\n\
+                 var b: Btn = this; b.h = h; b.hctx = ctx; return b;\n\
+             }\n\
+             fn fire(this) { let f: fn(*u8, *u8) = this.h; f(0 as *u8, this.hctx); return; }\n\
+         }\n\
+         fn probe(shim: fn(*u8) -> i64, ctx: *u8 = 0 as *u8) -> i64 { return shim(ctx); }\n\
+         fn main() -> i32 {\n\
+             let b: Btn = btn().on_click(COUNTER.on_inc);\n\
+             b.fire(); b.fire(); b.fire();\n\
+             let r: i64 = probe(COUNTER.render);\n\
+             return r as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "bound method references must compile");
+    let run = Command::new(dir.join("target/debug/br"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(3), "3 fires observed by render");
+}
+
+#[test]
+fn bound_method_reference_misuse_rejected() {
+    // The three shape errors, one precise diagnostic each (no trailing
+    // unknown-field noise): E0822 `take this` handler, E0823 signature
+    // mismatch, E0824 explicit ctx alongside a bound reference.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bn\"\n\n[[bin]]\nname = \"bn\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct C { n: i32 }\n\
+         impl C {\n\
+             fn eat(take this, sender: *u8) { return; }\n\
+             fn wrong(this, a: i64) -> i64 { return a; }\n\
+             fn ok(ref this, sender: *u8) { this.n = this.n + 1; return; }\n\
+         }\n\
+         static S: C = #zero::[C]();\n\
+         fn fire(h: fn(*u8, *u8), ctx: *u8 = 0 as *u8) { h(0 as *u8, ctx); return; }\n\
+         fn main() -> i32 {\n\
+             fire(S.eat);\n\
+             fire(S.wrong);\n\
+             fire(S.ok, ctx: 7 as *u8);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{}{}", String::from_utf8_lossy(&out.stdout), stderr);
+    assert!(!out.status.success(), "misuse must be rejected");
+    for code in ["E0822", "E0823", "E0824"] {
+        assert!(
+            combined.contains(code),
+            "expected {code} in diagnostics, got: {combined}"
+        );
+    }
+    assert!(
+        !combined.contains("E0320"),
+        "a resolved bound reference owns its diagnostics — no unknown-field noise: {combined}"
+    );
+}
+
+#[test]
+fn cross_module_interface_conformance_and_alias_bounds() {
+    // 2026-07-06: `impl T: mod::Interface` + `[C: mod::Interface]` bounds.
+    // The interface lives in one module; a struct in another module
+    // conforms via the import alias, and generics in BOTH modules accept
+    // the conforming type through the bound. Orphan rule (E0507) passes
+    // via the target-file side.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"xi\"\n\n[[bin]]\nname = \"xi\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/contract.cplus"),
+        "interface Component { fn render(this) -> i64; }\n\
+         fn render_of[C: Component](p: *C) -> i64 { return { (*p).render() }; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./contract\" as contract;\n\
+         struct Counter { count: i32 }\n\
+         impl Counter {\n\
+             fn on_inc(ref this, sender: *u8) { this.count = this.count +% 1; return; }\n\
+         }\n\
+         impl Counter: contract::Component {\n\
+             fn render(this) -> i64 { return this.count as i64; }\n\
+         }\n\
+         static COUNTER: Counter = #zero::[Counter]();\n\
+         fn use_bound[C: contract::Component](p: *C) -> i64 { return { (*p).render() }; }\n\
+         fn main() -> i32 {\n\
+             let c: *Counter = #addr_of(COUNTER);\n\
+             (*c).on_inc(0 as *u8);\n\
+             (*c).on_inc(0 as *u8);\n\
+             return (contract::render_of(c) + use_bound(c)) as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cross-module conformance must compile");
+    let run = Command::new(dir.join("target/debug/xi"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(4), "2 clicks x 2 render paths");
+}
+
+#[test]
+fn uncalled_generic_fn_sig_does_not_drift_static_type_ids() {
+    // Statics-id-drift regression (2026-07-06, found building the facet
+    // Rx prototype): an UNINSTANTIATED generic fn whose signature names a
+    // generic instantiation (`fn watch[T](p: *Rx[T])`) makes sema register
+    // a placeholder struct entry that codegen never emits. Every struct
+    // instantiated after it then has a sema id one past its codegen id.
+    // `emit_statics` used to lower `StaticInfo.ty` (sema ids) against
+    // codegen's table: a static typed with a later instantiation indexed
+    // out of bounds (compiler panic in `llvm_ty`) — or, with more structs
+    // following, landed on the WRONG entry and miscompiled silently.
+    // Statics now re-derive their type from the post-mono AST annotation
+    // (monomorphize rewrites static annotations like fn signatures).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+struct Rx[T] { _version: u64, _value: T }
+struct Item { a: i64 }
+struct Holder[T] { x: T }
+fn watch[T](p: *Rx[T]) -> i64 { return 0; }
+static H: Holder[Item] = #zero::[Holder[Item]]();
+fn main() -> i32 {
+    let v: i64 = H.x.a;
+    return v as i32;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "static of a post-placeholder generic instantiation must compile; stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0), "zero-initialized static reads back 0");
+}
+
+#[test]
 fn let_struct_eq_if_else_with_block_arm_compiles() {
     // bench-cplus handoff #4 regression: `let R: STRUCT = if c { call } else
     // { lets...; tail }` used to panic codegen for the struct-valued case.

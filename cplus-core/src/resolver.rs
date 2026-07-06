@@ -1823,6 +1823,7 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
         ItemKind::Enum(e) => {
             let mut e = e.clone();
             e.name.name = ctx.qualify_local(&e.name.name);
+            qualify_bounds(&mut e.generic_params, ctx)?;
             for v in &mut e.variants {
                 for p in &mut v.payload {
                     rewrite_type(p, ctx)?;
@@ -1833,6 +1834,7 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
         ItemKind::Struct(s) => {
             let mut s = s.clone();
             s.name.name = ctx.qualify_local(&s.name.name);
+            qualify_bounds(&mut s.generic_params, ctx)?;
             for f in &mut s.fields {
                 rewrite_type(&mut f.ty, ctx)?;
             }
@@ -1846,15 +1848,16 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
             if ctx.local_items.contains(&b.target.name) {
                 b.target.name = ctx.qualify_local(&b.target.name);
             }
+            qualify_bounds(&mut b.target_generic_params, ctx)?;
             for m in &mut b.methods {
                 let new_method = rewrite_method(m, ctx)?;
                 *m = new_method;
             }
-            // Slice 7GEN.3: qualify the interface name if local.
+            // Slice 7GEN.3: qualify the interface name if local; since
+            // 2026-07-06 an import-alias path (`impl T: mod::Interface`)
+            // also resolves, through the same machinery as type names.
             if let Some(iface) = &mut b.interface_name {
-                if ctx.local_items.contains(&iface.name) {
-                    iface.name = ctx.qualify_local(&iface.name);
-                }
+                iface.name = rewrite_type_name(&iface.name, iface.span, ctx)?;
             }
             ItemKind::Impl(b)
         }
@@ -1917,6 +1920,25 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
     })
 }
 
+/// Interface-bound qualification (2026-07-06): generic-param bounds
+/// (`[B: Backend]`, `[C: mod::Component]`) resolve through the same
+/// machinery as type names — import-alias paths rewrite to the target
+/// module's qualified name (with the `_`-privacy check), local names
+/// qualify to this module, and everything else (the blessed bounds:
+/// Copy/Send/Sync/Hash/Eq/Ord/...) passes through bare. Interface
+/// DECLARATIONS are module-qualified, so an unrewritten bound fails
+/// the package-mode bound check with E0502 — single-file mode
+/// qualifies nothing, which is why the mismatch only surfaced in
+/// packages.
+fn qualify_bounds(params: &mut [GenericParam], ctx: &RewriteCtx) -> Result<(), ResolveError> {
+    for gp in params {
+        for b in &mut gp.bounds {
+            b.name = rewrite_type_name(&b.name, b.span, ctx)?;
+        }
+    }
+    Ok(())
+}
+
 fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> {
     let mut f = f.clone();
     let local_scope = HashSet::new();
@@ -1930,6 +1952,7 @@ fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> 
     if !extern_stays_global(&f) {
         f.name.name = ctx.qualify_local(&f.name.name);
     }
+    qualify_bounds(&mut f.generic_params, ctx)?;
     for p in &mut f.params {
         rewrite_type(&mut p.ty, ctx)?;
     }
@@ -1949,6 +1972,7 @@ fn rewrite_method(m: &Method, ctx: &RewriteCtx) -> Result<Method, ResolveError> 
     let mut m = m.clone();
     // Method name stays bare — it's joined with the (already-qualified)
     // type name at codegen time.
+    qualify_bounds(&mut m.generic_params, ctx)?;
     for p in &mut m.params {
         rewrite_type(&mut p.ty, ctx)?;
     }

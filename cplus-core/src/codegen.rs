@@ -1185,7 +1185,30 @@ fn generate_inner(
     // `.rodata`). Mutable statics → `@NAME = global <ty> <lit>` (lives
     // in `.data`). Populates `md.statics` so gen_expr / gen_assign
     // route Ident references through load/store against the symbol.
-    emit_statics(&mut out, statics_map, &types, &md);
+    //
+    // Statics-id-drift fix (2026-07-06): sema's `StaticInfo.ty` carries
+    // struct/enum ids numbered by SEMA's type table, but `llvm_ty` indexes
+    // CODEGEN's independently collected table. The two drift whenever sema
+    // materializes a type codegen never emits — e.g. the placeholder
+    // instantiation for `Rx[T]` in an UNINSTANTIATED generic fn's
+    // signature. Every instantiation registered after the placeholder then
+    // has a sema id one past its codegen id: statics typed with one either
+    // index out of bounds (panic) or land on the WRONG struct entry and
+    // miscompile silently. Statics therefore re-derive their type from the
+    // post-mono AST annotation by name, like every other codegen consumer
+    // (see `collect_sigs`); the sema Ty remains only a defensive fallback.
+    let static_ast_tys: HashMap<String, Ty> = program
+        .items
+        .iter()
+        .filter_map(|it| {
+            if let ItemKind::Static(s) = &it.kind {
+                Some((s.name.name.clone(), ty_from(&s.ty, &types)))
+            } else {
+                None
+            }
+        })
+        .collect();
+    emit_statics(&mut out, statics_map, &static_ast_tys, &types, &md);
     // v0.0.10 Phase 4A: emit per-selector cached-pointer globals.
     emit_selector_globals(&mut out, selectors_set, &md);
     // v0.0.10 Phase 4C: emit per-call shader-blob globals.
@@ -2458,12 +2481,22 @@ fn param_attrs(
 ) -> String {
     if pointer_passed {
         let mut s = String::new();
-        s.push_str(if move_ || mutable {
-            "noalias"
+        // Memory-model hardening (2026-07-06): `noalias` is a PROMISE the
+        // borrow checker must be enforcing. It enforces exclusivity only
+        // for non-Copy places — §2.9 defines `ref`-on-Copy as local
+        // mutability, NOT a borrow, so `f(ref x, ref x)` on a Copy `x` is
+        // legal and the two pointers genuinely alias. Emitting `noalias`
+        // there handed LLVM a false promise (UB on a legal program).
+        // Three-way split: exclusive non-Copy → noalias; exclusive Copy →
+        // no aliasing attr (written through, may alias); shared → readonly.
+        if move_ || mutable {
+            if !is_copy_ty(ty, types) {
+                s.push_str("noalias ");
+            }
         } else {
-            "readonly"
-        });
-        s.push_str(" nonnull noundef");
+            s.push_str("readonly ");
+        }
+        s.push_str("nonnull noundef");
         if let Some((sz, al)) = static_layout(ty, types) {
             if sz > 0 {
                 let _ = write!(s, " dereferenceable({sz})");
@@ -4943,6 +4976,7 @@ fn emit_shader_blob_globals(
 fn emit_statics(
     out: &mut String,
     statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
+    ast_tys: &HashMap<String, Ty>,
     types: &TypeTable,
     md: &ModuleMetadata,
 ) {
@@ -4951,12 +4985,20 @@ fn emit_statics(
         return;
     }
     for (qname, info) in statics_map {
+        // Statics-id-drift fix: prefer the AST-derived type (codegen's id
+        // universe) over sema's `info.ty` (sema's id universe) — the two
+        // drift when sema materializes types codegen never emits. Fall
+        // back to sema's Ty only if the annotation didn't resolve here.
+        let sty: &Ty = match ast_tys.get(qname) {
+            Some(t) if !matches!(t, Ty::Error) => t,
+            _ => &info.ty,
+        };
         // v0.0.9 follow-up: `str`-typed statics need a paired data
         // global. Emit `@<name>.bytes = constant [N x i8] c"..."` for
         // the payload and `@<name> = {constant|global} { ptr, i64 } { ptr @<name>.bytes, i64 N }`
         // for the fat-pointer header. Reads through gen_expr's Ident
         // path then load `{ptr, i64}` from `@<name>` as any str does.
-        if matches!(info.ty, Ty::Str) {
+        if matches!(sty, Ty::Str) {
             if let ExprKind::StrLit(s) = &info.init.kind {
                 let bytes_sym = format!("{qname}.bytes");
                 let bytes_len = emit_cstr(out, &bytes_sym, s);
@@ -4965,14 +5007,12 @@ fn emit_statics(
                 out.push_str(&format!(
                     "@{qname} = {storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
                 ));
-                md.statics
-                    .borrow_mut()
-                    .insert(qname.clone(), info.ty.clone());
+                md.statics.borrow_mut().insert(qname.clone(), sty.clone());
                 continue;
             }
         }
-        let lltype = llvm_ty(&info.ty, types);
-        let llvalue = match render_static_literal(&info.init, &info.ty, types) {
+        let lltype = llvm_ty(sty, types);
+        let llvalue = match render_static_literal(&info.init, sty, types) {
             Some(s) => s,
             None => {
                 // Defense-in-depth: lower + sema should have rejected
@@ -4985,9 +5025,7 @@ fn emit_statics(
         };
         let storage = if info.is_mut { "global" } else { "constant" };
         out.push_str(&format!("@{qname} = {storage} {lltype} {llvalue}\n"));
-        md.statics
-            .borrow_mut()
-            .insert(qname.clone(), info.ty.clone());
+        md.statics.borrow_mut().insert(qname.clone(), sty.clone());
     }
     out.push('\n');
 }

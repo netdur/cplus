@@ -522,7 +522,14 @@ pub enum BorrowFlavor {
 /// the `take`-flag list and (5BC.3a) the elision-rule return source. Future
 /// slices will add types and lifetime info.
 #[derive(Debug, Default)]
+#[derive(Clone)]
 struct FnEntry {
+    /// Memory-model hardening (2026-07-06): the method receiver's claim
+    /// kind (`this` → Shared, `ref this` → Exclusive, `take this` → Move).
+    /// `None` for free fns and receiver-less methods. Lets the intra-call
+    /// conflict walk include the receiver — `h.poke(h)` is the same
+    /// aliasing bug as `poke2(h, h)` and must fire the same codes.
+    receiver_claim: Option<ClaimKind>,
     param_moves: Vec<bool>,
     /// Slice 6BC.1: per-parameter `ref` flag, parallel to `param_moves`.
     /// `param_muts[i]` is true iff parameter i was declared `ref x: T`.
@@ -571,6 +578,7 @@ impl SigTable {
                     t.fns.insert(
                         f.name.name.clone(),
                         FnEntry {
+                            receiver_claim: None,
                             param_moves: f
                                 .params
                                 .iter()
@@ -590,6 +598,11 @@ impl SigTable {
                         t.methods.insert(
                             key,
                             FnEntry {
+                                receiver_claim: m.receiver.as_ref().map(|r| match r {
+                                    crate::ast::Receiver::Read => ClaimKind::Shared,
+                                    crate::ast::Receiver::Mut => ClaimKind::Exclusive,
+                                    crate::ast::Receiver::Move => ClaimKind::Move,
+                                }),
                                 param_moves: m
                                     .params
                                     .iter()
@@ -700,7 +713,43 @@ fn detect_fn_elision_with_flavor(
     if let Some(s) = detect_fn_e3(f, oracle) {
         return (Some(s), Some(BorrowFlavor::Shared));
     }
+    if let Some(s) = detect_fn_view(f, oracle) {
+        return (Some(s), Some(BorrowFlavor::Shared));
+    }
     (None, None)
+}
+
+/// Rule E-VIEW-FN (2026-07-06): the free-function analog of Rule
+/// E-VIEW. A function returning `str` or a slice with borrow-passed
+/// non-Copy parameters returns a VIEW into one of them
+/// (`fn head(t: Text) -> str { return t.view(); }`), so the result
+/// borrows every such parameter. E1/E3 never see these because views
+/// are Copy return types. Same conservatism as the method rule: the
+/// tie applies regardless of what the body returns. Flavor is Shared —
+/// a view only reads. `take` params never contribute (the value is
+/// consumed; a view into it is a different bug, caught by drop order).
+fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
+    let ret = f.return_type.as_ref()?;
+    let is_view = matches!(&ret.kind, TypeKind::Slice(_))
+        || matches!(&ret.kind, TypeKind::Path(p) if p == "str");
+    if !is_view {
+        return None;
+    }
+    let mut indices: Vec<u32> = Vec::new();
+    for (i, p) in f.params.iter().enumerate() {
+        if p.move_ {
+            continue;
+        }
+        if !oracle.definitely_non_copy(&p.ty) {
+            continue;
+        }
+        indices.push(i as u32);
+    }
+    match indices.len() {
+        0 => None,
+        1 => Some(ReturnBorrowSource::Param(indices[0])),
+        _ => Some(ReturnBorrowSource::MultiParam(indices)),
+    }
 }
 
 /// Slice 6BC.5: explicit region-annotation detection. The source
@@ -787,7 +836,45 @@ fn detect_method_elision_with_flavor(
     if let Some(s) = detect_method_e2(b, m, oracle) {
         return (Some(s), Some(BorrowFlavor::Shared));
     }
+    if let Some(s) = detect_method_view(b, m, oracle) {
+        return (Some(s), Some(BorrowFlavor::Shared));
+    }
     (None, None)
+}
+
+/// Rule E-VIEW (2026-07-06 memory-model hardening): a borrow-receiver
+/// method on a non-Copy type returning `str` or a slice returns a VIEW
+/// into the receiver's storage — a fat pointer with no lifetime of its
+/// own (`Text::view`, `Vec::as_slice`). Binding the result borrows the
+/// receiver, so moving/consuming the owner while the view is live is
+/// rejected by the existing borrow machinery — closing the audit's #1
+/// safe-code use-after-free (`let s = t.view(); consume(t); peek(s)`).
+///
+/// Conservative on purpose: the tie applies even if the body returns a
+/// literal (`fn kind(this) -> str { return "x"; }`) — a rare
+/// over-restriction, and the sound direction.
+fn detect_method_view(
+    b: &ImplBlock,
+    m: &Method,
+    oracle: &CopyOracle,
+) -> Option<ReturnBorrowSource> {
+    if !matches!(m.receiver, Some(Receiver::Read) | Some(Receiver::Mut)) {
+        return None;
+    }
+    let synth = Type {
+        kind: TypeKind::Path(b.target.name.clone()),
+        span: Span::new(0, 0),
+    };
+    if !oracle.definitely_non_copy(&synth) {
+        return None;
+    }
+    let ret = m.return_type.as_ref()?;
+    let is_view = matches!(&ret.kind, TypeKind::Slice(_))
+        || matches!(&ret.kind, TypeKind::Path(p) if p == "str");
+    if !is_view {
+        return None;
+    }
+    Some(ReturnBorrowSource::SelfReceiver)
 }
 
 /// Slice 6BC.2 — Rule E1-mut. Mirror of E1 but for a `ref`-marked param:
@@ -2267,6 +2354,25 @@ impl Analyzer<'_> {
                     let (places, flavor) = self.classify_borrow_source(e);
                     borrow_sources = places;
                     borrow_flavor = flavor;
+                    // Rule E-VIEW, bare-coercion arm (2026-07-06): binding a
+                    // view-typed name (`str` / slice) straight to a non-Copy
+                    // place — `let s: str = t;` — coerces owner → view with
+                    // no call involved. The binding borrows the place, same
+                    // as `let s: str = t.view();`.
+                    if borrow_sources.is_empty() {
+                        if let Some(decl) = ty {
+                            let is_view_ty = matches!(&decl.kind, TypeKind::Slice(_))
+                                || matches!(&decl.kind, TypeKind::Path(p) if p == "str");
+                            if is_view_ty {
+                                if let Some(place) = place_from_expr(e) {
+                                    if self.binding_is_non_copy(&place.root) {
+                                        borrow_sources = vec![place];
+                                        borrow_flavor = BorrowFlavor::Shared;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     self.apply_expr(e, state);
                 }
                 let bt = match ty {
@@ -2519,8 +2625,29 @@ impl Analyzer<'_> {
                 }
             }
             ExprKind::Assign { target, value, .. } => {
-                self.apply_expr(target, state);
+                // Re-initialization heal: assigning a whole binding that is
+                // DEFINITELY moved makes it Owned again, so a branch that
+                // does `consume(v); v = mk();` presents a live `v` at the
+                // join (no E0371). Only the definite state heals —
+                // MaybePartial stays an error because codegen has no drop
+                // flags: `v = mk()` after a *conditional* move can't decide
+                // statically whether to drop the old value.
+                let heal = match &target.kind {
+                    ExprKind::Ident(name) => matches!(
+                        state.get(&Place::root(name)),
+                        Some(PlaceState::Moved)
+                    ),
+                    _ => false,
+                };
+                if !heal {
+                    self.apply_expr(target, state);
+                }
                 self.apply_expr(value, state);
+                if heal {
+                    if let ExprKind::Ident(name) = &target.kind {
+                        state.insert(Place::root(name), PlaceState::Owned);
+                    }
+                }
             }
             ExprKind::Cast { expr, .. } => self.apply_expr(expr, state),
             ExprKind::StructLit { fields, .. }
@@ -2816,6 +2943,42 @@ impl Analyzer<'_> {
             }
         }
 
+        // Memory-model hardening (2026-07-06): method calls used to run
+        // the intra-call walk with NO flags — a method's `ref`/`take`
+        // args and its receiver escaped E0380/E0381/E0382/E0374 entirely
+        // (`h.poke(h)` compiled while `poke2(h, h)` errored). Resolve the
+        // method's FnEntry through the receiver's binding type (the same
+        // lookup the cross-statement receiver check uses) and record the
+        // receiver as a claim of its declared kind.
+        let mut receiver_claim: Option<(ClaimKind, &Expr)> = None;
+        if let ExprKind::Field {
+            receiver,
+            name: method,
+        } = &callee.kind
+        {
+            if let ExprKind::Ident(recv_name) = &receiver.kind {
+                let entry = self
+                    .binding_type(recv_name)
+                    .and_then(|bt| match &bt.kind {
+                        TypeKind::Path(type_name) => self
+                            .sigs
+                            .methods
+                            .get(&format!("{type_name}.{}", method.name)),
+                        _ => None,
+                    })
+                    .cloned();
+                if let Some(entry) = entry {
+                    if move_flags.is_none() {
+                        move_flags = Some(entry.param_moves.clone());
+                    }
+                    if mut_flags.is_none() {
+                        mut_flags = Some(entry.param_muts.clone());
+                    }
+                    receiver_claim = entry.receiver_claim.map(|k| (k, &**receiver));
+                }
+            }
+        }
+
         // Slice 6BC.3 — intra-call conflict detection, place-aware.
         // Builds a per-arg `Claim` (place + kind) and walks pairs. The
         // overlap matrix decides which code fires:
@@ -2831,7 +2994,7 @@ impl Analyzer<'_> {
         // the design-note §5.2 win — partial-place tracking via
         // `Place::projections`. Copy bindings produce no claim (per
         // §2.9 `ref`-on-Copy is local-mutability, not a borrow).
-        self.check_intra_call_conflicts(args, &move_flags, &mut_flags);
+        self.check_intra_call_conflicts(args, &move_flags, &mut_flags, receiver_claim);
 
         // State transitions. Each move-arg of a *non-Copy* binding
         // transitions Owned → Moved. Copy-typed bindings (or bindings of
@@ -2892,6 +3055,7 @@ impl Analyzer<'_> {
         args: &[Expr],
         move_flags: &Option<Vec<bool>>,
         mut_flags: &Option<Vec<bool>>,
+        receiver: Option<(ClaimKind, &Expr)>,
     ) {
         // Build per-arg claims. Copy bindings, non-place exprs, and
         // unknown-type bindings (binding_is_non_copy returns false) all
@@ -2945,6 +3109,102 @@ impl Analyzer<'_> {
                 }
             })
             .collect();
+
+        // Receiver claim (2026-07-06): receivers are by-pointer for the
+        // whole call, so a receiver of a non-Copy place participates in
+        // the same conflicts as a direct arg claim. Copy receivers carry
+        // no aliasing constraint (codegen no longer marks Copy exclusive
+        // pointers `noalias`).
+        let recv_claim: Option<ArgClaim> = receiver.and_then(|(kind, rexpr)| {
+            let place = place_from_expr(rexpr)?;
+            if !self.binding_is_non_copy(&place.root) {
+                return None;
+            }
+            Some(ArgClaim {
+                kind,
+                place,
+                span: rexpr.span,
+            })
+        });
+        if let Some(rc) = &recv_claim {
+            for (j, arg) in args.iter().enumerate() {
+                if let Some(other) = &claims[j] {
+                    let overlap = rc.place.overlap(&other.place);
+                    if matches!(overlap, PlaceOverlap::Disjoint) {
+                        continue;
+                    }
+                    match (rc.kind, other.kind) {
+                        (ClaimKind::Shared, ClaimKind::Shared) => {}
+                        (ClaimKind::Shared, ClaimKind::Exclusive)
+                        | (ClaimKind::Shared, ClaimKind::Move) => {
+                            let name = &rc.place.root;
+                            let verb = if matches!(other.kind, ClaimKind::Move) {
+                                "move"
+                            } else {
+                                "exclusively borrow"
+                            };
+                            let code = if matches!(other.kind, ClaimKind::Move) {
+                                "E0370"
+                            } else {
+                                "E0381"
+                            };
+                            self.diags.push(RawDiag {
+                                code,
+                                message: format!(
+                                    "cannot {verb} `{name}` in an argument while it is the call's receiver"
+                                ),
+                                primary: other.span,
+                                suggestion: Some((
+                                    rc.span.merge(other.span),
+                                    String::new(),
+                                    format!(
+                                        "the receiver reads `{name}` for the duration of the call;                                          split into two statements."
+                                    ),
+                                )),
+                                label: Some((rc.span, format!("`{name}` is the receiver here"))),
+                            });
+                        }
+                        _ => {
+                            if let Some(diag) = build_direct_claim_diag(rc, other, 0, 1, overlap) {
+                                self.diags.push(diag);
+                            }
+                        }
+                    }
+                } else if matches!(rc.kind, ClaimKind::Exclusive | ClaimKind::Move) {
+                    // Sibling with no direct claim: fire ONLY when the arg
+                    // is the receiver's whole place passed bare (a by-ptr
+                    // borrow live for the call, `h.poke(h)`). An arg that
+                    // merely READS the place while evaluating
+                    // (`this.grow(this._cap * 2)`, `this.helper(this.len())`)
+                    // finishes before the call begins and its value is a
+                    // copy — temporally safe, and ubiquitous in method
+                    // bodies, so the deep expression scan is deliberately
+                    // NOT applied to receivers.
+                    if let Some(ap) = place_from_expr(arg) {
+                        if matches!(rc.place.overlap(&ap), PlaceOverlap::Same)
+                            && self.binding_is_non_copy(&ap.root)
+                        {
+                            let name = &rc.place.root;
+                            self.diags.push(RawDiag {
+                                code: "E0381",
+                                message: format!(
+                                    "cannot pass `{name}` by borrow while it is the call's receiver"
+                                ),
+                                primary: arg.span,
+                                suggestion: Some((
+                                    rc.span.merge(arg.span),
+                                    String::new(),
+                                    format!(
+                                        "the receiver holds `{name}` for the duration of the call;                                          split into two statements."
+                                    ),
+                                )),
+                                label: Some((rc.span, format!("`{name}` is the receiver here"))),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         // Pairwise walk. For each "primary" claim (Mut or Move), scan
         // every sibling for a conflict.
@@ -4054,6 +4314,37 @@ impl B { fn drop(ref this) { return; } }
 fn consume(take b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "consume"), None);
+    }
+
+    #[test]
+    fn e_view_fn_ties_str_return_to_non_copy_borrow_params() {
+        // Rule E-VIEW-FN: a free fn returning `str` with non-Copy borrow
+        // params is a view of those params — regardless of what the body
+        // returns (same conservatism as the method rule). Copy params
+        // never contribute; all-Copy signatures don't tie.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn head(b: B) -> str { return \"h\"; }
+fn fmt(b: B, n: i32) -> str { return \"f\"; }
+fn pick(a: B, b: B) -> str { return \"p\"; }
+fn lit(n: i32) -> str { return \"l\"; }
+fn eat(take b: B) -> str { return \"e\"; }";
+        let prog = parse_prog(src);
+        assert_eq!(
+            return_borrow_source_with_flavor(&prog, "head"),
+            Some((ReturnBorrowSource::Param(0), BorrowFlavor::Shared))
+        );
+        assert_eq!(
+            return_borrow_source_with_flavor(&prog, "fmt"),
+            Some((ReturnBorrowSource::Param(0), BorrowFlavor::Shared))
+        );
+        assert_eq!(
+            return_borrow_source(&prog, "pick"),
+            Some(ReturnBorrowSource::MultiParam(vec![0, 1]))
+        );
+        assert_eq!(return_borrow_source(&prog, "lit"), None);
+        assert_eq!(return_borrow_source(&prog, "eat"), None);
     }
 
     #[test]
