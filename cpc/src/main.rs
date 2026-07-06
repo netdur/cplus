@@ -243,6 +243,22 @@ fn emit_diag(d: &Diagnostic, mode: DiagMode, src: &str) {
     eprintln!("{line}");
 }
 
+/// `emit_diag` for multi-module pipelines: snippets quote the file each
+/// span names (via the loader's per-file source map), not the entry file.
+fn emit_diag_multi(
+    d: &Diagnostic,
+    mode: DiagMode,
+    src: &str,
+    files: &std::collections::BTreeMap<String, (PathBuf, String)>,
+) {
+    let line = match mode {
+        DiagMode::Human => d.render_human_multi(src, files),
+        DiagMode::Short => d.render_short(),
+        DiagMode::Json => d.to_json(),
+    };
+    eprintln!("{line}");
+}
+
 fn main() -> ExitCode {
     let args: Vec<OsString> = env::args_os().skip(1).collect();
 
@@ -2240,7 +2256,7 @@ fn load_and_check_project_full(
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &attr_diags {
-        emit_diag(d, diag_mode, &entry_src);
+        emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
     }
     if attr_errors {
         return Err(ExitCode::FAILURE);
@@ -2267,7 +2283,7 @@ fn load_and_check_project_full(
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &lower_diags {
-        emit_diag(d, diag_mode, &entry_src);
+        emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
     }
     if lower_errors {
         return Err(ExitCode::FAILURE);
@@ -2283,19 +2299,22 @@ fn load_and_check_project_full(
     );
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
-        emit_diag(d, diag_mode, &entry_src);
+        emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
     }
     if had_errors {
         return Err(ExitCode::FAILURE);
     }
     // Phase 5 borrow checker (slice 5BC.2a — active diagnostics E0370).
-    // Runs after sema so it inherits type-correctness assumptions.
-    let bc_diags = borrowck::check(&loaded.program, &entry.to_path_buf(), &entry_src);
+    // Runs after sema so it inherits type-correctness assumptions. Routed
+    // through the per-file source map (like sema) so a borrow error in an
+    // imported module names that module's file, not the entry file.
+    let bc_diags =
+        borrowck::check_multi(&loaded.program, &entry.to_path_buf(), &entry_src, &loaded.files);
     let bc_errors = bc_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &bc_diags {
-        emit_diag(d, diag_mode, &entry_src);
+        emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
     }
     if bc_errors {
         return Err(ExitCode::FAILURE);
@@ -3698,7 +3717,7 @@ fn build_ir(
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &attr_diags {
-        emit_diag(d, mode, src);
+        emit_diag_multi(d, mode, src, &files_map);
     }
     if attr_errors {
         return Err(ExitCode::FAILURE);
@@ -3715,7 +3734,7 @@ fn build_ir(
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &lower_diags {
-        emit_diag(d, mode, src);
+        emit_diag_multi(d, mode, src, &files_map);
     }
     if lower_errors {
         return Err(ExitCode::FAILURE);
@@ -3724,18 +3743,18 @@ fn build_ir(
         sema::check_multi_with_mono(&prog, file.to_path_buf(), src, files_map.clone());
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
-        emit_diag(d, mode, src);
+        emit_diag_multi(d, mode, src, &files_map);
     }
     if had_errors {
         return Err(ExitCode::FAILURE);
     }
-    // Phase 5 borrow checker (slice 5BC.2a).
-    let bc_diags = borrowck::check(&prog, &file.to_path_buf(), src);
+    // Phase 5 borrow checker (slice 5BC.2a). Same per-file routing as sema.
+    let bc_diags = borrowck::check_multi(&prog, &file.to_path_buf(), src, &files_map);
     let bc_errors = bc_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
     for d in &bc_diags {
-        emit_diag(d, mode, src);
+        emit_diag_multi(d, mode, src, &files_map);
     }
     if bc_errors {
         return Err(ExitCode::FAILURE);

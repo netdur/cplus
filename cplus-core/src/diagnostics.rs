@@ -102,8 +102,40 @@ impl Diagnostic {
     /// Phase-1 human renderer: short form plus optional source snippet. Polished
     /// later (caret underline, suggestion preview, ANSI color).
     pub fn render_human(&self, src: &str) -> String {
+        self.render_with(|_| None, src)
+    }
+
+    /// `render_human` for multi-module builds: each snippet is quoted from
+    /// the file its span names (via the loader's per-file source map, the
+    /// same map sema/borrowck route diagnostics through), falling back to
+    /// `default_src` when the span's file isn't in the map (single-file
+    /// mode, doctest-extracted buffers). Without this, a cross-file span
+    /// carried the right file:line header but quoted the ENTRY file's line
+    /// at that number.
+    pub fn render_human_multi(
+        &self,
+        default_src: &str,
+        files: &std::collections::BTreeMap<String, (PathBuf, String)>,
+    ) -> String {
+        self.render_with(
+            |span| {
+                files
+                    .values()
+                    .find(|(p, _)| p == &span.file)
+                    .map(|(_, s)| s.as_str())
+            },
+            default_src,
+        )
+    }
+
+    fn render_with<'a>(
+        &self,
+        snippet_src: impl Fn(&SourceSpan) -> Option<&'a str>,
+        default_src: &str,
+    ) -> String {
         let mut out = self.render_short();
-        if let Some(snippet) = render_snippet(&self.primary, src) {
+        let primary_src = snippet_src(&self.primary).unwrap_or(default_src);
+        if let Some(snippet) = render_snippet(&self.primary, primary_src) {
             out.push('\n');
             out.push_str(&snippet);
         }
@@ -120,7 +152,8 @@ impl Diagnostic {
                 l.span.start.col,
                 l.message,
             ));
-            if let Some(snippet) = render_snippet(&l.span, src) {
+            let label_src = snippet_src(&l.span).unwrap_or(default_src);
+            if let Some(snippet) = render_snippet(&l.span, label_src) {
                 out.push('\n');
                 out.push_str(&snippet);
             }

@@ -1960,13 +1960,45 @@ pub fn analyze(prog: &Program) -> ProgramAnalysis {
 /// projects pass the entry file's path / source; per-file routing is a
 /// follow-up (sema-style threading via `current_file`).
 pub fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
+    check_multi(prog, file, src, &std::collections::BTreeMap::new())
+}
+
+/// Multi-file entry: as `check`, but with the loader's per-file source map
+/// (keyed by each item's `origin_file`, the same map sema's
+/// `check_multi_with_mono` takes). Each raw diagnostic is resolved against
+/// the file the offending item actually lives in, so a borrow error inside
+/// an imported module names THAT file — not the entry file with a line
+/// number from somewhere else. Items without an origin (or with one the
+/// map doesn't know) fall back to the entry file, which is also the whole
+/// story in single-file mode.
+pub fn check_multi(
+    prog: &Program,
+    entry_file: &PathBuf,
+    entry_src: &str,
+    files: &std::collections::BTreeMap<String, (PathBuf, String)>,
+) -> Vec<Diagnostic> {
     let (_analysis, raws) = analyze_with_diags(prog);
     if raws.is_empty() {
         return Vec::new();
     }
-    let lm = LineMap::new(src);
+    let entry_lm = LineMap::new(entry_src);
+    // One LineMap per distinct origin file, built on first use.
+    let mut lms: std::collections::BTreeMap<&str, LineMap> = std::collections::BTreeMap::new();
     raws.into_iter()
-        .map(|r| raw_to_diagnostic(r, file, src, &lm))
+        .map(|(origin, r)| {
+            match origin
+                .as_deref()
+                .and_then(|o| files.get_key_value(o))
+            {
+                Some((key, (path, fsrc))) => {
+                    let lm = lms
+                        .entry(key.as_str())
+                        .or_insert_with(|| LineMap::new(fsrc));
+                    raw_to_diagnostic(r, path, fsrc, lm)
+                }
+                None => raw_to_diagnostic(r, entry_file, entry_src, &entry_lm),
+            }
+        })
         .collect()
 }
 
@@ -2013,19 +2045,19 @@ fn collect_e0384_diagnostics(
     prog: &Program,
     sigs: &SigTable,
     oracle: &CopyOracle,
-    diags: &mut Vec<RawDiag>,
+    diags: &mut Vec<(Option<String>, RawDiag)>,
 ) {
     for item in &prog.items {
         match &item.kind {
             ItemKind::Function(f) => {
                 if let Some(d) = e0384_for_fn(f, sigs, oracle) {
-                    diags.push(d);
+                    diags.push((item.origin_file.clone(), d));
                 }
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
                     if let Some(d) = e0384_for_method(b, m, sigs, oracle) {
-                        diags.push(d);
+                        diags.push((item.origin_file.clone(), d));
                     }
                 }
             }
@@ -2218,13 +2250,16 @@ fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
     }
 }
 
-fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
+fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, RawDiag)>) {
     let oracle = CopyOracle::build(prog);
     let sigs = SigTable::collect(prog, &oracle);
     let mut analysis = ProgramAnalysis {
         functions: BTreeMap::new(),
     };
-    let mut all_diags = Vec::new();
+    // Each raw diagnostic is paired with its item's `origin_file` so the
+    // multi-file entry (`check_multi`) can render it against the file the
+    // code actually lives in.
+    let mut all_diags: Vec<(Option<String>, RawDiag)> = Vec::new();
     // Slice 6BC.4 — signature-level E0384 emission. Walks every fn /
     // method whose signature matches the "wants elision but can't be
     // proven" pattern: 2+ non-Copy params, non-Copy return, no
@@ -2240,7 +2275,8 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
                 let mut a = Analyzer::new(&sigs, &oracle);
                 let fa = a.analyze_function(&f.name.name, &f.params, &f.body);
                 analysis.functions.insert(f.name.name.clone(), fa);
-                all_diags.extend(a.diags);
+                let origin = &item.origin_file;
+                all_diags.extend(a.diags.into_iter().map(|d| (origin.clone(), d)));
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
@@ -2248,7 +2284,8 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
                     let key = format!("{}.{}", b.target.name, m.name.name);
                     let fa = a.analyze_method(&key, &b.target.name, m.receiver, &m.params, &m.body);
                     analysis.functions.insert(key, fa);
-                    all_diags.extend(a.diags);
+                    let origin = &item.origin_file;
+                    all_diags.extend(a.diags.into_iter().map(|d| (origin.clone(), d)));
                 }
             }
             ItemKind::Struct(_)

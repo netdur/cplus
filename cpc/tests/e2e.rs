@@ -19220,3 +19220,78 @@ fn empty_text_coerces_to_valid_str_view() {
         "empty Text must coerce to a zero-length str with a VALID pointer (1/3=len wrong, 2/4=null ptr)"
     );
 }
+
+#[test]
+fn borrow_error_names_the_offending_module() {
+    // 2026-07-06 (iris review, top ask): borrowck attributed EVERY diagnostic
+    // to the entry file — an error inside an imported module printed
+    // `main.cplus:<line>` with the line number (and snippet) of a different
+    // file. borrowck::check_multi now routes each raw diagnostic through the
+    // item's `origin_file` (the same per-file map sema uses), and the human
+    // renderer quotes snippets from the span's own file.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"dm\"\n\n[[bin]]\nname = \"dm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./codex\" as codex;\n\
+         import \"stdlib/io\" as io;\n\
+         \n\
+         fn main() -> i32 {\n\
+             io::println(codex::describe());\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    // The borrow error lives in the SECOND module, on line 8/7.
+    std::fs::write(
+        dir.join("src/codex.cplus"),
+        "import \"stdlib/text\" as text;\n\
+         \n\
+         fn consume(take t: text::Text) { return; }\n\
+         \n\
+         fn describe() -> str {\n\
+             let cmd_str: text::Text = text::from_str(\"codex exec\");\n\
+             let s: str = cmd_str.view();\n\
+             consume(cmd_str);\n\
+             return s;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("cpc check");
+    assert!(!out.status.success(), "the move-while-borrowed must be rejected");
+    let err = String::from_utf8_lossy(&out.stderr);
+    // Primary span: the offending module, correct line (8 = `consume(cmd_str)`).
+    assert!(
+        err.contains("codex.cplus:8"),
+        "primary must name codex.cplus:8, got:\n{err}"
+    );
+    // The "borrowed here" label: same module, line 7.
+    assert!(
+        err.contains("codex.cplus:7"),
+        "label must name codex.cplus:7, got:\n{err}"
+    );
+    // Snippets quote the module's own lines, not the entry file's.
+    assert!(
+        err.contains("consume(cmd_str)"),
+        "snippet must quote the offending line, got:\n{err}"
+    );
+    assert!(
+        !err.contains("main.cplus:8"),
+        "the error must NOT be attributed to the entry file, got:\n{err}"
+    );
+}

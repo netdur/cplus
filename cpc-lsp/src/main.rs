@@ -1012,9 +1012,15 @@ fn compute_diagnostics(
                     for d in diags {
                         push_into(&mut by_file, d);
                     }
-                    // Phase 5 borrow checker (slice 5BC.2a).
-                    let bc_diags =
-                        borrowck::check(&loaded.program, &manifest.bins[0].path, open_text);
+                    // Phase 5 borrow checker (slice 5BC.2a). Per-file routing
+                    // (like sema above) so borrow errors in imported modules
+                    // land on the right file in the editor.
+                    let bc_diags = borrowck::check_multi(
+                        &loaded.program,
+                        &manifest.bins[0].path,
+                        open_text,
+                        &loaded.files,
+                    );
                     for d in bc_diags {
                         push_into(&mut by_file, d);
                     }
