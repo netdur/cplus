@@ -1,0 +1,173 @@
+// agent_appkit test root — headless coverage against real AppKit widgets.
+//
+// The library never imports appkit (it drives views through the raw ObjC
+// runtime); the typed binding here is fixture convenience only. Every test
+// builds a real NSWindow + widgets, opens a Surface, and exercises the
+// walk / describe / act paths, including the negatives: unexposed nodes,
+// unknown ids, and views that left the live UI (`Stale`).
+
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "appkit/appkit" as ak;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./agent_appkit" as agent;
+
+fn main() -> i32 { return 0; }
+
+// One titled window with a content view; the app is initialized once
+// (shared_application is idempotent).
+fn fixture_window(w: f64, h: f64) -> ak::Window {
+    let _app: ak::Application = ak::Application::shared_application();
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: w, h: h },
+        ak::window_style_mask_titled,
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    rt::retain(win.raw());
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    return win;
+}
+
+fn content_of(win: ak::Window) -> ak::View {
+    return ak::View::from_raw(rt::msg_id(win.raw(), rt::sel(#str_ptr("contentView\0"))));
+}
+
+fn add_button(content: ak::View, title: str) -> ak::Button {
+    let b = ak::Button::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 80.0, h: 24.0 });
+    b.set_title(title);
+    content.add_subview(b.as_view());
+    return b;
+}
+
+static CLICKS: i32 = 0;
+fn on_probe_click(sender: *u8) {
+    CLICKS = CLICKS + 1;
+    return;
+}
+
+#[test]
+fn walk_classifies_and_exposes_only_tagged() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    let l = ak::TextField::label_with_string("hello");
+    content.add_subview(l.as_view());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    // window + content group + button + label = 4 nodes.
+    assert nodes.count() == (4 as usize);
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Button);
+            assert { (*n).id.view() } == "go-btn";
+            assert { (*n).actionable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    }
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Text);
+            // Untagged: auto id, not exposed, not actionable.
+            assert !{ (*n).actionable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn click_gates_by_exposure_and_id() {
+    CLICKS = 0;
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    b.as_control().set_on_action(on_probe_click);
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    let stray = add_button(content, "stray"); // untagged -> NotExposed
+    let _sv: *u8 = stray.as_view().raw();
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Allowed);
+    assert CLICKS == 1;
+    assert surface::outcome_eq(s.click("nope"), surface::Outcome::NotFound);
+    // The stray button's auto id resolves but the node is unexposed.
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            let auto_id: text::Text = text::from_str({ (*n).id.view() });
+            assert surface::outcome_eq(s.click(auto_id.view()), surface::Outcome::NotExposed);
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    }
+    assert CLICKS == 1;
+}
+
+#[test]
+fn accessibility_identifier_is_the_declarative_tag_channel() {
+    // A view tagged ONLY via accessibilityIdentifier (what facet's mount
+    // applies) is exposed exactly like a set_agent_id pin...
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    ak::Accessibility::from_raw(b.as_view().raw()).set_accessibility_identifier("ax-btn");
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.click("ax-btn"), surface::Outcome::Allowed);
+
+    // ...and an explicit pin wins over the identifier when both exist.
+    agent::set_agent_id(b.as_view().raw(), "pinned");
+    var s2: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s2.click("pinned"), surface::Outcome::Allowed);
+    assert surface::outcome_eq(s2.click("ax-btn"), surface::Outcome::NotFound);
+}
+
+#[test]
+fn removed_view_reports_stale_not_uaf() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Allowed);
+
+    // Replace the UI the way an MVU re-render does: the button leaves the
+    // window. The surface retains it (no dangling pointer), and acting on
+    // it now reports Stale — the agent's cue to re-open.
+    b.as_view().remove_from_superview();
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Stale);
+    assert surface::outcome_eq(s.scroll_to("go-btn"), surface::Outcome::Stale);
+    let base: u64 = s.text_version("go-btn");
+    // set_text authorization fails earlier (a button is click-ceiling), so
+    // use a field for the text path.
+    let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 100.0, h: 24.0 });
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), "field");
+    var s2: agent::Surface = agent::open(win.raw());
+    f.as_view().remove_from_superview();
+    assert surface::outcome_eq(s2.set_text("field", "x", s2.text_version("field")), surface::Outcome::Stale);
+    let _b: u64 = base;
+}
+
+#[test]
+fn describe_survives_a_replaced_tree() {
+    // A full describe on a surface whose views were ALL removed must not
+    // crash (views are retained; reads land on live, detached objects).
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+
+    var s: agent::Surface = agent::open(win.raw());
+    b.as_view().remove_from_superview();
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    assert nodes.count() == (3 as usize);
+}

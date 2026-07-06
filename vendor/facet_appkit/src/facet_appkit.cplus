@@ -31,32 +31,57 @@ import "facet/facet" as facet;
 // payload, measure wired). The node's Text is borrowed via c_str inside the
 // match arm; the widget copies it into an NSString before the borrow ends.
 
+// Pin the node's agent-id (if any) on the created widget as its AppKit
+// accessibilityIdentifier. Ops run at every mount, so a re-render re-tags
+// the fresh views by construction; the agent surface (agent_appkit) reads
+// the identifier back when no explicitly pinned id exists.
+fn apply_agent_id(view: *u8, np: *facet::Node) {
+    let ip: *text::Text = { #addr_of((*np).agent_id) };
+    if (*ip).count() == (0 as usize) { return; }
+    match (*ip).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            ak::Accessibility::from_raw(view).set_accessibility_identifier(sv);
+        }
+        option::Option[text::CString]::None => { }
+    };
+    return;
+}
+
 fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
     var size: f64 = { (*np).font_size };
     if size <= 0.0f64 { size = 13.0f64; }
+    var n: flex::Node = flex::Node::new();
     let tp: *text::Text = { #addr_of((*np).text) };
     match (*tp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            return ui::label(sv, size: size, bold: { (*np).bold }, secondary: { (*np).secondary });
+            n = ui::label(sv, size: size, bold: { (*np).bold }, secondary: { (*np).secondary });
         }
-        option::Option[text::CString]::None => { }
+        option::Option[text::CString]::None => {
+            n = ui::label("", size: size);
+        }
     };
-    return ui::label("", size: size);
+    apply_agent_id(n.payload(), np);
+    return n;
 }
 
 fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
     var size: f64 = { (*np).font_size };
     if size <= 0.0f64 { size = 13.0f64; }
+    var n: flex::Node = flex::Node::new();
     let tp: *text::Text = { #addr_of((*np).text) };
     match (*tp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            return ui::wrap_label(sv, size: size, secondary: { (*np).secondary });
+            n = ui::wrap_label(sv, size: size, secondary: { (*np).secondary });
         }
-        option::Option[text::CString]::None => { }
+        option::Option[text::CString]::None => {
+            n = ui::wrap_label("", size: size);
+        }
     };
-    return ui::wrap_label("", size: size);
+    apply_agent_id(n.payload(), np);
+    return n;
 }
 
 fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
@@ -80,6 +105,7 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     } else {
         akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
     }
+    apply_agent_id(n.payload(), np);
     return n;
 }
 
@@ -417,6 +443,54 @@ fn app_counter_label_follows_state() {
     let l1: ak::TextField = ak::TextField::from_raw(nth_widget(content.raw(), 0 as usize));
     assert l1.as_control().string_value().count() == (8 as usize);
     APP_CONTENT = 0 as *u8;   // unbind for the other tests
+}
+
+// counter_view with agent-id tags on both leaves.
+fn tagged_counter_view() -> facet::Node {
+    let t: text::Text = "count ${COUNT}";
+    return @facet {
+        vstack {
+            label(t.view(), size: 20.0f64).agent_id("count-label")
+            button("+1").on_click(count_inc).agent_id("inc-btn")
+        }
+    };
+}
+
+#[test]
+fn agent_id_pins_identifier_and_survives_rerender() {
+    COUNT = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    app_bind(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
+    refresh();
+
+    // Fresh mount: both leaves carry their accessibilityIdentifier.
+    let l0: *u8 = nth_widget(content.raw(), 0 as usize);
+    let b0: *u8 = nth_widget(content.raw(), 1 as usize);
+    assert ak::Accessibility::from_raw(l0).accessibility_identifier().view() == "count-label";
+    assert ak::Accessibility::from_raw(b0).accessibility_identifier().view() == "inc-btn";
+
+    // A click -> handler -> re-render cycle rebuilds every view. The ops
+    // re-apply the tag at mount, so the FRESH button carries it again —
+    // the property that keeps an agent surface addressable across MVU
+    // updates (tags used to die with the replaced views).
+    click(b0);
+    assert COUNT == 1;
+    let b1: *u8 = nth_widget(content.raw(), 1 as usize);
+    assert ak::Accessibility::from_raw(b1).accessibility_identifier().view() == "inc-btn";
+    APP_CONTENT = 0 as *u8;
+}
+
+#[test]
+fn untagged_nodes_get_no_identifier() {
+    COUNT = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    app_bind(counter_view, content.raw(), 300.0f64, 200.0f64);
+    refresh();
+    // counter_view never tags; the identifier read must come back empty
+    // (nil or "" both count — messages to nil return zero).
+    let l0: *u8 = nth_widget(content.raw(), 0 as usize);
+    assert ak::Accessibility::from_raw(l0).accessibility_identifier().count() == (0 as usize);
+    APP_CONTENT = 0 as *u8;
 }
 
 // -- the app runtime: a removable list ----------------------------------------

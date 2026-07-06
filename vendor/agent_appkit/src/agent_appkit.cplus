@@ -144,13 +144,27 @@ fn set_agent_id(view: *u8, id: str) {
     rt::set_associated_object(view, agent_id_key(), ns, 1 as usize);
 }
 
-// Read a view's pinned agent-id, or None if it was never tagged.
+// Read a view's agent-id, or None if it was never tagged. A pinned id
+// (`set_agent_id`) wins; otherwise a non-empty AppKit accessibilityIdentifier
+// counts as the tag. The identifier channel is how declarative frameworks
+// tag without depending on this package: facet re-applies each node's
+// `agent_id` as the accessibilityIdentifier at every mount, so the tag
+// survives re-renders that replace the views.
 fn get_agent_id(view: *u8) -> option::Option[text::Text] {
     let ns: *u8 = rt::get_associated_object(view, agent_id_key());
-    if is_null(ns) {
-        return option::Option[text::Text]::None;
+    if !is_null(ns) {
+        return option::Option[text::Text]::Some(bridge::to_text(ns));
     }
-    return option::Option[text::Text]::Some(bridge::to_text(ns));
+    if responds_to(view, #str_ptr("accessibilityIdentifier\0")) {
+        let ident: *u8 = rt::msg_id(view, rt::sel(#str_ptr("accessibilityIdentifier\0")));
+        if !is_null(ident) {
+            let t: text::Text = bridge::to_text(ident);
+            if t.count() > (0 as usize) {
+                return option::Option[text::Text]::Some(t);
+            }
+        }
+    }
+    return option::Option[text::Text]::None;
 }
 
 // ---- the describe_ui snapshot node ------------------------------------------
@@ -348,10 +362,11 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 
 // ---- the Surface ------------------------------------------------------------
 
-// A borrowed NSView wrapped as a nominal type so it can be stored in a `Vec`.
+// A RETAINED NSView wrapped as a nominal type so it can be stored in a `Vec`.
 // (cpc's monomorphizer does not accept a bare raw pointer as a generic type
 // argument — `Vec[*u8]` fails with "unknown type <raw-ptr>" — so the map is a
-// `Vec[ViewRef]`.) `opaque` marks the pointer unaccounted-by-design.
+// `Vec[ViewRef]`.) `opaque` marks the pointer unaccounted-by-design; the
+// retain/release pairing lives in `open`/`walk` and `Surface::drop`.
 struct ViewRef {
     opaque p: *u8,
 }
@@ -359,10 +374,30 @@ struct ViewRef {
 // The live surface of one window: the identity tree, the NodeId->NSView map
 // (index 0 is the synthetic app root, mapped to null), and the text-version
 // state for optimistic-concurrency edits.
+//
+// The map RETAINS every view (released in `drop`). A UI update that replaces
+// widgets (e.g. an MVU re-render) therefore cannot leave the map dangling:
+// replaced views live on, detached from their window, and the write paths
+// report `Stale` for them instead of touching dead UI. Re-open the surface
+// after events to pick up the fresh tree.
 struct Surface {
     reg: identity::Registry,
     versions: surface::TextVersions,
     views: vec::Vec[ViewRef],
+}
+
+// Whether a mapped view left the live UI: still alive (retained above), but
+// no longer attached to any window — acting on it would be invisible to the
+// user. Nodes that don't respond to `window` (the NSWindow root itself) are
+// never stale.
+fn is_detached(view: *u8) -> bool {
+    if is_null(view) {
+        return true;
+    }
+    if !responds_to(view, #str_ptr("window\0")) {
+        return false;
+    }
+    return is_null(rt::msg_id(view, rt::sel(#str_ptr("window\0"))));
 }
 
 // Recursively register a view subtree: classify the view, add it to the
@@ -383,6 +418,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         }
     };
     reg.set_enabled(reg_node, live_enabled(view));
+    let _r: *u8 = rt::retain(view);
     views.append(ViewRef { p: view });
 
     let n: usize = subview_count(view);
@@ -415,6 +451,7 @@ fn open(window: *u8) -> Surface {
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
         }
     };
+    let _rw: *u8 = rt::retain(window);
     views.append(ViewRef { p: window });
 
     let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
@@ -432,6 +469,26 @@ fn describe(window: *u8) -> vec::Vec[AppKitNode] {
 }
 
 impl Surface {
+    // Balance the per-view retains taken by `open`/`walk` (index 0 is the
+    // synthetic app root, mapped to null — skipped).
+    fn drop(ref this) {
+        var i: usize = 0 as usize;
+        let n: usize = this.views.count();
+        while i < n {
+            match this.views.at_ptr(i) {
+                option::Option[*ViewRef]::Some(r) => {
+                    let p: *u8 = { (*r).p };
+                    if !is_null(p) {
+                        rt::release(p);
+                    }
+                }
+                option::Option[*ViewRef]::None => {}
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
     fn view_of(this, node: usize) -> *u8 {
         return match this.views.at_ptr(node) {
             option::Option[*ViewRef]::Some(r) => { (*r).p },
@@ -542,13 +599,17 @@ impl Surface {
     }
 
     // WRITE: click a control. Authorized via the core (exposed + actionable);
-    // on `Allowed`, sends `performClick:` to the backing view.
+    // on `Allowed`, sends `performClick:` to the backing view. A view that
+    // left the live UI since `open` (re-render, removal) reports `Stale`.
     fn click(this, id: str) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome = surface::authorize_action(this.reg, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
+                }
+                if is_detached(this.view_of(node)) {
+                    return surface::Outcome::Stale;
                 }
                 perform_on_main(this.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
@@ -569,6 +630,9 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
+                if is_detached(this.view_of(node)) {
+                    return surface::Outcome::Stale;
+                }
                 let ns: *u8 = bridge::nsstring(value);
                 perform_on_main(this.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
                 this.versions.bump(node);
@@ -587,6 +651,9 @@ impl Surface {
                 let oc: surface::Outcome = surface::authorize_read(this.reg, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
+                }
+                if is_detached(this.view_of(node)) {
+                    return surface::Outcome::Stale;
                 }
                 scroll_visible_on_main(this.view_of(node));
                 return surface::Outcome::Allowed;

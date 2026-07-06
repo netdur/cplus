@@ -82,6 +82,7 @@ fn outcome_to_str(o: surface::Outcome) -> str {
     if surface::outcome_eq(o, surface::Outcome::NotFound) { return "not_found"; }
     if surface::outcome_eq(o, surface::Outcome::NotExposed) { return "not_exposed"; }
     if surface::outcome_eq(o, surface::Outcome::NotActionable) { return "not_actionable"; }
+    if surface::outcome_eq(o, surface::Outcome::Stale) { return "stale"; }
     return "version_conflict";
 }
 

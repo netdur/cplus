@@ -1,0 +1,113 @@
+// facet_agent — a declarative facet UI that an agent can see and drive.
+//
+// The facet counterpart of the `appkit_agent` recipe. There, widgets are
+// tagged imperatively with `set_agent_id` on the NSView; here the tag is part
+// of the DESCRIPTION — `.agent_id("inc-btn")` on a facet node — and the AppKit
+// backend re-applies it (as the view's accessibilityIdentifier) at every
+// mount. That difference is the whole point: facet's MVU runtime rebuilds all
+// views after every event, and description-borne tags survive that where
+// view-pinned tags would die with the replaced views.
+//
+// The flow, printed step by step without the blocking event loop:
+//
+//   1. An MVU counter app (state = a static, view fn, run via app_bind +
+//      refresh — `run_app` minus `app.run()`).
+//   2. `agent::open(window)` -> describe: the tagged button and label are
+//      exposed + actionable, structural views are visible but not.
+//   3. The agent clicks "+1" through the authorized path. The handler runs,
+//      state advances, and the runtime re-renders (all views replaced).
+//   4. The OLD surface now reports `Stale` for the button — never a
+//      use-after-free (the surface retains its views).
+//   5. Re-open: the fresh button carries the same agent-id, and the click
+//      works again. Tags survive re-renders by construction.
+
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "facet/facet" as facet;
+import "facet_appkit/facet_appkit" as fak;
+import "agent_appkit/agent_appkit" as agent;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/io" as io;
+
+// ---- the app: MVU counter with agent-tagged widgets -------------------------
+
+static COUNT: i32 = 0;
+
+fn on_inc(sender: *u8, ctx: *u8) {
+    COUNT = COUNT + 1;
+    return;
+}
+
+fn view() -> facet::Node {
+    let t: text::Text = "count ${COUNT}";
+    return @facet {
+        vstack {
+            label(t.view(), size: 20.0f64).agent_id("count-label")
+            button("+1").on_click(on_inc).agent_id("inc-btn")
+        }
+    };
+}
+
+fn outcome_name(o: surface::Outcome) -> str {
+    if surface::outcome_eq(o, surface::Outcome::Allowed) { return "Allowed"; }
+    if surface::outcome_eq(o, surface::Outcome::NotFound) { return "NotFound"; }
+    if surface::outcome_eq(o, surface::Outcome::Stale) { return "Stale"; }
+    return "Refused";
+}
+
+fn main() -> i32 {
+    let _app: ak::Application = ak::Application::shared_application();
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 },
+        ak::window_style_mask_titled,
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    rt::retain(win.raw());
+    win.set_title("facet agent demo");
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+
+    // Bind + first render (what `run_app` does before entering the loop).
+    fak::app_bind(view, content.raw(), 300.0f64, 200.0f64);
+    fak::refresh();
+
+    // 2) Open the surface and describe. The two tagged nodes are actionable.
+    var s1: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s1.describe();
+    io::println("--- describe: ${nodes.count()} nodes ---");
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                let id_v: str = { (*n).id.view() };
+                let txt_v: str = { (*n).text.view() };
+                let act: bool = { (*n).actionable };
+                io::println("  ${id_v} text='${txt_v}' actionable=${act}");
+            }
+            option::Option[*agent::AppKitNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+
+    // 3) The agent clicks. Handler runs, state advances, runtime re-renders.
+    let oc1: surface::Outcome = s1.click("inc-btn");
+    io::println("--- click inc-btn -> ${outcome_name(oc1)}, COUNT=${COUNT} ---");
+
+    // 4) That re-render replaced every view. The OLD surface refuses with
+    //    Stale (its views are retained, so this is safe, not UB).
+    let oc2: surface::Outcome = s1.click("inc-btn");
+    io::println("--- click again through the OLD surface -> ${outcome_name(oc2)}, COUNT=${COUNT} ---");
+
+    // 5) Re-open: the fresh views carry the same description-borne tags.
+    var s2: agent::Surface = agent::open(win.raw());
+    let oc3: surface::Outcome = s2.click("inc-btn");
+    io::println("--- re-open, click -> ${outcome_name(oc3)}, COUNT=${COUNT} ---");
+
+    fak::APP_CONTENT = 0 as *u8;
+    return 0;
+}

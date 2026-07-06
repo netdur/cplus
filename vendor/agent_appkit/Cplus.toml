@@ -5,10 +5,16 @@ edition = "2026"
 
 # The AppKit backend for the agent surface (Theme B / Iris GAP 1): walk a live
 # NSView hierarchy into the agent-core identity tree and emit a describe_ui
-# snapshot. Depends on appkit (the live widgets) + agent_core (the headless
-# id/role/tree model).
+# snapshot. The library itself drives views through the raw ObjC runtime;
+# appkit is used by the test root only (typed widget fixtures).
 [dependencies]
 stdlib     = "*"
 objc       = "*"
+quartzcore = "*"
 appkit     = "*"
 agent_core = "*"
+
+# Test root: headless walk/describe/act coverage against real AppKit widgets.
+[[bin]]
+name = "agent_appkit_tests"
+path = "src/test_main.cplus"

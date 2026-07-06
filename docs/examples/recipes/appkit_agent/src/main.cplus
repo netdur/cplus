@@ -3,26 +3,32 @@
 // The basics of agent-aware code, end to end:
 //
 //   1. Build an ordinary AppKit window (a Save button, a name field, and a
-//      decorative label).
+//      decorative label) with the typed `vendor/appkit` binding.
 //   2. *Tag* the widgets an agent may use with `set_agent_id`. Tagging is what
 //      EXPOSES a node — untagged views are still seen in the tree but are not
 //      actionable. The developer curates the agent's surface this way.
+//      (Declarative frameworks tag through the view's accessibilityIdentifier
+//      instead — facet's `.agent_id("...")` does exactly that — and the walk
+//      honors both channels; an explicit pin wins.)
 //   3. `open(window)` into a `Surface`: the agent-id tree + a NodeId->NSView map
-//      + text-version state.
+//      + text-version state. The surface RETAINS its views, so UI updates can
+//      never leave it dangling.
 //   4. Drive it over the MCP bridge's JSON-RPC: `describe_ui` (what the agent
 //      sees), `click` / `set_text` (authorized actions), each first passed
 //      through the agent_core consent `AuthGate`.
+//   5. When the UI moves on (a re-render replaces a widget), acting through the
+//      old surface reports `stale` — the agent's cue to re-open, never a
+//      use-after-free.
 //
 // This program prints each step and exits — it focuses on the agent surface, so
 // it does NOT enter the blocking `app.run()` event loop. A real app would build
 // the same tagged UI, then `app.run()`, and serve the surface to agents on a
 // background connection (see `agent_mcp::serve_uds`).
 
-import "appkit/runtime" as rt;
-import "appkit/application" as application;
-import "appkit/window" as window;
-import "appkit/controls" as controls;
-import "agent_appkit/agent_appkit" as ui;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "agent_appkit/agent_appkit" as agent;
+import "agent_core/backend" as backend;
 import "agent_core/events" as events;
 import "agent_core/auth" as auth;
 import "agent_mcp/agent_mcp" as mcp;
@@ -35,7 +41,7 @@ extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 static SAVES: i32 = 0;
 
 fn on_save(sender: *u8) {
-    { SAVES = SAVES +% (1 as i32); }
+    SAVES = SAVES +% (1 as i32);
     return;
 }
 
@@ -47,7 +53,7 @@ fn allow_external(req: auth::Request) -> auth::Decision {
 }
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
-    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+    return rt::Rect { x: x, y: y, w: w, h: h };
 }
 
 fn print_line(s: str) {
@@ -58,70 +64,88 @@ fn print_line(s: str) {
 }
 
 fn print_text(t: text::Text) {
-    print_line({ t });
+    print_line({ t.view() });
     return;
 }
 
 fn main() -> i32 {
-    let pool = application::AutoreleasePool::new();
-    let _app = application::Application::shared();
+    let _app: ak::Application = ak::Application::shared_application();
 
     // ---- An ordinary AppKit window ----
-    let win: window::Window = window::Window::new(rect(0.0, 0.0, 480.0, 240.0), 15 as u64, 2 as u64, false);
+    let style: u64 = ak::window_style_mask_titled
+        | ak::window_style_mask_closable
+        | ak::window_style_mask_miniaturizable
+        | ak::window_style_mask_resizable;
+    let win = ak::Window::new(rect(0.0, 0.0, 480.0, 240.0), style,
+    ak::BackingStoreType::NSBackingStoreBuffered, false);
+    rt::retain(win.raw());
     win.set_title("Agent-aware demo");
-    let content: *u8 = win.content_view();
+    let content = ak::View::new(rect(0.0, 0.0, 480.0, 240.0));
+    win.set_content_view(ak::View::from_raw(content.raw()));
 
     // A Save button — tagged + wired to a real handler.
-    let save: controls::Button = controls::Button::new(rect(360.0, 20.0, 100.0, 32.0));
+    let save = ak::Button::new_with_frame(rect(360.0, 20.0, 100.0, 32.0));
     save.set_title("Save");
-    save.set_on_click(on_save);
-    ui::set_agent_id(save.raw(), "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), save.raw());
+    save.as_control().set_on_action(on_save);
+    agent::set_agent_id(save.as_view().raw(), "save-btn");
+    content.add_subview(save.as_view());
 
     // A name field — tagged, so the agent may read + write its text.
-    let name: controls::TextField = controls::TextField::new(rect(20.0, 180.0, 300.0, 24.0));
-    ui::set_agent_id(name.raw(), "name-field");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), name.raw());
+    let name = ak::TextField::new_with_frame(rect(20.0, 180.0, 300.0, 24.0));
+    agent::set_agent_id(name.as_view().raw(), "name-field");
+    content.add_subview(name.as_view());
 
     // A decorative label — deliberately UNtagged: it shows up in the tree but is
     // not actionable (the agent can see it, not act on it).
-    let caption: controls::Label = controls::Label::new(rect(20.0, 140.0, 300.0, 20.0));
-    caption.set_text("Your name:");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.raw());
+    let caption = ak::TextField::label_with_string("Your name:");
+    content.add_subview(caption.as_view());
 
     // ---- Open the agent surface ----
-    var surf: ui::Surface = ui::open(win.raw());
+    var surf: agent::Surface = agent::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+    let vt: backend::Backend = agent::mcp_backend();
+    let sp: *u8 = { #addr_of(surf) as *u8 };
 
     // 1) What the agent sees. `actionable:true` on the tagged nodes, `false` on
     //    the untagged caption and structural views.
     print_line("--- describe_ui (what the agent sees) ---");
-    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+    print_text(mcp::handle_request(sp, vt, sub, auth::serve(allow_external),
     "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}"));
 
     // 2) The agent clicks Save. Authorized -> performClick: -> our handler fires.
     print_line("--- click save-btn ---");
-    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+    print_text(mcp::handle_request(sp, vt, sub, auth::serve(allow_external),
     "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}"));
-    if { SAVES } == (1 as i32) {
+    if SAVES == (1 as i32) {
         print_line("(the real Save handler fired: SAVES == 1)");
     }
 
     // 3) The agent types a name. `set_text` carries the version it last read
     //    (base_version); a stale base loses to a concurrent edit.
     print_line("--- set_text name-field (base_version 0) ---");
-    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+    print_text(mcp::handle_request(sp, vt, sub, auth::serve(allow_external),
     "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"Ada\",\"base_version\":0},\"id\":3}"));
     print_line("--- set_text again with the SAME stale base_version 0 ---");
-    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+    print_text(mcp::handle_request(sp, vt, sub, auth::serve(allow_external),
     "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"oops\",\"base_version\":0},\"id\":4}"));
 
     // 4) Consent: the very same request through a closed (deny-all) gate is
     //    refused before it can touch the UI.
     print_line("--- describe_ui through a deny-all gate (consent refused) ---");
-    print_text(mcp::handle_request(surf, sub, auth::deny_all(),
+    print_text(mcp::handle_request(sp, vt, sub, auth::deny_all(),
     "{\"method\":\"describe_ui\",\"params\":{},\"id\":5}"));
 
-    pool.drain();
+    // 5) The UI moves on: the Save button leaves the window (what an MVU
+    //    re-render does to every widget). The old surface still holds the view
+    //    safely (retained), but acting through it reports `stale` — re-open
+    //    the surface to address the fresh tree.
+    save.as_view().remove_from_superview();
+    print_line("--- click save-btn after the button left the window ---");
+    print_text(mcp::handle_request(sp, vt, sub, auth::serve(allow_external),
+    "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":6}"));
+    if SAVES == (1 as i32) {
+        print_line("(the handler did NOT fire again: SAVES still 1)");
+    }
+
     return 0;
 }

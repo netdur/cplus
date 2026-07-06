@@ -37,6 +37,8 @@ enum Outcome {
     NotExposed,     // node exists but is not in the agent-visible tree (layer 1)
     NotActionable,  // observe-only or disabled (layer 2 ceiling)
     VersionConflict, // text edit raced a change; the agent must re-read
+    Stale,          // the node's backing widget left the live UI (e.g. a
+                    // re-render replaced it); the agent must re-open the surface
 }
 
 fn outcome_index(o: Outcome) -> i32 {
@@ -46,6 +48,7 @@ fn outcome_index(o: Outcome) -> i32 {
         Outcome::NotExposed => 2,
         Outcome::NotActionable => 3,
         Outcome::VersionConflict => 4,
+        Outcome::Stale => 5,
     };
 }
 
@@ -214,4 +217,15 @@ fn test_text_write_gated_by_exposure_before_version() {
     // Exposure is checked before the version: a hidden node is NotExposed even
     // with a matching base version.
     assert outcome_eq(authorize_text_write(r, tv, 2 as usize, 0 as u64), Outcome::NotExposed);
+}
+
+#[test]
+fn test_stale_is_its_own_outcome() {
+    // `Stale` is a backend-reported state (the widget left the live UI); the
+    // authorization fns never return it, so it must never compare equal to
+    // any outcome they do produce.
+    assert outcome_eq(Outcome::Stale, Outcome::Stale);
+    assert !outcome_eq(Outcome::Stale, Outcome::Allowed);
+    assert !outcome_eq(Outcome::Stale, Outcome::NotFound);
+    assert !outcome_eq(Outcome::Stale, Outcome::VersionConflict);
 }

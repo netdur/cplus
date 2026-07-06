@@ -66,6 +66,10 @@ struct Node {
     text: text::Text,
     click: fn(*u8, *u8),    // (sender, ctx) — wired by the backend's button op
     opaque click_ctx: *u8,  // borrowed identity value; the app owns it
+    agent_id: text::Text,   // "" = untagged. A developer-curated stable id the
+                            // backend pins on the created widget at every mount
+                            // (AppKit: accessibilityIdentifier), so it survives
+                            // re-renders; the agent surface exposes tagged nodes.
     font_size: f64,         // 0 = platform default
     bold: bool,
     secondary: bool,
@@ -84,6 +88,7 @@ fn blank(kind: u32) -> Node {
         text: text::from_str(""),
         click: noop,
         click_ctx: 0 as *u8,
+        agent_id: text::from_str(""),
         font_size: 0.0f64,
         bold: false,
         secondary: false,
@@ -147,6 +152,11 @@ impl Node {
         n.click_ctx = ctx;
         return n;
     }
+    fn agent_id(take this, id: str) -> Node {
+        var n: Node = this;
+        n.agent_id = text::from_str(id);
+        return n;
+    }
 
     fn set_grow(ref this, v: f64) { this._grow = v; return; }
     fn set_gap(ref this, v: f64) { this._gap = v; return; }
@@ -156,6 +166,10 @@ impl Node {
     fn set_on_click(ref this, cb: fn(*u8, *u8), ctx: *u8 = 0 as *u8) {
         this.click = cb;
         this.click_ctx = ctx;
+        return;
+    }
+    fn set_agent_id(ref this, id: str) {
+        this.agent_id = text::from_str(id);
         return;
     }
 }

@@ -79,3 +79,36 @@ fn dsl_tree_mounts_to_flex() {
         option::Option[*flex::Node]::None => { assert false; }
     };
 }
+
+#[test]
+fn agent_id_rides_the_description() {
+    // Fluent form tags a leaf; untouched nodes stay untagged (empty).
+    var root: facet::Node = @facet {
+        vstack {
+            label("count")
+            button("+1").agent_id("inc-btn")
+        }
+    };
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*facet::Node]::Some(v) => {
+            match { (*v).children.at_ptr(0 as usize) } {
+                option::Option[*facet::Node]::Some(l) => {
+                    assert { (*l).agent_id.count() } == (0 as usize);
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            };
+            match { (*v).children.at_ptr(1 as usize) } {
+                option::Option[*facet::Node]::Some(b) => {
+                    assert { (*b).agent_id.view() } == "inc-btn";
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            };
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    };
+
+    // set_ form rewrites in place.
+    var n: facet::Node = facet::button("Save");
+    n.set_agent_id("save-btn");
+    assert n.agent_id.view() == "save-btn";
+}
