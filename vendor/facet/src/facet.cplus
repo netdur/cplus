@@ -24,6 +24,26 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 
+// ---- the component contract ---------------------------------------------
+// A component is a plain struct: fields are the state, handlers are
+// `ref this` methods in the INHERENT impl, and this interface is the
+// checked conformance block (`impl Foo: facet::Component`) holding
+// `render`. Interface-impl blocks are closed (E0503/E0504 typo interlock),
+// so `render` here is verified against this declaration both ways.
+//
+// `render` returns the platform tier's node — a `flex_layout` tree whose
+// leaves carry native views in their payload slots (the `@ui` tier on
+// AppKit; a future gtk/win32 tier produces the same shape). The runtime
+// that mounts and re-renders components is erased and lives with the
+// platform package (facet_appkit/ui: `mount`, `invalidate`); wiring is a
+// bound method reference (`button("+1", on: counter.on_inc)`), which
+// carries the component's address as the handler ctx — the ONE update
+// rule "after a component's handler runs, that component re-renders" is
+// keyed on that address.
+interface Component {
+    fn render(this) -> flex::Node;
+}
+
 // ---- node kinds --------------------------------------------------------
 
 fn kind_label() -> u32 { return 0 as u32; }

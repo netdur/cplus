@@ -116,24 +116,31 @@ fn button_view(title: str, primary: bool = false) -> flex::Node {
     return view(b.as_view());
 }
 
-// A push button firing `on(sender)`.
-fn button(title: str, on: fn(*u8), primary: bool = false) -> flex::Node {
+// A push button firing `on(sender, ctx)`. The defaulted `ctx` right after
+// the handler is the bound-method-reference slot: `button("+1",
+// on: counter.on_inc)` wires the handler AND the component's address in one
+// token. After the handler returns, the wire runs `component_after(ctx)` —
+// if ctx is a mounted component, exactly that component re-renders; any
+// other ctx (an index, 0) misses the registry and no-ops.
+fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false) -> flex::Node {
     let n: flex::Node = button_view(title, primary: primary);
-    ak::Button::from_raw(n.payload()).as_control().set_on_action(on);
+    akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
     return n;
 }
 
-// A push button firing `on(sender, ctx)` — per-item identity without the
-// setTag workaround. The caller owns `ctx` (an index smuggled as a pointer
-// needs no ownership at all).
+// The explicit-ctx spelling of `button` — per-item identity without the
+// setTag workaround (an index smuggled as a pointer needs no ownership).
+// Same wire as `button`, ctx required. Kept as the desugared form.
 fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false) -> flex::Node {
     let n: flex::Node = button_view(title, primary: primary);
-    akx::set_control_action_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx);
+    akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
     return n;
 }
 
-// A borderless image-only button (SF Symbol by name) firing `on(sender)`.
-fn icon_button(symbol_name: str, on: fn(*u8)) -> flex::Node {
+// A borderless image-only button (SF Symbol by name) firing `on(sender,
+// ctx)`. Defaulted ctx after the handler = the bound-reference slot:
+// `icon_button("xmark", on: recents.remove_at)`.
+fn icon_button(symbol_name: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> flex::Node {
     let b = ak::Button::new();
     b.set_title("");
     b.set_bordered(false);
@@ -142,7 +149,7 @@ fn icon_button(symbol_name: str, on: fn(*u8)) -> flex::Node {
         option::Option[ak::Image]::None => { }
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
-    b.as_control().set_on_action(on);
+    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
     return view(b.as_view());
 }
 
@@ -156,7 +163,7 @@ fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8) -> flex::Node {
         option::Option[ak::Image]::None => { }
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
-    akx::set_control_action_ctx(b.as_control(), on, ctx);
+    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
     return view(b.as_view());
 }
 
@@ -329,6 +336,117 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
 }
 
 // ==========================================================================
+// The component runtime
+// ==========================================================================
+// A component is a plain struct: fields = state, handlers = `ref this`
+// methods in the inherent impl, `render` in the checked contract block
+// (`impl Foo: facet::Component`, render -> flex::Node with full @ui reach).
+// The runtime here is erased: it never sees the type, only
+// (component address, erased render fn) — which is exactly what a bound
+// method reference produces:
+//
+//     ui::mount(RECENTS.render, host: panel.raw());
+//     ...
+//     icon_button("xmark", on: recents.remove_at)
+//
+// The ONE update rule: after a component's handler runs, that component
+// re-renders. Every action wire in this module runs `component_after(ctx)`
+// once the handler returns; if ctx is a mounted component it re-renders
+// into its host at the host's CURRENT size, any other ctx no-ops. Explicit
+// cross-component refresh is `invalidate(#addr_of(OTHER) as *u8)`.
+//
+// Hosts are BORROWED plain NSViews the app owns (usually placed in its
+// outer tree via `fixed_view`); a scroll document host uses flipped: true.
+
+struct Slot {
+    opaque _cp: *u8,                    // borrowed: the app owns the component
+    _render: fn(*u8) -> flex::Node,
+    opaque _host: *u8,                  // borrowed: the app owns the host view
+    _flipped: bool,
+    _live: bool,
+}
+
+static SLOTS: vec::Vec[Slot] = #zero::[vec::Vec[Slot]]();
+
+// Render one slot into its host at the host's current size. The previous
+// subtree is removed first; the flex tree (and the views it owns) drops at
+// the end of the call — the applied NSViews live on under the host, each
+// retained by its superview.
+fn render_slot(sp: *Slot) -> f64 {
+    let host: ak::View = ak::View::from_raw({ (*sp)._host });
+    var subs: vec::Vec[ak::View] = host.subviews();
+    let cnt: usize = subs.count();
+    for i in 0..(cnt as i32) {
+        match subs.at_ptr(i as usize) {
+            option::Option[*ak::View]::Some(vp) => { { (*vp).remove_from_superview(); } }
+            option::Option[*ak::View]::None => { }
+        }
+    }
+    let hf: rt::Rect = host.frame();
+    let r: fn(*u8) -> flex::Node = { (*sp)._render };
+    var tree: flex::Node = r({ (*sp)._cp });
+    tree.calculate_layout(hf.w, hf.h, flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    apply(#addr_of(tree), { (*sp)._host }, { (*sp)._flipped });
+    let f: flex::Layout = tree.layout_frame();
+    return f.height;
+}
+
+// Mount a component into a host view: `ui::mount(COUNTER.render, host: v)`.
+// The bound reference fills `ctx` with the component's address; `render`
+// runs once now and again on every invalidate. Returns the content height
+// (-1.0 when host is missing).
+fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u8, flipped: bool = false) -> f64 {
+    if host == { 0 as *u8 } { return -1.0f64; }
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    (*slots).append(Slot { _cp: ctx, _render: render, _host: host, _flipped: flipped, _live: true });
+    let n: usize = SLOTS.count();
+    match SLOTS.at_ptr(n -% (1 as usize)) {
+        option::Option[*Slot]::Some(sp) => { return render_slot(sp); }
+        option::Option[*Slot]::None => { }
+    }
+    return -1.0f64;
+}
+
+// Re-render the ONE component registered at this address. Returns whether
+// a component was found — a non-component ctx (an index, 0) no-ops false.
+fn invalidate(cp: *u8) -> bool {
+    if cp == { 0 as *u8 } { return false; }
+    let n: usize = SLOTS.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SLOTS.at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._live } {
+                    if { (*sp)._cp } == cp {
+                        let _h: f64 = render_slot(sp);
+                        return true;
+                    }
+                }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The after-hook every action wire carries: re-render the handler's
+// component, if the ctx is one.
+fn component_after(ctx: *u8) {
+    let _hit: bool = invalidate(ctx);
+    return;
+}
+
+// Drop every registration (window teardown, tests). Host views and
+// components are borrowed, so this releases nothing.
+fn unmount_all() {
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    (*slots).remove_all();
+    return;
+}
+
+// ==========================================================================
 // Tests — the builder protocol, widget wiring, apply math, and scroll fill.
 // These call the protocol functions directly (exactly what a `@ui` block
 // desugars to); the literal `@ui` syntax runs in src/test_main.cplus, whose
@@ -359,7 +477,7 @@ fn test_button_wires_title_and_view() {
     assert t.count() == (2 as usize);
 }
 
-fn test_noop_action(sender: *u8) { return; }
+fn test_noop_action(sender: *u8, ctx: *u8) { return; }
 
 static CTX_FIRES: i32 = 0;
 static CTX_SEEN: i64 = 0;
@@ -377,8 +495,9 @@ fn test_button_ctx_delivers_userdata() {
     let bp: *u8 = n.payload();
     // Fire through the wired target/action, as a click would.
     let t: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("target\0")));
+    let a: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("action\0")));
     assert t != (0 as *u8);
-    rt::msg_void_id(t, akx::action_ctx_sel(), bp);
+    rt::msg_void_id(t, a, bp);
     assert CTX_FIRES == 1;
     assert CTX_SEEN == (5 as i64);
 }
