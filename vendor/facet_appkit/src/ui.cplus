@@ -54,7 +54,21 @@ fn measure_wrap(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, 
     return flex::Size { width: s.w, height: s.h };
 }
 
+// Pin a non-empty `agent_id` as the view's accessibilityIdentifier — the
+// tag channel the agent surface reads (`agent_appkit` falls back to it when
+// no explicitly pinned id exists). Widget constructors run at every mount,
+// so a re-render re-tags its fresh views and the id stays addressable for
+// agents across UI updates.
+fn tag_agent(view_ptr: *u8, agent_id: str) {
+    if #str_len(agent_id) == (0 as usize) { return; }
+    ak::Accessibility::from_raw(view_ptr).set_accessibility_identifier(agent_id);
+    return;
+}
+
 // ---- escape hatches: wrap any NSView as a node ----
+// For agent exposure of a hatch-wrapped view, tag it yourself before (or
+// after) wrapping: `ak::Accessibility::from_raw(v.raw())
+// .set_accessibility_identifier("field-id")` — the app owns the view here.
 
 // A content leaf measured through the view (labels, buttons).
 fn view(take v: ak::View) -> flex::Node {
@@ -89,30 +103,33 @@ fn fixed_view(take v: ak::View) -> flex::Node {
 // ==========================================================================
 
 // A single-line text label.
-fn label(text: str, size: f64 = 13.0f64, bold: bool = false, secondary: bool = false) -> flex::Node {
+fn label(text: str, size: f64 = 13.0f64, bold: bool = false, secondary: bool = false, agent_id: str = "") -> flex::Node {
     let l = ak::TextField::label_with_string(text);
     if bold { l.as_control().set_font(ak::Font::bold_system_font_of_size(size)); }
     else    { l.as_control().set_font(ak::Font::system_font_of_size(size)); }
     if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
+    tag_agent(l.as_view().raw(), agent_id);
     return view(l.as_view());
 }
 
 // A multi-line label that wraps to its flexed width.
-fn wrap_label(text: str, size: f64 = 13.0f64, secondary: bool = false) -> flex::Node {
+fn wrap_label(text: str, size: f64 = 13.0f64, secondary: bool = false, agent_id: str = "") -> flex::Node {
     let l = ak::TextField::wrapping_label_with_string(text);
     l.as_control().set_font(ak::Font::system_font_of_size(size));
     if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
+    tag_agent(l.as_view().raw(), agent_id);
     return wrap_view(l.as_view());
 }
 
 // A styled push button with NO action wired — for backends that wire their
 // own target/action exactly once (a replaced target strands its creation
 // reference; wire once, never rewire).
-fn button_view(title: str, primary: bool = false) -> flex::Node {
+fn button_view(title: str, primary: bool = false, agent_id: str = "") -> flex::Node {
     let b = ak::Button::new();
     b.set_title(title);
     b.set_bezel_style(ak::BezelStyle::Rounded);
     if primary { b.set_tint_prominence(ak::TintProminence::Primary); }
+    tag_agent(b.as_view().raw(), agent_id);
     return view(b.as_view());
 }
 
@@ -122,8 +139,8 @@ fn button_view(title: str, primary: bool = false) -> flex::Node {
 // token. After the handler returns, the wire runs `component_after(ctx)` —
 // if ctx is a mounted component, exactly that component re-renders; any
 // other ctx (an index, 0) misses the registry and no-ops.
-fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false) -> flex::Node {
-    let n: flex::Node = button_view(title, primary: primary);
+fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false, agent_id: str = "") -> flex::Node {
+    let n: flex::Node = button_view(title, primary: primary, agent_id: agent_id);
     akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
     return n;
 }
@@ -131,8 +148,8 @@ fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = fal
 // The explicit-ctx spelling of `button` — per-item identity without the
 // setTag workaround (an index smuggled as a pointer needs no ownership).
 // Same wire as `button`, ctx required. Kept as the desugared form.
-fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false) -> flex::Node {
-    let n: flex::Node = button_view(title, primary: primary);
+fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false, agent_id: str = "") -> flex::Node {
+    let n: flex::Node = button_view(title, primary: primary, agent_id: agent_id);
     akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
     return n;
 }
@@ -140,7 +157,7 @@ fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false) -> 
 // A borderless image-only button (SF Symbol by name) firing `on(sender,
 // ctx)`. Defaulted ctx after the handler = the bound-reference slot:
 // `icon_button("xmark", on: recents.remove_at)`.
-fn icon_button(symbol_name: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> flex::Node {
+fn icon_button(symbol_name: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
     let b = ak::Button::new();
     b.set_title("");
     b.set_bordered(false);
@@ -150,11 +167,12 @@ fn icon_button(symbol_name: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> flex:
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
     akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    tag_agent(b.as_view().raw(), agent_id);
     return view(b.as_view());
 }
 
 // The ctx-carrying variant of `icon_button`.
-fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8) -> flex::Node {
+fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8, agent_id: str = "") -> flex::Node {
     let b = ak::Button::new();
     b.set_title("");
     b.set_bordered(false);
@@ -164,6 +182,7 @@ fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8) -> flex::Node {
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
     akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    tag_agent(b.as_view().raw(), agent_id);
     return view(b.as_view());
 }
 

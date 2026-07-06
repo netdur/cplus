@@ -588,3 +588,82 @@ fn any_binding_view_enters_via_escape_hatches() {
     // And the popup still behaves like the binding object it is.
     assert pop.number_of_items() == (2 as i64);
 }
+
+// ---- @ui agent-id tagging (bugs/facet-agent-id-exposure.md, Gap A) --------
+
+#[test]
+fn ui_widgets_carry_agent_id() {
+    var tree: flex::Node = @ui {
+        vstack {
+            label("Iris", agent_id: "title")
+            button("New Project", on: demo_noop, agent_id: "new-project")
+            button("Open", on: demo_noop)
+        }
+    };
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(v) => {
+            match { (*v).children.at_ptr(0 as usize) } {
+                option::Option[*flex::Node]::Some(l) => {
+                    let lp: *u8 = { (*l).payload() };
+                    assert ak::Accessibility::from_raw(lp).accessibility_identifier().view() == "title";
+                }
+                option::Option[*flex::Node]::None => { assert false; }
+            };
+            match { (*v).children.at_ptr(1 as usize) } {
+                option::Option[*flex::Node]::Some(b) => {
+                    let bp: *u8 = { (*b).payload() };
+                    assert ak::Accessibility::from_raw(bp).accessibility_identifier().view() == "new-project";
+                }
+                option::Option[*flex::Node]::None => { assert false; }
+            };
+            // Untagged stays untagged.
+            match { (*v).children.at_ptr(2 as usize) } {
+                option::Option[*flex::Node]::Some(b) => {
+                    let bp: *u8 = { (*b).payload() };
+                    assert ak::Accessibility::from_raw(bp).accessibility_identifier().count() == (0 as usize);
+                }
+                option::Option[*flex::Node]::None => { assert false; }
+            };
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+    return;
+}
+
+static UITAG_CTX: i32 = 0;
+
+fn uitag_render(ctx: *u8) -> flex::Node {
+    return @ui {
+        button("go", on: demo_noop, agent_id: "go-btn")
+    };
+}
+
+#[test]
+fn ui_agent_id_survives_component_rerender() {
+    // The Gap B half: a component re-render replaces its views wholesale;
+    // because the constructor tags at every mount, the FRESH button carries
+    // the same id — an agent that re-opens its surface finds "go-btn" again.
+    ui::unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
+    let _h0: f64 = ui::mount(uitag_render, ctx: { #addr_of(UITAG_CTX) as *u8 }, host: host.raw());
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(v) => {
+            let b0: *u8 = { (*v).raw() };
+            assert ak::Accessibility::from_raw(b0).accessibility_identifier().view() == "go-btn";
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    assert ui::invalidate({ #addr_of(UITAG_CTX) as *u8 });
+    var subs2: vec::Vec[ak::View] = host.subviews();
+    match subs2.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(v) => {
+            let b1: *u8 = { (*v).raw() };
+            assert ak::Accessibility::from_raw(b1).accessibility_identifier().view() == "go-btn";
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::unmount_all();
+    return;
+}

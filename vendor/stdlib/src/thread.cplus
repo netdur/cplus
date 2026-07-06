@@ -51,6 +51,11 @@ struct JoinHandle[O] {
 // value to the caller. The thread runs concurrently with the parent
 // until joined.
 //
+// Discarding the handle DETACHES the thread: `JoinHandle::drop` does not
+// join, so `let _ = thread::spawn(serve);` is the sanctioned idiom for a
+// background worker that outlives the spawning scope (the thread keeps
+// running; its result is dropped when it finishes).
+//
 // `O: Send` — the return value must be safely transferrable between
 // threads. v0.0.4 Phase 2 Slice 2A baseline: every type is Send.
 // Future tightening rejects `Rc[T]`, `MutexGuard[T]`, and structs
