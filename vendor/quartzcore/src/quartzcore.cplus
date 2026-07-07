@@ -7707,6 +7707,18 @@ fn LayerDelegate_action_for_layer_for_key_imp(self_obj: *u8, cmd: *u8, a0: *u8, 
     return f(u, a0, a1);
 }
 
+fn LayerDelegate_responds_imp(self_obj: *u8, cmd: *u8, sel: *u8) -> i8 {
+    let c: *LayerDelegate = { synth::get_associated(self_obj, LayerDelegate_key()) as *LayerDelegate };
+    if c != { 0 as *LayerDelegate } {
+        if sel == rt::sel(#str_ptr("displayLayer:\0")) { let h: fn(*u8, *u8) = { (*c).display_layer }; return { (h != LayerDelegate_noop_v_id) as i8 }; }
+        if sel == rt::sel(#str_ptr("drawLayer:inContext:\0")) { let h: fn(*u8, *u8, *u8) = { (*c).draw_layer_in_context }; return { (h != LayerDelegate_noop_v_id_id) as i8 }; }
+        if sel == rt::sel(#str_ptr("layerWillDraw:\0")) { let h: fn(*u8, *u8) = { (*c).layer_will_draw }; return { (h != LayerDelegate_noop_v_id) as i8 }; }
+        if sel == rt::sel(#str_ptr("layoutSublayersOfLayer:\0")) { let h: fn(*u8, *u8) = { (*c).layout_sublayers_of_layer }; return { (h != LayerDelegate_noop_v_id) as i8 }; }
+        if sel == rt::sel(#str_ptr("actionForLayer:forKey:\0")) { let h: fn(*u8, *u8, *u8) -> *u8 = { (*c).action_for_layer_for_key }; return { (h != LayerDelegate_noop_id_id_id) as i8 }; }
+    }
+    return { synth::class_responds(synth::object_class(self_obj), sel) };
+}
+
 fn create_LayerDelegate(ctx: *LayerDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_LayerDelegate\0");
     var cls: *u8 = rt::get_class(name);
@@ -7717,6 +7729,7 @@ fn create_LayerDelegate(ctx: *LayerDelegate) -> *u8 {
         let add_layer_will_draw: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("layerWillDraw:\0")), LayerDelegate_layer_will_draw_imp, #str_ptr("v@:@\0"));
         let add_layout_sublayers_of_layer: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("layoutSublayersOfLayer:\0")), LayerDelegate_layout_sublayers_of_layer_imp, #str_ptr("v@:@\0"));
         let add_action_for_layer_for_key: i8 = cplus_add_method_id_id_id(cls, rt::sel(#str_ptr("actionForLayer:forKey:\0")), LayerDelegate_action_for_layer_for_key_imp, #str_ptr("@@:@@\0"));
+        let add_responds_to_selector: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), LayerDelegate_responds_imp, #str_ptr("c@::\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -7794,6 +7807,15 @@ fn AnimationDelegate_animation_did_stop_finished_imp(self_obj: *u8, cmd: *u8, a0
     return;
 }
 
+fn AnimationDelegate_responds_imp(self_obj: *u8, cmd: *u8, sel: *u8) -> i8 {
+    let c: *AnimationDelegate = { synth::get_associated(self_obj, AnimationDelegate_key()) as *AnimationDelegate };
+    if c != { 0 as *AnimationDelegate } {
+        if sel == rt::sel(#str_ptr("animationDidStart:\0")) { let h: fn(*u8, *u8) = { (*c).animation_did_start }; return { (h != AnimationDelegate_noop_v_id) as i8 }; }
+        if sel == rt::sel(#str_ptr("animationDidStop:finished:\0")) { let h: fn(*u8, *u8, i8) = { (*c).animation_did_stop_finished }; return { (h != AnimationDelegate_noop_v_id_i8) as i8 }; }
+    }
+    return { synth::class_responds(synth::object_class(self_obj), sel) };
+}
+
 fn create_AnimationDelegate(ctx: *AnimationDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_AnimationDelegate\0");
     var cls: *u8 = rt::get_class(name);
@@ -7801,6 +7823,7 @@ fn create_AnimationDelegate(ctx: *AnimationDelegate) -> *u8 {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
         let add_animation_did_start: i8 = cplus_add_method_v_id(cls, rt::sel(#str_ptr("animationDidStart:\0")), AnimationDelegate_animation_did_start_imp, #str_ptr("v@:@\0"));
         let add_animation_did_stop_finished: i8 = cplus_add_method_v_id_i8(cls, rt::sel(#str_ptr("animationDidStop:finished:\0")), AnimationDelegate_animation_did_stop_finished_imp, #str_ptr("v@:@c\0"));
+        let add_responds_to_selector: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), AnimationDelegate_responds_imp, #str_ptr("c@::\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);
@@ -7882,12 +7905,21 @@ fn MetalDisplayLinkDelegate_metal_display_link_needs_update_imp(self_obj: *u8, c
     return;
 }
 
+fn MetalDisplayLinkDelegate_responds_imp(self_obj: *u8, cmd: *u8, sel: *u8) -> i8 {
+    let c: *MetalDisplayLinkDelegate = { synth::get_associated(self_obj, MetalDisplayLinkDelegate_key()) as *MetalDisplayLinkDelegate };
+    if c != { 0 as *MetalDisplayLinkDelegate } {
+        if sel == rt::sel(#str_ptr("metalDisplayLink:needsUpdate:\0")) { let h: fn(*u8, *u8, *u8) = { (*c).metal_display_link_needs_update }; return { (h != MetalDisplayLinkDelegate_noop_v_id_id) as i8 }; }
+    }
+    return { synth::class_responds(synth::object_class(self_obj), sel) };
+}
+
 fn create_MetalDisplayLinkDelegate(ctx: *MetalDisplayLinkDelegate) -> *u8 {
     let name: *u8 = #str_ptr("Cplus_MetalDisplayLinkDelegate\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
         let add_metal_display_link_needs_update: i8 = cplus_add_method_v_id_id(cls, rt::sel(#str_ptr("metalDisplayLink:needsUpdate:\0")), MetalDisplayLinkDelegate_metal_display_link_needs_update_imp, #str_ptr("v@:@@\0"));
+        let add_responds_to_selector: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), MetalDisplayLinkDelegate_responds_imp, #str_ptr("c@::\0"));
         synth::register_class_pair(cls);
     }
     let d: *u8 = synth::alloc_init_class(cls);

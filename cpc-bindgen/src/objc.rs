@@ -1815,6 +1815,33 @@ impl ObjcEmitter {
             s.push_str("}\n\n");
         }
 
+        // `respondsToSelector:` override. AppKit-style optional protocol methods
+        // are only invoked when the delegate reports it responds; a synthesized
+        // delegate that installed every selector (each backed by a noop) forces
+        // the framework to call all of them and use the noop's return value,
+        // clobbering the defaults it would otherwise apply (e.g. free resize,
+        // standard-frame zoom). Report NO for callbacks the caller left unset
+        // (handler still the generated noop) so those fall back to the
+        // framework's own behavior — how a native delegate works. Selectors we
+        // don't model defer to the real class check.
+        s.push_str(&format!(
+            "fn {proto_ty}_responds_imp(self_obj: *u8, cmd: *u8, sel: *u8) -> i8 {{\n"
+        ));
+        s.push_str(&format!(
+            "    let c: *{proto_ty} = {{ synth::get_associated(self_obj, {proto_ty}_key()) as *{proto_ty} }};\n"
+        ));
+        s.push_str(&format!("    if c != {{ 0 as *{proto_ty} }} {{\n"));
+        for (sel, mid, args, r) in &callbacks {
+            let sym = handler_sym(args, r);
+            let hty = handler_ty(args, r);
+            s.push_str(&format!(
+                "        if sel == rt::sel(#str_ptr(\"{sel}\\0\")) {{ let h: {hty} = {{ (*c).{mid} }}; return {{ (h != {proto_ty}_noop_{sym}) as i8 }}; }}\n"
+            ));
+        }
+        s.push_str("    }\n");
+        s.push_str("    return { synth::class_responds(synth::object_class(self_obj), sel) };\n");
+        s.push_str("}\n\n");
+
         // create: build + register the class once (installing every callback),
         // instantiate, and attach the caller's handler table.
         s.push_str(&format!("fn create_{proto_ty}(ctx: *{proto_ty}) -> *u8 {{\n"));
@@ -1830,6 +1857,9 @@ impl ObjcEmitter {
                 wire_sym(args, r)
             ));
         }
+        s.push_str(&format!(
+            "        let add_responds_to_selector: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr(\"respondsToSelector:\\0\")), {proto_ty}_responds_imp, #str_ptr(\"c@::\\0\"));\n"
+        ));
         s.push_str("        synth::register_class_pair(cls);\n    }\n");
         s.push_str("    let d: *u8 = synth::alloc_init_class(cls);\n");
         s.push_str(&format!("    synth::set_associated(d, {proto_ty}_key(), {{ ctx as *u8 }});\n"));
@@ -4861,6 +4891,54 @@ mod tests {
         assert!(out.contains("cplus_add_method_v_id_i64(cls, rt::sel("), "create_ uses the shim:\n{out}");
         // No scalar-arg skip anymore.
         assert!(!out.contains("only <=5 object args"), "no legacy object-arg skip:\n{out}");
+    }
+
+    #[test]
+    fn delegate_synthesizes_responds_to_selector_gated_on_set_handlers() {
+        // A synthesized delegate installs an IMP for every selector, so without a
+        // `respondsToSelector:` override the framework calls all of them and uses
+        // the noop's return value — clobbering the defaults it would otherwise
+        // apply (free resize, standard-frame zoom). The generated class overrides
+        // respondsToSelector: to report NO for callbacks the caller left unset
+        // (handler still the noop) so those fall back to the framework's own
+        // behavior, exactly like a hand-written optional-method delegate.
+        let m = |sel: &str, ret: &str, params: &[(&str, &str)]| {
+            serde_json::json!({
+                "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+                "returnType": { "qualType": ret },
+                "inner": params.iter().map(|(n, t)| serde_json::json!(
+                    { "kind": "ParmVarDecl", "name": n, "type": { "qualType": t } })).collect::<Vec<_>>()
+            })
+        };
+        let tu = serde_json::json!({
+            "inner": [{
+                "kind": "ObjCProtocolDecl", "name": "NSFooDelegate", "loc": { "file": "test.h" },
+                "inner": [
+                    m("fooShouldClose:", "BOOL", &[("foo", "id")]),
+                    m("foo:willResizeToSize:", "NSSize", &[("foo", "id"), ("size", "NSSize")]),
+                ]
+            }]
+        });
+        let out = ObjcEmitter::new("test.h", "NS", serde_json::json!({})).run(&tu);
+        // The override IMP exists and reads the per-instance handler context.
+        assert!(out.contains("fn FooDelegate_responds_imp(self_obj: *u8, cmd: *u8, sel: *u8) -> i8 {"),
+            "responds IMP emitted:\n{out}");
+        assert!(out.contains("synth::get_associated(self_obj, FooDelegate_key())"),
+            "responds IMP reads the ctx:\n{out}");
+        // Each callback selector is gated on (handler != its noop), cast to BOOL.
+        assert!(out.contains(r#"if sel == rt::sel(#str_ptr("fooShouldClose:\0")) { let h:"#)
+            && out.contains("!= FooDelegate_noop_"),
+            "per-selector gate on set handler:\n{out}");
+        assert!(out.contains(") as i8 }"), "gate result cast to BOOL:\n{out}");
+        // Selectors we don't model defer to the real class check.
+        assert!(out.contains("return { synth::class_responds(synth::object_class(self_obj), sel) };"),
+            "fallback to class check:\n{out}");
+        // create_ installs the override before registering the class.
+        assert!(out.contains(r#"synth::add_method_i8_1id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), FooDelegate_responds_imp, #str_ptr("c@::\0"))"#),
+            "respondsToSelector: installed with the BOOL/self/SEL encoding:\n{out}");
+        let idx_add = out.find("respondsToSelector:").expect("responds add present");
+        let idx_reg = out.find("register_class_pair").expect("register present");
+        assert!(idx_add < idx_reg, "respondsToSelector added before register_class_pair:\n{out}");
     }
 
     #[test]

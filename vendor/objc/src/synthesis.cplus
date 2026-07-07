@@ -156,6 +156,21 @@ fn get_associated(object: *u8, key: *u8) -> *u8 {
     return { objc_getAssociatedObject(object, key) };
 }
 
+// Class introspection, used by a synthesized delegate's `respondsToSelector:`
+// override. A delegate reports NO for the optional protocol methods the caller
+// left unset, so the framework falls back to its own defaults (native delegate
+// behavior) instead of a noop stub's return value.
+extern fn object_getClass(obj: *u8) -> *u8;
+extern fn class_respondsToSelector(cls: *u8, sel: *u8) -> i8;
+
+fn object_class(obj: *u8) -> *u8 {
+    return { object_getClass(obj) };
+}
+
+fn class_responds(cls: *u8, sel: *u8) -> i8 {
+    return { class_respondsToSelector(cls, sel) };
+}
+
 // alloc + init on a class OBJECT (not a name) — instantiates a synthesized class.
 fn alloc_init_class(cls: *u8) -> *u8 {
     let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
