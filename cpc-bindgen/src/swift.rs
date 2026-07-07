@@ -222,7 +222,7 @@ fn classify_function(sym: &Value) -> FnVerdict {
                 .get("name")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .map(|s| sanitize_ident(s))
+                .map(sanitize_ident)
                 .unwrap_or_else(|| format!("arg{i}"));
             params_out.push(format!("{pname}: {pty_cplus}"));
         }
@@ -319,7 +319,7 @@ pub fn generate(graph: &Value, module: &str) -> String {
         // Bucket the reason by its leading phrase (before any '(' or '`') for
         // the summary histogram.
         let bucket = reason
-            .split(|c| c == '(' || c == '`' || c == '—')
+            .split(['(', '`', '—'])
             .next()
             .unwrap_or(&reason)
             .trim()
@@ -334,7 +334,7 @@ pub fn generate(graph: &Value, module: &str) -> String {
         .iter()
         .filter(|s| access(s) == "public" || access(s) == "open")
         .collect();
-    ordered.sort_by(|a, b| path_of(a).cmp(&path_of(b)));
+    ordered.sort_by_key(|a| path_of(a));
 
     for s in ordered {
         let k = kind_of(s);
@@ -1654,7 +1654,7 @@ pub fn generate_bridge(
     let mut skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
     let skip = |reasons: &mut BTreeMap<String, usize>, n: &mut usize, body: &mut String, path: &str, reason: String| {
         let bucket = reason
-            .split(|c| c == '(' || c == '`' || c == '—')
+            .split(['(', '`', '—'])
             .next()
             .unwrap_or(&reason)
             .trim()
@@ -1666,7 +1666,7 @@ pub fn generate_bridge(
 
     // Emit one handle struct + box + impl block per type. `name` is the dotted
     // Swift spelling; `ident` is its flattened C+ identifier.
-    for (name, _p) in &type_precise {
+    for name in type_precise.keys() {
         let ident = cident(name);
         // `consuming` on the init param lets the box hold a noncopyable
         // (`~Copyable`) value too — noncopyability is not detectable from the

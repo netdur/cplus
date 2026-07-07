@@ -1,19 +1,20 @@
-use crate::id::PackageId;
-use serde::Serialize;
-use std::fmt;
+//! Fetch a repo once, at a repo-wide version tag, into a shared cache.
+//!
+//! A C+ monorepo tags the whole repo `v<version>`; the many packages inside it
+//! (`vendor/stdlib`, `vendor/json`, …) share that one tag. So the unit we clone
+//! is the *repo at a tag*, not a per-package tree, and every dependency drawn
+//! from the same `(repo, version)` reuses one checkout.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct FetchPlan {
-    pub id: PackageId,
-    pub version: String,
+/// A clone of one repo at one tag, cached under `<cache>/<repo>/<tag>/source`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkout {
     pub repo_url: String,
     pub tag: String,
-    pub cache_dir: PathBuf,
-    pub checkout_dir: PathBuf,
-    pub package_dir: PathBuf,
+    pub source_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -26,71 +27,40 @@ pub enum FetchError {
         command: String,
         stderr: String,
     },
-    MissingPackageDir {
-        path: PathBuf,
-    },
-    InvalidTag {
-        raw: String,
-    },
 }
 
-impl FetchPlan {
-    pub fn new(id: PackageId, version: impl Into<String>, cache_root: impl AsRef<Path>) -> Self {
-        let repo_url = id.repo_url();
-        Self::with_repo_url(id, version, repo_url, cache_root)
-    }
-
-    pub fn with_repo_url(
-        id: PackageId,
-        version: impl Into<String>,
+impl Checkout {
+    /// Plan a checkout. `repo` (`host/owner/repo`) names the cache slot;
+    /// `repo_url` is what git actually clones (may be a local path override).
+    pub fn new(
+        repo: &str,
         repo_url: impl Into<String>,
-        cache_root: impl AsRef<Path>,
+        tag: impl Into<String>,
+        cache_root: &Path,
     ) -> Self {
-        let version = version.into();
-        let tag = id.tag_for_version(&version);
-        let repo_url = repo_url.into();
-        let cache_dir = cache_root
-            .as_ref()
-            .join(sanitize_path(id.origin()))
-            .join(sanitize_path(&tag));
-        let checkout_dir = cache_dir.join("source");
-        let package_dir = match id.path() {
-            Some(path) => checkout_dir.join(path),
-            None => checkout_dir.clone(),
-        };
-
+        let tag = tag.into();
+        let cache_dir = cache_root.join(sanitize(repo)).join(sanitize(&tag));
         Self {
-            id,
-            version,
-            repo_url,
+            repo_url: repo_url.into(),
             tag,
-            cache_dir,
-            checkout_dir,
-            package_dir,
+            source_dir: cache_dir.join("source"),
         }
     }
 
-    pub fn fetch(&self) -> Result<PathBuf, FetchError> {
-        if self.package_dir.join("pkg.toml").exists() {
-            return Ok(self.package_dir.clone());
+    /// Ensure the checkout exists on disk, cloning it if absent, and return its
+    /// source directory. Idempotent: a present checkout is reused as-is.
+    pub fn ensure(&self) -> Result<&Path, FetchError> {
+        if self.source_dir.exists() {
+            return Ok(&self.source_dir);
         }
-
-        fs::create_dir_all(&self.cache_dir).map_err(|source| FetchError::Io {
-            path: self.cache_dir.clone(),
-            source,
-        })?;
-
-        if !self.checkout_dir.exists() {
-            self.git_clone()?;
+        if let Some(parent) = self.source_dir.parent() {
+            fs::create_dir_all(parent).map_err(|source| FetchError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
         }
-
-        if !self.package_dir.join("pkg.toml").exists() {
-            return Err(FetchError::MissingPackageDir {
-                path: self.package_dir.clone(),
-            });
-        }
-
-        Ok(self.package_dir.clone())
+        self.git_clone()?;
+        Ok(&self.source_dir)
     }
 
     fn git_clone(&self) -> Result<(), FetchError> {
@@ -102,10 +72,10 @@ impl FetchPlan {
             .arg(&self.tag)
             .arg("--")
             .arg(&self.repo_url)
-            .arg(&self.checkout_dir)
+            .arg(&self.source_dir)
             .output()
             .map_err(|source| FetchError::Io {
-                path: self.checkout_dir.clone(),
+                path: self.source_dir.clone(),
                 source,
             })?;
 
@@ -118,79 +88,14 @@ impl FetchPlan {
                 "git clone --depth 1 --branch {} -- {} {}",
                 self.tag,
                 self.repo_url,
-                self.checkout_dir.display()
+                self.source_dir.display()
             ),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
     }
 }
 
-pub fn list_remote_versions(
-    id: &PackageId,
-    repo_url_override: Option<&str>,
-) -> Result<Vec<String>, FetchError> {
-    let repo_url = repo_url_override
-        .map(str::to_string)
-        .unwrap_or_else(|| id.repo_url());
-    let output = Command::new("git")
-        .arg("ls-remote")
-        .arg("--tags")
-        .arg("--")
-        .arg(&repo_url)
-        .output()
-        .map_err(|source| FetchError::Io {
-            path: PathBuf::from(&repo_url),
-            source,
-        })?;
-
-    if !output.status.success() {
-        return Err(FetchError::Git {
-            command: format!("git ls-remote --tags -- {repo_url}"),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-
-    let mut versions = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some(raw_ref) = line.split_whitespace().nth(1) else {
-            continue;
-        };
-        let Some(tag) = raw_ref
-            .strip_prefix("refs/tags/")
-            .and_then(|tag| tag.strip_suffix("^{}").or(Some(tag)))
-        else {
-            continue;
-        };
-        if let Some(version) = version_from_tag(id, tag)? {
-            versions.push(version);
-        }
-    }
-    versions.sort();
-    versions.dedup();
-    Ok(versions)
-}
-
-fn version_from_tag(id: &PackageId, tag: &str) -> Result<Option<String>, FetchError> {
-    match id.path() {
-        Some(path) => {
-            let Some(rest) = tag
-                .strip_prefix(path)
-                .and_then(|rest| rest.strip_prefix("/v"))
-            else {
-                return Ok(None);
-            };
-            if rest.contains('/') {
-                return Err(FetchError::InvalidTag {
-                    raw: tag.to_string(),
-                });
-            }
-            Ok(Some(rest.to_string()))
-        }
-        None => Ok(tag.strip_prefix('v').map(str::to_string)),
-    }
-}
-
-fn sanitize_path(value: &str) -> String {
+fn sanitize(value: &str) -> String {
     value
         .chars()
         .map(|ch| match ch {
@@ -200,8 +105,8 @@ fn sanitize_path(value: &str) -> String {
         .collect()
 }
 
-impl fmt::Display for FetchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FetchError::Io { path, source } => {
                 write!(f, "failed to access {}: {source}", path.display())
@@ -209,12 +114,6 @@ impl fmt::Display for FetchError {
             FetchError::Git { command, stderr } => {
                 write!(f, "`{command}` failed: {}", stderr.trim())
             }
-            FetchError::MissingPackageDir { path } => write!(
-                f,
-                "fetched source does not contain a pkg.toml at {}",
-                path.display()
-            ),
-            FetchError::InvalidTag { raw } => write!(f, "invalid package tag `{raw}`"),
         }
     }
 }
@@ -226,62 +125,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plans_root_fetch() {
-        let plan = FetchPlan::new(
-            PackageId::new("github.com/sled/tools").unwrap(),
-            "1.2.3",
-            ".pkgcache",
+    fn caches_under_repo_and_tag() {
+        let checkout = Checkout::new(
+            "github.com/netdur/cplus",
+            "https://github.com/netdur/cplus.git",
+            "v0.0.26",
+            Path::new(".pkgcache"),
         );
-
-        assert_eq!(plan.tag, "v1.2.3");
-        assert_eq!(plan.repo_url, "https://github.com/sled/tools.git");
         assert_eq!(
-            plan.package_dir,
-            PathBuf::from(".pkgcache/github.com_sled_tools/v1.2.3/source")
+            checkout.source_dir,
+            PathBuf::from(".pkgcache/github.com_netdur_cplus/v0.0.26/source")
         );
     }
 
     #[test]
-    fn plans_subdir_fetch() {
-        let plan = FetchPlan::new(
-            PackageId::new("github.com/sled/tools/parser").unwrap(),
-            "2.1.0",
-            ".pkgcache",
-        );
-
-        assert_eq!(plan.tag, "parser/v2.1.0");
-        assert_eq!(
-            plan.package_dir,
-            PathBuf::from(".pkgcache/github.com_sled_tools/parser_v2.1.0/source/parser")
-        );
-    }
-
-    #[test]
-    fn supports_explicit_repo_url() {
-        let plan = FetchPlan::with_repo_url(
-            PackageId::new("github.com/sled/tools/parser").unwrap(),
-            "2.1.0",
-            "/tmp/tools.git",
-            ".pkgcache",
-        );
-
-        assert_eq!(plan.repo_url, "/tmp/tools.git");
-        assert_eq!(plan.tag, "parser/v2.1.0");
-    }
-
-    #[test]
-    fn extracts_versions_from_root_and_subdir_tags() {
-        let root = PackageId::new("github.com/sled/tools").unwrap();
-        let subdir = PackageId::new("github.com/sled/tools/parser").unwrap();
-
-        assert_eq!(
-            version_from_tag(&root, "v1.2.3").unwrap(),
-            Some("1.2.3".to_string())
-        );
-        assert_eq!(
-            version_from_tag(&subdir, "parser/v2.1.0").unwrap(),
-            Some("2.1.0".to_string())
-        );
-        assert_eq!(version_from_tag(&subdir, "lexer/v2.1.0").unwrap(), None);
+    fn same_repo_and_tag_share_one_checkout() {
+        let cache = Path::new(".pkgcache");
+        let a = Checkout::new("github.com/x/y", "u", "v1", cache);
+        let b = Checkout::new("github.com/x/y", "u", "v1", cache);
+        assert_eq!(a.source_dir, b.source_dir);
     }
 }

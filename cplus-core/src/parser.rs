@@ -18,6 +18,10 @@ pub enum ParseErrorKind {
         expected: &'static str,
     },
     NonChainableComparison,
+    /// Recursive-descent depth guard tripped: an expression / statement nested
+    /// past [`MAX_PARSE_DEPTH`]. Turns a would-be native stack overflow
+    /// (SIGABRT on ~1 KB of `(`) into a clean diagnostic.
+    NestingTooDeep,
 }
 
 impl fmt::Display for ParseError {
@@ -35,9 +39,26 @@ impl fmt::Display for ParseError {
                     "comparison operators are non-chainable; use `&&` between comparisons"
                 )
             }
+            ParseErrorKind::NestingTooDeep => {
+                write!(
+                    f,
+                    "expression or statement nesting too deep (limit {MAX_PARSE_DEPTH})"
+                )
+            }
         }
     }
 }
+
+/// Maximum recursive-descent nesting depth for expressions and statement
+/// blocks. Deeply nested source (hostile or generated — `(((…)))`, nested
+/// blocks, unary chains) drives one native stack frame per level; without a
+/// bound the OS stack overflows and the process aborts (SIGABRT). Bounding it
+/// turns that into a clean, testable diagnostic. Set well below the parser's
+/// empirical overflow threshold (~500–1000 nested parens on an 8 MiB stack) so
+/// there is ample margin for the later passes (sema / borrowck / codegen) that
+/// recurse over the same tree, and for the smaller stacks in the wasm
+/// playground — while sitting far above any nesting a real program contains.
+pub const MAX_PARSE_DEPTH: u32 = 256;
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
     let mut p = Parser::new(tokens);
@@ -61,6 +82,11 @@ struct Parser {
     /// grouping, array literals, blocks) so only the entry's own
     /// top-level postfix chain is line-sensitive.
     stop_line_dot: bool,
+    /// Recursive-descent nesting depth, incremented at each expression /
+    /// statement-block recursion point and checked against [`MAX_PARSE_DEPTH`]
+    /// so pathological nesting fails as a diagnostic instead of a stack
+    /// overflow. See `enter_depth`.
+    depth: u32,
 }
 
 impl Parser {
@@ -70,7 +96,30 @@ impl Parser {
             pos: 0,
             no_struct_lit: false,
             stop_line_dot: false,
+            depth: 0,
         }
+    }
+
+    /// Increment the recursion depth and error if it exceeds the limit.
+    /// Paired with `exit_depth` around each self-recursive parse point; the
+    /// balanced decrement keeps the counter accurate across sibling
+    /// subexpressions (so wide-but-shallow input isn't falsely rejected).
+    fn enter_depth(&mut self) -> Result<(), ParseError> {
+        self.depth += 1;
+        if self.depth > MAX_PARSE_DEPTH {
+            // Decrement so the counter is consistent even though the caller
+            // will unwind (defensive; the parse aborts on this Err anyway).
+            self.depth -= 1;
+            return Err(ParseError {
+                kind: ParseErrorKind::NestingTooDeep,
+                span: self.peek().span,
+            });
+        }
+        Ok(())
+    }
+
+    fn exit_depth(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     /// Run `f` with `no_struct_lit` flipped on, restoring it afterward.
@@ -908,14 +957,15 @@ impl Parser {
 
     /// Phase 8 slice 8.STR.B.1: convert the lexer's raw interpolation parts
     /// into AST parts. Each `Expr` part is re-lexed + parsed as a fresh
-    /// expression. Spans on the inner tokens are *relative to the inner
-    /// source*, not the parent file — accepted as a v1 limitation; the
-    /// design doc flags it (the parent token's span points at the whole
-    /// literal, which most diagnostics will resolve to anyway).
+    /// expression, and the re-lexed token spans are rebased onto the
+    /// fragment's span in the parent file — so a later-pass diagnostic on
+    /// an interpolated sub-expression points at the real source (the v1
+    /// fragment-local spans landed every such diagnostic at offset 0 of
+    /// file 0).
     fn parse_interp_parts(
         &mut self,
         lex_parts: Vec<crate::lexer::InterpPart>,
-        whole_span: Span,
+        _whole_span: Span,
     ) -> Result<Vec<crate::ast::InterpStrPart>, ParseError> {
         use crate::lexer::{tokenize, InterpPart};
         let mut out = Vec::with_capacity(lex_parts.len());
@@ -924,16 +974,31 @@ impl Parser {
                 InterpPart::Lit(s) => {
                     out.push(crate::ast::InterpStrPart::Lit(s));
                 }
-                InterpPart::Expr { source, span: _ } => {
-                    let inner_tokens = tokenize(&source).map_err(|_e| ParseError {
-                        // Use the whole-string span; precise inner-source
-                        // span needs offset adjustment which v1 skips.
+                InterpPart::Expr { source, span } => {
+                    // Re-lex the fragment, then rebase every token span from
+                    // fragment-local offsets (`tokenize` restarts at 0 with
+                    // file 0) onto the fragment's own span in the parent
+                    // file. Downstream diagnostics on an interpolated
+                    // sub-expression then point at the real source instead
+                    // of offset 0 of file 0 (the old v1 shortcut).
+                    let mut inner_tokens = tokenize(&source).map_err(|e| ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: "invalid expression".to_string(),
                             expected: "well-formed expression inside `${...}`",
                         },
-                        span: whole_span,
+                        span: Span::in_file(
+                            span.file,
+                            span.start + e.span.start,
+                            span.start + e.span.end,
+                        ),
                     })?;
+                    for t in &mut inner_tokens {
+                        t.span = Span::in_file(
+                            span.file,
+                            span.start + t.span.start,
+                            span.start + t.span.end,
+                        );
+                    }
                     let mut sub = Parser::new(inner_tokens);
                     let expr = sub.parse_expr()?;
                     // Confirm the parser consumed the full source —
@@ -945,7 +1010,7 @@ impl Parser {
                                 found: "trailing tokens".to_string(),
                                 expected: "end of expression inside `${...}`",
                             },
-                            span: whole_span,
+                            span: sub.peek().span,
                         });
                     }
                     out.push(crate::ast::InterpStrPart::Expr(Box::new(expr)));
@@ -983,9 +1048,9 @@ impl Parser {
     }
 
     /// v0.0.9 Phase 4: parse `export? const NAME: Ty = LIT;`.
-    /// Type annotation is mandatory (E0X31); initializer must be a
+    /// A type annotation is mandatory; initializer must be a
     /// literal expression — the literal-shape check happens in sema
-    /// (`check_const_static_inits`, E0X30) so the parser stays
+    /// (`check_const_static_inits`, E0911) so the parser stays
     /// uniform and accepts any expression here.
     fn parse_const_decl(
         &mut self,
@@ -1486,7 +1551,7 @@ impl Parser {
         let mut mutable = false;
         let mut move_ = false;
         let mut restrict = false;
-        let mut borrow_ = false;
+        let borrow_ = false;
         let start = self.peek().span;
         loop {
             match self.peek_kind() {
@@ -1582,19 +1647,30 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
+        // Types nest recursively — `*T`, `[T; N]`, `fn(T) -> R`, `(T1, T2)` —
+        // so a pathological chain (`**…**i32`, nested slices/tuples) recurses
+        // `parse_type → parse_type` and would overflow the stack. Same depth
+        // guard as the expression path.
+        self.enter_depth()?;
+        let r = self.parse_type_inner();
+        self.exit_depth();
+        r
+    }
+
+    fn parse_type_inner(&mut self) -> Result<Type, ParseError> {
         let tok = self.peek().clone();
         match &tok.kind {
             // v0.0.24 #9: the region-annotated `borrow REGION T` type is retired
             // along with the `borrow` keyword. A read-only borrow is a bare
             // parameter `x: T`; ownership transfer is `take`. Reject with a hint.
             TokenKind::Borrow => {
-                return Err(ParseError {
+                Err(ParseError {
                     kind: ParseErrorKind::Unexpected {
                         found: "`borrow`".into(),
                         expected: "a type — `borrow REGION T` is retired; a bare parameter `x: T` is a read-only borrow (use `take` to consume)",
                     },
                     span: tok.span,
-                });
+                })
             }
             // Slice 10.FFI.1: raw pointer `*T`. The `*` token is the
             // multiply operator everywhere else, but in *type position*
@@ -1605,10 +1681,10 @@ impl Parser {
                 let start = self.bump().span;
                 let inner = Box::new(self.parse_type()?);
                 let end = inner.span;
-                return Ok(Type {
+                Ok(Type {
                     kind: TypeKind::RawPtr(inner),
                     span: start.merge(end),
-                });
+                })
             }
             // Slice 11.FN_PTR: function pointer type — `fn(T1, T2, ...) -> R`
             // or `fn(...)` with implicit unit return. The `fn` token here
@@ -1650,10 +1726,10 @@ impl Parser {
                         span: start.merge(end),
                     });
                 }
-                return Ok(Type {
+                Ok(Type {
                     kind: TypeKind::Tuple(elems),
                     span: start.merge(end),
-                });
+                })
             }
             TokenKind::Fn => {
                 let start = self.bump().span;
@@ -1700,7 +1776,7 @@ impl Parser {
                 } else {
                     None
                 };
-                return Ok(Type {
+                Ok(Type {
                     kind: TypeKind::FnPtr {
                         params,
                         param_takes,
@@ -1708,7 +1784,7 @@ impl Parser {
                         return_type,
                     },
                     span: start.merge(end_span),
-                });
+                })
             }
             TokenKind::Ident(s) => {
                 let mut name = s.clone();
@@ -1833,7 +1909,14 @@ impl Parser {
     fn parse_block(&mut self) -> Result<Block, ParseError> {
         // v0.0.22 DSL.1: a nested block body is never line-dot sensitive,
         // even when the block appears inside a builder-entry expression.
-        self.with_line_dots_allowed(|p| p.parse_block_body())
+        //
+        // Depth choke point for statement nesting: `{ { { … } } }` recurses
+        // block → stmt → block here (not through `parse_expr`), so it needs
+        // its own guard against a stack-overflow abort.
+        self.enter_depth()?;
+        let r = self.with_line_dots_allowed(|p| p.parse_block_body());
+        self.exit_depth();
+        r
     }
 
     fn parse_block_body(&mut self) -> Result<Block, ParseError> {
@@ -2496,7 +2579,13 @@ impl Parser {
     // ---- expressions: precedence climbing from low to high ----
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_assign()
+        // Depth choke point for expression recursion: grouping `(expr)`, unary
+        // chains, call args, indices, etc. all bottom out through `parse_expr`,
+        // so one guard here bounds the whole expression tree.
+        self.enter_depth()?;
+        let r = self.parse_assign();
+        self.exit_depth();
+        r
     }
 
     fn parse_assign(&mut self) -> Result<Expr, ParseError> {
@@ -2751,6 +2840,16 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        // A prefix chain (`----1`, `!!x`, `**p`, `await await …`) recurses
+        // `parse_unary → parse_unary` without re-entering `parse_expr`, so it
+        // needs its own depth guard against a stack-overflow abort.
+        self.enter_depth()?;
+        let r = self.parse_unary_inner();
+        self.exit_depth();
+        r
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek().span;
         // v0.0.3 Phase 5 Slice 5E.1: prefix `await EXPR`. Parse as a
         // unary-precedence operator so `await foo().bar` parses as
@@ -3019,12 +3118,12 @@ impl Parser {
                 return Err(self.err_at_peek("`}`"));
             }
             if self.at_var_binding() {
-                entries.push(BuilderEntry::Let(self.parse_var_stmt()?));
+                entries.push(BuilderEntry::Let(Box::new(self.parse_var_stmt()?)));
                 continue;
             }
             match self.peek_kind() {
                 TokenKind::Let => {
-                    entries.push(BuilderEntry::Let(self.parse_let_stmt()?));
+                    entries.push(BuilderEntry::Let(Box::new(self.parse_let_stmt()?)));
                 }
                 TokenKind::Dot => {
                     let m = self.parse_builder_modifier()?;
@@ -4122,6 +4221,48 @@ mod tests {
     fn empty_program() {
         let p = parse_src("").unwrap();
         assert!(p.items.is_empty());
+    }
+
+    #[test]
+    fn pathological_nesting_reports_e0103_not_stack_overflow() {
+        // Each shape recurses through a different parse path: grouping
+        // (`parse_expr`), blocks (`parse_block`), prefix chains
+        // (`parse_unary`), and pointer types (`parse_type`). All four must
+        // bottom out in a clean NestingTooDeep error rather than aborting the
+        // process with a native stack overflow. Depth is far above the limit.
+        let n = (MAX_PARSE_DEPTH as usize) + 50;
+        let cases = [
+            format!("fn main() -> i32 {{ return {}1{}; }}", "(".repeat(n), ")".repeat(n)),
+            format!("fn f() {}{}", "{".repeat(n), "}".repeat(n)),
+            format!("fn main() -> i32 {{ return {}1; }}", "-".repeat(n)),
+            format!(
+                "fn f(p: {}i32) {{ return; }}",
+                "*".repeat(n)
+            ),
+        ];
+        for (i, src) in cases.iter().enumerate() {
+            let err = parse_src(src).unwrap_err();
+            assert!(
+                matches!(err.kind, ParseErrorKind::NestingTooDeep),
+                "case {i}: expected NestingTooDeep, got {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn moderate_nesting_within_limit_parses() {
+        // Well below the limit — must parse without a false NestingTooDeep.
+        // Balanced siblings (a wide, shallow tree) must not accumulate depth.
+        let n = 40usize;
+        let src = format!("fn main() -> i32 {{ return {}1{}; }}", "(".repeat(n), ")".repeat(n));
+        assert!(parse_src(&src).is_ok(), "{n} nested parens should parse");
+        // Wide flat expression: many siblings, depth stays ~constant.
+        let wide = format!(
+            "fn main() -> i32 {{ return {}; }}",
+            (0..500).map(|i| i.to_string()).collect::<Vec<_>>().join(" + ")
+        );
+        assert!(parse_src(&wide).is_ok(), "wide flat expression should parse");
     }
 
     // v0.0.24 de-Rust: the dead Rust keywords `trait`/`use`/`mod`/`union`/`try`

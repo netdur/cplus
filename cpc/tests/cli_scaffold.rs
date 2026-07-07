@@ -156,18 +156,32 @@ fn pm_help_is_the_package_manager() {
 }
 
 #[test]
-fn pm_tag_routes_to_package_manager() {
+fn pm_manifest_routes_to_package_manager() {
     // `cpc pm ...` dispatches to the same `cplus_pm::cli::run` that backs the
-    // standalone `cplus-pm` binary. `tag` is pure (no fs/network): a valid
-    // package id must produce a tag referencing the version.
-    let id = "github.com/netdur/cplus";
-    let out = Command::new(cpc()).args(["pm", "tag", id, "1.2.3"]).output().expect("cpc pm tag");
+    // standalone `cplus-pm` binary. `manifest` is the offline command (reads a
+    // Cplus.toml, prints JSON — no network): a valid manifest must round-trip
+    // its name and version. (Replaces the retired `pm tag` probe: the rebuilt
+    // pm takes versions from git tags on the dependency repo, so there is no
+    // tag subcommand anymore.)
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Cplus.toml"),
+        "[package]\nname = \"probe\"\nversion = \"1.2.3\"\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc())
+        .args(["pm", "manifest"])
+        .arg(dir.path())
+        .output()
+        .expect("cpc pm manifest");
     assert!(
         out.status.success(),
-        "tag of a valid id should succeed: {}",
+        "manifest of a valid project should succeed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("1.2.3"), "tag should reference the version");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("\"probe\""), "manifest JSON should carry the name: {s}");
+    assert!(s.contains("\"1.2.3\""), "manifest JSON should carry the version: {s}");
 }
 
 #[test]

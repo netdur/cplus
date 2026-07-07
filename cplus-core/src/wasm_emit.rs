@@ -21,6 +21,12 @@
 //! Control flow is emitted straight from the structured AST (C+ has no `goto`),
 //! so wasm's `block`/`loop`/`br` cover it with no relooper.
 
+// `Diagnostic` is the compiler's by-value error currency (sema and borrowck
+// return `Vec<Diagnostic>`); this backend's `Result<_, Diagnostic>` follows
+// suit. Boxing only these errors would break that uniformity for a cold,
+// once-per-compile path, so the large-`Err` lint is allowed module-wide.
+#![allow(clippy::result_large_err)]
+
 use crate::ast::{
     AssignOp, BinOp, Block, Expr, ExprKind, Function, ItemKind, Program, Stmt, StmtKind, Type,
     TypeKind, UnaryOp,
@@ -80,10 +86,9 @@ enum Val {
     Num(Num),
 }
 
-/// Per-function signature for resolving calls (param types + result arity).
+/// Per-function signature for resolving calls (result arity).
 #[derive(Clone)]
 struct FnSig {
-    params: Vec<Num>,
     result: Val,
 }
 
@@ -128,13 +133,13 @@ pub fn generate_wat(
                 continue;
             }
             em.reject_unsupported_fn(f)?;
-            let params = f
-                .params
-                .iter()
-                .map(|p| em.ty_to_num(&p.ty, p.span))
-                .collect::<Result<Vec<_>, _>>()?;
+            // Validate that every parameter type is in the Phase-1 scalar
+            // subset (rejecting non-scalar params up front, before bodies).
+            for p in &f.params {
+                em.ty_to_num(&p.ty, p.span)?;
+            }
             let result = em.fn_result(f)?;
-            em.funcs.insert(f.name.name.clone(), FnSig { params, result });
+            em.funcs.insert(f.name.name.clone(), FnSig { result });
         }
     }
 

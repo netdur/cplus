@@ -102,14 +102,12 @@ pub fn parse(src: &str) -> Node {
         let end = tag_end(b, i);
         let inner = &src[i + 1..end]; // between '<' and '>'
         i = end + 1;
-        if let Some(closed) = inner.strip_prefix('/') {
+        if inner.starts_with('/') {
             // Close tag: pop, attaching the finished node to its parent.
-            let name = closed.trim();
+            // We stay lenient and don't verify the close-tag name matches.
             if stack.len() > 1 {
                 let node = stack.pop().unwrap();
-                if node.name == name || true {
-                    stack.last_mut().unwrap().children.push(node);
-                }
+                stack.last_mut().unwrap().children.push(node);
             }
             continue;
         }

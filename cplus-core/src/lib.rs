@@ -4,6 +4,12 @@
 //! and analyzers) consumes this crate. The CLI is a thin wrapper; this is where
 //! the language lives.
 
+// Compiler passes thread wide, stable context — the target spec, module state,
+// the codegen builder, and the type/symbol tables — through many functions.
+// Folding these into parameter structs adds indirection without improving
+// clarity, so the argument-count lint is allowed crate-wide.
+#![allow(clippy::too_many_arguments)]
+
 pub mod ast;
 pub mod atomic;
 pub mod attrs;

@@ -36,6 +36,12 @@ use crate::lexer::{NumSuffix, Span as ByteSpan};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
+/// Definite-assignment state for one scope level: `(binding, assigned?, moved
+/// fields)` per binding in scope at that level.
+type ScopeAssigned = Vec<(String, bool, BTreeSet<String>)>;
+/// A full snapshot of definite-assignment state across every live scope level.
+type AssignedSnapshot = Vec<ScopeAssigned>;
+
 /// Stable identifier for a user-defined enum. Indices into `SemaCx::enums`,
 /// assigned in declaration order. Codegen rebuilds the same numbering by
 /// walking `program.items` in the same order.
@@ -252,6 +258,16 @@ impl Ty {
             Ty::Param(_) => false,
         }
     }
+}
+
+/// A node in the by-value type-containment graph, used by the infinite-size
+/// occurs check (`check_recursive_types`). Only aggregates that can embed
+/// another aggregate inline (structs, enums) are nodes; scalars and
+/// indirections are leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TyNode {
+    Struct(StructId),
+    Enum(EnumId),
 }
 
 #[derive(Debug, Clone)]
@@ -738,19 +754,19 @@ pub fn check_multi(
     check_with_files(program, entry_file, entry_src, files)
 }
 
-fn check_with_files<'a>(
+fn check_with_files(
     program: &Program,
     file: PathBuf,
-    src: &'a str,
+    src: &str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
     check_with_files_inner(program, file, src, files_raw, false).0
 }
 
-fn check_with_files_inner<'a>(
+fn check_with_files_inner(
     program: &Program,
     file: PathBuf,
-    src: &'a str,
+    src: &str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
     record_types: bool,
 ) -> (Vec<Diagnostic>, MonoInfo) {
@@ -817,6 +833,7 @@ fn check_with_files_inner<'a>(
         assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
         struct_template_origins: HashMap::new(),
+        copy_flags_settled: false,
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
         enum_instantiations: std::collections::BTreeMap::new(),
@@ -867,6 +884,18 @@ fn check_with_files_inner<'a>(
             break;
         }
     }
+    // From here on, an instantiation created during body checking is never
+    // revisited by the fixpoint, so it must finalize its own Copy/Drop flags
+    // at creation (fixes the spurious-E0335 late-Copy FP). Before this point
+    // the fixpoint owns classification.
+    cx.copy_flags_settled = true;
+    // Reject infinite-size (value-recursive) type definitions before any later
+    // pass tries to compute their layout. `struct S { s: S }` and mutually
+    // recursive `A`/`B` have no finite size; left unchecked they leak a clang
+    // "recursive struct" error at build, overflow the size/zero-value
+    // computation, or (unused recursive enums) build silently. One occurs-check
+    // here turns all three into a clean E0913 (Rust's E0072 analogue).
+    cx.check_recursive_types(program);
     cx.collect_functions(program);
     // v0.0.9 Phase 4: register module-scope const/static items. Runs
     // after function collection so cross-item name collisions are
@@ -1250,6 +1279,15 @@ struct SemaCx<'a> {
     /// inherits this as its `origin_file` so cross-file `_`-field privacy fires
     /// for generic types exactly as it does for concrete ones.
     struct_template_origins: HashMap<String, Option<String>>,
+    /// True once the initial struct/enum Copy-flag fixpoint has run. Before
+    /// that point (type collection), generic instantiations are classified by
+    /// the fixpoint + drop reconciliation, so the per-instantiation
+    /// `finalize_late_*_copy_flag` hooks must stay inert — the template's drop
+    /// method table isn't fully populated yet, so an early finalize could
+    /// mis-flag a Drop instantiation Copy. After the fixpoint (body checking),
+    /// late instantiations ARE finalized eagerly (the fixpoint won't revisit
+    /// them). See `finalize_late_struct_copy_flag`.
+    copy_flags_settled: bool,
     /// Slice 7GEN.5c: per-instantiation dedup. Keys are
     /// `(generic_name, [concrete_args])`; values are the StructId of
     /// the synthesized concrete struct. Ensures repeated references to
@@ -1513,6 +1551,37 @@ impl SemaCx<'_> {
     /// First pass: register every enum and struct *name* (and enum variants),
     /// without resolving struct field types yet. This lets struct fields
     /// reference any user-defined type regardless of declaration order.
+    /// Mangling-injectivity hardening: an INTERIOR `__` in a user-defined
+    /// type or function name is reserved for the compiler's monomorphization
+    /// mangling (`Box[i32]` → `Box__i32`, `h::[T]` → `h__T`). A literal
+    /// `struct Box__i32` next to a `Box[T]` template would collide with the
+    /// instantiation's symbol — two types under one name, one silently
+    /// shadowing the other (the `__` arg-joiner is not otherwise
+    /// injective). Reserving the sequence (as C reserves `__`) removes the
+    /// ambiguity at the root. LEADING underscores are exempt: a mangle
+    /// splits as `<template>__<args>` with a non-empty template, so a name
+    /// like `__doctest_helper_0` (compiler-synthesized doctest harness) or
+    /// `__x` can never be misread as an instantiation. Only the LAST dotted
+    /// segment is checked — resolver-qualified names embed file paths, and
+    /// a `my__utils.cplus` module must not taint every item it declares.
+    /// Extern fns are exempt (they bind existing C symbols like
+    /// `__errno_location` and never monomorphize).
+    fn reject_reserved_double_underscore(&mut self, kind: &str, name: &Ident) -> bool {
+        let user_part = name.name.rsplit('.').next().unwrap_or(&name.name);
+        if user_part.trim_start_matches('_').contains("__") {
+            self.err(
+                "E0917",
+                format!(
+                    "{kind} name `{user_part}` contains `__`, which is reserved for \
+                     compiler name mangling"
+                ),
+                name.span,
+            );
+            return true;
+        }
+        false
+    }
+
     fn collect_type_names(&mut self, p: &Program) {
         for item in &p.items {
             // Slice 4C: set current_file so diagnostics route to the
@@ -1520,6 +1589,9 @@ impl SemaCx<'_> {
             self.current_file = item.origin_file.clone();
             match &item.kind {
                 ItemKind::Enum(e) => {
+                    if self.reject_reserved_double_underscore("enum", &e.name) {
+                        continue;
+                    }
                     // An enum with zero variants is uninhabited: no value can
                     // ever be constructed, yet match exhaustiveness treats it
                     // as vacuously covered and the tag ABI lowers it as a plain
@@ -1600,6 +1672,9 @@ impl SemaCx<'_> {
                     self.enum_by_name.insert(e.name.name.clone(), id);
                 }
                 ItemKind::Struct(s) => {
+                    if self.reject_reserved_double_underscore("struct", &s.name) {
+                        continue;
+                    }
                     if self.type_name_taken(&s.name.name)
                         || self.struct_generic_templates.contains_key(&s.name.name)
                     {
@@ -1745,6 +1820,111 @@ impl SemaCx<'_> {
         self.current_file = None;
     }
 
+    /// Well-formedness: reject a struct/enum whose definition contains itself
+    /// *by value* (directly or through a cycle), which would have infinite
+    /// size. Recursion is only legal through a pointer/slice/fn-pointer
+    /// indirection (`*S`, `S[]`), which is finite. This is the analogue of
+    /// Rust's E0072. Runs after field/payload types are resolved; every
+    /// concrete struct/enum is checked (generic templates are skipped — their
+    /// instantiations are concrete defs checked in turn).
+    fn check_recursive_types(&mut self, p: &Program) {
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            match &item.kind {
+                ItemKind::Struct(s) if s.generic_params.is_empty() => {
+                    if let Some(&id) = self.struct_by_name.get(&s.name.name) {
+                        if self.type_node_is_infinite(TyNode::Struct(id)) {
+                            self.emit_infinite_type_error(&s.name.name, s.name.span);
+                        }
+                    }
+                }
+                ItemKind::Enum(e) if e.generic_params.is_empty() => {
+                    if let Some(&id) = self.enum_by_name.get(&e.name.name) {
+                        if self.type_node_is_infinite(TyNode::Enum(id)) {
+                            self.emit_infinite_type_error(&e.name.name, e.name.span);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.current_file = None;
+    }
+
+    fn emit_infinite_type_error(&mut self, name: &str, span: ByteSpan) {
+        self.err_note(
+            "E0913",
+            format!("recursive type `{name}` has infinite size: it contains itself by value"),
+            span,
+            vec![
+                "break the cycle with an indirection: store the recursive field \
+                 behind a pointer (`*T`) so the type has a finite size"
+                    .to_string(),
+                "a raw-pointer field needs `opaque` or a `fn drop(ref this)` \
+                 (see E0510)"
+                    .to_string(),
+            ],
+        );
+    }
+
+    /// The struct/enum nodes directly contained *by value* in `ty`. Walks
+    /// through fixed arrays (a non-empty `[T; N]` embeds `T` inline) but STOPS
+    /// at pointer/slice/fn-pointer indirection — those are finite (one word),
+    /// so recursion through them is legal.
+    fn byval_child_nodes(&self, ty: &Ty, out: &mut Vec<TyNode>) {
+        match ty {
+            Ty::Struct(id) => out.push(TyNode::Struct(*id)),
+            Ty::Enum(id) => out.push(TyNode::Enum(*id)),
+            // A zero-length array embeds nothing; a non-empty one embeds its
+            // element type inline.
+            Ty::Array(inner, n) if *n > 0 => self.byval_child_nodes(inner, out),
+            // RawPtr / Slice / FnPtr: indirection — the pointee is not stored
+            // inline, so it does not contribute to this type's size.
+            _ => {}
+        }
+    }
+
+    fn node_byval_children(&self, node: TyNode) -> Vec<TyNode> {
+        let mut out = Vec::new();
+        match node {
+            TyNode::Struct(id) => {
+                if let Some(def) = self.structs.get(id.0 as usize) {
+                    for (_, fty, _) in &def.fields {
+                        self.byval_child_nodes(fty, &mut out);
+                    }
+                }
+            }
+            TyNode::Enum(id) => {
+                if let Some(def) = self.enums.get(id.0 as usize) {
+                    for v in &def.variants {
+                        for pty in &v.payload {
+                            self.byval_child_nodes(pty, &mut out);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// True iff `start` can reach itself along by-value containment edges — an
+    /// occurs check. The `visited` set bounds the walk so the CHECKER never
+    /// loops on the very cycle it is detecting.
+    fn type_node_is_infinite(&self, start: TyNode) -> bool {
+        let mut stack = self.node_byval_children(start);
+        let mut visited: std::collections::HashSet<TyNode> = std::collections::HashSet::new();
+        while let Some(node) = stack.pop() {
+            if node == start {
+                return true;
+            }
+            if !visited.insert(node) {
+                continue;
+            }
+            stack.extend(self.node_byval_children(node));
+        }
+        false
+    }
+
     /// Compute `is_copy` for every user-defined struct: a struct is `Copy`
     /// iff every field type is `Copy`. The check is iterated to a fixpoint
     /// because struct A's `is_copy` may depend on struct B's, and the
@@ -1810,6 +1990,69 @@ impl SemaCx<'_> {
             if !changed {
                 break;
             }
+        }
+    }
+
+    /// Finalize the `is_drop`/`is_copy` flags of a struct instantiation (or
+    /// synthesized tuple) at CREATION time. The early `compute_struct_copy_flags`
+    /// fixpoint runs once, before body checking — an instantiation first
+    /// materialized *during* body checking (`let q = p;` where `Pair[i32,i32]`
+    /// was never referenced earlier) is never revisited, so it kept its
+    /// placeholder `is_copy: false` and an all-Copy value was wrongly treated as
+    /// move-only (spurious E0335). Computing the flag here from the already-
+    /// resolved fields closes that. Drop status is read from the template's
+    /// generic impl methods (the instantiation's own method table is backfilled
+    /// lazily and is empty at this point) — so a `Vec[i32]` is still correctly
+    /// non-Copy. Monotone: only ever sets `is_copy` true, never clobbering a
+    /// value the fixpoint will later raise.
+    fn finalize_late_struct_copy_flag(&mut self, id: StructId) {
+        // Inert until the initial fixpoint has settled — early instantiations
+        // are the fixpoint's job (the template drop table isn't ready yet).
+        if !self.copy_flags_settled {
+            return;
+        }
+        let idx = id.0 as usize;
+        let is_drop = {
+            let s = &self.structs[idx];
+            s.is_drop
+                || s.methods.contains_key("drop")
+                || s.generic_origin.as_ref().is_some_and(|(tmpl, _)| {
+                    self.generic_impl_methods
+                        .get(tmpl)
+                        .is_some_and(|ts| ts.iter().any(|t| t.name == "drop"))
+                })
+        };
+        self.structs[idx].is_drop = is_drop;
+        if is_drop {
+            return; // Drop types are never Copy.
+        }
+        let all_copy = self.structs[idx]
+            .fields
+            .iter()
+            .all(|(_, ty, _)| self.is_copy(ty));
+        if all_copy {
+            self.structs[idx].is_copy = true;
+        }
+    }
+
+    /// Enum counterpart to `finalize_late_struct_copy_flag`. Mirrors
+    /// `compute_enum_copy_flags`: a plain (payload-less) enum is Copy; a tagged
+    /// enum is Copy iff every payload type is Copy.
+    fn finalize_late_enum_copy_flag(&mut self, id: EnumId) {
+        if !self.copy_flags_settled {
+            return;
+        }
+        let idx = id.0 as usize;
+        let copy_now = if !self.enums[idx].is_tagged {
+            true
+        } else {
+            self.enums[idx]
+                .variants
+                .iter()
+                .all(|v| v.payload.iter().all(|t| self.is_copy(t)))
+        };
+        if copy_now {
+            self.enums[idx].is_copy = true;
         }
     }
 
@@ -2363,6 +2606,7 @@ impl SemaCx<'_> {
     ///     caller-dropped via the auto-clone-on-return safety net
     ///     (`borrowed_params`), so the callee frees nothing — `Ty::String`
     ///     therefore returns `false` here even under `take`.
+    ///
     /// Returning `true` means this parameter's implicit teardown is the
     /// callee's, so a `#[no_alloc]` function must reject it when that teardown
     /// allocates (`!no_alloc_safe_drop`).
@@ -2613,8 +2857,8 @@ impl SemaCx<'_> {
                         .collect()
                 };
                 let resolved_return = {
-                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    s
+                    
+                    self.subst_ty_deep(&t.return_type, &method_subst)
                 };
                 self.structs[id.0 as usize].methods.insert(
                     t.name.clone(),
@@ -2840,7 +3084,7 @@ impl SemaCx<'_> {
         self.type_params_stack.pop();
         self.generic_impl_methods
             .entry(b.target.name.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(templates);
     }
 
@@ -2853,6 +3097,7 @@ impl SemaCx<'_> {
     /// Reports:
     /// - **E0301** — duplicate interface name (shares the type-namespace
     ///   collision rule with structs/enums).
+    ///
     /// Slice 7GEN.6: register the compiler-blessed interfaces
     /// (`Copy`, `Eq`, `Ord`, `Hash`, `Clone`) into the interfaces
     /// table. Users implement most of them manually; `Copy` is a
@@ -3079,10 +3324,10 @@ impl SemaCx<'_> {
             if iface_name.name == "Send" || iface_name.name == "Sync" {
                 if !b.methods.is_empty() {
                     diags.push(Diag {
-                        code: "E0860",
+                        code: "E0915",
                         msg: format!(
                             "`impl {}: {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
-                            iface_name.name, b.target.name
+                            b.target.name, iface_name.name
                         ),
                         span: iface_name.span,
                         origin_file: item.origin_file.clone(),
@@ -3109,7 +3354,7 @@ impl SemaCx<'_> {
             // Empty interface impls are meaningful only for marker assertions.
             if b.methods.is_empty() {
                 diags.push(Diag {
-                    code: "E0861",
+                    code: "E0916",
                     msg: format!(
                         "empty `impl` applies only to the `Send` / `Sync` markers, not `{}`",
                         iface_name.name
@@ -3186,9 +3431,7 @@ impl SemaCx<'_> {
                 let Some(impl_sig) = target_def.methods.get(mname) else {
                     // E0503 — missing method.
                     let span = b
-                        .methods
-                        .iter()
-                        .next()
+                        .methods.first()
                         .map(|m| m.name.span)
                         .unwrap_or(b.target.span);
                     diags.push(Diag {
@@ -3271,8 +3514,60 @@ impl SemaCx<'_> {
                 }
                 continue;
             }
+            // A generic-target impl block (`impl Box[T] { ... }`) has no
+            // concrete struct/enum id yet — its methods are checked per
+            // instantiation. But nothing name-resolves the TEMPLATE body, so an
+            // undefined name (typo, out-of-scope match binding) sailed through
+            // `cpc check` and panicked codegen at the instantiation
+            // (`.expect("sema validated")`). Generic FREE fns already get this
+            // via `check_function`'s `fns_generic` path; this closes the same
+            // gap for generic methods with a name-resolution pass (no typing —
+            // that stays per-instantiation).
+            if !b.target_generic_params.is_empty() {
+                for m in &b.methods {
+                    self.check_generic_method_body_names(b, m);
+                }
+            }
         }
         self.current_file = None;
+    }
+
+    /// Name-resolution pass over a generic-impl method body. Verifies every
+    /// bare identifier used in value position resolves to a parameter, the
+    /// receiver, a local binding (let / destructure / for / match-arm /
+    /// if-let / while-let / guard-let), or a global (function or `static`).
+    /// Anything else is E0300 at the use site — the same error the concrete
+    /// path already produces, instead of a codegen ICE.
+    ///
+    /// Only NAMES are checked here (typing stays per-instantiation): `const`
+    /// uses are already substituted to literals by `lower`, and struct/enum
+    /// names never appear as bare value identifiers, so the global set is just
+    /// functions + statics. Lexically scoped so an out-of-scope match binding
+    /// (`Some(v) => v, None => v`) is caught, not just names bound nowhere.
+    fn check_generic_method_body_names(&mut self, b: &crate::ast::ImplBlock, m: &Method) {
+        let mut globals: std::collections::HashSet<String> = std::collections::HashSet::new();
+        globals.extend(self.fns.keys().cloned());
+        globals.extend(self.fns_generic.keys().cloned());
+        globals.extend(self.statics_table.keys().cloned());
+        globals.extend(self.extern_fns.iter().cloned());
+        // Base scope: the receiver and every parameter. Method-level and
+        // impl-level generic params are TYPE names — they never appear as bare
+        // value identifiers, so they don't belong in the value scope.
+        let _ = b;
+        let mut base: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if m.receiver.is_some() {
+            base.insert("this".to_string());
+            base.insert("self".to_string());
+        }
+        for p in &m.params {
+            base.insert(p.name.name.clone());
+        }
+        let mut scopes: Vec<std::collections::HashSet<String>> = vec![base];
+        let mut undefined: Vec<(String, ByteSpan)> = Vec::new();
+        walk_block_names(&m.body, &globals, &mut scopes, &mut undefined);
+        for (name, span) in undefined {
+            self.err("E0300", format!("undefined name `{name}`"), span);
+        }
     }
 
     /// v0.0.5 Phase 2C: type-check the body of a method declared inside
@@ -3567,6 +3862,8 @@ impl SemaCx<'_> {
             // calls are bare expressions — the old `unsafe` gate is gone).
             if f.is_extern {
                 self.extern_fns.insert(f.name.name.clone());
+            } else {
+                self.reject_reserved_double_underscore("function", &f.name);
             }
             // Phase 11 / ObjC interop: `#[link_name = "..."]` symbol alias.
             // Extract here once and stash on FnSig; gate placement on extern.
@@ -3598,16 +3895,12 @@ impl SemaCx<'_> {
             // are visible while resolving the function's parameter and
             // return types.
             self.push_type_params(&f.generic_params);
-            // v0.0.5 Phase 1A: auto-promote non-Copy value params to `move`
-            // semantics. A param `x: T` where T is non-Copy and there's no
-            // explicit `mut` / `move` annotation behaves as if `move x: T`
-            // was written — caller's binding marked moved at the call site,
-            // callee owns. Closes the value-pass-without-`move` double-free
-            // (`fn echo(x: string) -> string { return x; }` no longer
-            // double-frees). Read-only callees on non-Copy types now also
-            // consume the source — callers needing to retain ownership
-            // clone explicitly. Explicit `mut` keeps its pointer-pass
-            // semantics; explicit `move` is preserved verbatim.
+            // v0.0.24 #9: parameter ownership markers are propagated verbatim —
+            // there is NO auto-promotion of a bare non-Copy value param to a
+            // move. A bare `x: T` is a read-only borrow (the caller keeps and
+            // drops it); only an explicit `take` consumes the argument, and
+            // `ref` is a write-back borrow. Call-site consumption is decided by
+            // `consume_value_arg` from these flags, not inferred from the type.
             let params: Vec<ParamSig> = f
                 .params
                 .iter()
@@ -4288,7 +4581,8 @@ impl SemaCx<'_> {
     /// prologue/epilogue, so its body must be inline asm only — anything else
     /// would read/write a stack frame that doesn't exist. Each statement must
     /// be `#asm(...)` (optionally wrapped in a plain `{ ... }` block); a non-asm
-    /// statement or a value tail is **E0906**.
+    /// statement or a value tail is **E0909** (E0906 is the `#[no_alloc]`
+    /// violation).
     fn check_naked(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
@@ -4439,7 +4733,6 @@ impl SemaCx<'_> {
                     span,
                 );
             }
-            return;
         }
         // Unresolved callee — likely a method-dispatch shape we don't
         // statically resolve here, or a name the resolver knows under a form
@@ -4612,7 +4905,6 @@ impl SemaCx<'_> {
                     span,
                 );
             }
-            return;
         }
         // Unresolved callee — method-dispatch shape we don't statically
         // resolve here. Skip silently; the rule blocks the common cases
@@ -4639,6 +4931,7 @@ impl SemaCx<'_> {
     ///     an unconditional direct release (`{ free(this.f); }`) or a
     ///     release guarded by a null-test on the same field
     ///     (`if this.f.is_not_null() { ... }` / `if !this.f.is_null() { ... }`).
+    ///
     /// Anything else (no `drop`, an omitted field, or a release hidden behind an
     /// arbitrary condition / loop / helper call) is **E0510**. The check is a
     /// structural pattern match over the `drop` body — no dataflow, no
@@ -4724,7 +5017,7 @@ impl SemaCx<'_> {
             b.stmts.iter().any(|s| match &s.kind {
                 StmtKind::Expr(e) | StmtKind::Defer(e) => expr_releases(e, field),
                 _ => false,
-            }) || b.tail.as_ref().map_or(false, |t| expr_releases(t, field))
+            }) || b.tail.as_ref().is_some_and(|t| expr_releases(t, field))
         }
 
         /// A direct release of `field` APPEARS somewhere in the drop body —
@@ -4997,7 +5290,7 @@ impl SemaCx<'_> {
                             let (sz, _) = self.layout_of(pty);
                             bytes = bytes.saturating_add((sz + 7) & !7);
                         }
-                        let slots = (bytes + 7) / 8;
+                        let slots = bytes.div_ceil(8);
                         if slots > max_slots {
                             max_slots = slots;
                         }
@@ -6715,7 +7008,7 @@ impl SemaCx<'_> {
                 span,
             );
         }
-        if args.len() < 1 || args.len() > 2 {
+        if args.is_empty() || args.len() > 2 {
             self.err("E0903",
                 format!("`#compile_shader` takes 1 or 2 string-literal arguments (path, [target]); got {}", args.len()),
                 span);
@@ -7179,7 +7472,7 @@ impl SemaCx<'_> {
         template: &str,
         operands: &[AsmOperand],
         _clobbers: &[String],
-        span: ByteSpan,
+        _span: ByteSpan,
     ) -> Ty {
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for op in operands {
@@ -7270,6 +7563,7 @@ impl SemaCx<'_> {
     /// `std::env::var` at sema time (cpc's own process environment).
     /// Errors:
     ///   - **E0876**: environment variable not set when cpc was invoked.
+    ///
     /// On success, stashes the resolved value in `env_vars_table` keyed
     /// by call span; codegen reads from there to emit the global. Result
     /// type is `str` (the fat-pointer view over the value's bytes).
@@ -7628,6 +7922,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         });
         self.struct_by_name.insert(mangled.clone(), id);
         self.struct_instantiations.insert(key, id);
+        self.finalize_late_struct_copy_flag(id);
         Ty::Struct(id)
     }
 
@@ -7730,7 +8025,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Definite-assignment flow merge across arms: snapshot pre-match
         // state, run each arm from that state, intersect post-arm states.
         let pre_match = self.snapshot_assigned();
-        let mut merged_post: Option<Vec<Vec<(String, bool, BTreeSet<String>)>>> = None;
+        let mut merged_post: Option<AssignedSnapshot> = None;
         // v0.0.15 flow-sensitive moves: arms are mutually exclusive, so a move
         // in one arm must not poison a binding for a sibling arm; and a move in
         // a *diverging* arm (the `guard let` else, an early `return`) must not
@@ -7825,12 +8120,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             self.scopes.pop();
             // Capture this arm's post-state for flow merging, then reset
-            // for the next arm.
-            let after_arm = self.snapshot_assigned();
-            merged_post = Some(match merged_post {
-                None => after_arm,
-                Some(prev) => self.intersect_assigned(&prev, &after_arm),
-            });
+            // for the next arm. A diverging arm (`_ => return`) never falls
+            // through to the join, so — exactly as with its moves below — it
+            // imposes NO definite-assignment constraint and must be excluded
+            // from the intersection (else a binding a surviving arm assigned is
+            // spuriously demoted → false E0345).
+            if !arm_diverges {
+                let after_arm = self.snapshot_assigned();
+                merged_post = Some(match merged_post {
+                    None => after_arm,
+                    Some(prev) => self.intersect_assigned(&prev, &after_arm),
+                });
+            }
             // v0.0.15: remember a fall-through arm's moves to fold in after the
             // match; a diverging arm's moves are dropped (they never reach past
             // the match). `arm_diverges` was computed above.
@@ -7955,7 +8256,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         || self.enums[enum_id.0 as usize]
                             .generic_base
                             .as_deref()
-                            .map_or(false, |g| g == pat_enum.name)
+                            .is_some_and(|g| g == pat_enum.name)
                 };
                 if !pattern_matches {
                     let display = if type_args.is_empty() {
@@ -8575,7 +8876,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let after_else = self.snapshot_assigned();
         let moved_after_else = self.snapshot_moved();
         let else_diverges = else_branch.is_some_and(expr_diverges);
-        let merged = self.intersect_assigned(&after_then, &after_else);
+        // Definite-assignment merge must credit divergence, exactly as the
+        // move-merge below does: a branch that `return`s / `break`s /
+        // `continue`s never falls through, so it imposes NO constraint on what
+        // is definitely assigned at the join. Intersecting it in anyway
+        // spuriously demoted a binding the surviving branch DID assign
+        // (`if c { x = 1; } else { return; } use(x);` → false E0345).
+        let merged = match (then_diverges, else_diverges) {
+            (false, false) => self.intersect_assigned(&after_then, &after_else),
+            (true, false) => after_else.clone(),
+            (false, true) => after_then.clone(),
+            // Both diverge: the join is unreachable; the intersection is a
+            // harmless, conservative choice.
+            (true, true) => self.intersect_assigned(&after_then, &after_else),
+        };
         self.restore_assigned(&merged);
         // v0.0.15 flow-sensitive moves: a binding is moved after the `if` iff it
         // was moved before, or moved by a branch that *falls through*. Moves in a
@@ -8610,7 +8924,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     /// Snapshot the assigned-state and borrow provenance of every binding
     /// currently in scope. Used for flow merging at `if`/`match` boundaries.
-    fn snapshot_assigned(&self) -> Vec<Vec<(String, bool, BTreeSet<String>)>> {
+    fn snapshot_assigned(&self) -> AssignedSnapshot {
         self.scopes
             .iter()
             .map(|scope| {
@@ -8625,7 +8939,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Restore each binding's flow state from a prior snapshot. The
     /// scope stack shape must match (same names per frame). Used to reset
     /// state before running a parallel control-flow branch.
-    fn restore_assigned(&mut self, snap: &[Vec<(String, bool, BTreeSet<String>)>]) {
+    fn restore_assigned(&mut self, snap: &[ScopeAssigned]) {
         for (frame, snap_frame) in self.scopes.iter_mut().zip(snap.iter()) {
             for (name, was_assigned, borrow_roots) in snap_frame {
                 if let Some(info) = frame.get_mut(name) {
@@ -8641,9 +8955,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// remains visible after the merge.
     fn intersect_assigned(
         &self,
-        a: &[Vec<(String, bool, BTreeSet<String>)>],
-        b: &[Vec<(String, bool, BTreeSet<String>)>],
-    ) -> Vec<Vec<(String, bool, BTreeSet<String>)>> {
+        a: &[ScopeAssigned],
+        b: &[ScopeAssigned],
+    ) -> AssignedSnapshot {
         a.iter()
             .zip(b.iter())
             .map(|(fa, fb)| {
@@ -8853,53 +9167,55 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if takes_fnptr_branch {
             if let Ty::Struct(id) = &recv_ty {
                 let sdef = &self.structs[id.0 as usize];
-                if let Some((_, ft, _)) = sdef.field_with_pub(&name.name) {
-                    if let Ty::FnPtr {
+                if let Some((
+                    _,
+                    Ty::FnPtr {
                         params,
                         param_takes,
                         param_refs,
                         return_type,
-                    } = ft
-                    {
-                        if !type_args.is_empty() {
-                            self.err(
-                                "E0501",
-                                "indirect calls through a fn-pointer field do not accept type arguments".to_string(),
-                                callee.span,
-                            );
-                        }
-                        if args.len() != params.len() {
-                            self.err(
-                                "E0308",
-                                format!(
-                                    "wrong number of arguments: fn-pointer field `{}` expects {}, got {}",
-                                    name.name,
-                                    params.len(),
-                                    args.len()
-                                ),
-                                call_span,
-                            );
-                            for a in args {
-                                let _ = self.check_expr(a, None);
-                            }
-                            return *return_type;
-                        }
-                        // v0.0.24 #9: consume `take` args, borrow bare args,
-                        // require a `var` place for `ref` args (see the Ident
-                        // fn-pointer branch above).
-                        for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
-                            self.check_arg_with_move(
-                                a,
-                                &ParamSig {
-                                    ty: p.clone(),
-                                    mutable: param_refs.get(i).copied().unwrap_or(false),
-                                    move_: param_takes.get(i).copied().unwrap_or(false),
-                                    borrow_: false,
-                                },
-                            );
+                    },
+                    _,
+                )) = sdef.field_with_pub(&name.name)
+                {
+                    if !type_args.is_empty() {
+                        self.err(
+                            "E0501",
+                            "indirect calls through a fn-pointer field do not accept type arguments".to_string(),
+                            callee.span,
+                        );
+                    }
+                    if args.len() != params.len() {
+                        self.err(
+                            "E0308",
+                            format!(
+                                "wrong number of arguments: fn-pointer field `{}` expects {}, got {}",
+                                name.name,
+                                params.len(),
+                                args.len()
+                            ),
+                            call_span,
+                        );
+                        for a in args {
+                            let _ = self.check_expr(a, None);
                         }
                         return *return_type;
                     }
+                    // v0.0.24 #9: consume `take` args, borrow bare args,
+                    // require a `var` place for `ref` args (see the Ident
+                    // fn-pointer branch above).
+                    for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
+                        self.check_arg_with_move(
+                            a,
+                            &ParamSig {
+                                ty: p.clone(),
+                                mutable: param_refs.get(i).copied().unwrap_or(false),
+                                move_: param_takes.get(i).copied().unwrap_or(false),
+                                borrow_: false,
+                            },
+                        );
+                    }
+                    return *return_type;
                 }
             }
             }
@@ -9174,15 +9490,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         for (a, expected) in args.iter().zip(sig.params.iter()) {
             self.check_arg_with_move(a, expected);
         }
-        // Slice 10.FFI.4: type-check the variadic tail. C's varargs ABI
-        // requires the caller to pass concrete types (no implicit
-        // promotion modeling in this first cut); just sema-check that
-        // each tail arg has *some* well-typed value.
-        if sig.is_variadic {
-            for a in args.iter().skip(sig.params.len()) {
-                let _ = self.check_expr(a, None);
-            }
-        }
+        // Slice 10.FFI.4: type-check the tail args beyond the fixed params —
+        // the variadic tail of an extern fn, or the excess of a mis-arity call.
+        // C's varargs ABI requires concrete types (no implicit promotion
+        // modeling in this first cut); just check each has *some* well-typed
+        // value. One loop, not two — a second identical pass double-emitted any
+        // diagnostic on a tail arg (e.g. E0335 on a moved `printf` arg).
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
         }
@@ -9206,6 +9519,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ///   return-only params are deferred.
     /// - **E0302** — type mismatch when the same Param infers two
     ///   different concrete types across arguments.
+    ///
     /// v0.0.3 Phase 5 Slice 5B: type-check `#thread_spawn::[O](f)`
     /// and `#thread_join::[O](h)`. Both intrinsics take one
     /// turbofish type argument and one value argument; both are bare
@@ -9601,7 +9915,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         let i_ty = self.resolve_type(&type_args[0]);
         let o_ty = self.resolve_type(&type_args[1]);
-        let _input = self.check_arg_with_move(
+        self.check_arg_with_move(
             &args[0],
             &ParamSig {
                 ty: i_ty.clone(),
@@ -9722,9 +10036,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // value and pass through untouched. v0.0.23: peel closes the
                 // `g({ x })` hole (no `is_addr_of_place` gate, which skipped
                 // wrapped bindings).
-                if param.move_ && !self.is_copy(&expected) && !matches!(actual_before, Ty::Error) {
-                    self.reject_partial_move_of_drop(arg, &expected);
-                    self.mark_moved_through_wrappers(arg, &expected);
+                if !matches!(actual_before, Ty::Error) {
+                    self.consume_generic_take_arg(param, arg, &expected);
                 }
             }
             if had_err {
@@ -9792,6 +10105,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
+        // Same `take` consumption as the turbofish branch. Deferred to here
+        // (not the unification loop) because the substituted param type needs
+        // the completed `subst`; every declared generic param is bound at this
+        // point. Without this the inference path type-checked `take` args but
+        // never marked them moved — the caller kept using a value whose drop
+        // had already run inside the callee (safe-code use-after-free).
+        for (param, arg) in gsig.params.iter().zip(args.iter()) {
+            let expected = self.subst_ty_deep(&param.ty, &subst);
+            self.consume_generic_take_arg(param, arg, &expected);
+        }
         // Slice 7GEN.5e step 4: bound check at the inference path.
         self.check_generic_bounds(
             &gsig.generic_params,
@@ -9807,6 +10130,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.call_monos.insert(call_span, concrete_args.clone());
         // Substitute the return type and return it as the call's type.
         self.subst_ty_deep(&gsig.return_type, &subst)
+    }
+
+    /// v0.0.14 soundness + v0.0.24 #9 for generic calls: a `take` param
+    /// consumes its non-Copy argument (partial-move rejection + move marking
+    /// through wrappers); a bare param is a read-only borrow and must not
+    /// move. Shared by BOTH branches of `check_generic_named_call` — the
+    /// turbofish branch had this inline while the inference branch shipped
+    /// without it, so `sink(s)` left `s` live after its drop ran inside the
+    /// callee (safe-code use-after-free). `expected` is the param type after
+    /// substitution.
+    fn consume_generic_take_arg(&mut self, param: &ParamSig, arg: &Expr, expected: &Ty) {
+        if param.move_ && !self.is_copy(expected) {
+            self.reject_partial_move_of_drop(arg, expected);
+            self.mark_moved_through_wrappers(arg, expected);
+        }
     }
 
     /// Shared receiver + arity checks for a resolved method call. The concrete
@@ -9926,6 +10264,41 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let _ = self.check_expr(a, None);
         }
         self.subst_ty_deep(&sig.return_type, subst)
+    }
+
+    /// Enforce an `impl Container[T: Bound] { fn m }` block bound at a call
+    /// site: the receiver's concrete `T` must satisfy the bound the method's
+    /// originating impl declared, but only when *that* method is called (so a
+    /// non-Copy `Maybe[R]` stays usable through its unbounded methods). Shared
+    /// by the struct and enum receiver paths — the enum path shipped without
+    /// it, so an `impl Maybe[T: Copy]` bound was silently unenforced, letting a
+    /// `Maybe[NonCopy].get()` bit-copy an owning value (double-free). Struct
+    /// declaration bounds are enforced separately at instantiation.
+    /// `generic_origin` is the receiver def's `(template_name, concrete_args)`.
+    fn check_impl_block_bounds_at_call(
+        &mut self,
+        generic_origin: Option<(String, Vec<Ty>)>,
+        method_name: &str,
+        call_span: ByteSpan,
+    ) {
+        let Some((tmpl_name, concrete_args)) = generic_origin else {
+            return;
+        };
+        let tmpl = self
+            .generic_impl_methods
+            .get(&tmpl_name)
+            .and_then(|ts| ts.iter().find(|t| t.name == method_name).cloned());
+        if let Some(t) = tmpl {
+            if t.impl_param_bounds.iter().any(|b| !b.is_empty()) {
+                self.check_generic_bounds(
+                    &t.impl_generic_params,
+                    &t.impl_param_bounds,
+                    &concrete_args,
+                    call_span,
+                    &format!("method `{}::{}`", tmpl_name, method_name),
+                );
+            }
+        }
     }
 
     fn check_method_call(
@@ -10196,28 +10569,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // from `impl Box[T: Copy] { fn get }` requires the receiver's concrete
         // `T` to satisfy `Copy` — but only when *that* method is called, so a
         // non-Copy `Box[R]` stays usable through its unbounded methods (`new`,
-        // `set`, `unwrap`). The struct's `generic_origin` carries the concrete
-        // args; the method's originating impl bounds live on its template.
-        // (Struct-declaration bounds are enforced separately at instantiation;
-        // before this, impl-block bounds parsed but were silently ignored.)
-        if let Some((tmpl_name, concrete_args)) = self.structs[id.0 as usize].generic_origin.clone()
-        {
-            let tmpl = self
-                .generic_impl_methods
-                .get(&tmpl_name)
-                .and_then(|ts| ts.iter().find(|t| t.name == name.name).cloned());
-            if let Some(t) = tmpl {
-                if t.impl_param_bounds.iter().any(|b| !b.is_empty()) {
-                    self.check_generic_bounds(
-                        &t.impl_generic_params,
-                        &t.impl_param_bounds,
-                        &concrete_args,
-                        call_span,
-                        &format!("method `{}::{}`", tmpl_name, name.name),
-                    );
-                }
-            }
-        }
+        // `set`, `unwrap`). Shared with the enum path via the helper.
+        let struct_origin = self.structs[id.0 as usize].generic_origin.clone();
+        self.check_impl_block_bounds_at_call(struct_origin, &name.name, call_span);
         if !self.check_method_receiver(
             receiver,
             &Ty::Struct(id),
@@ -10273,6 +10627,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         call_span: ByteSpan,
         receiver: &Expr,
     ) -> Ty {
+        // Enforce `impl Maybe[T: Copy] { fn get }` block bounds at the call
+        // site, exactly as the struct path does — the enum path omitted this,
+        // so the bound that prevents a non-Copy bit-copy (double-free) was
+        // silently unenforced for enum receivers.
+        let enum_origin = self.enums[enum_id.0 as usize].generic_origin.clone();
+        self.check_impl_block_bounds_at_call(enum_origin, &name.name, call_span);
         // Same shared receiver check as the struct + generic paths.
         if !self.check_method_receiver(
             receiver,
@@ -12190,6 +12550,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 call_span,
             );
         }
+        // Enforce `impl Box[T: Copy] { fn make }` block bounds for an
+        // associated-fn call (`Box[NC]::make()`), same as the instance-method
+        // paths — the receiver's concrete args live on the owner def's
+        // `generic_origin`.
+        let assoc_origin = match owner {
+            MethodOwner::Struct(id) => self
+                .structs
+                .get(id.0 as usize)
+                .and_then(|d| d.generic_origin.clone()),
+            MethodOwner::Enum(id) => self
+                .enums
+                .get(id.0 as usize)
+                .and_then(|d| d.generic_origin.clone()),
+        };
+        self.check_impl_block_bounds_at_call(assoc_origin, &method_seg.name, call_span);
         // Slice 7GEN.5e: generic-method dispatch on assoc-call form
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {
@@ -12224,6 +12599,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ///   - Plain Ident referencing a local: mark the binding as moved.
     ///   - Anything else (Field/Index/temp): reject as E0337 — partial moves
     ///     out of struct fields or array slots are deferred to Phase 5/6.
+    ///
     /// `Copy`-typed arguments are unaffected — the `take` marker on a Copy
     /// parameter is redundant (a future E0336 lint will suggest removing it).
     /// Quiet place typing for bound-method-reference RECEIVERS. Like
@@ -13117,7 +13493,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     } else if rt != Ty::Error {
                         self.err(
                             "E0302",
-                            format!("`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function"),
+                            "`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function".to_string(),
                             lhs.span,
                         );
                     }
@@ -13126,7 +13502,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if lt.is_struct() {
                     self.err(
                         "E0302",
-                        format!("`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function"),
+                        "`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function".to_string(),
                         lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -13383,20 +13759,81 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             && matches!(target_ty, Ty::Struct(id) if self.designated_string_struct == Some(*id))
     }
 
+    /// Validate a compound-assign operator against its target type: arithmetic
+    /// ops (`+=`, `-=`, `*=`, `/=`, `%=`) need a numeric type; bitwise/shift
+    /// (`&=`, `|=`, `^=`, `<<=`, `>>=`) need an integer. No-op for plain `=`.
+    /// Shared by the local-binding and `static` assignment paths so a
+    /// non-numeric `static` (`FLAG += true` where `FLAG: bool`) is rejected
+    /// identically to a local — the static fast-path used to return before this.
+    fn check_compound_assign_op_type(
+        &mut self,
+        op: AssignOp,
+        target_ty: &Ty,
+        value_ty: &Ty,
+        span: ByteSpan,
+    ) {
+        if matches!(op, AssignOp::Assign)
+            || matches!(target_ty, Ty::Error)
+            || matches!(value_ty, Ty::Error)
+        {
+            return;
+        }
+        let (op_label, is_arith, is_bitwise) = match op {
+            AssignOp::AddAssign => ("`+=`", true, false),
+            AssignOp::SubAssign => ("`-=`", true, false),
+            AssignOp::MulAssign => ("`*=`", true, false),
+            AssignOp::DivAssign => ("`/=`", true, false),
+            AssignOp::ModAssign => ("`%=`", true, false),
+            AssignOp::BitAndAssign => ("`&=`", false, true),
+            AssignOp::BitOrAssign => ("`|=`", false, true),
+            AssignOp::BitXorAssign => ("`^=`", false, true),
+            AssignOp::ShlAssign => ("`<<=`", false, true),
+            AssignOp::ShrAssign => ("`>>=`", false, true),
+            AssignOp::Assign => unreachable!(),
+        };
+        let int_ok = target_ty.is_signed_int() || target_ty.is_unsigned_int();
+        let arith_ok = int_ok || matches!(target_ty, Ty::F32 | Ty::F64);
+        if is_arith && !arith_ok {
+            self.err(
+                "E0302",
+                format!(
+                    "{op_label} requires a numeric type, got `{}`",
+                    ty_display(target_ty)
+                ),
+                span,
+            );
+        }
+        if is_bitwise && !int_ok {
+            self.err(
+                "E0302",
+                format!(
+                    "{op_label} requires an integer type, got `{}`",
+                    ty_display(target_ty)
+                ),
+                span,
+            );
+        }
+    }
+
     fn check_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr, span: ByteSpan) -> Ty {
         // v0.0.9 Phase 4: assignment to a module-scope `static`.
         // Routed before the local-binding path because static names
         // don't appear in `self.scopes`.
         // v0.0.24 de-Rust (#9 stage 3d): every `static` is mutable and access is
         // bare — there is no immutable `static` (E0305) and no `unsafe` gate on
-        // the write (E0X34 dropped; the marker is the `static` declaration
+        // the write (the old write-accountability code was dropped; the marker
+        // is the `static` declaration
         // itself). Cross-`static` data races are the developer's responsibility
         // (mem.md). Raw deref/cast operations are likewise bare — they
         // self-flag by syntax (no `unsafe` wrapper, which is removed).
         if let ExprKind::Ident(name) = &target.kind {
             if self.lookup_local(name).is_none() {
                 if let Some(info) = self.statics_table.get(name).cloned() {
-                    let _ = self.check_expr(value, Some(info.ty));
+                    let value_ty = self.check_expr(value, Some(info.ty.clone()));
+                    // The static fast-path short-circuits binding-kind
+                    // resolution only — the operator's legality still applies,
+                    // so `FLAG += true` (bool static) is rejected like a local.
+                    self.check_compound_assign_op_type(op, &info.ty, &value_ty, span);
                     return Ty::Unit;
                 }
             }
@@ -13502,47 +13939,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // (through wrappers) so a later use of it is E0335, like `let`.
             self.mark_moved_through_wrappers(value, &value_ty);
         }
-        if !matches!(op, AssignOp::Assign) && target_ty != Ty::Error && value_ty != Ty::Error {
-            // Check the op is type-compatible with target_ty. For arithmetic
-            // ops (+=, -=, *=, /=, %=) — operand must be a numeric type
-            // (and float for /% is rejected). For bitwise/shift — operand
-            // must be an integer.
-            let (op_label, is_arith, is_bitwise) = match op {
-                AssignOp::AddAssign => ("`+=`", true, false),
-                AssignOp::SubAssign => ("`-=`", true, false),
-                AssignOp::MulAssign => ("`*=`", true, false),
-                AssignOp::DivAssign => ("`/=`", true, false),
-                AssignOp::ModAssign => ("`%=`", true, false),
-                AssignOp::BitAndAssign => ("`&=`", false, true),
-                AssignOp::BitOrAssign => ("`|=`", false, true),
-                AssignOp::BitXorAssign => ("`^=`", false, true),
-                AssignOp::ShlAssign => ("`<<=`", false, true),
-                AssignOp::ShrAssign => ("`>>=`", false, true),
-                AssignOp::Assign => unreachable!(),
-            };
-            let int_ok = target_ty.is_signed_int() || target_ty.is_unsigned_int();
-            let arith_ok = int_ok || matches!(target_ty, Ty::F32 | Ty::F64);
-            if is_arith && !arith_ok {
-                self.err(
-                    "E0302",
-                    format!(
-                        "{op_label} requires a numeric type, got `{}`",
-                        ty_display(&target_ty)
-                    ),
-                    span,
-                );
-            }
-            if is_bitwise && !int_ok {
-                self.err(
-                    "E0302",
-                    format!(
-                        "{op_label} requires an integer type, got `{}`",
-                        ty_display(&target_ty)
-                    ),
-                    span,
-                );
-            }
-        }
+        self.check_compound_assign_op_type(op, &target_ty, &value_ty, span);
         if matches!(op, AssignOp::Assign) {
             if let ExprKind::Ident(name) = &target.kind {
                 let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
@@ -14072,6 +14469,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         });
         self.struct_by_name.insert(mangled.clone(), id);
         self.struct_instantiations.insert(key, id);
+        self.finalize_late_struct_copy_flag(id);
         // Slice 7GEN.5e step 3: populate methods on the synthesized
         // StructDef from any `impl Vec[T] { ... }` blocks registered
         // for this template. Substitute impl-level `T` references
@@ -14112,8 +14510,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .collect()
                 };
                 let resolved_return = {
-                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    s
+                    
+                    self.subst_ty_deep(&t.return_type, &method_subst)
                 };
                 self.structs[id.0 as usize].methods.insert(
                     t.name.clone(),
@@ -14469,6 +14867,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.enum_by_name.insert(mangled, id);
         self.enum_instantiations.insert(key, id);
         self.populate_generic_enum_methods(id, name, &arg_tys);
+        self.finalize_late_enum_copy_flag(id);
         Ty::Enum(id)
     }
 
@@ -14731,7 +15130,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // v0.0.9 Phase 4: module-scope `static` lookup.
         // v0.0.24 de-Rust (#9 stage 3d): `static` access is bare — a `static`
-        // read needs no `unsafe` gate (E0X33 dropped). The `static` declaration
+        // read needs no `unsafe` gate (the old read-accountability code was
+        // dropped). The `static` declaration
         // is itself the marker for global, foreign-facing state; cross-`static`
         // data races are the developer's responsibility (mem.md).
         if let Some(info) = self.statics_table.get(name).cloned() {
@@ -14875,6 +15275,7 @@ fn op_str(op: BinOp) -> &'static str {
 /// - `Array(elem_a, len_a)` against `Array(elem_b, len_b)` → match
 ///   lengths and recurse on element types.
 /// - Concrete-against-concrete → equality check.
+///
 /// Names bound by a match arm pattern: the catch-all binding `x`, or the
 /// binding payload slots of a variant pattern (`E::A(x)` → `x`; `_` slots bind
 /// nothing). Used to check whether a payload escaped a borrowed-place scrutinee.
@@ -15056,6 +15457,276 @@ fn stmt_is_asm_only(s: &Stmt) -> bool {
     match &s.kind {
         StmtKind::Expr(e) => expr_is_asm_only(e),
         _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic-method-body name resolution (`check_generic_method_body_names`).
+//
+// Lexically-scoped walk that flags a bare identifier resolving to nothing.
+// `scopes` is a stack of name sets (innermost last); a use is defined iff it
+// is in any scope frame or in `globals`. Binding forms push their names into
+// the current frame (sequential `let`) or a fresh pushed frame (block / loop /
+// match-arm / pattern-let bodies). Only NAMES matter here — type positions are
+// never walked, so no type resolution is attempted.
+// ---------------------------------------------------------------------------
+
+fn name_in_scope(name: &str, globals: &std::collections::HashSet<String>, scopes: &[std::collections::HashSet<String>]) -> bool {
+    globals.contains(name) || scopes.iter().any(|s| s.contains(name))
+}
+
+fn collect_pattern_bindings(p: &Pattern, out: &mut std::collections::HashSet<String>) {
+    match &p.kind {
+        PatternKind::Wildcard => {}
+        PatternKind::Binding(id) => {
+            out.insert(id.name.clone());
+        }
+        PatternKind::Variant { payload, .. } => {
+            for sub in payload {
+                collect_pattern_bindings(sub, out);
+            }
+        }
+    }
+}
+
+fn walk_block_names(
+    block: &Block,
+    globals: &std::collections::HashSet<String>,
+    scopes: &mut Vec<std::collections::HashSet<String>>,
+    out: &mut Vec<(String, ByteSpan)>,
+) {
+    scopes.push(std::collections::HashSet::new());
+    for stmt in &block.stmts {
+        walk_stmt_names(stmt, globals, scopes, out);
+    }
+    if let Some(tail) = &block.tail {
+        walk_expr_names(tail, globals, scopes, out);
+    }
+    scopes.pop();
+}
+
+fn walk_stmt_names(
+    stmt: &Stmt,
+    globals: &std::collections::HashSet<String>,
+    scopes: &mut Vec<std::collections::HashSet<String>>,
+    out: &mut Vec<(String, ByteSpan)>,
+) {
+    match &stmt.kind {
+        StmtKind::Let { name, init, .. } => {
+            // The initializer is checked BEFORE the binding is in scope, so a
+            // self-referential `let x = x;` correctly resolves `x` against the
+            // outer scope only.
+            if let Some(e) = init {
+                walk_expr_names(e, globals, scopes, out);
+            }
+            scopes.last_mut().unwrap().insert(name.name.clone());
+        }
+        StmtKind::LetDestructure { fields, init, .. } => {
+            walk_expr_names(init, globals, scopes, out);
+            let frame = scopes.last_mut().unwrap();
+            for f in fields {
+                frame.insert(f.name.clone());
+            }
+        }
+        StmtKind::Return(opt) => {
+            if let Some(e) = opt {
+                walk_expr_names(e, globals, scopes, out);
+            }
+        }
+        StmtKind::While { cond, body, .. } => {
+            walk_expr_names(cond, globals, scopes, out);
+            walk_block_names(body, globals, scopes, out);
+        }
+        StmtKind::For(fl, _) => match fl {
+            ForLoop::Range { var, iter, body } => {
+                walk_expr_names(iter, globals, scopes, out);
+                scopes.push(std::collections::HashSet::new());
+                scopes.last_mut().unwrap().insert(var.name.clone());
+                walk_block_names(body, globals, scopes, out);
+                scopes.pop();
+            }
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                scopes.push(std::collections::HashSet::new());
+                if let Some(s) = init {
+                    walk_stmt_names(s, globals, scopes, out);
+                }
+                if let Some(c) = cond {
+                    walk_expr_names(c, globals, scopes, out);
+                }
+                for u in update {
+                    walk_expr_names(u, globals, scopes, out);
+                }
+                walk_block_names(body, globals, scopes, out);
+                scopes.pop();
+            }
+        },
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+            walk_expr_names(e, globals, scopes, out);
+        }
+        StmtKind::Loop(body, _) => {
+            walk_block_names(body, globals, scopes, out);
+        }
+        StmtKind::IfLet {
+            pattern,
+            scrutinee,
+            body,
+            else_body,
+        } => {
+            walk_expr_names(scrutinee, globals, scopes, out);
+            let mut binds = std::collections::HashSet::new();
+            collect_pattern_bindings(pattern, &mut binds);
+            scopes.push(binds);
+            walk_block_names(body, globals, scopes, out);
+            scopes.pop();
+            if let Some(eb) = else_body {
+                walk_block_names(eb, globals, scopes, out);
+            }
+        }
+        StmtKind::WhileLet {
+            pattern,
+            scrutinee,
+            body,
+        } => {
+            walk_expr_names(scrutinee, globals, scopes, out);
+            let mut binds = std::collections::HashSet::new();
+            collect_pattern_bindings(pattern, &mut binds);
+            scopes.push(binds);
+            walk_block_names(body, globals, scopes, out);
+            scopes.pop();
+        }
+        StmtKind::GuardLet {
+            pattern,
+            scrutinee,
+            else_body,
+            ..
+        } => {
+            walk_expr_names(scrutinee, globals, scopes, out);
+            // The else branch runs when the pattern does NOT match, so its
+            // bindings are not in scope there.
+            walk_block_names(else_body, globals, scopes, out);
+            // On the success path the bindings live in the ENCLOSING scope for
+            // the rest of the block.
+            let frame = scopes.last_mut().unwrap();
+            let mut binds = std::collections::HashSet::new();
+            collect_pattern_bindings(pattern, &mut binds);
+            frame.extend(binds);
+        }
+        StmtKind::Break | StmtKind::Continue => {}
+    }
+}
+
+fn walk_expr_names(
+    e: &Expr,
+    globals: &std::collections::HashSet<String>,
+    scopes: &mut Vec<std::collections::HashSet<String>>,
+    out: &mut Vec<(String, ByteSpan)>,
+) {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if !name_in_scope(name, globals, scopes) {
+                out.push((name.clone(), e.span));
+            }
+        }
+        ExprKind::Block(b) => walk_block_names(b, globals, scopes, out),
+        ExprKind::Await(inner) | ExprKind::Yield(inner) | ExprKind::Cast { expr: inner, .. } => {
+            walk_expr_names(inner, globals, scopes, out)
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_names(operand, globals, scopes, out),
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            walk_expr_names(cond, globals, scopes, out);
+            walk_block_names(then, globals, scopes, out);
+            if let Some(eb) = else_branch {
+                walk_expr_names(eb, globals, scopes, out);
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            walk_expr_names(callee, globals, scopes, out);
+            for a in args {
+                walk_expr_names(a, globals, scopes, out);
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            walk_expr_names(lhs, globals, scopes, out);
+            walk_expr_names(rhs, globals, scopes, out);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                walk_expr_names(s, globals, scopes, out);
+            }
+            if let Some(en) = end {
+                walk_expr_names(en, globals, scopes, out);
+            }
+        }
+        ExprKind::Assign { target, value, .. } => {
+            walk_expr_names(target, globals, scopes, out);
+            walk_expr_names(value, globals, scopes, out);
+        }
+        // Struct-literal field NAMES are labels, not variable uses; only the
+        // field VALUES are expressions.
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
+            for f in fields {
+                walk_expr_names(&f.value, globals, scopes, out);
+            }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args {
+                walk_expr_names(a, globals, scopes, out);
+            }
+        }
+        // The `name` is a field, not a variable — only recurse the receiver.
+        ExprKind::Field { receiver, .. } => walk_expr_names(receiver, globals, scopes, out),
+        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+            for el in elements {
+                walk_expr_names(el, globals, scopes, out);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => walk_expr_names(fill, globals, scopes, out),
+        ExprKind::Index { receiver, index } => {
+            walk_expr_names(receiver, globals, scopes, out);
+            walk_expr_names(index, globals, scopes, out);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_names(scrutinee, globals, scopes, out);
+            for arm in arms {
+                let mut binds = std::collections::HashSet::new();
+                collect_pattern_bindings(&arm.pattern, &mut binds);
+                scopes.push(binds);
+                walk_expr_names(&arm.body, globals, scopes, out);
+                scopes.pop();
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(inner) = p {
+                    walk_expr_names(inner, globals, scopes, out);
+                }
+            }
+        }
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                walk_expr_names(a, globals, scopes, out);
+            }
+        }
+        ExprKind::Asm { operands, .. } => {
+            for op in operands {
+                walk_expr_names(&op.value, globals, scopes, out);
+            }
+        }
+        // `Path` (Type::assoc) segments are type/assoc names, not variables.
+        // Literals, EnvVar, IncludeBytes/Str, BuilderBlock carry no bare
+        // variable references relevant to name resolution.
+        _ => {}
     }
 }
 
@@ -15534,16 +16205,12 @@ fn ty_display(ty: &Ty) -> String {
 /// rendered name uses a minimal cover of primitives + struct/enum names;
 /// arrays/borrows in the substitution are not yet supported by this
 /// path (no in-tree use case exercises them — extend when needed).
-fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type {
-    substitute_param_in_type_ast_with_tables(ty, subst, &[], &[])
-}
-
-/// G-026 fix: name-aware variant of `substitute_param_in_type_ast`. When
-/// substituting a `Param("T")` with a concrete `Ty::Struct(id)` or
-/// `Ty::Enum(id)`, render the real source name from the struct/enum
-/// tables instead of the `<concrete>` placeholder. Without this, a
-/// recursive enum payload like `Value::Array(Vec[Value])` round-trips
-/// `Value` through `<concrete>` and fires E0303 at re-resolution.
+///
+/// G-026 fix: this is name-aware. When substituting a `Param("T")` with a
+/// concrete `Ty::Struct(id)` or `Ty::Enum(id)`, render the real source name
+/// from the struct/enum tables instead of the `<concrete>` placeholder.
+/// Without this, a recursive enum payload like `Value::Array(Vec[Value])`
+/// round-trips `Value` through `<concrete>` and fires E0303 at re-resolution.
 fn substitute_param_in_type_ast_with_tables(
     ty: &Type,
     subst: &HashMap<String, Ty>,
@@ -16505,6 +17172,7 @@ struct BodyEffects {
 ///   - `Path { segments }` → `seg1.seg2....segN` (matches the resolver's
 ///     qualified-name form)
 ///   - `Field` method calls → skipped (cannot resolve without dispatch info)
+///
 /// Allocating non-call constructs (string interpolation) are recorded too.
 fn collect_effects_block(block: &Block, out: &mut BodyEffects) {
     for s in &block.stmts {
@@ -17285,6 +17953,59 @@ mod tests {
     }
 
     #[test]
+    fn generic_struct_method_undefined_name_is_e0300_not_ice() {
+        // An undefined name inside a generic STRUCT method body was never
+        // name-resolved (only concrete + generic-free-fn bodies were), so it
+        // sailed through `check` and panicked codegen ("sema validated"). It
+        // must now be a clean E0300 at the use site.
+        assert_has_code(
+            "struct Box[T] { v: T }\n\
+             impl Box[T] { fn get(this) -> T { return undefined_name; } }\n\
+             fn main() -> i32 { let b: Box[i32] = Box[i32] { v: 1 }; return b.get(); }",
+            "E0300",
+        );
+    }
+
+    #[test]
+    fn generic_enum_method_undefined_name_is_e0300_not_ice() {
+        assert_has_code(
+            "enum Maybe[T] { Some(T), None }\n\
+             impl Maybe[T] { fn peek(this) -> i32 { return undefined_name; } }\n\
+             fn main() -> i32 { let m: Maybe[i32] = Maybe[i32]::None; return m.peek(); }",
+            "E0300",
+        );
+    }
+
+    #[test]
+    fn generic_method_out_of_scope_match_binding_is_e0300() {
+        // `v` is bound only in the `Some(v)` arm; using it in the `None` arm is
+        // out of scope — the lexically-scoped resolver must catch it.
+        assert_has_code(
+            "enum Maybe[T] { Some(T), None }\n\
+             impl Maybe[T] { fn get(this) -> T { match this { Maybe::Some(v) => { return v; } Maybe::None => { return v; } } } }\n\
+             fn main() -> i32 { let m: Maybe[i32] = Maybe[i32]::None; return m.get(); }",
+            "E0300",
+        );
+    }
+
+    #[test]
+    fn generic_method_valid_bodies_stay_clean() {
+        // A generic method that references params, receiver, locals, for-loop
+        // vars, and match-arm bindings correctly must NOT be flagged.
+        assert_clean(
+            "struct Box[T] { v: T }\n\
+             impl Box[T] {\n\
+                 fn new(x: T) -> Box[T] { return Box[T] { v: x }; }\n\
+                 fn get(this) -> T { return this.v; }\n\
+                 fn count(this, extra: i32) -> i32 { var n: i32 = extra; for i in 0..3 { n = n + i; } return n; }\n\
+             }\n\
+             enum Opt[T] { Some(T), None }\n\
+             impl Opt[T] { fn unwrap_or(this, d: T) -> T { match this { Opt::Some(v) => { return v; } Opt::None => { return d; } } } }\n\
+             fn main() -> i32 { let b: Box[i32] = Box[i32]::new(5); let o: Opt[i32] = Opt[i32]::None; return b.get() + b.count(1) + o.unwrap_or(0); }",
+        );
+    }
+
+    #[test]
     fn generic_body_generic_struct_literal_is_clean() {
         // Constructing a generic struct (`Box[T] { ... }`) inside a generic
         // free-fn body resolves and type-checks.
@@ -17632,6 +18353,79 @@ fn main() -> i32 { return 0; }\n";
                 codes.contains(&"E0335"),
                 "[mark-move {sname}] expected E0335 (use after move), got {codes:?}\n--- program ---\n{prog}"
             );
+        }
+    }
+
+    #[test]
+    fn generic_take_arg_consumes_on_both_call_paths() {
+        // check_generic_named_call has two branches — turbofish (`sink::[R](r)`)
+        // and inference (`sink(r)`) — and the `take` consumption logic must run
+        // on BOTH. The inference branch shipped without it: the callee dropped
+        // its `take` param while the caller's binding stayed live — a safe-code
+        // use-after-free with no unsafe. Grid: call form × consumption shape.
+        const PRELUDE: &str = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+struct W { r: R }\n\
+impl W { fn drop(ref this) { return; } }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
+fn mkw() -> W { return W { r: mkr() }; }\n\
+fn sink[T](take x: T) -> i32 { return 0; }\n\
+fn peek[T](x: T) -> i32 { return 0; }\n\
+fn main() -> i32 { return 0; }\n";
+
+        // (case, body, expected code | "" = clean)
+        let cases: &[(&str, &str, &str)] = &[
+            // whole-binding move: later use must be E0335 on both forms
+            (
+                "infer_move",
+                "let r: R = mkr(); let _a: i32 = sink(r); let _u: R = r;",
+                "E0335",
+            ),
+            (
+                "turbofish_move",
+                "let r: R = mkr(); let _a: i32 = sink::[R](r); let _u: R = r;",
+                "E0335",
+            ),
+            // partial move out of a Drop struct: rejected on both forms
+            (
+                "infer_partial",
+                "let w: W = mkw(); let _a: i32 = sink(w.r);",
+                "E0509",
+            ),
+            (
+                "turbofish_partial",
+                "let w: W = mkw(); let _a: i32 = sink::[R](w.r);",
+                "E0509",
+            ),
+            // bare (non-take) param is a borrow: caller keeps the value
+            (
+                "infer_bare_borrow",
+                "let r: R = mkr(); let _a: i32 = peek(r); let _u: R = r;",
+                "",
+            ),
+            // Copy type args are never consumed
+            (
+                "infer_copy",
+                "let n: i32 = 5; let _a: i32 = sink(n); let _u: i32 = n;",
+                "",
+            ),
+        ];
+
+        for (cname, body, expected) in cases {
+            let prog = format!("{PRELUDE}fn case_{cname}() {{ {body} }}\n");
+            let codes = errors(&prog);
+            if expected.is_empty() {
+                assert!(
+                    codes.is_empty(),
+                    "[generic-take {cname}] expected clean, got {codes:?}\n--- program ---\n{prog}"
+                );
+            } else {
+                assert!(
+                    codes.contains(expected),
+                    "[generic-take {cname}] expected {expected}, got {codes:?}\n--- program ---\n{prog}"
+                );
+            }
         }
     }
 
@@ -18174,7 +18968,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         );
     }
 
-    // Note: E0X30 lives in the lower pass, not sema, so the negative
+    // Note: E0911 lives in the lower pass, not sema, so the negative
     // tests for it live near the other lower-pass tests further down
     // (using `lowered_errors`). Cross-ref: array_literal_still_rejected
     // / fill_array_in_static_still_rejected, both labeled `_g033`.
@@ -18356,6 +19150,27 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0613"), "expected E0613, got: {codes:?}");
+    }
+
+    #[test]
+    fn interp_fragment_diagnostic_spans_point_into_parent_source() {
+        // A sema diagnostic on an interpolated `${...}` sub-expression must
+        // carry the PARENT-file span (the re-lexed fragment tokens are
+        // rebased), not offset 0 of file 0 — the v1 shortcut that anchored
+        // every such diagnostic at the top of the wrong file.
+        let src = "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+                   fn f() -> i32 { let b: Text = \"v=${undefned}\"; return 0; }";
+        let diags = check_src(src);
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0300")
+            .expect("undefined name inside ${...} must be E0300");
+        let want = src.find("undefned").unwrap() as u32;
+        assert_eq!(
+            d.primary.start.byte, want,
+            "diagnostic must anchor at the fragment's parent-file offset, got {:?}",
+            d.primary.start
+        );
     }
 
     // With the lang-string struct in scope (the import's effect), both are clean.
@@ -19985,6 +20800,74 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     // is not a false positive.
 
     #[test]
+    fn late_all_copy_generic_struct_copies_not_moves() {
+        // FP1: `Pair[i32,i32]` (all-Copy, no drop) first materialized DURING
+        // body checking must be classified Copy, so `let q = p;` copies. It was
+        // stuck at the placeholder `is_copy: false` → spurious E0335.
+        assert_clean(
+            "struct Pair[A, B] { a: A, b: B }\n\
+             fn main() -> i32 {\n\
+                 let p: Pair[i32, i32] = Pair[i32, i32] { a: 1, b: 2 };\n\
+                 let q: Pair[i32, i32] = p;\n\
+                 return p.a + q.b;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn late_all_copy_tuple_copies_not_moves() {
+        // FP1b: a bare tuple synthesized during body checking, same fix.
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let t: (i32, i32) = (1, 2);\n\
+                 let u: (i32, i32) = t;\n\
+                 return t._0 + u._1;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn definite_assignment_credits_diverging_if_branch() {
+        // FP2: the `else` diverges, so the only fall-through branch assigns `x`
+        // — `x` is definitely assigned at the read. Intersecting the diverging
+        // arm spuriously demoted it → false E0345.
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let x: i32;\n\
+                 if 1 == 1 { x = 1; } else { return 7; }\n\
+                 return x;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn definite_assignment_credits_diverging_match_arm() {
+        assert_clean(
+            "enum E { A, B }\n\
+             fn main() -> i32 {\n\
+                 let x: i32;\n\
+                 let e: E = E::A;\n\
+                 match e { E::A => { x = 1; } E::B => { return 9; } }\n\
+                 return x;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn possibly_unassigned_still_caught_when_no_branch_diverges() {
+        // Guard against over-correction: when NEITHER branch diverges and one
+        // fails to assign `x`, E0345 must still fire.
+        assert_has_code(
+            "fn main() -> i32 {\n\
+                 let x: i32;\n\
+                 if 1 == 1 { x = 1; } else { let _y: i32 = 0; }\n\
+                 return x;\n\
+             }",
+            "E0345",
+        );
+    }
+
+    #[test]
     fn generic_payload_enum_use_after_move_e0335() {
         // `Held[i32]` has a Drop (from `impl Held[T]`), so `W` is non-Copy;
         // using `w` after it's moved into a call must be caught. Pre-fix, the
@@ -21478,6 +22361,58 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0510"), "expected E0510, got: {codes:?}");
+    }
+
+    #[test]
+    fn recursive_struct_by_value_rejected_e0913() {
+        // `struct S { s: S }` has no finite size.
+        assert_has_code(
+            "struct S { s: S }\nfn main() -> i32 { return 0; }",
+            "E0913",
+        );
+    }
+
+    #[test]
+    fn mutually_recursive_structs_rejected_e0913() {
+        assert_has_code(
+            "struct A { b: B }\nstruct B { a: A }\nfn main() -> i32 { return 0; }",
+            "E0913",
+        );
+    }
+
+    #[test]
+    fn recursive_enum_by_value_rejected_e0913() {
+        // Even when the recursive enum is unused it must be rejected (it was
+        // silently building a working binary before the occurs check).
+        assert_has_code(
+            "enum E { X(E), Y }\nfn main() -> i32 { return 0; }",
+            "E0913",
+        );
+    }
+
+    #[test]
+    fn recursion_through_array_field_rejected_e0913() {
+        assert_has_code(
+            "struct S { s: [S; 2] }\nfn main() -> i32 { return 0; }",
+            "E0913",
+        );
+    }
+
+    #[test]
+    fn recursion_through_pointer_is_clean() {
+        // The correct form: indirect the recursive field. A raw-pointer field
+        // needs `opaque` or a drop; use `opaque` here. Finite size, no error.
+        assert_clean(
+            "struct Node { opaque next: *Node, v: i32 }\n\
+             impl Node { fn drop(ref this) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn zero_length_array_recursion_is_clean() {
+        // `[S; 0]` embeds nothing — a zero-sized field, finite.
+        assert_clean("struct S { s: [S; 0] }\nfn main() -> i32 { return 0; }");
     }
 
     #[test]
@@ -23272,7 +24207,38 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn enum_impl_block_copy_bound_enforced_e0502() {
+        // The enum receiver path must enforce an `impl Maybe[T: Copy]` block
+        // bound at the call site exactly as the struct path does — it shipped
+        // without the check, letting `Maybe[NonCopy].get()` bit-copy an owning
+        // value (double-free). NC is non-Copy (has drop).
+        let codes = errors(
+            "enum Maybe[T] { Some(T), None }\n\
+             impl Maybe[T: Copy] { fn get(this, d: T) -> T { match this { Maybe::Some(v) => { return v; } Maybe::None => { return d; } } } }\n\
+             struct NC { opaque p: *u8 }\n\
+             impl NC { fn drop(ref this) { return; } }\n\
+             fn f(m: Maybe[NC], d: NC) -> i32 { let _x: NC = m.get(d); return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0502"),
+            "enum impl-block Copy bound not enforced; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn enum_impl_block_copy_bound_satisfied_clean() {
+        // A Copy type argument satisfies the bound — no error.
+        assert_clean(
+            "enum Maybe[T] { Some(T), None }\n\
+             impl Maybe[T: Copy] { fn get(this, d: T) -> T { match this { Maybe::Some(v) => { return v; } Maybe::None => { return d; } } } }\n\
+             fn f(m: Maybe[i32]) -> i32 { return m.get(0); }\n\
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     #[test]
@@ -23286,7 +24252,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     #[test]
@@ -23300,7 +24266,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     #[test]
@@ -23345,7 +24311,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     #[test]
@@ -23359,7 +24325,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     #[test]
@@ -23423,7 +24389,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     #[test]
@@ -23453,14 +24419,61 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn empty_impl_on_regular_interface_rejected_e0861() {
+    fn double_underscore_item_names_reserved_e0917() {
+        // `__` is the monomorphization arg-joiner (`Box[i32]` → `Box__i32`);
+        // a user item squatting on the sequence collides with instantiation
+        // symbols (non-injective mangling). Reserved like C reserves `__`.
+        for src in [
+            "struct Box__i32 { v: i32 }\nfn main() -> i32 { return 0; }",
+            "enum Maybe__T { A, B }\nfn main() -> i32 { return 0; }",
+            "fn h__i32() -> i32 { return 0; }\nfn main() -> i32 { return h__i32(); }",
+        ] {
+            let codes = errors(src);
+            assert!(
+                codes.contains(&"E0917"),
+                "expected E0917 for reserved `__` name, got {codes:?} in: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn double_underscore_allowed_in_extern_and_single_underscore_names() {
+        // Extern fns bind existing C symbols (`__errno_location`) and never
+        // monomorphize; ordinary single underscores stay legal everywhere;
+        // LEADING double underscores are implementation-owned and mangle-
+        // safe (an instantiation's template base is never empty) — the
+        // doctest harness synthesizes `__doctest_helper_N` fns.
+        assert_clean(
+            "extern fn __errno_location() -> *i32;\n\
+             struct my_box { v: i32 }\n\
+             fn make_box() -> my_box { return my_box { v: 1 }; }\n\
+             fn __doctest_helper_0() { return; }\n\
+             fn main() -> i32 { __doctest_helper_0(); return make_box().v; }",
+        );
+    }
+
+    #[test]
+    fn nonempty_send_marker_impl_rejected_e0915() {
+        // `Send`/`Sync` are marker interfaces: the assertion is the empty
+        // body itself. Methods in the body are rejected.
+        let codes = errors(
+            "struct Handle { opaque p: *u8 }\n\
+             impl Handle { fn drop(ref this) { return; } }\n\
+             impl Handle: Send { fn x(this) -> i32 { return 0; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0915"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn empty_impl_on_regular_interface_rejected_e0916() {
         let codes = errors(
             "interface Greet { fn hi(this) -> i32; }\n\
              struct S { x: i32 }\n\
              impl S: Greet {}\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0861"), "got {:?}", codes);
+        assert!(codes.contains(&"E0916"), "got {:?}", codes);
     }
 
     #[test]
@@ -23475,7 +24488,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 
     // ---- v0.0.6 Slice 1A: include_bytes! ----
@@ -24439,21 +25452,21 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn const_with_non_literal_initializer_e0x30() {
-        // Arithmetic in the initializer is rejected by lower with E0X30.
+    fn const_with_non_literal_initializer_e0911() {
+        // Arithmetic in the initializer is rejected by lower with E0911.
         let codes = lowered_errors("const FOO: i32 = 1 + 2;");
-        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+        assert!(codes.iter().any(|c| c == "E0911"), "got {:?}", codes);
     }
 
     #[test]
-    fn const_with_ident_initializer_e0x30() {
+    fn const_with_ident_initializer_e0911() {
         // Referring to another binding/const from an initializer is
         // out of scope for v0.0.9.
         let codes = lowered_errors(
             "const A: i32 = 5; \
              const B: i32 = A;",
         );
-        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+        assert!(codes.iter().any(|c| c == "E0911"), "got {:?}", codes);
     }
 
     // v0.0.12 G-033: array literals + fill literals still rejected in
@@ -24466,8 +25479,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     fn array_literal_in_static_accepted_g043() {
         let codes = lowered_errors("static T: [i32; 4] = [1, 2, 3, 4];");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24476,20 +25489,20 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     fn fill_array_in_static_accepted_g043() {
         let codes = lowered_errors("static T: [u8; 256] = [0u8; 256];");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
 
     // G-043 keeps `const` literal-only: an array literal on a `const` is still
-    // E0X30 (consts inline at use sites; arrays belong in `static`).
+    // E0911 (consts inline at use sites; arrays belong in `static`).
     #[test]
-    fn array_literal_in_const_still_rejected_e0x30_g043() {
+    fn array_literal_in_const_still_rejected_e0911_g043() {
         let codes = lowered_errors("const C: [i32; 4] = [1, 2, 3, 4];");
         assert!(
-            codes.iter().any(|c| c == "E0X30"),
-            "expected E0X30, got {:?}",
+            codes.iter().any(|c| c == "E0911"),
+            "expected E0911, got {:?}",
             codes
         );
     }
@@ -24503,8 +25516,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              static S: P = P { x: 1, y: 2.0f32, ok: true };",
         );
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24522,49 +25535,49 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              ];",
         );
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
 
-    // A struct literal with a non-literal field value is still E0X30.
+    // A struct literal with a non-literal field value is still E0911.
     #[test]
-    fn struct_literal_with_call_field_rejected_e0x30_g043b() {
+    fn struct_literal_with_call_field_rejected_e0911_g043b() {
         let codes = lowered_errors(
             "struct P { x: i32 } \
              fn f() -> i32 { return 3; } \
              static S: P = P { x: f() };",
         );
         assert!(
-            codes.iter().any(|c| c == "E0X30"),
-            "expected E0X30, got {:?}",
+            codes.iter().any(|c| c == "E0911"),
+            "expected E0911, got {:?}",
             codes
         );
     }
 
     // The generic struct-literal form is excluded (it reaches codegen
-    // un-monomorphized in static position); it stays E0X30.
+    // un-monomorphized in static position); it stays E0911.
     #[test]
-    fn generic_struct_literal_in_static_rejected_e0x30_g043b() {
+    fn generic_struct_literal_in_static_rejected_e0911_g043b() {
         let codes = lowered_errors(
             "struct Pair[A, B] { first: A, second: B } \
              static G: Pair[i32, bool] = Pair[i32, bool] { first: 1, second: true };",
         );
         assert!(
-            codes.iter().any(|c| c == "E0X30"),
-            "expected E0X30, got {:?}",
+            codes.iter().any(|c| c == "E0911"),
+            "expected E0911, got {:?}",
             codes
         );
     }
 
-    // `const` stays literal-only: a struct literal on a `const` is E0X30.
+    // `const` stays literal-only: a struct literal on a `const` is E0911.
     #[test]
-    fn struct_literal_in_const_still_rejected_e0x30_g043b() {
+    fn struct_literal_in_const_still_rejected_e0911_g043b() {
         let codes = lowered_errors("struct P { x: i32 } const C: P = P { x: 1 };");
         assert!(
-            codes.iter().any(|c| c == "E0X30"),
-            "expected E0X30, got {:?}",
+            codes.iter().any(|c| c == "E0911"),
+            "expected E0911, got {:?}",
             codes
         );
     }
@@ -24576,8 +25589,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // the declared type.
         let codes = lowered_errors("static T: [u8; 256] = #zero::[[u8; 256]]();");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24592,14 +25605,14 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     // v0.0.19: a narrowing-literal cast `1 as i8` is a constant and is
-    // accepted in `static` / `const` position — previously E0X30 rejected
+    // accepted in `static` / `const` position — previously E0911 rejected
     // it even though the plain `= 1` form worked (a surprising asymmetry).
     #[test]
     fn static_narrowing_literal_cast_accepted_v0019() {
         let codes = lowered_errors("static X: i8 = 1 as i8;");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24608,8 +25621,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     fn static_negative_narrowing_literal_cast_accepted_v0019() {
         let codes = lowered_errors("static X: i16 = -3 as i16;");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24620,8 +25633,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // type through substitution. Accepted symmetrically with `static`.
         let codes = lowered_errors("const C: u8 = 7 as u8;");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
@@ -24630,20 +25643,20 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     fn static_int_to_float_literal_cast_accepted_v0019() {
         let codes = lowered_errors("static F: f32 = 2 as f32;");
         assert!(
-            !codes.iter().any(|c| c == "E0X30"),
-            "expected no E0X30, got {:?}",
+            !codes.iter().any(|c| c == "E0911"),
+            "expected no E0911, got {:?}",
             codes
         );
     }
 
     // The narrowing-cast allowance is for *literal* operands only: a cast
-    // of an arithmetic expression or identifier is still E0X30.
+    // of an arithmetic expression or identifier is still E0911.
     #[test]
-    fn static_cast_of_arithmetic_still_rejected_e0x30_v0019() {
+    fn static_cast_of_arithmetic_still_rejected_e0911_v0019() {
         let codes = lowered_errors("static X: i8 = (1 + 2) as i8;");
         assert!(
-            codes.iter().any(|c| c == "E0X30"),
-            "expected E0X30, got {:?}",
+            codes.iter().any(|c| c == "E0911"),
+            "expected E0911, got {:?}",
             codes
         );
     }
@@ -24658,7 +25671,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     // v0.0.24 de-Rust (#9 stage 3d): `static` is mutable and access is bare —
-    // no `static mut`, no `unsafe` gate on read (E0X33) or write (E0X34), no
+    // no `static mut`, no `unsafe` gate on read or write (the old
+    // read/write-accountability codes were dropped), no
     // immutable `static` (E0305). Raw deref/cast are likewise bare (no `unsafe`
     // wrapper, which is removed).
     #[test]
@@ -24685,6 +25699,31 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "static write should be bare, got {:?}",
             codes
         );
+    }
+
+    #[test]
+    fn static_compound_assign_wrong_type_rejected_e0302() {
+        // A compound op on a non-numeric `static` must be rejected exactly as
+        // on a local — the static fast-path used to return before the op-type
+        // check, letting `FLAG += true` (bool static) through to codegen.
+        let codes = lowered_errors(
+            "static FLAG: bool = true; \
+             fn main() -> i32 { FLAG += true; return 0; }",
+        );
+        assert!(
+            codes.iter().any(|c| c == "E0302"),
+            "bool static `+=` must be E0302, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn static_compound_assign_numeric_is_clean() {
+        // The legitimate case must still compile.
+        let codes = lowered_errors(
+            "static COUNT: i32 = 0; \
+             fn main() -> i32 { COUNT += 5; return COUNT; }",
+        );
+        assert!(codes.is_empty(), "numeric static `+=` should be clean, got {codes:?}");
     }
 
     #[test]
@@ -24752,7 +25791,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn f() { { malloc(8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24762,7 +25801,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn f(p: *u8) { { free(p); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24774,7 +25813,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn f(p: *u8) { { grow(p, 16 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24793,7 +25832,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn caller(x: i32) -> i32 { return helper(x); }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24819,7 +25858,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn caller(x: i32) -> i32 { return { mystery(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24861,7 +25900,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "#[no_alloc] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24899,7 +25938,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24918,7 +25957,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24948,7 +25987,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -24992,7 +26031,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn f(take h: Handle) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -25044,7 +26083,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -25059,7 +26098,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_alloc] fn f(raw: *u8) -> i32 { Handle { p: raw }; return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -25080,7 +26119,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "#[realtime] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     // Wrong-target rejection for `#[no_alloc]` lives in attrs.rs's test
@@ -25107,7 +26146,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+        assert!(codes.contains(&"E0906"), "got {:?}", codes);
     }
 
     // ========================================================================
@@ -25129,7 +26168,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn f(m: *u8) { { pthread_mutex_lock(m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25139,7 +26178,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn f() { { sleep(1); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25150,7 +26189,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn f(fd: i32, buf: *u8) { { read(fd, buf, 8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25162,7 +26201,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn f(c: *u8, m: *u8) { { park(c, m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25201,7 +26240,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn caller(x: i32) -> i32 { return helper(x); }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25211,7 +26250,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[no_block] fn caller(x: i32) -> i32 { return { mystery(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25263,7 +26302,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[realtime] fn f() { { malloc(8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+        assert!(codes.contains(&"E0901"), "got {:?}", codes);
     }
 
     #[test]
@@ -25273,7 +26312,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[realtime] fn f(m: *u8) { { pthread_mutex_lock(m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+        assert!(codes.contains(&"E0907"), "got {:?}", codes);
     }
 
     #[test]
@@ -25285,7 +26324,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+        assert!(codes.contains(&"E0906"), "got {:?}", codes);
     }
 
     #[test]
@@ -25326,7 +26365,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "#[max_stack(64)] fn f() { let buf: [u8; 100] = [0u8; 100]; return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+        assert!(codes.contains(&"E0908"), "got {:?}", codes);
     }
 
     #[test]
@@ -25344,7 +26383,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "#[max_stack(8)] fn f(a: i64, b: i64) -> i64 { return a +% b; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+        assert!(codes.contains(&"E0908"), "got {:?}", codes);
     }
 
     #[test]
@@ -25355,7 +26394,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              #[max_stack(128)] fn f() { let b: Big = Big { data: [0u8; 1000] }; return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+        assert!(codes.contains(&"E0908"), "got {:?}", codes);
     }
 
     #[test]
@@ -25368,7 +26407,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+        assert!(codes.contains(&"E0908"), "got {:?}", codes);
     }
 
     #[test]
@@ -25404,7 +26443,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+        assert!(codes.contains(&"E0905"), "got {:?}", codes);
     }
 
     // v0.0.16: FFI/raw builtins are `#name(...)` intrinsics. A bare call is a
@@ -25412,7 +26451,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn ffi_builtin_bare_call_is_migration_error_e0905() {
         let codes = errors("fn main() -> i32 { let p: *u8 = str_ptr(\"x\"); return 0; }");
-        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+        assert!(codes.contains(&"E0905"), "got {:?}", codes);
     }
 
     #[test]
@@ -25423,7 +26462,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn bare_println_is_migration_error_e0905() {
         let codes = errors("fn main() -> i32 { println(\"x\"); return 0; }");
-        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+        assert!(codes.contains(&"E0905"), "got {:?}", codes);
     }
 
     #[test]
@@ -25457,7 +26496,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn f() -> i32 { loop { if g() { break; } } }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0306"), "got {:?}", codes);
+        assert!(codes.contains(&"E0306"), "got {:?}", codes);
     }
 
     // v0.0.16 move tracking: `let y = x;` on a non-Copy whole binding *moves* it.
@@ -25472,7 +26511,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 {{ return 0; }}"
         );
         let codes = errors(&src);
-        assert!(codes.iter().any(|c| *c == "E0335"), "got {:?}", codes);
+        assert!(codes.contains(&"E0335"), "got {:?}", codes);
     }
 
     #[test]
@@ -25485,7 +26524,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 {{ return 0; }}"
         );
         let codes = errors(&src);
-        assert!(codes.iter().any(|c| *c == "E0335"), "got {:?}", codes);
+        assert!(codes.contains(&"E0335"), "got {:?}", codes);
     }
 
     #[test]
@@ -25525,7 +26564,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0903"), "got {:?}", codes);
+        assert!(codes.contains(&"E0903"), "got {:?}", codes);
     }
     #[test]
     fn intrinsic_msg_send_inside_unsafe_clean() {
@@ -25669,7 +26708,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0305"), "got {:?}", codes);
+        assert!(codes.contains(&"E0305"), "got {:?}", codes);
     }
 
     #[test]
@@ -25678,7 +26717,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "{DROP_STRUCT}fn f(a: Owned) {{ {{ #asm(\"nop {{a}}\", a = in(reg) a); }} return; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
-        assert!(codes.iter().any(|c| *c == "E0892"), "got {:?}", codes);
+        assert!(codes.contains(&"E0892"), "got {:?}", codes);
     }
 
     #[test]
@@ -25687,7 +26726,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "fn f(a: i64) { { #asm(\"nop\", a = in(reg) a); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0893"), "got {:?}", codes);
+        assert!(codes.contains(&"E0893"), "got {:?}", codes);
     }
 
     #[test]
@@ -25700,7 +26739,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0895"), "got {:?}", codes);
+        assert!(codes.contains(&"E0895"), "got {:?}", codes);
     }
 
     // ---- v0.0.14 inline asm Tier 3: #[naked] ----
@@ -25723,7 +26762,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn bad() -> i64 { let x: i64 = 1; return x; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0909"), "got {:?}", codes);
+        assert!(codes.contains(&"E0909"), "got {:?}", codes);
     }
 
     #[test]
@@ -25733,7 +26772,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn bad(a: i64) -> i64 { a }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0909"), "got {:?}", codes);
+        assert!(codes.contains(&"E0909"), "got {:?}", codes);
     }
 
     // ---- v0.0.14 graph value-depth: sema span->Ty retention ----
@@ -25808,7 +26847,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
         );
-        assert!(codes.iter().any(|c| *c == "E0904"), "got {:?}", codes);
+        assert!(codes.contains(&"E0904"), "got {:?}", codes);
     }
 
     #[test]
@@ -25823,6 +26862,6 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+        assert!(codes.contains(&"E0906"), "got {:?}", codes);
     }
 }

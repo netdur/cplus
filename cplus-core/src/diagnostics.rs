@@ -8,7 +8,7 @@ use crate::lexer::{LexError, LexErrorKind, Span as ByteSpan};
 use crate::parser::{ParseError, ParseErrorKind};
 use serde::Serialize;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -119,9 +119,23 @@ impl Diagnostic {
     ) -> String {
         self.render_with(
             |span| {
+                // Exact path match first (the common case — the loader and
+                // the span agree on the path form). On a miss, retry with
+                // both sides canonicalized: a relative span must still find
+                // its canonically-keyed source (and vice versa), otherwise
+                // the fallback quotes the ENTRY file's line at that number —
+                // the wrong-file bug this function exists to fix.
+                if let Some((_, s)) = files.values().find(|(p, _)| p == &span.file) {
+                    return Some(s.as_str());
+                }
+                let want = std::fs::canonicalize(&span.file).ok()?;
                 files
                     .values()
-                    .find(|(p, _)| p == &span.file)
+                    .find(|(p, _)| {
+                        std::fs::canonicalize(p)
+                            .map(|c| c == want)
+                            .unwrap_or(false)
+                    })
                     .map(|(_, s)| s.as_str())
             },
             default_src,
@@ -179,6 +193,22 @@ fn render_snippet(span: &SourceSpan, src: &str) -> Option<String> {
 
 // ---- LineMap: byte offset → line/col ----
 
+/// Largest char-boundary index `<= idx` in `src`. `str::floor_char_boundary`
+/// is still unstable, so we walk back over UTF-8 continuation bytes (0b10xx_xxxx)
+/// ourselves. Keeps `position()` total on any byte offset a front-end
+/// span-arithmetic slip might hand us — the renderer must never panic on a
+/// mid-character index (the lone-`é` compiler crash).
+fn floor_char_boundary(src: &str, idx: usize) -> usize {
+    let mut i = idx.min(src.len());
+    let bytes = src.as_bytes();
+    // `i == src.len()` is already a valid boundary; only step back while `i`
+    // indexes a UTF-8 continuation byte.
+    while i > 0 && i < src.len() && (bytes[i] & 0b1100_0000) == 0b1000_0000 {
+        i -= 1;
+    }
+    i
+}
+
 #[derive(Debug, Clone)]
 pub struct LineMap {
     line_starts: Vec<u32>,
@@ -200,9 +230,15 @@ impl LineMap {
             .line_starts
             .partition_point(|&s| s <= byte)
             .saturating_sub(1);
-        let line_start = self.line_starts[line_idx];
-        let line_byte = (byte as usize).min(src.len());
-        let line_text = &src[line_start as usize..line_byte];
+        // Total-ize the slice: a span whose end lands mid-UTF-8-character (a
+        // front-end span-arithmetic bug on multibyte input) must never panic
+        // the renderer — clamp both bounds down to the nearest char boundary.
+        // `line_start` comes from newline offsets so it is already a boundary,
+        // but clamp it too so `position()` can never construct an invalid
+        // slice regardless of how it's called.
+        let line_start = floor_char_boundary(src, self.line_starts[line_idx] as usize);
+        let line_byte = floor_char_boundary(src, (byte as usize).min(src.len()));
+        let line_text = &src[line_start..line_byte.max(line_start)];
         let col = line_text.chars().count() as u32 + 1;
         Position {
             line: (line_idx + 1) as u32,
@@ -211,9 +247,9 @@ impl LineMap {
         }
     }
 
-    pub fn span(&self, file: &PathBuf, span: ByteSpan, src: &str) -> SourceSpan {
+    pub fn span(&self, file: &Path, span: ByteSpan, src: &str) -> SourceSpan {
         SourceSpan {
-            file: file.clone(),
+            file: file.to_path_buf(),
             start: self.position(span.start, src),
             end: self.position(span.end, src),
         }
@@ -262,7 +298,7 @@ impl DiagSink {
 
 // ---- Conversions from existing error types ----
 
-pub fn from_lex(err: &LexError, file: &PathBuf, lm: &LineMap, src: &str) -> Diagnostic {
+pub fn from_lex(err: &LexError, file: &Path, lm: &LineMap, src: &str) -> Diagnostic {
     let primary = lm.span(file, err.span, src);
     let (code, message, suggestions) = match &err.kind {
         LexErrorKind::UnexpectedChar(c) => (
@@ -291,6 +327,11 @@ pub fn from_lex(err: &LexError, file: &PathBuf, lm: &LineMap, src: &str) -> Diag
             format!("invalid numeric type suffix `{s}`; expected one of i8/i16/i32/i64/u8/u16/u32/u64/isize/usize/f32/f64"),
             Vec::new(),
         ),
+        LexErrorKind::FloatOutOfRange(s) => (
+            DiagCode("E0003"),
+            format!("float literal `{s}` is out of range — it overflows to infinity or underflows to zero"),
+            Vec::new(),
+        ),
     };
     Diagnostic {
         severity: Severity::Error,
@@ -303,7 +344,7 @@ pub fn from_lex(err: &LexError, file: &PathBuf, lm: &LineMap, src: &str) -> Diag
     }
 }
 
-pub fn from_parse(err: &ParseError, file: &PathBuf, lm: &LineMap, src: &str) -> Diagnostic {
+pub fn from_parse(err: &ParseError, file: &Path, lm: &LineMap, src: &str) -> Diagnostic {
     let primary = lm.span(file, err.span, src);
     let (code, message, suggestions) = match &err.kind {
         ParseErrorKind::Unexpected { found, expected } => (
@@ -335,6 +376,14 @@ pub fn from_parse(err: &ParseError, file: &PathBuf, lm: &LineMap, src: &str) -> 
             "comparison operators are non-chainable; use `&&` between comparisons".to_string(),
             // We could suggest `a < b && b < c` but synthesis is fragile;
             // leave as a note instead.
+            Vec::new(),
+        ),
+        ParseErrorKind::NestingTooDeep => (
+            DiagCode("E0103"),
+            format!(
+                "expression or statement nesting too deep (limit {})",
+                crate::parser::MAX_PARSE_DEPTH
+            ),
             Vec::new(),
         ),
     };
@@ -414,6 +463,91 @@ mod tests {
     }
 
     #[test]
+    fn line_map_position_totals_over_mid_char_offset() {
+        // A span offset that lands INSIDE a multibyte character (a front-end
+        // span-arithmetic slip) must not panic — `position()` clamps down to
+        // the nearest char boundary instead of slicing mid-`é`.
+        let src = "é"; // 2 bytes: 0xC3 0xA9
+        let lm = LineMap::new(src);
+        // byte 1 is inside 'é'; must clamp to boundary 0 (col 1), not panic.
+        let p = lm.position(1, src);
+        assert_eq!(p.line, 1);
+        assert_eq!(p.col, 1);
+        // End-of-string and past-end stay total too.
+        assert_eq!(lm.position(2, src).col, 2);
+        assert_eq!(lm.position(99, src).col, 2);
+    }
+
+    #[test]
+    fn render_human_multi_matches_canonicalized_paths() {
+        // The snippet lookup must survive a relative-vs-canonicalized path
+        // mismatch between the span and the loader's file map — an exact-
+        // equality miss silently quoted the ENTRY file's line at that number
+        // (the wrong-file bug render_human_multi exists to fix).
+        let dir = std::env::temp_dir().join(format!("cpc-diag-canon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("other.cplus");
+        std::fs::write(&file, "first\nsecond line from other\n").unwrap();
+        let canon = std::fs::canonicalize(&file).unwrap();
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            "other".to_string(),
+            (canon.clone(), std::fs::read_to_string(&file).unwrap()),
+        );
+        // Span names a non-canonical form of the same file: the macOS
+        // tempdir sits behind a symlink so `file` != `canon` there; fall
+        // back to a `./`-component form elsewhere.
+        let noncanon = if canon != file {
+            file.clone()
+        } else {
+            dir.join("./other.cplus")
+        };
+        let d = Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0000"),
+            message: "test".to_string(),
+            primary: SourceSpan {
+                file: noncanon,
+                start: Position {
+                    line: 2,
+                    col: 1,
+                    byte: 6,
+                },
+                end: Position {
+                    line: 2,
+                    col: 7,
+                    byte: 12,
+                },
+            },
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        };
+        let out = d.render_human_multi("ENTRY ONE\nENTRY TWO\n", &files);
+        assert!(
+            out.contains("second line from other"),
+            "must quote the span's own file, got:\n{out}"
+        );
+        assert!(
+            !out.contains("ENTRY TWO"),
+            "must not quote the entry file's line:\n{out}"
+        );
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn floor_char_boundary_walks_back_continuation_bytes() {
+        let src = "a変b"; // 'a'=1, '変'=3 (bytes 1..4), 'b'=1
+        assert_eq!(floor_char_boundary(src, 0), 0);
+        assert_eq!(floor_char_boundary(src, 1), 1); // boundary before 変
+        assert_eq!(floor_char_boundary(src, 2), 1); // inside 変 → back to 1
+        assert_eq!(floor_char_boundary(src, 3), 1); // inside 変 → back to 1
+        assert_eq!(floor_char_boundary(src, 4), 4); // boundary before b
+        assert_eq!(floor_char_boundary(src, 99), src.len()); // past end clamps
+    }
+
+    #[test]
     fn diag_serializes_to_json_and_round_trips_shape() {
         let d = Diagnostic {
             severity: Severity::Error,
@@ -488,6 +622,22 @@ mod tests {
             "fn main() -> i32 { 1 < 2 < 3 }",
         );
         assert_eq!(d.code, DiagCode("E0102"));
+    }
+
+    #[test]
+    fn from_parse_nesting_too_deep_is_e0103() {
+        let n = (crate::parser::MAX_PARSE_DEPTH as usize) + 20;
+        let src = format!(
+            "fn main() -> i32 {{ return {}1{}; }}",
+            "(".repeat(n),
+            ")".repeat(n)
+        );
+        let toks = crate::lexer::tokenize(&src).unwrap();
+        let err = crate::parser::parse(toks).unwrap_err();
+        let lm = LineMap::new(&src);
+        let d = from_parse(&err, &pb("test.cplus"), &lm, &src);
+        assert_eq!(d.code, DiagCode("E0103"));
+        assert!(d.message.contains("too deep"), "message: {}", d.message);
     }
 
     #[test]

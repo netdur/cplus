@@ -573,7 +573,7 @@ mod tests {
     fn wasm32_is_internal_browser_only_32_bit() {
         // 32-bit, little-endian, freestanding, self-emitted.
         assert_eq!(WASM32.pointer_width, 32);
-        assert!(WASM32.little_endian);
+        const _: () = assert!(WASM32.little_endian);
         assert_eq!(WASM32.arch, TargetArch::Wasm32);
         assert_eq!(WASM32.os, TargetOs::Unknown);
         assert_eq!(WASM32.object_format, ObjectFormat::Wasm);

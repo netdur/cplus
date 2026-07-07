@@ -274,6 +274,11 @@ pub enum LexErrorKind {
     UnterminatedString,
     InvalidNumber(String),
     InvalidNumSuffix(String),
+    /// A finite float literal that overflows to `±inf` or underflows a
+    /// non-zero significand to `0.0`. Rust's `FromStr` returns `Ok` for both,
+    /// so without this check the program silently compiled with a value the
+    /// author never wrote (integer literals already error on overflow).
+    FloatOutOfRange(String),
 }
 
 impl fmt::Display for LexError {
@@ -284,8 +289,24 @@ impl fmt::Display for LexError {
             LexErrorKind::UnterminatedString => write!(f, "unterminated string literal"),
             LexErrorKind::InvalidNumber(s) => write!(f, "invalid number literal: {s}"),
             LexErrorKind::InvalidNumSuffix(s) => write!(f, "invalid numeric type suffix: {s}"),
+            LexErrorKind::FloatOutOfRange(s) => {
+                write!(f, "float literal out of range: {s}")
+            }
         }
     }
+}
+
+/// True iff the significand of `digits` (the part before any `e`/`E`
+/// exponent) contains a non-zero digit — i.e. the literal denotes a non-zero
+/// value. Used to tell an underflow-to-zero (`1e-400` → `0.0`, a mistake) from
+/// a literal that is genuinely zero (`0.0`, `0e0`). Digit separators and a
+/// decimal point are ignored.
+fn float_significand_is_nonzero(digits: &str) -> bool {
+    let significand = digits
+        .split(['e', 'E'])
+        .next()
+        .unwrap_or(digits);
+    significand.chars().any(|c| c.is_ascii_digit() && c != '0')
 }
 
 pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
@@ -524,7 +545,7 @@ impl<'a> Lexer<'a> {
     /// regular u8 literal.
     ///
     /// Errors:
-    ///   - `''` (empty) → E0X20 reported via UnexpectedChar('\'')
+    ///   - `''` (empty) → reported via UnexpectedChar('\'') (E0001)
     ///   - `'ab'` (two bytes between the quotes) → UnexpectedChar
     ///   - `'á'` (non-ASCII byte) → UnexpectedChar (the byte > 0x7F)
     ///   - Missing closing quote → UnterminatedString
@@ -1121,6 +1142,23 @@ impl<'a> Lexer<'a> {
             });
         }
 
+        // A decimal digit immediately following a base-prefixed run is an
+        // invalid digit for that base (`0b12`, `0o18`) — the digit loop stopped
+        // at it. Reject the whole literal instead of silently ending the number
+        // and re-lexing the stray digit as a separate `Int` token (which
+        // produced a confusing downstream "expected `;`" parse error). Base-16
+        // never reaches here (every ascii digit is a valid hex digit).
+        if radix != 10
+            && matches!(self.peek(0), Some(c) if c.is_ascii_digit()) {
+                while matches!(self.peek(0), Some(c) if c.is_ascii_digit()) {
+                    self.pos += 1;
+                }
+                return Err(LexError {
+                    kind: LexErrorKind::InvalidNumber(self.text_from(start).to_string()),
+                    span: self.span_from(start),
+                });
+            }
+
         // float? only base-10 supports floats
         let mut is_float = false;
         if radix == 10 {
@@ -1221,6 +1259,14 @@ impl<'a> Lexer<'a> {
                     kind: LexErrorKind::InvalidNumber(digits.clone()),
                     span: self.span_from(start),
                 })?;
+                // f32 overflow → `inf`; the digit string never spells `inf`,
+                // so a non-finite result is always an out-of-range literal.
+                if f.is_infinite() {
+                    return Err(LexError {
+                        kind: LexErrorKind::FloatOutOfRange(digits.clone()),
+                        span: self.span_from(start),
+                    });
+                }
                 f as f64
             } else {
                 digits.parse().map_err(|_| LexError {
@@ -1228,6 +1274,15 @@ impl<'a> Lexer<'a> {
                     span: self.span_from(start),
                 })?
             };
+            // Reject a finite literal that overflowed to `±inf` or underflowed
+            // a non-zero value to `0.0` — Rust's `FromStr` accepts both, which
+            // silently compiled a value the author never wrote.
+            if v.is_infinite() || (v == 0.0 && float_significand_is_nonzero(&digits)) {
+                return Err(LexError {
+                    kind: LexErrorKind::FloatOutOfRange(digits.clone()),
+                    span: self.span_from(start),
+                });
+            }
             TokenKind::Float(v, suf)
         } else {
             let v = u64::from_str_radix(&digits, radix).map_err(|_| LexError {
@@ -1420,10 +1475,36 @@ impl<'a> Lexer<'a> {
             b'#' => TokenKind::Pound,
             b'@' => TokenKind::At,
             other => {
+                // A lead byte >= 0x80 begins a multibyte UTF-8 sequence. `bump`
+                // advanced `self.pos` by ONE byte, so `start..self.pos` would
+                // end inside the character — a span the diagnostics renderer
+                // slices, panicking on the non-boundary index (the lone-`é`
+                // crash). Consume the whole character so the span sits on
+                // boundaries, and report the real `char`, not the mojibake
+                // `other as char` gives for a lead byte.
+                let ch = if other >= 0x80 {
+                    let char_start = start;
+                    let seq_len = utf8_seq_len(other);
+                    // Advance over the continuation bytes we haven't consumed
+                    // yet (bump already took the lead byte).
+                    for _ in 1..seq_len {
+                        if matches!(self.peek(0), Some(b) if (b & 0b1100_0000) == 0b1000_0000) {
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    std::str::from_utf8(&self.src[char_start..self.pos])
+                        .ok()
+                        .and_then(|s| s.chars().next())
+                        .unwrap_or(char::REPLACEMENT_CHARACTER)
+                } else {
+                    other as char
+                };
                 return Err(LexError {
-                    kind: LexErrorKind::UnexpectedChar(other as char),
+                    kind: LexErrorKind::UnexpectedChar(ch),
                     span: self.span_from(start),
-                })
+                });
             }
         };
         Ok(Token {
@@ -1431,6 +1512,23 @@ impl<'a> Lexer<'a> {
             span: self.span_from(start),
             nl_before: false,
         })
+    }
+}
+
+/// Number of bytes in the UTF-8 sequence a lead byte introduces (1–4). Used to
+/// build a char-boundary-aligned span for an unexpected non-ASCII character so
+/// the diagnostics renderer never slices mid-character.
+fn utf8_seq_len(lead: u8) -> usize {
+    if lead < 0x80 {
+        1
+    } else if lead >= 0xF0 {
+        4
+    } else if lead >= 0xE0 {
+        3
+    } else if lead >= 0xC0 {
+        2
+    } else {
+        1 // stray continuation byte — treat as a single bad byte
     }
 }
 
@@ -1499,6 +1597,89 @@ mod tests {
             tokenize("/* hello").unwrap_err().kind,
             LexErrorKind::UnterminatedBlockComment
         ));
+    }
+
+    #[test]
+    fn non_ascii_char_reports_real_char_with_boundary_span() {
+        // A multibyte character outside a string must produce a clean
+        // UnexpectedChar carrying the REAL char (not the mojibake lead byte)
+        // and a span that ends on a char boundary — else the diagnostics
+        // renderer panics slicing mid-character (the lone-`é` crash).
+        for (src, ch, nbytes) in [
+            ("é", 'é', 2usize),         // 2-byte
+            ("変", '変', 3),            // 3-byte CJK
+            ("😀", '😀', 4),           // 4-byte emoji
+        ] {
+            let err = tokenize(src).unwrap_err();
+            match err.kind {
+                LexErrorKind::UnexpectedChar(c) => assert_eq!(c, ch, "wrong char for {src:?}"),
+                other => panic!("expected UnexpectedChar for {src:?}, got {other:?}"),
+            }
+            // Span must cover the whole character and sit on boundaries.
+            assert_eq!(err.span.start, 0, "span start for {src:?}");
+            assert_eq!(
+                err.span.end as usize, nbytes,
+                "span must span the full {nbytes}-byte char {src:?}"
+            );
+            assert!(
+                src.is_char_boundary(err.span.end as usize),
+                "span end must be a char boundary for {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_ascii_in_string_literal_lexes_clean() {
+        // Multibyte content INSIDE a string is valid UTF-8 payload — no error.
+        assert!(tokenize("\"café 😀 変\"").is_ok());
+    }
+
+    #[test]
+    fn float_literal_overflow_and_underflow_rejected() {
+        // Overflow to inf and underflow of a non-zero significand to 0.0 must
+        // both be rejected, not silently compiled to the wrong value.
+        for src in ["1e400", "1e-400", "1.5e400", "1e40f32"] {
+            let err = tokenize(src).unwrap_err();
+            assert!(
+                matches!(err.kind, LexErrorKind::FloatOutOfRange(_)),
+                "expected FloatOutOfRange for {src:?}, got {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn base_prefixed_literal_with_out_of_radix_digit_errors() {
+        // `0b12` / `0o18` must be a single InvalidNumber error, not `Int(1)`
+        // followed by a stray `Int(2)`/`Int(8)` (which produced a confusing
+        // downstream parse error).
+        for src in ["0b12", "0o18", "0b101013"] {
+            let err = tokenize(src).unwrap_err();
+            assert!(
+                matches!(err.kind, LexErrorKind::InvalidNumber(_)),
+                "expected InvalidNumber for {src:?}, got {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn valid_base_prefixed_literals_lex_clean() {
+        for src in ["0b1010", "0o17", "0xFF", "0xdead_beef", "0b0", "0o0"] {
+            assert!(tokenize(src).is_ok(), "{src:?} should lex cleanly");
+        }
+    }
+
+    #[test]
+    fn in_range_and_zero_float_literals_lex_clean() {
+        // Representable floats and a genuine zero must NOT be flagged.
+        for src in ["3.14159", "1e300", "1e-300", "0.0", "0e0", "0.0e10", "3.4e38f32"] {
+            assert!(
+                tokenize(src).is_ok(),
+                "{src:?} should lex cleanly, got {:?}",
+                tokenize(src).unwrap_err().kind
+            );
+        }
     }
 
     #[test]
@@ -1729,7 +1910,7 @@ mod tests {
 
     #[test]
     fn float_literals() {
-        let ks = kinds("1.5 2.0e10 3.14f32");
+        let ks = kinds("1.5 2.0e10 1.25f32");
         assert_eq!(ks.len(), 4);
         match &ks[0] {
             TokenKind::Float(v, NumSuffix::None) => assert!((v - 1.5).abs() < 1e-9),
@@ -1740,7 +1921,7 @@ mod tests {
             _ => panic!(),
         }
         match &ks[2] {
-            TokenKind::Float(v, NumSuffix::F32) => assert!((v - 3.14).abs() < 1e-6),
+            TokenKind::Float(v, NumSuffix::F32) => assert!((v - 1.25).abs() < 1e-6),
             _ => panic!(),
         }
     }

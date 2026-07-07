@@ -37,6 +37,17 @@ use crate::ast::*;
 use crate::lexer::Span;
 use crate::sema::{BoundMethodRefInfo, EnumId, MonoInfo, StructId, Ty};
 
+/// Hard ceiling on the number of distinct generic-fn instantiations a single
+/// compilation may produce. A self-growing generic (`fn rec[T]() {
+/// rec::[*T](); }`) discovers a strictly-larger type argument on every
+/// recursive step — `rec[i32]` → `rec[*i32]` → `rec[**i32]` → … — so the
+/// worklist never drains and the compiler hangs (or OOMs). rustc's
+/// `recursion_limit` is the model: cap the expansion, and surface the breach
+/// as a real diagnostic (E0910) instead of an unbounded loop. Set far above
+/// any realistic program's monomorph count so it never fires on legitimate
+/// code — the vendor packages instantiate on the order of hundreds.
+pub const INSTANTIATION_LIMIT: usize = 4096;
+
 /// Slice 7GEN.5c carry-forward (2026-05-13): generic-instantiation
 /// lookup re-keyed by *mangled argument names* (vs sema's Vec<Ty> form).
 /// Required because `subst_type_ast` operates on AST after recursion has
@@ -114,7 +125,7 @@ pub fn monomorphize(
     // through recorded inner call args, and add the resolved
     // `(callee, concrete_args)` to the instantiation set. Iterate until
     // no new pair is produced.
-    let propagated_instantiations = propagate_fn_instantiations(
+    let (propagated_instantiations, _overflow) = propagate_fn_instantiations(
         &program,
         &mono.instantiations,
         &mono.call_monos,
@@ -187,7 +198,7 @@ pub fn monomorphize(
             // struct_instantiation below.
             ItemKind::Impl(b) if !b.target_generic_params.is_empty() => {
                 synthesize_generic_typed_impls(
-                    &b,
+                    b,
                     item.span,
                     item.origin_file.clone(),
                     mono,
@@ -501,10 +512,12 @@ fn ty_to_source_name_for_simd(ty: &Ty) -> String {
         Ty::F16 => "f16".into(),
         Ty::F32 => "f32".into(),
         Ty::F64 => "f64".into(),
-        other => panic!(
-            "non-numeric SIMD lane type reached AST reconstruction: {:?}",
-            other
-        ),
+        // A non-numeric lane can only get here through a front-end gap
+        // (sema gates SIMD element types). Degrade to an unresolvable
+        // source name — the resolver then reports a normal unknown-type
+        // diagnostic at the use site — instead of panicking the compiler,
+        // mirroring the sibling `Ty::Mask` arm's width-0 degradation.
+        _ => "<non-numeric-simd-lane>".into(),
     }
 }
 
@@ -625,7 +638,7 @@ fn synthesize_generic_typed_impls(
         .iter()
         .map(|((n, a), info)| (n.clone(), a.clone(), info.mangled_name.clone()))
         .collect();
-    let all_pairs = struct_pairs.into_iter().chain(enum_pairs.into_iter());
+    let all_pairs = struct_pairs.into_iter().chain(enum_pairs);
     for (sname, args, mangled_from_info) in all_pairs {
         if sname != target_name {
             continue;
@@ -1364,7 +1377,7 @@ fn propagate_fn_instantiations(
         (String, Vec<Ty>),
         crate::sema::StructInstantiationInfo,
     >,
-) -> std::collections::BTreeSet<(String, Vec<Ty>)> {
+) -> (std::collections::BTreeSet<(String, Vec<Ty>)>, Option<String>) {
     // Build template lookup: name -> &Function. Only generic templates.
     let templates: std::collections::HashMap<String, &Function> = program
         .items
@@ -1387,7 +1400,16 @@ fn propagate_fn_instantiations(
         .cloned()
         .collect();
     let mut worklist: std::collections::VecDeque<(String, Vec<Ty>)> = out.iter().cloned().collect();
+    // Set when the expansion blows past the cap — a self-growing generic. The
+    // driver's `check_instantiation_bounds` turns this into E0910; here we
+    // simply stop so `monomorphize` (and the test helper that skips the
+    // pre-check) terminate instead of hanging.
+    let mut overflow_culprit: Option<String> = None;
     while let Some((caller, caller_args)) = worklist.pop_front() {
+        if out.len() > INSTANTIATION_LIMIT {
+            overflow_culprit = Some(dominant_template(&out));
+            break;
+        }
         let Some(template) = templates.get(&caller) else {
             continue;
         };
@@ -1441,7 +1463,7 @@ fn propagate_fn_instantiations(
     // worklist for transitive discovery.
     let mut method_worklist: std::collections::VecDeque<(String, Vec<Ty>)> =
         std::collections::VecDeque::new();
-    for ((sname, sargs), _info) in struct_instantiations {
+    for (sname, sargs) in struct_instantiations.keys() {
         for item in &program.items {
             let ItemKind::Impl(b) = &item.kind else {
                 continue;
@@ -1491,6 +1513,10 @@ fn propagate_fn_instantiations(
     // generic-fn instantiation might call yet another generic fn in its
     // body. Same fixed-point shape as the main worklist above.
     while let Some((caller, caller_args)) = method_worklist.pop_front() {
+        if out.len() > INSTANTIATION_LIMIT {
+            overflow_culprit = Some(dominant_template(&out));
+            break;
+        }
         let Some(template) = templates.get(&caller) else {
             continue;
         };
@@ -1524,7 +1550,84 @@ fn propagate_fn_instantiations(
             }
         }
     }
-    out
+    (out, overflow_culprit)
+}
+
+/// The generic-fn name with the most distinct instantiations in `set` — the
+/// template driving a runaway expansion (its argument grows on every recursive
+/// step, so it dominates the count). Used to name the offender in E0910.
+fn dominant_template(set: &std::collections::BTreeSet<(String, Vec<Ty>)>) -> String {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (name, _) in set {
+        *counts.entry(name.as_str()).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, c)| *c)
+        .map(|(n, _)| n.to_string())
+        .unwrap_or_default()
+}
+
+/// Pre-monomorphization guard: detect a self-growing generic instantiation
+/// (`fn rec[T]() { rec::[*T](); }`) that would expand without bound and hang
+/// codegen. Runs the same fixed-point propagation `monomorphize` uses, capped
+/// at [`INSTANTIATION_LIMIT`]; if the cap is breached it emits a single
+/// **E0910** at the offending template's definition span. Returns an empty
+/// vec when instantiation is bounded (the overwhelming common case). The
+/// driver calls this after borrowck and before `monomorphize`, so the breach
+/// becomes a clean diagnostic rather than a non-terminating loop.
+pub fn check_instantiation_bounds(
+    program: &Program,
+    mono: &MonoInfo,
+    entry_file: &std::path::Path,
+    entry_src: &str,
+    files: &std::collections::BTreeMap<String, (std::path::PathBuf, String)>,
+) -> Vec<crate::diagnostics::Diagnostic> {
+    use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
+    let (_set, culprit) = propagate_fn_instantiations(
+        program,
+        &mono.instantiations,
+        &mono.call_monos,
+        &mono.struct_instantiations,
+    );
+    let Some(name) = culprit else {
+        return Vec::new();
+    };
+    // Locate the offending template's definition for the primary span + the
+    // file it lives in (multi-file projects route the snippet to that file,
+    // like sema/borrowck).
+    let (def_span, origin) = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Function(f) if f.name.name == name && !f.generic_params.is_empty() => {
+                Some((f.name.span, item.origin_file.clone()))
+            }
+            _ => None,
+        })
+        .unwrap_or((crate::lexer::Span { start: 0, end: 0, file: 0 }, None));
+    let message = format!(
+        "generic instantiation of `{name}` exceeds the recursion limit ({INSTANTIATION_LIMIT}); \
+         the type argument grows on each recursive call, so monomorphization never terminates"
+    );
+    let (path, src, lm) = match origin.as_deref().and_then(|o| files.get(o)) {
+        Some((p, s)) => (p.clone(), s.as_str(), LineMap::new(s)),
+        None => (entry_file.to_path_buf(), entry_src, LineMap::new(entry_src)),
+    };
+    vec![Diagnostic {
+        severity: Severity::Error,
+        code: DiagCode("E0910"),
+        message,
+        primary: lm.span(&path, def_span, src),
+        labels: Vec::new(),
+        notes: vec![
+            "a recursive generic function must reduce its type argument toward a \
+             non-generic base case; wrapping it (`*T`, `[T; N]`, `Box[T]`) on each \
+             call makes every instantiation distinct and the expansion infinite"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    }]
 }
 
 fn build_subst(
@@ -3492,6 +3595,84 @@ mod tests {
         monomorphize(prog, &mono, &name_of)
     }
 
+    fn bounds_diags(src: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let (diags, mono) = check_multi_with_mono(
+            &prog,
+            PathBuf::from("test.cplus"),
+            src,
+            std::collections::BTreeMap::new(),
+        );
+        for d in &diags {
+            if matches!(d.severity, crate::diagnostics::Severity::Error) {
+                panic!("sema errors: {:#?}", diags);
+            }
+        }
+        check_instantiation_bounds(
+            &prog,
+            &mono,
+            &PathBuf::from("test.cplus"),
+            src,
+            &std::collections::BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn self_growing_generic_instantiation_reports_e0910() {
+        // `rec[T]` calls `rec::[*T]` — every recursive step wraps the type
+        // argument in another `*`, so no two instantiations dedup and the
+        // worklist never drains. The bounded pre-check must catch it and
+        // report E0910 instead of hanging monomorphization.
+        let diags = bounds_diags(
+            "fn rec[T]() -> i32 { let _z: i32 = rec::[*T](); return 0; }\n\
+             fn main() -> i32 { return rec::[i32](); }",
+        );
+        assert_eq!(diags.len(), 1, "expected exactly one E0910; got {diags:#?}");
+        assert_eq!(diags[0].code.0, "E0910");
+        assert!(
+            diags[0].message.contains("rec"),
+            "diagnostic should name the offending template: {}",
+            diags[0].message
+        );
+    }
+
+    #[test]
+    fn array_growing_generic_instantiation_reports_e0910() {
+        // The `[T; N]` wrapper drives the same unbounded growth via the Array
+        // arm of type substitution.
+        let diags = bounds_diags(
+            "fn rec[T]() -> i32 { let _z: i32 = rec::[[T; 2]](); return 0; }\n\
+             fn main() -> i32 { return rec::[i32](); }",
+        );
+        assert_eq!(diags.len(), 1, "expected one E0910; got {diags:#?}");
+        assert_eq!(diags[0].code.0, "E0910");
+    }
+
+    #[test]
+    fn bounded_generic_recursion_is_not_flagged() {
+        // Self-recursion that keeps the SAME type argument (`countdown::[T]`)
+        // instantiates exactly one monomorph — it must NOT trip the guard.
+        let diags = bounds_diags(
+            "fn countdown[T](n: i32) -> i32 { if n == 0 { return 0; } return countdown::[T](n - 1); }\n\
+             fn main() -> i32 { return countdown::[i32](5); }",
+        );
+        assert!(diags.is_empty(), "bounded recursion flagged: {diags:#?}");
+    }
+
+    #[test]
+    fn non_recursive_type_growth_is_not_flagged() {
+        // A growing turbofish edge to a LEAF generic (no cycle) terminates —
+        // `wrap[i32]` instantiates `leaf[*i32]`, which recurses no further.
+        // The guard must fire only on genuine divergence, not any growth.
+        let diags = bounds_diags(
+            "fn leaf[U]() -> i32 { return 0; }\n\
+             fn wrap[T]() -> i32 { let _z: i32 = leaf::[*T](); return 0; }\n\
+             fn main() -> i32 { return wrap::[i32](); }",
+        );
+        assert!(diags.is_empty(), "non-cyclic growth flagged: {diags:#?}");
+    }
+
     #[test]
     fn identity_call_synthesizes_concrete_fn_and_rewrites_callee() {
         let p = run("fn identity[T](take x: T) -> T { return x; } \
@@ -3553,6 +3734,23 @@ mod tests {
     fn mangle_separates_args_with_double_underscore() {
         let result = mangle_name("pick", &[Ty::I32, Ty::Bool], &name_of);
         assert_eq!(result, "pick__i32__bool");
+    }
+
+    #[test]
+    fn simd_non_numeric_lane_degrades_instead_of_panicking() {
+        // A non-numeric lane reaching AST reconstruction is a front-end gap;
+        // it must degrade to an unresolvable source name (a normal
+        // unknown-type diagnostic downstream), not panic the compiler —
+        // mirroring the sibling `Ty::Mask` width-0 arm.
+        let ty = Ty::Simd {
+            elem: Box::new(Ty::Bool),
+            lanes: 4,
+        };
+        let t = ty_to_type_ast(&ty, &|_| "X".to_string());
+        match t.kind {
+            TypeKind::Path(p) => assert_eq!(p, "<non-numeric-simd-lane>x4"),
+            other => panic!("expected Path, got {other:?}"),
+        }
     }
 
     #[test]

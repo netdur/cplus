@@ -7,14 +7,14 @@
 //!    - E0347: irrefutable `if let` pattern (use plain `let`)
 //!    - E0348: `guard let` else block must diverge (return / break / continue)
 //!    - E0349: `guard let` else complement is not exhaustive with the
-//!             success pattern (only fires when the user wrote an explicit
-//!             `else |Pat|` form — without a complement we synthesize `_`
-//!             which is trivially exhaustive)
+//!      success pattern (only fires when the user wrote an explicit
+//!      `else |Pat|` form — without a complement we synthesize `_`
+//!      which is trivially exhaustive)
 //!    - E0350: `guard let` complement overlaps the success pattern
 //!    - E0351: `guard let` requires the success pattern to bind at least
-//!             one value (else it's just an `if let` with side effects)
+//!      one value (else it's just an `if let` with side effects)
 //!    - E0352: multi-binding `guard let` patterns are deferred to a
-//!             follow-up slice
+//!      follow-up slice
 //!
 //! 2. Rewrites each `IfLet` / `GuardLet` statement in place to an
 //!    equivalent form built from existing AST nodes (match expression for
@@ -29,30 +29,30 @@ use crate::ast::*;
 use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
 use crate::lexer::Span;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Run the lowering pass over a merged Program. Mutates `prog` so all
 /// `StmtKind::IfLet` / `StmtKind::GuardLet` nodes are replaced with
 /// equivalent match-using forms.
 ///
 /// v0.0.9 Phase 4: also validates module-scope `const` / `static`
-/// initializers are literals (E0X30) and substitutes every use-site
+/// initializers are literals (E0911) and substitutes every use-site
 /// reference to a const with the initializer expression. After this
 /// pass returns, sema sees literal expressions where the user wrote a
 /// const name — codegen never observes a const-name reference.
-pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
+pub fn lower(prog: &mut Program, file: &Path, src: &str) -> Vec<Diagnostic> {
     // Single-file entry: build a one-entry files map and delegate to the
     // multi-file path. Mirrors `sema::check` / `attrs::check`.
     let mut files: BTreeMap<String, (PathBuf, String)> = BTreeMap::new();
-    files.insert(String::new(), (file.clone(), src.to_string()));
+    files.insert(String::new(), (file.to_path_buf(), src.to_string()));
     lower_multi(prog, file, src, files)
 }
 
 /// Multi-file entry point. Mirrors `sema::check_multi` / `attrs::check_multi`.
 ///
 /// GAP 3 (v0.0.19): the merged program carries items from several files, each
-/// tagged with its `origin_file`. Diagnostics raised here (E0X30 on a bad
-/// static/const initializer, the if-let/guard-let desugar errors, E0X36 on a
+/// tagged with its `origin_file`. Diagnostics raised here (E0911 on a bad
+/// static/const initializer, the if-let/guard-let desugar errors, E0912 on a
 /// bad const array length) must render against the file the *item* came from,
 /// not the entry file. Previously `lower` knew only the entry path + source, so
 /// an error in an imported file pointed at the entry file (wrong file) and a
@@ -60,11 +60,11 @@ pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
 /// `current_file` per item and resolve spans through that file's `LineMap`.
 pub fn lower_multi(
     prog: &mut Program,
-    entry_file: &PathBuf,
+    entry_file: &Path,
     entry_src: &str,
     files: BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
-    let mut cx = Lower::new(entry_file.clone(), entry_src, files);
+    let mut cx = Lower::new(entry_file.to_path_buf(), entry_src, files);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
@@ -1032,7 +1032,7 @@ impl Lower {
     // ---- v0.0.9 Phase 4: const + static literal-only check + const substitution ----
 
     /// Walk the program's items, validating that every `const` and
-    /// `static` initializer is a literal (E0X30). Returns a map from
+    /// `static` initializer is a literal (E0911). Returns a map from
     /// qualified const name → (initializer expression, declared type)
     /// for the substitution pass to consume.
     ///
@@ -1050,14 +1050,14 @@ impl Lower {
         let mut consts: std::collections::HashMap<String, (Expr, Type)> =
             std::collections::HashMap::new();
         for item in &prog.items {
-            // GAP 3: an E0X30 on a bad initializer must point at the file the
+            // GAP 3: an E0911 on a bad initializer must point at the file the
             // const/static was declared in, not always the entry file.
             self.set_current_file(item.origin_file.as_deref());
             match &item.kind {
                 ItemKind::Const(c) => {
                     if !is_const_initializer(&c.value) {
                         self.err(
-                            "E0X30",
+                            "E0911",
                             "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`)".to_string(),
                             c.value.span,
                         );
@@ -1068,7 +1068,7 @@ impl Lower {
                 ItemKind::Static(s) => {
                     if !is_static_initializer(&s.value) {
                         self.err(
-                            "E0X30",
+                            "E0911",
                             "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, or a (non-generic) struct literal of such".to_string(),
                             s.value.span,
                         );
@@ -1119,14 +1119,14 @@ impl Lower {
     /// `[v; N]` (fill expression) where `N` is a non-negative integer `const`
     /// name are resolved against `consts` (the same table the substitution
     /// pass uses); unknown names, non-integer consts, and overflow fire
-    /// **E0X36**. After this pass `len_name` / `count_name` are `None`.
+    /// **E0912**. After this pass `len_name` / `count_name` are `None`.
     fn resolve_const_array_lengths(
         &mut self,
         prog: &mut Program,
         consts: &std::collections::HashMap<String, (Expr, Type)>,
     ) {
         for item in &mut prog.items {
-            // GAP 3: an E0X36 on a bad const array length renders against the
+            // GAP 3: an E0912 on a bad const array length renders against the
             // file the type/expression was written in.
             self.set_current_file(item.origin_file.as_deref());
             match &mut item.kind {
@@ -1188,7 +1188,7 @@ impl Lower {
         }
     }
 
-    /// Resolve a single `const`-name length to a `u32`, emitting E0X36 on a
+    /// Resolve a single `const`-name length to a `u32`, emitting E0912 on a
     /// name that is not a usable non-negative integer `const`.
     fn resolve_one_len(
         &mut self,
@@ -1199,7 +1199,7 @@ impl Lower {
         match consts.get(name) {
             None => {
                 self.err(
-                    "E0X36",
+                    "E0912",
                     format!(
                         "array length `{name}` is not a known `const`; use an integer literal or a `const` (with a non-negative integer literal initializer) in scope"
                     ),
@@ -1211,7 +1211,7 @@ impl Lower {
                 ExprKind::IntLit(v, _) if *v <= u32::MAX as u64 => *v as u32,
                 ExprKind::IntLit(_, _) => {
                     self.err(
-                        "E0X36",
+                        "E0912",
                         format!("array length `const {name}` exceeds the u32 maximum"),
                         span,
                     );
@@ -1219,7 +1219,7 @@ impl Lower {
                 }
                 _ => {
                     self.err(
-                        "E0X36",
+                        "E0912",
                         format!(
                             "array length `const {name}` must be a non-negative integer literal"
                         ),
@@ -1505,7 +1505,7 @@ impl Lower {
 ///   numeric constants (`-1`, `-3.14`)
 ///
 /// Arithmetic, identifier references, struct literals, array literals,
-/// and any other shape are rejected with E0X30. Future slices may
+/// and any other shape are rejected with E0911. Future slices may
 /// widen this (struct-of-literals for the raytracer scene, const
 /// arithmetic for derived values); v0.0.9 ships the smallest viable
 /// surface.
@@ -1528,7 +1528,7 @@ fn is_const_initializer(e: &Expr) -> bool {
         // numeric literal — or a unary-negated one — so the result is a
         // compile-time constant, the const/static-position analog of the
         // value sema would compute at runtime. Previously rejected with
-        // E0X30 ("casts aren't literals") even though the plain-literal
+        // E0911 ("casts aren't literals") even though the plain-literal
         // form `= 1` worked, which was a surprising asymmetry. Bool and
         // string casts are intentionally excluded: they have no
         // narrowing-literal use and would not render as scalar globals.
@@ -1956,7 +1956,7 @@ pub fn desugar_builder_block(e: &mut Expr) {
 /// so `if`/`for` bodies add into the same accumulator as their siblings.
 fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>) {
     match entry {
-        BuilderEntry::Let(s) => out.push(s),
+        BuilderEntry::Let(s) => out.push(*s),
         BuilderEntry::Item { expr, modifiers } => {
             let item_span = expr.span;
             let i_name = format!("__i{}", item_span.start);
@@ -2232,7 +2232,7 @@ mod tests {
         diags.iter().map(|d| d.code.0).collect()
     }
 
-    // GAP 3 (v0.0.19): a lower-pass diagnostic (here E0X30 on a bad static
+    // GAP 3 (v0.0.19): a lower-pass diagnostic (here E0911 on a bad static
     // initializer) in an *imported* file must render against that file, not the
     // entry file. Before the multi-file `lower_multi`, every diagnostic used the
     // entry path + entry source, so an imported-file error pointed at the wrong
@@ -2286,8 +2286,8 @@ mod tests {
         let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
         let d = diags
             .iter()
-            .find(|d| d.code.0 == "E0X30")
-            .expect("expected E0X30 on the bad static initializer");
+            .find(|d| d.code.0 == "E0911")
+            .expect("expected E0911 on the bad static initializer");
         assert!(
             d.primary.file.ends_with("lib.cplus"),
             "diagnostic should point at lib.cplus, got {:?}",
@@ -2300,7 +2300,7 @@ mod tests {
 
     #[test]
     fn multi_file_const_array_length_error_points_at_origin_file_gap3() {
-        // E0X36 (unknown const array length) raised in the array-length pass
+        // E0912 (unknown const array length) raised in the array-length pass
         // also routes through the item's origin file.
         let entry_src = "fn main() -> i32 { return 0; }\n";
         let lib_src = "struct Buf { data: [i32; MISSING] }\n";
@@ -2315,8 +2315,8 @@ mod tests {
         let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
         let d = diags
             .iter()
-            .find(|d| d.code.0 == "E0X36")
-            .expect("expected E0X36 on the unknown array length");
+            .find(|d| d.code.0 == "E0912")
+            .expect("expected E0912 on the unknown array length");
         assert!(
             d.primary.file.ends_with("lib.cplus"),
             "diagnostic should point at lib.cplus, got {:?}",
@@ -2330,8 +2330,8 @@ mod tests {
         let (_, diags) = run("static BAD: i32 = 1 + 2;\nfn main() -> i32 { return 0; }");
         let d = diags
             .iter()
-            .find(|d| d.code.0 == "E0X30")
-            .expect("expected E0X30");
+            .find(|d| d.code.0 == "E0911")
+            .expect("expected E0911");
         assert!(
             d.primary.file.ends_with("test.cplus"),
             "got {:?}",
@@ -2541,7 +2541,7 @@ mod tests {
     fn const_array_length_folds_to_literal() {
         let (prog, diags) = run("const CAP: usize = 8;\n\
              fn main() -> i32 { let a: [i32; CAP] = [0; CAP]; return a[0]; }");
-        assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        assert!(!first_codes(&diags).contains(&"E0912"), "diags: {diags:?}");
         // The `len_name` placeholder is folded into a literal `8` and cleared.
         assert_eq!(first_let_array_len(&prog), Some((8, None)));
     }
@@ -2575,16 +2575,16 @@ mod tests {
     }
 
     #[test]
-    fn unknown_const_array_length_e0x36() {
+    fn unknown_const_array_length_e0912() {
         let (_, diags) = run("fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }");
-        assert!(first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        assert!(first_codes(&diags).contains(&"E0912"), "diags: {diags:?}");
     }
 
     #[test]
-    fn non_integer_const_array_length_e0x36() {
+    fn non_integer_const_array_length_e0912() {
         let (_, diags) = run("const NAME: str = \"hi\";\n\
              fn main() -> i32 { let a: [i32; NAME] = [0; 1]; return 0; }");
-        assert!(first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        assert!(first_codes(&diags).contains(&"E0912"), "diags: {diags:?}");
     }
 
     #[test]
@@ -2593,7 +2593,7 @@ mod tests {
         let (prog, diags) = run("const W: u32 = 16;\n\
              struct Buf { data: [u8; W] }\n\
              fn main() -> i32 { return 0; }");
-        assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        assert!(!first_codes(&diags).contains(&"E0912"), "diags: {diags:?}");
         let s = prog.items.iter().find_map(|it| match &it.kind {
             ItemKind::Struct(s) if s.name.name == "Buf" => Some(s),
             _ => None,

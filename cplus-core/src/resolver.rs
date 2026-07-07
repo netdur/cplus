@@ -147,6 +147,14 @@ pub enum ResolveError {
         import_span: Span,
         requested: String,
     },
+    /// A file-relative import (`./x` / `../x`) whose `..` chain resolves to a
+    /// file OUTSIDE the project tree. Security: symmetric with `VendorEscape`
+    /// — neither import kind may pull source from outside `manifest_root`.
+    RelativeEscape {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -305,6 +313,17 @@ impl std::fmt::Display for ResolveError {
                     importing_file.display(),
                 )
             }
+            ResolveError::RelativeEscape {
+                importing_file,
+                requested,
+                ..
+            } => {
+                write!(
+                    f,
+                    "[E0914] {}: relative import `{requested}` resolves outside the project directory — imports may not reach beyond the project root",
+                    importing_file.display(),
+                )
+            }
         }
     }
 }
@@ -380,9 +399,7 @@ pub fn load_project_full(
     let LoaderState { files, edges } = loader.into_state();
 
     if let Err(e) = detect_cycle(&entry_file_id, &edges, &files) {
-        let sources = files
-            .iter()
-            .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
+        let sources = files.values().map(|u| (u.canonical_path.clone(), u.source.clone()))
             .collect();
         return Err(LoadFailure { error: e, sources });
     }
@@ -393,9 +410,7 @@ pub fn load_project_full(
         .map(|(fid, u)| (fid.clone(), (u.canonical_path.clone(), u.source.clone())))
         .collect();
     // Also keyed by canonical path for the failure path.
-    let sources_by_path: std::collections::BTreeMap<PathBuf, String> = files
-        .iter()
-        .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
+    let sources_by_path: std::collections::BTreeMap<PathBuf, String> = files.values().map(|u| (u.canonical_path.clone(), u.source.clone()))
         .collect();
 
     let merged = match merge(
@@ -442,7 +457,7 @@ impl LoadFailure {
         // for successfully-parsed files carries the post-doctest source
         // that matches the spans the parser produced).
         let mut sources: std::collections::BTreeMap<PathBuf, String> = loader.raw_sources.clone();
-        for (_, u) in &loader.files {
+        for u in loader.files.values() {
             sources.insert(u.canonical_path.clone(), u.source.clone());
         }
         Self { error, sources }
@@ -467,6 +482,7 @@ impl LoadFailure {
             ResolveError::TargetGatedModule { importing_file, .. } => Some(importing_file),
             ResolveError::StaleExtension { importing_file, .. } => Some(importing_file),
             ResolveError::VendorEscape { importing_file, .. } => Some(importing_file),
+            ResolveError::RelativeEscape { importing_file, .. } => Some(importing_file),
         }
     }
 
@@ -497,7 +513,7 @@ impl LoadFailure {
         let span_in = |path: &Path, span: Span| -> SourceSpan {
             if let Some(src) = self.sources.get(path) {
                 let lm = LineMap::new(src);
-                lm.span(&path.to_path_buf(), span, src)
+                lm.span(path, span, src)
             } else {
                 SourceSpan {
                     file: path.to_path_buf(),
@@ -640,17 +656,20 @@ impl LoadFailure {
                 pathless_span(path),
             ),
             ResolveError::Parse { path, source } => {
-                // Parse / lex errors in non-entry files already carry their
-                // own structured shape; rewrap minimally for now. (A full
-                // wrap would re-export ParseError's E01xx codes; this stays
-                // a 4C polish item that comes for free with proper sema-side
-                // structured handling. Use the parse error's span.)
-                let primary = span_in(path, source.span);
-                ("E01XX", format!("{source}"), primary)
+                // Carry the ORIGINAL parse error's code/message/span through, so
+                // a syntax error in an imported file reports the same code as
+                // the identical error in the entry file (was a placeholder
+                // `E01XX`). `from_parse` owns the ParseErrorKind → code map.
+                let src = self.sources.get(path).map(String::as_str).unwrap_or("");
+                let lm = LineMap::new(src);
+                return crate::diagnostics::from_parse(source, path, &lm, src);
             }
             ResolveError::Lex { path, source } => {
-                let primary = span_in(path, source.span);
-                ("E00XX", format!("{source}"), primary)
+                // Same for a lex error in an imported file — route through the
+                // canonical `from_lex` map instead of a placeholder `E00XX`.
+                let src = self.sources.get(path).map(String::as_str).unwrap_or("");
+                let lm = LineMap::new(src);
+                return crate::diagnostics::from_lex(source, path, &lm, src);
             }
             ResolveError::UnknownPackage {
                 importing_file,
@@ -734,6 +753,20 @@ impl LoadFailure {
                 (
                     "E0859",
                     format!("vendor import `{requested}` contains `..`"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::RelativeEscape {
+                importing_file,
+                import_span,
+                requested,
+            } => {
+                notes.push(
+                    "a relative import may not resolve outside the project root — the same containment the vendor import path enforces".to_string()
+                );
+                (
+                    "E0914",
+                    format!("relative import `{requested}` resolves outside the project directory"),
                     span_in(importing_file, *import_span),
                 )
             }
@@ -884,10 +917,6 @@ struct LoaderState {
 }
 
 impl Loader {
-    fn new(manifest_root: PathBuf) -> Self {
-        Self::with_deps(manifest_root, BTreeSet::new())
-    }
-
     fn with_deps(manifest_root: PathBuf, deps: BTreeSet<String>) -> Self {
         Self {
             manifest_root,
@@ -1066,6 +1095,19 @@ fn classify_import_path(
     };
 
     if extensionless.starts_with("./") || extensionless.starts_with("../") {
+        // Security: a relative import must stay within the project tree, the
+        // same boundary the vendor path enforces via E0859. Without this a
+        // `../../../../etc/...` chain resolved and loaded arbitrary on-disk
+        // `.cplus` files into the build. Only enforced in project mode
+        // (single-file mode has no project boundary, and sibling `../` imports
+        // are expected there).
+        if project_mode && relative_import_escapes_root(import_dir, &extensionless, manifest_root) {
+            return Err(ResolveError::RelativeEscape {
+                importing_file: importing_canonical.to_path_buf(),
+                import_span: span,
+                requested: path_str.to_string(),
+            });
+        }
         let mut p = import_dir.join(&extensionless);
         if p.extension().is_none() {
             p.set_extension("cplus");
@@ -1171,6 +1213,57 @@ fn classify_import_path(
         }
     }
     Ok(platform_override(p))
+}
+
+/// True iff resolving the relative import `rel` against `import_dir` escapes
+/// the importing file's own PACKAGE tree.
+///
+/// The boundary is the nearest ancestor of `import_dir` that holds a
+/// `Cplus.toml` (the importing file's package root), falling back to
+/// `manifest_root`. This is deliberately the *package* root, not the consumer's
+/// `manifest_root`: a dependency's source lives OUTSIDE the consumer root (the
+/// loader resolves `stdlib` from `<root>/../stdlib/`), and its own internal
+/// `import "./option"` must still resolve — while a `../../etc/...` chain that
+/// leaves the package is rejected, symmetric with the vendor path's E0859.
+///
+/// Canonicalizes the anchors (they exist on disk); if that fails, returns false
+/// (can't establish a boundary — don't block the build), matching the
+/// conservative posture of the single-file compat path.
+fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Path) -> bool {
+    let base = match import_dir.canonicalize() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let root = {
+        let mut cur: Option<&Path> = Some(base.as_path());
+        let mut found: Option<PathBuf> = None;
+        while let Some(d) = cur {
+            if d.join("Cplus.toml").is_file() {
+                found = Some(d.to_path_buf());
+                break;
+            }
+            cur = d.parent();
+        }
+        match found.or_else(|| manifest_root.canonicalize().ok()) {
+            Some(r) => r,
+            None => return false,
+        }
+    };
+    let mut parts: Vec<std::ffi::OsString> = base
+        .components()
+        .map(|c| c.as_os_str().to_os_string())
+        .collect();
+    for seg in rel.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(std::ffi::OsString::from(other)),
+        }
+    }
+    let resolved: PathBuf = parts.iter().collect();
+    !resolved.starts_with(&root)
 }
 
 /// Platform-specific source override. Some stdlib modules have an
@@ -1315,6 +1408,7 @@ fn exported_name(name: &str) -> bool {
 ///    helpers defined in C+ and called by the compiler's emitted code), and
 ///  - `__cplus_*` — compiler-runtime ABI reached by `#name` intrinsics from any module
 ///    (`#reactor_get_state` -> `__cplus_reactor_get_state`).
+///
 /// A plain (non-`export`) `extern fn` FFI import (`free`, `read`, `write`) is the
 /// scoped case: private to its declaring module, so importers don't inherit libc
 /// names bare into their namespace.
@@ -1341,15 +1435,11 @@ fn merge(
     // inherit the enum's visibility (no per-variant marker), so the variant
     // gate just re-checks `pub_items`.
     let mut local_items: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut local_enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut local_structs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut pub_items: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut pub_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
     let mut item_kind: BTreeMap<String, BTreeMap<String, ItemKindTag>> = BTreeMap::new();
     for (fid, unit) in &files {
         let mut all: BTreeSet<String> = BTreeSet::new();
-        let mut enums: BTreeSet<String> = BTreeSet::new();
-        let mut structs: BTreeSet<String> = BTreeSet::new();
         let mut pubs: BTreeSet<String> = BTreeSet::new();
         let mut methods: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut kinds: BTreeMap<String, ItemKindTag> = BTreeMap::new();
@@ -1379,7 +1469,6 @@ fn merge(
                 }
                 ItemKind::Enum(e) => {
                     all.insert(e.name.name.clone());
-                    enums.insert(e.name.name.clone());
                     kinds.insert(e.name.name.clone(), ItemKindTag::Enum);
                     if exported_name(&e.name.name) {
                         pubs.insert(e.name.name.clone());
@@ -1387,7 +1476,6 @@ fn merge(
                 }
                 ItemKind::Struct(s) => {
                     all.insert(s.name.name.clone());
-                    structs.insert(s.name.name.clone());
                     kinds.insert(s.name.name.clone(), ItemKindTag::Struct);
                     if exported_name(&s.name.name) {
                         pubs.insert(s.name.name.clone());
@@ -1446,8 +1534,6 @@ fn merge(
             }
         }
         local_items.insert(fid.clone(), all);
-        local_enums.insert(fid.clone(), enums);
-        local_structs.insert(fid.clone(), structs);
         pub_items.insert(fid.clone(), pubs);
         pub_methods.insert(fid.clone(), methods);
         item_kind.insert(fid.clone(), kinds);
@@ -1524,8 +1610,6 @@ fn merge(
             is_lib_entry,
             imports: imports_map,
             local_items: local_items.get(fid).cloned().unwrap_or_default(),
-            local_enums: local_enums.clone(),
-            local_structs: local_structs.clone(),
             pub_items: pub_items.clone(),
             pub_methods: pub_methods.clone(),
             item_kind: item_kind.clone(),
@@ -1582,13 +1666,6 @@ struct RewriteCtx {
     imports: BTreeMap<String, String>,
     /// Top-level item names declared in this file.
     local_items: BTreeSet<String>,
-    /// All files' enums and structs, indexed by file_id. Used to
-    /// distinguish "Type::Variant" enum paths from "Type::method" assoc
-    /// calls after a path prefix has been resolved.
-    #[allow(dead_code)]
-    local_enums: BTreeMap<String, BTreeSet<String>>,
-    #[allow(dead_code)]
-    local_structs: BTreeMap<String, BTreeSet<String>>,
     /// Per-file public surface (slice 4B). `pub_items[file_id]` is the set
     /// of exported top-level item names (no leading `_`);
     /// `pub_methods[file_id][type]` is the set of exported methods on that
@@ -2831,6 +2908,63 @@ mod tests {
             })
             .collect();
         assert!(names.contains(&"main".to_string()));
+    }
+
+    #[test]
+    fn relative_import_escaping_project_is_rejected_e0914() {
+        // Security: a `../..`-chain relative import that resolves outside the
+        // package must be rejected, symmetric with the vendor `..` guard.
+        let dir = tmpdir();
+        // Plant a file OUTSIDE the project tree (as a sibling of `dir`).
+        let outside = dir.parent().unwrap().join(format!(
+            "cpc-outside-{}",
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.cplus"), "fn leaked() -> i32 { return 42; }").unwrap();
+        fs::write(dir.join("Cplus.toml"), "[package]\nname=\"proj\"").unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let main = dir.join("src/main.cplus");
+        // Enough `..` to climb out of the project and into the sibling dir.
+        let rel = format!(
+            "../../{}/secret",
+            outside.file_name().unwrap().to_str().unwrap()
+        );
+        fs::write(
+            &main,
+            format!("import \"{rel}\" as outside;\nfn main() -> i32 {{ return outside::leaked(); }}"),
+        )
+        .unwrap();
+        // Project mode (`Some(deps)`) — the containment applies there, not in
+        // legacy single-file mode.
+        let err = load_project_full(&main, &dir, false, Some(&[]), BTreeMap::new()).unwrap_err();
+        let diag = err.to_diagnostic();
+        assert_eq!(diag.code.0, "E0914", "expected E0914, got {}", diag.code.0);
+    }
+
+    #[test]
+    fn relative_import_within_project_is_allowed() {
+        // A `./` and an in-tree `../` import that stay inside the package must
+        // still resolve — the containment check must not over-reject.
+        let dir = tmpdir();
+        fs::write(dir.join("Cplus.toml"), "[package]\nname=\"proj\"").unwrap();
+        fs::create_dir_all(dir.join("src/util")).unwrap();
+        fs::write(
+            dir.join("src/main.cplus"),
+            "import \"./util/helper\" as helper;\nfn main() -> i32 { return helper::help(); }",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/util/helper.cplus"),
+            "import \"../sibling\" as s;\nfn help() -> i32 { return s::val(); }",
+        )
+        .unwrap();
+        fs::write(dir.join("src/sibling.cplus"), "fn val() -> i32 { return 3; }").unwrap();
+        let main = dir.join("src/main.cplus");
+        assert!(
+            load_project_full(&main, &dir, false, Some(&[]), BTreeMap::new()).is_ok(),
+            "in-tree relative imports should resolve"
+        );
     }
 
     #[test]

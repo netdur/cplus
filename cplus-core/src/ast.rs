@@ -109,17 +109,18 @@ pub enum ItemKind {
     /// expression that resolves to a const is rewritten to a clone of
     /// the initializer expression before sema runs its expression-level
     /// checks. No LLVM global emitted. Initializer must be a literal
-    /// (sema enforces, E0X30); type annotation required (parser
-    /// enforces, E0X31).
+    /// (sema enforces, E0911); a type annotation is required (parser
+    /// enforces).
     Const(ConstDecl),
     /// v0.0.9 Phase 4: `export? static NAME: Ty = LIT;` module-scope
     /// global with a real address. A `static` is a mutable, C-facing
     /// global: it lowers to LLVM `@NAME = global <ty> <lit>` in `.data`.
     /// (A `const`-style immutable global instead uses `const`, which
     /// lowers to `@NAME = constant <ty> <lit>` in `.rodata`.) Reads and
-    /// writes of a `static` carry E0X33 / E0X34 accountability — the
-    /// borrow checker can't prove absence of data races for module-scope
-    /// mutable state.
+    /// writes of a `static` are bare (the read/write-accountability codes
+    /// were dropped in v0.0.24) — the borrow checker can't prove absence of
+    /// data races for module-scope mutable state; that's the author's
+    /// responsibility.
     Static(StaticDecl),
     /// v0.0.15: module-scope `#asm("...");` → LLVM `module asm "..."`. Raw
     /// assembly emitted at module top level, outside any function — the
@@ -150,7 +151,7 @@ pub struct ConstDecl {
     pub name: Ident,
     pub ty: Type,
     /// Initializer expression. Sema (`check_const_static_inits`) enforces
-    /// the literal-only rule with E0X30. The accepted shapes are
+    /// the literal-only rule with E0911. The accepted shapes are
     /// `IntLit` / `FloatLit` / `BoolLit` / `StrLit` plus optional
     /// `Unary { op: Neg, operand: <numeric lit> }` for negative
     /// numeric constants. Anything else is a hard error before the
@@ -916,6 +917,7 @@ pub enum ExprKind {
     ///   - **E0871** at parse time — non-string-literal argument.
     ///   - **E0876** at sema time — environment variable not set in the
     ///     compiler's environment at build time.
+    ///
     /// Result type is `str` (a `.rodata` global plus its UTF-8 byte
     /// length). Same dedup behavior as `#include_str` — two `#env("X")`
     /// calls on the same name share one underlying byte global.
@@ -929,6 +931,7 @@ pub enum ExprKind {
     /// from earlier cycles. Supports:
     ///   - turbofish type args: `#size_of::[T]()`
     ///   - optional return-type ascription: `#msg_send(recv, "sel") -> T`
+    ///
     /// The optional `ret_ty` is mainly load-bearing for Phase 4B
     /// (`#msg_send`) where the C-ABI return-type can't be inferred from
     /// the receiver. Other intrinsics ignore it.
@@ -987,8 +990,9 @@ pub struct BuilderBlock {
 pub enum BuilderEntry {
     /// `let NAME = EXPR;` — ordinary local setup. Carries a full `Stmt`
     /// (always `StmtKind::Let`) so lowering can splice it through
-    /// unchanged.
-    Let(Stmt),
+    /// unchanged. Boxed to keep `BuilderEntry` small — a bare `Stmt` is
+    /// far larger than the other variants.
+    Let(Box<Stmt>),
     /// One item expression (`text("title")`, a bare container block, ...)
     /// plus the leading-dot modifier lines that follow it. The
     /// modifiers apply to the item value before it is added to the

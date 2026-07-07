@@ -17,6 +17,11 @@
 // - Functions taking/returning unsupported C types (long double, vector,
 //   complex, etc.) are emitted with a `// SKIPPED: <reason>` comment.
 
+// The header-to-C+ renderers pass many format-shaping parameters (names,
+// C ids, type maps, param lists) through a single call; grouping them into
+// structs would not make the emitters clearer, so allow the arg-count lint.
+#![allow(clippy::too_many_arguments)]
+
 mod framework;
 mod gir;
 mod objc;
@@ -1390,7 +1395,7 @@ impl Emitter {
                         && f.get("type")
                             .and_then(|t| t.get("qualType"))
                             .and_then(|v| v.as_str())
-                            .map_or(false, |qt| qt.contains("(anonymous") || qt.contains("(unnamed"))
+                            .is_some_and(|qt| qt.contains("(anonymous") || qt.contains("(unnamed"))
                 })
             })
             .unwrap_or(false);
@@ -1453,7 +1458,7 @@ impl Emitter {
                 continue;
             } else if !bitfields.is_empty() {
                 // Flush the accumulated bitfield run into a storage field.
-                let bytes = ((bit_cursor + 7) / 8).max(1);
+                let bytes = bit_cursor.div_ceil(8).max(1);
                 let _ = bytes;
                 self.out
                     .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
@@ -1942,7 +1947,7 @@ pub(crate) fn sanitize_ident(name: &str) -> String {
         "restrict", "return", "self", "Self", "static", "struct", "take", "this", "This", "trait",
         "true", "try", "type", "union", "unsafe", "use", "var", "while", "yield",
     ];
-    if RESERVED.iter().any(|r| *r == name) {
+    if RESERVED.contains(&name) {
         return format!("{name}_");
     }
     name.to_string()

@@ -138,6 +138,22 @@ fn main() -> i32 { let r = 1 < 2 < 3; 0 }
 '''
 
 [[code]]
+id = "E0103"
+title = "Expression or statement nesting too deep"
+category = "Parser"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/parser.rs:enter_depth"
+test = "cplus-core/src/parser.rs:pathological_nesting_reports_e0103_not_stack_overflow"
+cause = "Source nests expressions, statement blocks, prefix operators, or types past the recursive-descent depth limit. Each level costs a native stack frame; without the bound the parser (and the later passes that recurse over the same tree) would overflow the stack and abort the process."
+fix = "Flatten the nesting: introduce intermediate `let` bindings, split deep expressions across statements, or reduce redundant parentheses. A limit this high is only reached by hostile or machine-generated input."
+example = '''
+fn main() -> i32 { return ((((((((((… 300 levels …)))))))))); }
+'''
+
+[[code]]
 id = "E0300"
 title = "Undefined name"
 category = "Names, types, and items"
@@ -1945,41 +1961,40 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0860"
-title = "`Send` / `Sync` marker impl has a non-empty body"
-category = "Ownership and borrowing"
+title = "Declared `[link].bundled` file missing on host"
+category = "Targets and packages"
 severity = "error"
-repro = "checked"
-lang = "cplus"
+repro = "scenario"
+lang = "toml"
 verified = true
-emit_site = "cplus-core/src/sema.rs:2963"
-test = "cplus-core/src/sema.rs:bare_impl_send_registers_marker_override"
-cause = "`Send` and `Sync` are marker interfaces with no methods; the assertion is the empty `impl Type: Send {}` itself. A non-empty body is rejected."
-fix = "Make the body empty: `impl Type: Send {}`."
+emit_site = "cpc/src/main.rs:link_bundled_missing"
+test = "cpc/tests/e2e.rs:bundled_lib_missing_for_host_triple_is_e0860"
+cause = "A vendored package's manifest declares a file in `[link].bundled`, but `src/lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing."
+fix = "Add the missing file under `src/lib/<host-triple>/`, or remove its entry from `[link].bundled`."
 example = '''
-struct Handle { opaque p: *u8 }
-impl Handle: Send { fn x(this) -> i32 { return 0; } }
-fn main() -> i32 { return 0; }
-// -> [E0860] `impl Handle: Send` must have an empty body
+[link]
+triples = ["arm64-apple-darwin"]
+bundled = ["libfoo.a"]
+# src/lib/arm64-apple-darwin/libfoo.a absent
+# -> [E0860] package declares bundled `libfoo.a` but the file is not present
 '''
 
 [[code]]
 id = "E0861"
-title = "Empty `impl` of an interface that is not `Send` / `Sync`"
-category = "Ownership and borrowing"
+title = "Orphan binary under `src/lib/` not declared in `[link].bundled`"
+category = "Targets and packages"
 severity = "error"
-repro = "checked"
-lang = "cplus"
+repro = "scenario"
+lang = "toml"
 verified = true
-emit_site = "cplus-core/src/sema.rs:2993"
-test = "cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0861"
-cause = "An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided."
-fix = "Implement the interface's methods, or remove the impl."
+emit_site = "cpc/src/main.rs:link_orphan_binary"
+test = "cpc/tests/e2e.rs (orphan .a under src/lib/<host> without [link])"
+cause = "A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `src/lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries."
+fix = "Add the file to `[link].bundled`, or delete it from the package."
 example = '''
-interface Greet { fn hi(this) -> i32; }
-struct S { x: i32 }
-impl S: Greet {}
-fn main() -> i32 { return 0; }
-// -> [E0861] empty `impl` applies only to the `Send` / `Sync` markers
+# vendor/foo/src/lib/arm64-apple-darwin/liborphan.a exists
+# vendor/foo/Cplus.toml has no [link] section
+# -> [E0861] package ships `liborphan.a` but the manifest doesn't declare it
 '''
 
 [[code]]
@@ -2108,6 +2123,28 @@ async fn fetch() -> i32 { return helper(); }
 fn main() -> i32 { return 0; }
 // compiled with `cpc check --target esp32-xtensa`
 // -> [E0867] async functions are not supported on 32-bit target `esp32-xtensa`
+'''
+
+[[code]]
+id = "E0868"
+title = "`[lib]` / `[[bin]]` path escapes the package directory"
+category = "Targets and packages"
+severity = "error"
+repro = "checked"
+lang = "toml"
+verified = true
+emit_site = "cplus-core/src/manifest.rs:target_path_escapes"
+test = "cplus-core/src/manifest.rs:bin_path_escaping_package_is_rejected_e0868"
+cause = "A `[lib].path` or `[[bin]].path` key resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt (they legitimately name external SDK locations)."
+fix = "Move the source file into the package and use a package-relative path (e.g. `path = \"src/main.cplus\"`)."
+example = '''
+[package]
+name = "esc"
+
+[[bin]]
+name = "esc"
+path = "../../outside/main.cplus"
+# -> [E0868] `[[bin]] `esc`` path resolves outside the package directory
 '''
 
 [[code]]
@@ -2484,7 +2521,24 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
-id = "E0X30"
+id = "E0910"
+title = "Generic instantiation exceeds the recursion limit"
+category = "Generics"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/monomorphize.rs:check_instantiation_bounds"
+test = "cplus-core/src/monomorphize.rs:self_growing_generic_instantiation_reports_e0910"
+cause = "A generic function calls itself (directly or through a cycle) with a type argument that grows on every step — `rec::[*T]`, `rec::[[T; 2]]`, `rec::[Box[T]]`. Each step is a distinct concrete type, so monomorphization never converges and the compiler would hang."
+fix = "Reduce the type argument toward a non-generic base case, or drop the wrapper so the recursive call reuses the same type (`rec::[T]`). Runtime recursion on a value parameter is fine; only the *type* argument must not grow."
+example = '''
+fn rec[T]() -> i32 { let _z: i32 = rec::[*T](); return 0; }
+fn main() -> i32 { return rec::[i32](); }
+'''
+
+[[code]]
+id = "E0911"
 title = "`const`/`static` initializer is not a literal"
 category = "const / static / char"
 severity = "error"
@@ -2492,7 +2546,7 @@ repro = "checked"
 lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/lower.rs:729"
-test = "cplus-core/src/sema.rs:const_with_non_literal_initializer_e0x30"
+test = "cplus-core/src/sema.rs:const_with_non_literal_initializer_e0911"
 cause = "A `const` or `static` initializer used a non-literal shape (arithmetic, an identifier, a call, or a generic struct literal); `const` is literal-only and `static` allows only literals, `#zero::[T]()`, array literals/fills, or non-generic struct literals of such."
 fix = "Use a literal initializer (or an accepted `static` shape such as `#zero::[T]()` or an array/struct literal of literals)."
 example = '''
@@ -2500,7 +2554,7 @@ const FOO: i32 = 1 + 2;
 '''
 
 [[code]]
-id = "E0X36"
+id = "E0912"
 title = "Unknown `const` array length"
 category = "const / static / char"
 severity = "error"
@@ -2508,11 +2562,103 @@ repro = "checked"
 lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/lower.rs:871"
-test = "cpc/tests/e2e.rs:unknown_const_array_length_rejected_e0x36"
+test = "cpc/tests/e2e.rs:unknown_const_array_length_rejected_e0912"
 cause = "An array length named a `const` that is not in scope, is not an integer, is negative, or exceeds the u32 maximum."
 fix = "Use an integer literal, or a `const` in scope with a non-negative integer literal initializer."
 example = '''
 fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }
+'''
+
+[[code]]
+id = "E0913"
+title = "Recursive type has infinite size"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_recursive_types"
+test = "cplus-core/src/sema.rs:recursive_struct_by_value_rejected_e0913"
+cause = "A struct or enum contains itself by value — directly (`struct S { s: S }`), mutually (`A` holds `B`, `B` holds `A`), or through an inline array (`[S; N]`). Such a type has no finite size."
+fix = "Break the cycle with an indirection: store the recursive field behind a pointer (`*S`). A raw-pointer field needs `opaque` or a `fn drop(ref this)` (see E0510)."
+example = '''
+struct S { s: S }
+fn main() -> i32 { return 0; }
+'''
+
+[[code]]
+id = "E0914"
+title = "Relative import escapes the project directory"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/resolver.rs:relative_import_escapes_root"
+test = "cplus-core/src/resolver.rs:relative_import_escaping_project_is_rejected_e0914"
+cause = "A file-relative import (`./x` / `../x`) has a `..` chain that resolves to a file outside the importing package's tree — the same escape the vendor import path (E0859) blocks, on the relative path that previously left it open."
+fix = "Keep relative imports inside the package. To use another package, add it to `[dependencies]` and import it by name (`import \"dep/module\"`)."
+example = '''
+import "../../../../etc/whatever" as e;
+fn main() -> i32 { return 0; }
+// -> [E0914] relative import resolves outside the project directory
+'''
+
+[[code]]
+id = "E0915"
+title = "`Send` / `Sync` marker impl has a non-empty body"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:2963"
+test = "cplus-core/src/sema.rs:nonempty_send_marker_impl_rejected_e0915"
+cause = "`Send` and `Sync` are marker interfaces with no methods; the assertion is the empty `impl Type: Send {}` itself. A non-empty body is rejected."
+fix = "Make the body empty: `impl Type: Send {}`."
+example = '''
+struct Handle { opaque p: *u8 }
+impl Handle: Send { fn x(this) -> i32 { return 0; } }
+fn main() -> i32 { return 0; }
+// -> [E0915] `impl Handle: Send` must have an empty body
+'''
+
+[[code]]
+id = "E0916"
+title = "Empty `impl` of an interface that is not `Send` / `Sync`"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:2993"
+test = "cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916"
+cause = "An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided."
+fix = "Implement the interface's methods, or remove the impl."
+example = '''
+interface Greet { fn hi(this) -> i32; }
+struct S { x: i32 }
+impl S: Greet {}
+fn main() -> i32 { return 0; }
+// -> [E0916] empty `impl` applies only to the `Send` / `Sync` markers
+'''
+
+[[code]]
+id = "E0917"
+title = "Item name contains reserved `__`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:reject_reserved_double_underscore"
+test = "cplus-core/src/sema.rs:double_underscore_item_names_reserved_e0917"
+cause = "A struct, enum, or (non-extern) function name contains an interior `__`. The double underscore is the compiler's monomorphization separator (`Box[i32]` mangles to `Box__i32`), so a literal `Box__i32` next to a `Box[T]` template would collide with the instantiation's symbol — two items under one name, one silently shadowing the other."
+fix = "Use a single underscore (`box_i32`). Exempt: `extern fn` names (existing C symbols like `__errno_location` never monomorphize) and names whose only `__` is leading (`__x` — an instantiation's template base is never empty)."
+example = '''
+struct Box__i32 { v: i32 }
+fn main() -> i32 { return 0; }
+// -> [E0917] struct name `Box__i32` contains `__`, which is reserved for compiler name mangling
 '''
 
 [[code]]

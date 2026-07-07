@@ -741,6 +741,9 @@ fn describe_targets(mask: u8) -> String {
     if mask & TARGET_VARIANT != 0 {
         parts.push("enum variants");
     }
+    if mask & TARGET_LOOP_STMT != 0 {
+        parts.push("loop statements");
+    }
     match parts.len() {
         0 => "(no targets)".to_string(),
         1 => parts[0].to_string(),

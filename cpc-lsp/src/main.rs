@@ -713,42 +713,6 @@ fn identifier_at_position(text: &str, pos: Position) -> Option<String> {
     None
 }
 
-/// Scan the resolver's merged program for items whose source-level name
-/// matches `target`. Item names in the merged program are qualified
-/// (`src.math.square`); we match either the full qualified name or the
-/// last `.`-segment so a click on `square` finds `src.math.square`.
-fn find_decls_in_project(
-    target: &str,
-    program: &cplus_core::ast::Program,
-    files: &std::collections::BTreeMap<String, (PathBuf, String)>,
-) -> Vec<Location> {
-    let mut out = Vec::new();
-    for item in &program.items {
-        let Some((name, name_span)) = item_name_and_span(item) else {
-            continue;
-        };
-        if !name_matches(name, target) {
-            continue;
-        }
-        let Some(file_id) = item.origin_file.as_ref() else {
-            continue;
-        };
-        let Some((path, src)) = files.get(file_id) else {
-            continue;
-        };
-        let lm = cplus_core::diagnostics::LineMap::new(src);
-        let source_span = lm.span(path, name_span, src);
-        let Ok(uri) = Url::from_file_path(path) else {
-            continue;
-        };
-        out.push(Location {
-            uri,
-            range: source_span_to_range(&source_span),
-        });
-    }
-    out
-}
-
 /// Single-file fallback: parse the open buffer directly and find
 /// matching top-level items.
 fn find_decls_in_single_file(target: &str, open_path: &Path, text: &str) -> Vec<Location> {
@@ -770,7 +734,7 @@ fn find_decls_in_single_file(target: &str, open_path: &Path, text: &str) -> Vec<
         if !name_matches(name, target) {
             continue;
         }
-        let source_span = lm.span(&open_path.to_path_buf(), name_span, text);
+        let source_span = lm.span(open_path, name_span, text);
         out.push(Location {
             uri: uri.clone(),
             range: source_span_to_range(&source_span),
@@ -1038,7 +1002,7 @@ fn compute_diagnostics(
         Ok(t) => t,
         Err(e) => {
             let lm = cplus_core::diagnostics::LineMap::new(open_text);
-            let d = cplus_core::diagnostics::from_lex(&e, &open_path.to_path_buf(), &lm, open_text);
+            let d = cplus_core::diagnostics::from_lex(&e, open_path, &lm, open_text);
             push_into(&mut by_file, d);
             return by_file;
         }
@@ -1048,7 +1012,7 @@ fn compute_diagnostics(
         Err(e) => {
             let lm = cplus_core::diagnostics::LineMap::new(open_text);
             let d =
-                cplus_core::diagnostics::from_parse(&e, &open_path.to_path_buf(), &lm, open_text);
+                cplus_core::diagnostics::from_parse(&e, open_path, &lm, open_text);
             push_into(&mut by_file, d);
             return by_file;
         }
@@ -1058,7 +1022,7 @@ fn compute_diagnostics(
     for d in attr_diags {
         push_into(&mut by_file, d);
     }
-    let lower_diags = lower::lower(&mut prog, &open_path.to_path_buf(), open_text);
+    let lower_diags = lower::lower(&mut prog, open_path, open_text);
     for d in lower_diags {
         push_into(&mut by_file, d);
     }
@@ -1067,7 +1031,7 @@ fn compute_diagnostics(
         push_into(&mut by_file, d);
     }
     // Phase 5 borrow checker (slice 5BC.2a).
-    let bc_diags = borrowck::check(&prog, &open_path.to_path_buf(), open_text);
+    let bc_diags = borrowck::check(&prog, open_path, open_text);
     for d in bc_diags {
         push_into(&mut by_file, d);
     }
@@ -1096,7 +1060,9 @@ enum ManifestProbe {
     Loaded {
         #[allow(dead_code)]
         manifest_path: PathBuf,
-        manifest: manifest::Manifest,
+        // Boxed to keep `ManifestProbe` small: `Manifest` dwarfs the other
+        // variants, so an unboxed field bloats every probe result.
+        manifest: Box<manifest::Manifest>,
     },
 }
 
@@ -1110,7 +1076,7 @@ fn find_manifest(open_path: &Path) -> ManifestProbe {
             return match manifest::load(&candidate) {
                 Ok(m) if !m.bins.is_empty() => ManifestProbe::Loaded {
                     manifest_path: candidate,
-                    manifest: m,
+                    manifest: Box::new(m),
                 },
                 Ok(_) => ManifestProbe::None, // empty bin list: behave as single-file
                 Err(e) => ManifestProbe::Error(e.to_diagnostic()),

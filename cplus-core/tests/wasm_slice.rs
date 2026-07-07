@@ -109,7 +109,7 @@ fn wrapping_arithmetic_matches_twos_complement() {
 /// Instantiate and return the typed result of a no-arg exported function.
 fn call_i64(src: &str, f: &str) -> i64 {
     use wasmi::{Caller, Engine, Linker, Module, Store};
-    let wasm = wat::parse_str(&compile_to_wat(src).expect("compile")).expect("assemble");
+    let wasm = wat::parse_str(compile_to_wat(src).expect("compile")).expect("assemble");
     let engine = Engine::default();
     let module = Module::new(&engine, &wasm[..]).expect("module");
     let mut store = Store::new(&engine, Host::default());

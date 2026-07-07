@@ -75,13 +75,14 @@ pub fn extract(src: &str) -> Vec<DocItem> {
     let mut items = Vec::new();
     let mut i = 0;
     let mut current_impl_target: Option<String> = None;
+    let mut impl_depth: i32 = 0;
     while i < lines.len() {
         // Try to find a doc block starting at line i.
         let (doc_lines, doc_start) = collect_doc_block(&lines, i);
         if doc_lines.is_empty() {
             // No doc block here; check if this is an impl-opening or
             // impl-closing line to track the current_impl_target.
-            update_impl_tracker(lines[i], &mut current_impl_target);
+            update_impl_tracker(lines[i], &mut current_impl_target, &mut impl_depth);
             i += 1;
             continue;
         }
@@ -105,7 +106,7 @@ pub fn extract(src: &str) -> Vec<DocItem> {
         }
         // Track impl context if this line opens one (so subsequent
         // methods get qualified).
-        update_impl_tracker(lines[item_line], &mut current_impl_target);
+        update_impl_tracker(lines[item_line], &mut current_impl_target, &mut impl_depth);
         i = item_line + 1;
     }
     items
@@ -233,15 +234,16 @@ fn parse_item_header(
             }
         }
     }
-    let (_keyword, kind, _is_pub) = matched?;
-    // Extract the bare name: skip the leading `pub `/`pub extern `, the
-    // item keyword, then read an identifier.
-    let after_kw = head
-        .trim_start_matches("pub ")
-        .trim_start_matches("extern ")
-        .splitn(2, ' ')
-        .nth(1)
-        .unwrap_or("");
+    let (keyword, kind, _is_pub) = matched?;
+    // The matched `keyword` is the FULL declaration prefix up to and including
+    // the item keyword + trailing space (e.g. `"export extern fn "`), so
+    // stripping it lands exactly on the name. The old code hand-stripped only
+    // `pub `/`extern ` then split on the first space — for `export extern fn
+    // foo` that left `extern` as the "name" (dropping the real `foo` from the
+    // header, TOC, and anchor).
+    // `keyword` is stored trimmed (no trailing space), so stripping it leaves
+    // the separating space — trim it before reading the identifier.
+    let after_kw = head.strip_prefix(keyword).unwrap_or("").trim_start();
     let raw_name: String = after_kw
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -264,8 +266,7 @@ fn parse_item_header(
     // a `{` inside a default-value initializer would terminate early
     // but C+ has no default values, so it's fine.
     let mut sig = String::new();
-    for j in start..lines.len() {
-        let l = lines[j];
+    for &l in &lines[start..] {
         if !sig.is_empty() {
             sig.push('\n');
         }
@@ -279,7 +280,48 @@ fn parse_item_header(
     Some((kind, display_name, sig.trim_end().to_string()))
 }
 
-fn update_impl_tracker(line: &str, current: &mut Option<String>) {
+/// Count this line's brace delta (`{` minus `}`) outside string literals
+/// and `//` comments, and report whether a real `}` was seen. Interpolation
+/// braces inside `"...${x}..."` and braces in trailing comments must not
+/// perturb the impl-depth tracking.
+fn brace_delta(line: &str) -> (i32, bool) {
+    let mut delta = 0i32;
+    let mut saw_close = false;
+    let mut in_str = false;
+    let mut bytes = line.bytes().peekable();
+    while let Some(b) = bytes.next() {
+        match b {
+            b'\\' if in_str => {
+                bytes.next();
+            }
+            b'"' => in_str = !in_str,
+            b'/' if !in_str && bytes.peek() == Some(&b'/') => break,
+            b'{' if !in_str => delta += 1,
+            b'}' if !in_str => {
+                delta -= 1;
+                saw_close = true;
+            }
+            _ => {}
+        }
+    }
+    (delta, saw_close)
+}
+
+/// Per-line impl-context tracker. Depth-counts braces so an impl's closing
+/// `}` is recognized in any formatting — indented, `} // comment`, or an
+/// inline `impl X: Send {}` — not only a byte-for-byte `}` line (which left
+/// the context open and mis-qualified every following free `fn` as
+/// `Type::fn`).
+fn update_impl_tracker(line: &str, current: &mut Option<String>, depth: &mut i32) {
+    if current.is_some() {
+        let (delta, saw_close) = brace_delta(line);
+        *depth += delta;
+        if *depth <= 0 && saw_close {
+            *current = None;
+            *depth = 0;
+        }
+        return;
+    }
     let t = line.trim_start();
     if let Some(after) = t
         .strip_prefix("impl ")
@@ -315,11 +357,14 @@ fn update_impl_tracker(line: &str, current: &mut Option<String>) {
             .to_string();
         if !target.is_empty() {
             *current = Some(target);
+            let (delta, saw_close) = brace_delta(line);
+            *depth = delta;
+            // An inline `impl X: Marker {}` opens and closes on one line.
+            if *depth <= 0 && saw_close {
+                *current = None;
+                *depth = 0;
+            }
         }
-    }
-    // A closing `}` at column 0 marks the end of the impl block.
-    if line == "}" {
-        *current = None;
     }
 }
 
@@ -359,6 +404,69 @@ mod tests {
     #[test]
     fn no_docs_returns_empty() {
         assert!(extract("fn main() -> i32 { return 0; }").is_empty());
+    }
+
+    #[test]
+    fn impl_close_with_trailing_comment_ends_qualification() {
+        // The impl context must close on `} // end`, an indented `}`, or an
+        // inline `impl X {}` — not only a byte-for-byte `}` line. A free fn
+        // after a nonconforming close was documented as `Type::helper`.
+        let src = "\
+impl Widget {
+    /// Method.
+    fn draw(this) { return; }
+} // end of impl
+
+/// Free helper.
+fn helper() -> i32 { return 0; }
+";
+        let items = extract(src);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(
+            names.contains(&"Widget::draw"),
+            "method keeps qualification: {names:?}"
+        );
+        assert!(
+            names.contains(&"helper"),
+            "free fn after `}} // end` must NOT be Widget::helper: {names:?}"
+        );
+    }
+
+    #[test]
+    fn inline_marker_impl_does_not_leak_context() {
+        let src = "\
+struct Handle { opaque p: *u8 }
+impl Handle: Send {}
+
+/// Free helper.
+fn helper() -> i32 { return 0; }
+";
+        let items = extract(src);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].name, "helper",
+            "one-line `impl X: Send {{}}` must not qualify following fns"
+        );
+    }
+
+    #[test]
+    fn interpolation_braces_in_strings_do_not_skew_impl_depth() {
+        let src = "\
+impl Logger {
+    /// Logs.
+    fn log(this, n: i32) { let s: str = \"n=${n}\"; return; }
+}
+
+/// Free helper.
+fn helper() -> i32 { return 0; }
+";
+        let items = extract(src);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.contains(&"Logger::log"), "{names:?}");
+        assert!(
+            names.contains(&"helper"),
+            "string-literal braces must not desync depth: {names:?}"
+        );
     }
 
     #[test]

@@ -6,33 +6,21 @@
 //! list (without the program name) and returns `Ok(())` or a ready-to-print
 //! error message.
 
-use crate::fetch::FetchPlan;
-use crate::id::PackageId;
-use crate::manifest::Manifest;
-use crate::resolve::{direct_dependency, resolve_graph, write_lockfile, ResolveOptions};
-use crate::vendor;
-use std::path::Path;
+use crate::manifest::{Manifest, MANIFEST_NAME};
+use crate::vendor::{self, InstallOptions};
 use std::path::PathBuf;
 
 const USAGE: &str = "\
 cpc pm - manage C+ packages in a project's vendor/ folder
 
 usage:
-  cpc pm install DIR              resolve deps and place them in DIR/vendor/
+  cpc pm install [DIR]           resolve DIR/Cplus.toml deps into DIR/vendor/
+                                  DIR defaults to the current directory
+                                  flags: --cache DIR, --repo-url URL
+  cpc pm update [DIR]            re-resolve and refresh DIR/vendor/ (= install)
                                   flags: --cache DIR, --repo-url URL
   cpc pm remove DIR NAME          delete DIR/vendor/NAME
-  cpc pm update DIR               re-resolve and refresh DIR/vendor/
-                                  flags: --cache DIR, --repo-url URL
-  cpc pm manifest [PATH]          parse pkg.toml and print normalized JSON
-  cpc pm resolve PATH             resolve transitive deps and print lockfile JSON
-                                  flags: --cache DIR, --repo-url URL
-  cpc pm lock PATH [OUT]          resolve transitive deps and write pkg.lock
-                                  flags: --cache DIR, --repo-url URL
-  cpc pm fetch ID VERSION         fetch one tagged package into a local cache
-                                  flags: --cache DIR, --repo-url URL
-  cpc pm fetch-dep PATH DEP_ID    resolve one direct dep from PATH and fetch it
-                                  flags: --cache DIR, --repo-url URL
-  cpc pm tag ID VERSION           print the canonical git tag for ID/VERSION
+  cpc pm manifest [DIR]           parse DIR/Cplus.toml and print normalized JSON
   cpc pm -h | --help              show this message
 
 (also available as the standalone `cplus-pm` command)
@@ -46,37 +34,35 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         Some("install") => install_cmd(&args[1..]),
-        Some("remove") => remove_cmd(&args[1..]),
         Some("update") => update_cmd(&args[1..]),
+        Some("remove") => remove_cmd(&args[1..]),
         Some("manifest") => manifest_cmd(&args[1..]),
-        Some("fetch") => fetch_cmd(&args[1..]),
-        Some("fetch-dep") => fetch_dep_cmd(&args[1..]),
-        Some("resolve") => resolve_cmd(&args[1..]),
-        Some("lock") => lock_cmd(&args[1..]),
-        Some("tag") => tag_cmd(&args[1..]),
         Some(command) => Err(format!("unknown command `{command}`\n\n{USAGE}")),
     }
 }
 
 fn install_cmd(args: &[String]) -> Result<(), String> {
-    let (positional, options) = parse_manifest_resolve_args(args)?;
-    if positional.len() != 1 {
-        return Err(format!("install requires a project DIR\n\n{USAGE}"));
+    let (positional, options) = parse_install_args(args)?;
+    if positional.len() > 1 {
+        return Err(format!("install takes at most one project DIR\n\n{USAGE}"));
     }
-    let project_dir = PathBuf::from(&positional[0]);
-    let installed = vendor::install(&project_dir, &options).map_err(|err| err.to_string())?;
-    for pkg in &installed {
-        println!("installed {} ({}@{})", pkg.name, pkg.id, pkg.version);
+    // No DIR means the current directory, matching `cpc build`.
+    let project_dir = PathBuf::from(positional.first().map(String::as_str).unwrap_or("."));
+    let resolved = vendor::install(&project_dir, &options).map_err(|err| err.to_string())?;
+    for pkg in &resolved {
+        let verb = if pkg.fresh { "installed" } else { "present " };
+        println!("{verb} {} ({}@{})", pkg.name, pkg.repo, pkg.version);
     }
-    if installed.is_empty() {
-        println!("no dependencies to install");
+    match resolved.iter().filter(|p| p.fresh).count() {
+        _ if resolved.is_empty() => println!("no dependencies to install"),
+        0 => println!("all {} dependencies already present", resolved.len()),
+        n => println!("installed {n} of {} dependencies", resolved.len()),
     }
     Ok(())
 }
 
 fn update_cmd(args: &[String]) -> Result<(), String> {
-    // Update re-resolves (picking the newest version within each constraint) and
-    // refreshes vendor/ — the same materialization as install.
+    // Update re-resolves and refreshes vendor/ — same materialization as install.
     install_cmd(args)
 }
 
@@ -92,141 +78,33 @@ fn remove_cmd(args: &[String]) -> Result<(), String> {
 
 fn manifest_cmd(args: &[String]) -> Result<(), String> {
     if args.len() > 1 {
-        return Err(format!("manifest accepts at most one PATH\n\n{USAGE}"));
+        return Err(format!("manifest accepts at most one DIR\n\n{USAGE}"));
     }
 
-    let path = args
-        .first()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("pkg.toml"));
-    let manifest = Manifest::load(&path).map_err(|err| err.to_string())?;
-    let json = serde_json::to_string_pretty(&manifest).map_err(|err| err.to_string())?;
-    println!("{json}");
-    Ok(())
-}
-
-fn fetch_cmd(args: &[String]) -> Result<(), String> {
-    let mut positional = Vec::new();
-    let mut cache = PathBuf::from(".pkgcache");
-    let mut repo_url = None;
-    let mut iter = args.iter();
-
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--cache" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--cache requires a directory".to_string())?;
-                cache = PathBuf::from(value);
-            }
-            "--repo-url" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--repo-url requires a URL or local git path".to_string())?;
-                repo_url = Some(value.clone());
-            }
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                return Ok(());
-            }
-            _ => positional.push(arg.clone()),
-        }
+    // Accept either a project directory or a direct path to a Cplus.toml.
+    let arg = args.first().map(PathBuf::from).unwrap_or_default();
+    let manifest = if arg.is_file() {
+        Manifest::load(&arg)
+    } else {
+        Manifest::load(arg.join(MANIFEST_NAME))
     }
+    .map_err(|err| err.to_string())?;
 
-    if positional.len() != 2 {
-        return Err(format!("fetch requires ID and VERSION\n\n{USAGE}"));
-    }
-
-    let id = PackageId::new(&positional[0]).map_err(|err| err.to_string())?;
-    let plan = match repo_url {
-        Some(repo_url) => FetchPlan::with_repo_url(id, &positional[1], repo_url, cache),
-        None => FetchPlan::new(id, &positional[1], cache),
-    };
-    let package_dir = plan.fetch().map_err(|err| err.to_string())?;
-
-    println!("{}", package_dir.display());
-    Ok(())
-}
-
-fn fetch_dep_cmd(args: &[String]) -> Result<(), String> {
-    let mut positional = Vec::new();
-    let mut cache = PathBuf::from(".pkgcache");
-    let mut repo_url = None;
-    let mut iter = args.iter();
-
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--cache" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--cache requires a directory".to_string())?;
-                cache = PathBuf::from(value);
-            }
-            "--repo-url" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--repo-url requires a URL or local git path".to_string())?;
-                repo_url = Some(value.clone());
-            }
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                return Ok(());
-            }
-            _ => positional.push(arg.clone()),
-        }
-    }
-
-    if positional.len() != 2 {
-        return Err(format!("fetch-dep requires PATH and DEP_ID\n\n{USAGE}"));
-    }
-
-    let manifest = Manifest::load(&positional[0]).map_err(|err| err.to_string())?;
-    let dep = direct_dependency(&manifest, &positional[1]).map_err(|err| err.to_string())?;
-    let receipt = dep
-        .fetch(cache, repo_url.as_deref())
-        .map_err(|err| err.to_string())?;
-    let json = serde_json::to_string_pretty(&receipt).map_err(|err| err.to_string())?;
-
-    println!("{json}");
-    Ok(())
-}
-
-fn resolve_cmd(args: &[String]) -> Result<(), String> {
-    let (positional, options) = parse_manifest_resolve_args(args)?;
-    if positional.len() != 1 {
-        return Err(format!("resolve requires PATH\n\n{USAGE}"));
-    }
-
-    let manifest = Manifest::load(&positional[0]).map_err(|err| err.to_string())?;
-    let graph = resolve_graph(&manifest, &options).map_err(|err| err.to_string())?;
-    let json = serde_json::to_string_pretty(&graph.lockfile).map_err(|err| err.to_string())?;
-    println!("{json}");
-    Ok(())
-}
-
-fn lock_cmd(args: &[String]) -> Result<(), String> {
-    let (positional, options) = parse_manifest_resolve_args(args)?;
-    if positional.is_empty() || positional.len() > 2 {
-        return Err(format!("lock requires PATH and optional OUT\n\n{USAGE}"));
-    }
-
-    let manifest_path = PathBuf::from(&positional[0]);
-    let out = positional.get(1).map(PathBuf::from).unwrap_or_else(|| {
-        manifest_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("pkg.lock")
+    let json = serde_json::json!({
+        "name": manifest.name,
+        "version": manifest.version,
+        "dependencies": manifest.deps,
     });
-    let manifest = Manifest::load(&manifest_path).map_err(|err| err.to_string())?;
-    write_lockfile(&manifest, &options, &out).map_err(|err| err.to_string())?;
-
-    println!("{}", out.display());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).map_err(|err| err.to_string())?
+    );
     Ok(())
 }
 
-fn parse_manifest_resolve_args(args: &[String]) -> Result<(Vec<String>, ResolveOptions), String> {
+fn parse_install_args(args: &[String]) -> Result<(Vec<String>, InstallOptions), String> {
     let mut positional = Vec::new();
-    let mut options = ResolveOptions::new(".pkgcache");
+    let mut options = InstallOptions::new(".pkgcache");
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
@@ -252,14 +130,4 @@ fn parse_manifest_resolve_args(args: &[String]) -> Result<(Vec<String>, ResolveO
     }
 
     Ok((positional, options))
-}
-
-fn tag_cmd(args: &[String]) -> Result<(), String> {
-    if args.len() != 2 {
-        return Err(format!("tag requires ID and VERSION\n\n{USAGE}"));
-    }
-
-    let id = PackageId::new(&args[0]).map_err(|err| err.to_string())?;
-    println!("{}", id.tag_for_version(&args[1]));
-    Ok(())
 }

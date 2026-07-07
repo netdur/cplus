@@ -51,6 +51,7 @@ struct ModuleMetadata {
     ///   - root: `!N = !{!"C+ TBAA Root"}`
     ///   - one leaf per primitive name, parented at root:
     ///     `!M = !{!"<name>", !N, i64 0}`
+    ///
     /// Returned IDs are referenced from `!tbaa !M` clauses on
     /// load/store instructions emitted via `gen_load` / `gen_store`.
     /// Aggregate types (struct, enum, str, slice, string, simd) skip
@@ -75,6 +76,7 @@ struct ModuleMetadata {
     ///   3. The function isn't a drop method (those use
     ///      `preserve_nonecc`, which can't compose with `fastcc`).
     ///   4. The function isn't `main` (the C runtime requires C cc).
+    ///
     /// `fastcc` lets LLVM pick its own register-passing convention for
     /// the callee, skipping the C-ABI's caller-saved register set on
     /// purely-internal calls. obs.md flagged this as a "few percent on
@@ -404,9 +406,9 @@ impl ThreadTrampolines {
         let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
         let key = format!("spawn:{suffix}");
         let mut seen = self.seen.borrow_mut();
-        if !seen.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
             let idx = self.specs.borrow().len();
-            seen.insert(key, idx);
+            e.insert(idx);
             self.specs
                 .borrow_mut()
                 .push(TrampolineSpec::Spawn { o: o_ty.clone() });
@@ -432,14 +434,6 @@ impl ThreadTrampolines {
         });
         format!("__cplus_thread_tramp_with_{idx}")
     }
-}
-
-/// Compute a stable suffix for a Ty to use in the trampoline symbol.
-/// Limited to the Copy-≤8-bytes subset that Slice 5B supports; codegen
-/// errors out elsewhere if O is something else, so we don't try to
-/// mangle aggregates here.
-fn mangle_o_for_tramp(ty: &Ty) -> String {
-    mangle_o_for_tramp_with_types(ty, None)
 }
 
 /// v0.0.4 Phase 1F: recursive type-name mangler matching sema's
@@ -572,6 +566,96 @@ fn align_of_ty(ty: &Ty, types: &TypeTable) -> u64 {
     static_layout(ty, types).map(|(_s, a)| a).unwrap_or(8)
 }
 
+/// The ABI shape a spawned worker's *definition* gives its return value.
+/// Workers are address-taken (their fn pointer is stored into the thread
+/// ctx), so they are never `fastcc` — a Copy-struct return takes the C-ABI
+/// classification (`classify_c_abi_return`: sret > 16 bytes, register-class
+/// coercion below), Text/non-Copy aggregates take cpc's widened sret, and
+/// everything else returns the raw LLVM value. The trampolines must call
+/// with this exact shape: a value-return call against an sret worker (or
+/// vice versa) reads the wrong registers and corrupts memory.
+enum TrampRetAbi {
+    Void,
+    Sret,
+    Coerce {
+        llvm_ty: String,
+        size: u64,
+        align: u64,
+    },
+    Value,
+}
+
+fn tramp_ret_abi(o_ty: &Ty, types: &TypeTable) -> TrampRetAbi {
+    if matches!(o_ty, Ty::Unit) {
+        return TrampRetAbi::Void;
+    }
+    // Mirror of the fn-definition return rule (see `want_c_abi_ret` in the
+    // fn emitter): Copy structs → C ABI; String/non-Copy aggregates → sret.
+    if matches!(o_ty, Ty::Struct(_)) && is_copy_ty(o_ty, types) {
+        return match classify_c_abi_return(o_ty, types) {
+            CAbiClass::Indirect => TrampRetAbi::Sret,
+            CAbiClass::Coerce {
+                llvm_ty,
+                size,
+                align,
+            } => TrampRetAbi::Coerce {
+                llvm_ty,
+                size,
+                align,
+            },
+            CAbiClass::Direct => TrampRetAbi::Value,
+        };
+    }
+    if return_passes_by_sret_widened(o_ty, types) {
+        return TrampRetAbi::Sret;
+    }
+    TrampRetAbi::Value
+}
+
+/// The ABI shape the worker's `take input` param has at its definition —
+/// mirror of the def-site param rule: a Copy struct classifies against the
+/// C ABI (`take` params never pointer-pass, so `param_passes_by_ptr` is
+/// vacuously false); everything else is the raw LLVM value.
+fn tramp_input_abi(i_ty: &Ty, types: &TypeTable) -> CAbiClass {
+    if matches!(i_ty, Ty::Struct(_)) && is_copy_ty(i_ty, types) {
+        classify_c_abi(i_ty, types)
+    } else {
+        CAbiClass::Direct
+    }
+}
+
+/// Ctx result-slot size for a spawned worker's `O`: the natural size,
+/// widened to the coerce class's size when the worker's return coerces —
+/// the trampoline stores the full coerced value (e.g. `[2 x i64]` for a
+/// 12-byte struct), which must not overflow into the bytes after the slot.
+fn thread_result_slot_size(o_ty: &Ty, types: &TypeTable) -> u64 {
+    let (sz, _) = static_layout(o_ty, types).unwrap_or((8, 8));
+    match tramp_ret_abi(o_ty, types) {
+        TrampRetAbi::Coerce { size, .. } => sz.max(size),
+        _ => sz,
+    }
+}
+
+/// spawn_with ctx layout, shared by the call site (malloc + input store)
+/// and the trampoline (input load) so the two can never disagree:
+///   refcount: u64  @ 0
+///   fn_ptr:        @ 8
+///   result_slot:   @ 16                (coerce-padded, see above)
+///   input_slot:    @ 16 + result_slot  (aligned for both the typed store
+///                                       and any coerced trampoline load)
+/// Returns `(input_off, total_ctx_size)`.
+fn spawn_with_ctx_layout(i_ty: &Ty, o_ty: &Ty, types: &TypeTable) -> (u64, u64) {
+    let (i_size, i_align) = static_layout(i_ty, types).unwrap_or((8, 8));
+    let (mut slot_size, mut slot_align) = (i_size, i_align);
+    if let CAbiClass::Coerce { size, align, .. } = tramp_input_abi(i_ty, types) {
+        slot_size = slot_size.max(size);
+        slot_align = slot_align.max(align);
+    }
+    let off_unaligned = 16 + thread_result_slot_size(o_ty, types);
+    let input_off = (off_unaligned + slot_align - 1) & !(slot_align - 1);
+    (input_off, input_off + slot_size)
+}
+
 fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
     let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
     let llvm_t = llvm_ty(o_ty, types);
@@ -586,25 +670,36 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
         "define internal ptr @__cplus_thread_tramp_{suffix}(ptr %arg) {{\n"
     ));
     out.push_str("entry:\n");
-    if matches!(o_ty, Ty::Unit) {
-        out.push_str(
-            "  %f = load ptr, ptr getelementptr inbounds (i8, ptr %arg, i64 8), align 8\n",
-        );
-        out.push_str("  call void %f()\n");
-    } else if return_passes_by_sret_widened(o_ty, types) {
-        let (sz, al) = static_layout(o_ty, types).expect("sret thread-spawn O has layout");
-        out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
-        out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
-        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
-        out.push_str(&format!(
-            "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
-        ));
-    } else {
-        out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
-        out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
-        out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
-        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
-        out.push_str(&format!("  store {llvm_t} %r, ptr %slot, align {align}\n"));
+    out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
+    out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
+    // The call must match the worker's DEFINITION ABI (`tramp_ret_abi`):
+    // sret workers take the result pointer as a leading arg, coerced
+    // returns come back in the register class, everything else by value.
+    match tramp_ret_abi(o_ty, types) {
+        TrampRetAbi::Void => {
+            out.push_str("  call void %f()\n");
+        }
+        TrampRetAbi::Sret => {
+            let (sz, al) = static_layout(o_ty, types).expect("sret thread-spawn O has layout");
+            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
+            ));
+        }
+        TrampRetAbi::Coerce {
+            llvm_ty: cty,
+            align: cal,
+            ..
+        } => {
+            out.push_str(&format!("  %r = call {cty} %f()\n"));
+            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!("  store {cty} %r, ptr %slot, align {cal}\n"));
+        }
+        TrampRetAbi::Value => {
+            out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
+            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!("  store {llvm_t} %r, ptr %slot, align {align}\n"));
+        }
     }
     // Atomic refcount decrement. AcqRel: release pairs with prior result
     // store; acquire on the decrement-from-1 path ensures the freeing
@@ -626,14 +721,9 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
     let o_llvm = llvm_ty(o_ty, types);
     let o_align = align_of_ty(o_ty, types);
     let i_align = align_of_ty(i_ty, types);
-    let o_size = static_layout(o_ty, types).map(|(s, _)| s).unwrap_or(8);
-    // v0.0.4 Phase 2 Slice 2H ctx layout:
-    //   refcount: u64       @ 0
-    //   fn_ptr:             @ 8
-    //   result_slot:        @ 16
-    //   input_slot:         @ 16 + size_of(O) (aligned to align_of(I))
-    let input_off_unaligned = 16 + o_size;
-    let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
+    // Ctx layout shared with `gen_thread_spawn_with` via
+    // `spawn_with_ctx_layout` — the two must agree byte-for-byte.
+    let (input_off, _total) = spawn_with_ctx_layout(i_ty, o_ty, types);
     out.push_str(&format!(
         "define internal ptr @__cplus_thread_tramp_with_{idx}(ptr %arg) {{\n"
     ));
@@ -643,17 +733,68 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
     out.push_str(&format!(
         "  %input_slot = getelementptr i8, ptr %arg, i64 {input_off}\n"
     ));
-    out.push_str(&format!(
-        "  %i = load {i_llvm}, ptr %input_slot, align {i_align}\n"
-    ));
-    if matches!(o_ty, Ty::Unit) {
-        out.push_str(&format!("  call void %f({i_llvm} %i)\n"));
-    } else {
-        out.push_str(&format!("  %r = call {o_llvm} %f({i_llvm} %i)\n"));
-        out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
-        out.push_str(&format!(
-            "  store {o_llvm} %r, ptr %result_slot, align {o_align}\n"
-        ));
+    // The input must be passed with the worker's DEFINITION param ABI
+    // (`tramp_input_abi`): a Copy struct coerces to its register class or
+    // passes indirectly (byval on x86_64-sysv, bare ptr elsewhere);
+    // everything else loads and passes the raw LLVM value.
+    let in_arg = match tramp_input_abi(i_ty, types) {
+        CAbiClass::Coerce {
+            llvm_ty: cty,
+            align: cal,
+            ..
+        } => {
+            out.push_str(&format!(
+                "  %i = load {cty}, ptr %input_slot, align {cal}\n"
+            ));
+            format!("{cty} %i")
+        }
+        CAbiClass::Indirect => {
+            // The worker reads its by-value param through the pointer; the
+            // input slot stays alive until the trampoline's refcount
+            // decrement below, which is after the call completes.
+            if indirect_uses_byval() {
+                format!("ptr byval({i_llvm}) align {i_align} %input_slot")
+            } else {
+                "ptr %input_slot".to_string()
+            }
+        }
+        CAbiClass::Direct => {
+            out.push_str(&format!(
+                "  %i = load {i_llvm}, ptr %input_slot, align {i_align}\n"
+            ));
+            format!("{i_llvm} %i")
+        }
+    };
+    // Return side: same mirror as `emit_spawn_tramp`.
+    match tramp_ret_abi(o_ty, types) {
+        TrampRetAbi::Void => {
+            out.push_str(&format!("  call void %f({in_arg})\n"));
+        }
+        TrampRetAbi::Sret => {
+            let (sz, al) = static_layout(o_ty, types).expect("sret spawn_with O has layout");
+            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  call void %f(ptr sret({o_llvm}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %result_slot, {in_arg})\n"
+            ));
+        }
+        TrampRetAbi::Coerce {
+            llvm_ty: cty,
+            align: cal,
+            ..
+        } => {
+            out.push_str(&format!("  %r = call {cty} %f({in_arg})\n"));
+            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  store {cty} %r, ptr %result_slot, align {cal}\n"
+            ));
+        }
+        TrampRetAbi::Value => {
+            out.push_str(&format!("  %r = call {o_llvm} %f({in_arg})\n"));
+            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  store {o_llvm} %r, ptr %result_slot, align {o_align}\n"
+            ));
+        }
     }
     // Refcount dec + maybe-free, same shape as emit_spawn_tramp.
     out.push_str("  %prev = atomicrmw sub ptr %arg, i64 1 acq_rel\n");
@@ -715,17 +856,41 @@ fn is_thread_spawn_eligible(ty: &Ty) -> bool {
 /// v0.0.3 Phase 5 Slice 5E.3: find the `Future[T]` struct in the
 /// type table given the inner `T`. Suffix-matches `Future__<mangle(T)>`
 /// the same way `lookup_join_handle_ty` matches the JoinHandle name.
+/// Deterministic monomorphized-type search: an exact-name hit wins
+/// immediately; otherwise the smallest-name `mangled_name_matches` hit is
+/// chosen — the same hardening `ty_from_suffix` and `lookup_option_ty`
+/// use. Without the exact-first + tie-break, two candidates (`Future__i32`
+/// vs `pkg.Future__i32`) resolved by table iteration order.
+fn best_mangled_match<'a>(
+    names: impl Iterator<Item = (usize, &'a str)>,
+    target: &str,
+) -> Option<usize> {
+    let mut best: Option<(usize, &'a str)> = None;
+    for (idx, name) in names {
+        if name == target {
+            return Some(idx);
+        }
+        if mangled_name_matches(name, target) && best.map_or(true, |(_, bn)| name < bn) {
+            best = Some((idx, name));
+        }
+    }
+    best.map(|(idx, _)| idx)
+}
+
 fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
     let target = format!(
         "Future__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
-    for (idx, d) in types.struct_defs.iter().enumerate() {
-        if mangled_name_matches(&d.name, &target) {
-            return Ty::Struct(StructId(idx as u32));
-        }
+    let names = types
+        .struct_defs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (i, d.name.as_str()));
+    match best_mangled_match(names, &target) {
+        Some(idx) => Ty::Struct(StructId(idx as u32)),
+        None => Ty::Struct(StructId(0)),
     }
-    Ty::Struct(StructId(0))
 }
 
 /// v0.0.4 Phase 4 Slice 4A: mirror of `lookup_future_ty` for `Iterator[T]`.
@@ -734,18 +899,21 @@ fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
         "Iterator__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
-    for (idx, d) in types.struct_defs.iter().enumerate() {
-        if mangled_name_matches(&d.name, &target) {
-            return Ty::Struct(StructId(idx as u32));
-        }
+    let names = types
+        .struct_defs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (i, d.name.as_str()));
+    match best_mangled_match(names, &target) {
+        Some(idx) => Ty::Struct(StructId(idx as u32)),
+        None => Ty::Struct(StructId(0)),
     }
-    Ty::Struct(StructId(0))
 }
 
 /// v0.0.3 Phase 5 Slice 5E.3: given the monomorphized struct name of
 /// a `Future[U]` instantiation (e.g. `Future__i32`), recover U as a
-/// `Ty`. Mirrors `mangle_o_for_tramp`'s naming — supports the same
-/// scalar set the async return-type restriction allows.
+/// `Ty`. Mirrors `mangle_o_for_tramp_with_types`'s naming — supports the
+/// same scalar set the async return-type restriction allows.
 fn ty_from_future_name(name: &str, types: &TypeTable) -> Ty {
     let suffix = name.rsplit_once("Future__").map(|(_, s)| s).unwrap_or(name);
     ty_from_suffix(suffix, types)
@@ -1305,9 +1473,18 @@ fn generate_inner(
         // opaque pointers accepts the shape divergence between declare
         // and call (this is what the user-side `extern fn ... #[link_name = "objc_msgSend"]`
         // pattern relies on too).
-        out.push_str("declare ptr @objc_msgSend(ptr, ptr)\n\n");
+        out.push_str("declare ptr @objc_msgSend(ptr, ptr)\n");
         emitted_extern_symbols.insert("sel_registerName".to_string());
         emitted_extern_symbols.insert("objc_msgSend".to_string());
+        // x86_64 routes MEMORY-class struct returns through the dedicated
+        // `objc_msgSend_stret` entry point (`gen_intrinsic_msg_send`'s
+        // Indirect return arm). arm64 has no _stret variant. The unused
+        // declare costs nothing (LLVM strips it).
+        if active_target().arch == TargetArch::X86_64 {
+            out.push_str("declare void @objc_msgSend_stret(ptr, ptr, ptr)\n");
+            emitted_extern_symbols.insert("objc_msgSend_stret".to_string());
+        }
+        out.push('\n');
     }
     // v0.0.22 (android_view listener): a program may both *define* a C-ABI
     // symbol (`export extern fn cplus_on_click` in the app) and *declare* it
@@ -2176,7 +2353,7 @@ fn collect_types(p: &Program) -> TypeTable {
                     bytes += (sz + 7) & !7;
                 }
             }
-            let slots = ((bytes + 7) / 8) as u32;
+            let slots = bytes.div_ceil(8) as u32;
             max_slots = max_slots.max(slots);
             payloads.push(p);
         }
@@ -2553,11 +2730,11 @@ fn param_attrs(
 /// The plan describes `sret` for "non-Copy structs, slices, owned strings,
 /// or any aggregate exceeding a target-specific size threshold (start with
 /// > 16 bytes)". This implementation ships the **narrow** version: only
-/// owned `Text` (24 bytes, has Drop, the canonical case where copy
-/// elision matters most). Generic non-Copy struct sret is deferred — it
-/// has substantial test-surface impact and the wins for small aggregates
-/// (≤ 16 bytes) are negligible at -O2 because LLVM already lowers them
-/// through ABI-appropriate registers.
+/// > owned `Text` (24 bytes, has Drop, the canonical case where copy
+/// > elision matters most). Generic non-Copy struct sret is deferred — it
+/// > has substantial test-surface impact and the wins for small aggregates
+/// > (≤ 16 bytes) are negligible at -O2 because LLVM already lowers them
+/// > through ABI-appropriate registers.
 ///
 /// `extern fn` boundaries are never sret-modified — those keep the C ABI
 /// the user declared. The callers of this predicate check `is_extern`
@@ -2693,7 +2870,7 @@ fn sysv_eightbyte_coerce(ty: &Ty, types: &TypeTable, size: u64) -> String {
     }
     let mut ls = Vec::new();
     leaves(ty, types, 0, &mut ls);
-    let n_eight = (((size + 7) / 8).max(1)) as usize;
+    let n_eight = (size.div_ceil(8).max(1)) as usize;
     // Each eightbyte is SSE until an integer field proves otherwise. An
     // eightbyte with no field at all (trailing padding) stays SSE — it never
     // carries a value the callee reads.
@@ -2703,9 +2880,11 @@ fn sysv_eightbyte_coerce(ty: &Ty, types: &TypeTable, size: u64) -> String {
             continue;
         }
         let first = (off / 8) as usize;
-        let last = ((off + sz.saturating_sub(1)) / 8) as usize;
-        for e in first..=last.min(n_eight - 1) {
-            is_sse[e] = false;
+        let last = (((off + sz.saturating_sub(1)) / 8) as usize).min(n_eight - 1);
+        // Mark eightbytes [first, last] as INTEGER, not SSE. `take` before
+        // `skip` so an empty range (first > last) stays a no-op.
+        for slot in is_sse.iter_mut().take(last + 1).skip(first) {
+            *slot = false;
         }
     }
     let part = |sse: bool| if sse { "double" } else { "i64" };
@@ -2790,7 +2969,7 @@ fn classify_c_abi_impl(
             return CAbiClass::Indirect;
         }
         let chunk: u64 = if _align >= 8 { 8 } else { 4 };
-        let k = (size + chunk - 1) / chunk;
+        let k = size.div_ceil(chunk);
         let llvm_ty = if k == 1 {
             format!("i{}", chunk * 8)
         } else {
@@ -2893,6 +3072,20 @@ fn classify_c_abi_impl(
 /// aarch64-darwin. Xtensa is unaffected (there is no Windows/Xtensa target).
 fn x86_64_indirect_uses_byval() -> bool {
     active_target().arch == TargetArch::X86_64 && active_target().os != TargetOs::Windows
+}
+
+/// Targets whose C ABI passes MEMORY-class (Indirect) by-value aggregates
+/// with a `byval` stack copy rather than a bare pointer: x86_64 SysV, and
+/// Xtensa (pinned by the esp-clang 20.1.1 probe at bring-up: >24-byte
+/// aggregates pass indirect byval — a later import-side comment claiming
+/// "bare ptr" for Xtensa mislabeled preserved pre-probe code as empirical).
+/// aarch64-darwin and Win64 pass a bare pointer to a caller-owned copy.
+/// EVERY Indirect-lowering site (fn definition, extern declaration, native
+/// and fn-pointer call, thread trampoline, `#msg_send`) must consult THIS
+/// predicate — per-site drift is an ABI break (the fn definition emitted
+/// byval on Xtensa while its call sites passed bare pointers).
+fn indirect_uses_byval() -> bool {
+    x86_64_indirect_uses_byval() || active_target().arch == TargetArch::Xtensa
 }
 
 fn return_passes_by_sret(ty: &Ty) -> bool {
@@ -4018,7 +4211,7 @@ fn write_preamble(out: &mut String) {
     if let Some(triple) = crate::target::active_triple() {
         out.push_str(&format!("target triple = \"{triple}\"\n"));
     }
-    out.push_str("\n");
+    out.push('\n');
     out.push_str(windows_binary_mode_ctor_ir());
     // Format string used by `#println(i32)`. Module-private constant.
     out.push_str(
@@ -4038,7 +4231,7 @@ fn write_preamble(out: &mut String) {
     out.push_str(
         "@.cplus.str.empty = private unnamed_addr constant [1 x i8] zeroinitializer, align 1\n",
     );
-    out.push_str("\n");
+    out.push('\n');
     out.push_str("declare i32 @printf(ptr noundef, ...)\n");
     // Phase 8 slice 8.STR.3: byte-level string comparison.
     // v0.0.8 bench-gap fix B: memcmp's two pointers are read-only and
@@ -4407,7 +4600,7 @@ fn write_preamble(out: &mut String) {
             }
         }
     }
-    out.push_str("\n");
+    out.push('\n');
 }
 
 /// Phase 8 slice 8.STR.1: walk the program, find every `ExprKind::StrLit`,
@@ -4550,17 +4743,9 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
     }
     fn walk_stmt(s: &Stmt, table: &mut StrLitTable, next_id: &mut u32, out: &mut String) {
         match &s.kind {
-            StmtKind::Let { init, .. } => {
-                if let Some(e) = init {
-                    walk_expr(e, table, next_id, out);
-                }
-            }
+            StmtKind::Let { init: Some(e), .. } => walk_expr(e, table, next_id, out),
             StmtKind::Expr(e) | StmtKind::Assert(e) => walk_expr(e, table, next_id, out),
-            StmtKind::Return(e) => {
-                if let Some(e) = e {
-                    walk_expr(e, table, next_id, out);
-                }
-            }
+            StmtKind::Return(Some(e)) => walk_expr(e, table, next_id, out),
             StmtKind::While { cond, body, .. } => {
                 walk_expr(cond, table, next_id, out);
                 walk_block(body, table, next_id, out);
@@ -4612,7 +4797,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
             _ => {}
         }
     }
-    out.push_str("\n");
+    out.push('\n');
     table
 }
 
@@ -4747,19 +4932,11 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
     }
     fn visit_stmt(s: &Stmt, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
         match &s.kind {
-            StmtKind::Let { init, .. } => {
-                if let Some(e) = init {
-                    visit_expr(e, sigs, taken);
-                }
-            }
+            StmtKind::Let { init: Some(e), .. } => visit_expr(e, sigs, taken),
             StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Defer(e) => {
                 visit_expr(e, sigs, taken);
             }
-            StmtKind::Return(e) => {
-                if let Some(e) = e {
-                    visit_expr(e, sigs, taken);
-                }
-            }
+            StmtKind::Return(Some(e)) => visit_expr(e, sigs, taken),
             StmtKind::While { cond, body, .. } => {
                 visit_expr(cond, sigs, taken);
                 visit_block(body, sigs, taken);
@@ -4859,7 +5036,7 @@ fn emit_compile_time_blob_globals(
             .insert(*span, (symbol, len));
     }
     if !map.is_empty() {
-        out.push_str("\n");
+        out.push('\n');
     }
 }
 
@@ -4886,7 +5063,7 @@ fn emit_env_var_globals(
             None => {
                 let symbol = format!("@.envvar.{}", next_id);
                 next_id += 1;
-                let len = entry.value.as_bytes().len() as u32;
+                let len = entry.value.len() as u32;
                 let mut escaped = String::new();
                 for byte in entry.value.as_bytes() {
                     if *byte == b'"' || *byte == b'\\' || !(0x20..0x7F).contains(byte) {
@@ -4906,7 +5083,7 @@ fn emit_env_var_globals(
         md.env_var_globals.borrow_mut().insert(*span, (symbol, len));
     }
     if !map.is_empty() {
-        out.push_str("\n");
+        out.push('\n');
     }
 }
 
@@ -4934,7 +5111,7 @@ fn emit_selector_globals(
     for (idx, name) in selectors_set.iter().enumerate() {
         let data_sym = format!("@__cplus.sel.{idx}.data");
         let cached_sym = format!("@__cplus.sel.{idx}.cached");
-        let payload_len = (name.as_bytes().len() + 1) as u32; // +1 for NUL
+        let payload_len = (name.len() + 1) as u32; // +1 for NUL
         let mut escaped = String::new();
         for byte in name.as_bytes() {
             if *byte == b'"' || *byte == b'\\' || !(0x20..0x7F).contains(byte) {
@@ -4952,7 +5129,7 @@ fn emit_selector_globals(
         ));
         globals.insert(name.clone(), (data_sym, cached_sym, payload_len));
     }
-    out.push_str("\n");
+    out.push('\n');
 }
 
 /// v0.0.10 Phase 4C: emit one private constant `[N x i8]` global per
@@ -4987,7 +5164,7 @@ fn emit_shader_blob_globals(
         ));
         globals.insert(**span, (symbol, len));
     }
-    out.push_str("\n");
+    out.push('\n');
 }
 
 /// v0.0.9 Phase 4: emit one LLVM global per module-scope `static`.
@@ -4999,8 +5176,8 @@ fn emit_shader_blob_globals(
 ///   - `@NAME = constant <ty> <lit>` when `info.is_mut == false`
 ///   - `@NAME = global   <ty> <lit>` when `info.is_mut == true`
 ///
-/// `str`-typed statics are rejected with E0X35 (panic here since sema
-/// should have caught) — string-fat-pointer initialization requires
+/// `str`-typed statics are rejected in sema (panic here since sema
+/// should have caught it) — string-fat-pointer initialization requires
 /// two globals and v0.0.9 punts that; use `const FOO: str = "..."`
 /// instead (which the lower pass substitutes literally).
 ///
@@ -5375,6 +5552,7 @@ fn emit_cstr(out: &mut String, name: &str, s: &str) -> usize {
 ///   - for `fn() -> i32` tests, fold the return into the failure check
 ///   - print one pass/fail line (human or JSON per `json`)
 ///   - bump a local pass/fail counter
+///
 /// Final block prints the summary and returns the fail count as the process
 /// exit status (so `cpc test` can short-circuit on any failure).
 fn emit_test_driver_main(out: &mut String, tests: &[crate::attrs::TestFn], json: bool) {
@@ -5468,10 +5646,10 @@ fn emit_test_driver_main(out: &mut String, tests: &[crate::attrs::TestFn], json:
 /// LLVM function attribute to splice after the `define ... (...)` signature.
 ///
 /// - `#[inline]`         → ` inlinehint` (raises the inliner's likelihood; only
-///                          matters once the inliner runs, i.e. `--release`/-O2+)
+///   matters once the inliner runs, i.e. `--release`/-O2+)
 /// - `#[inline(always)]` → ` alwaysinline` (forces inlining, including at -O0
-///                          and past LLVM's cost threshold — the lever for hot
-///                          SIMD/kernel wrappers that otherwise stay a `bl`)
+///   and past LLVM's cost threshold — the lever for hot
+///   SIMD/kernel wrappers that otherwise stay a `bl`)
 /// - `#[inline(never)]`  → ` noinline`
 ///
 /// Returns `""` when the attribute is absent. The leading space is included so
@@ -5510,7 +5688,7 @@ fn gen_function(
     emitted_extern_symbols: &mut std::collections::HashSet<String>,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
-    is_lib: bool,
+    _is_lib: bool,
 ) {
     // Builtin name: codegen never emits a definition for it; clang links printf.
     if f.name.name == "println" {
@@ -5640,11 +5818,11 @@ fn gen_function(
             // type unchanged. x86_64-sysv passes MEMORY-class aggregates on the
             // stack via `byval` — a bare pointer-in-register mismatches the
             // clang-compiled callee (the headline import bug). aarch64-darwin
-            // (and the empirical Xtensa import convention) share the layout
-            // through a bare pointer.
+            // and Win64 share the layout through a bare pointer; x86_64-sysv
+            // and Xtensa pass a `byval` stack copy (see indirect_uses_byval).
             match classify_c_abi(pty, types) {
                 CAbiClass::Indirect => {
-                    if x86_64_indirect_uses_byval() {
+                    if indirect_uses_byval() {
                         let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                         let inner = llvm_ty(pty, types);
                         out.push_str(&format!("ptr byval({inner}) align {al}"));
@@ -5738,14 +5916,19 @@ fn gen_function(
     } else {
         return_passes_by_sret_widened(&return_ty, types)
     };
-    let coerce_ret_ty: Option<String> = if let CAbiClass::Coerce { llvm_ty, .. } = &ret_abi {
-        Some(llvm_ty.clone())
+    let coerce_ret_ty: Option<(String, u64, u64)> = if let CAbiClass::Coerce {
+        llvm_ty,
+        size,
+        align,
+    } = &ret_abi
+    {
+        Some((llvm_ty.clone(), *size, *align))
     } else {
         None
     };
     let sig_return_ty: String = if uses_sret {
         "void".to_string()
-    } else if let Some(t) = &coerce_ret_ty {
+    } else if let Some((t, _, _)) = &coerce_ret_ty {
         t.clone()
     } else {
         llvm_ty(&return_ty, types)
@@ -5850,7 +6033,7 @@ fn gen_function(
                 // doesn't use byval — caller and callee implicitly share
                 // the layout via the bare pointer. Xtensa (per the esp-clang
                 // probe) passes >24-byte aggregates `byval` like sysv.
-                if x86_64_indirect_uses_byval() || active_target().arch == TargetArch::Xtensa {
+                if indirect_uses_byval() {
                     let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                     let inner = llvm_ty(pty, types);
                     write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
@@ -5886,7 +6069,7 @@ fn gen_function(
             }
         }
     }
-    out.push_str(")");
+    out.push(')');
     out.push_str(inline_fn_attr(&f.attributes));
     let is_naked = has_naked_attr(&f.attributes);
     if is_naked {
@@ -5943,7 +6126,7 @@ fn gen_function(
     // A `#[naked]` function materializes no params: the body is inline asm
     // that reads arguments straight from their ABI registers. Skipping the
     // prologue is the whole point (the SSA args stay unused, which is legal).
-    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in f
+    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in f
         .params
         .iter()
         .zip(sig.params.iter())
@@ -6288,7 +6471,7 @@ fn gen_async_method(
         }
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
     {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
@@ -6515,7 +6698,7 @@ fn gen_gen_method(
         next_idx += 1;
     }
     // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
     {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
@@ -6929,6 +7112,7 @@ fn gen_async_function(
 /// Receivers compile to LLVM parameters:
 /// - `this` (value): a struct-typed parameter, stored in an alloca
 /// - `this` / `ref this`: a `ptr` parameter, bound directly (no alloca)
+///
 /// v0.0.5 Phase 2C: emit an inherent method declared on an enum type
 /// (`impl EnumName { fn foo(this, ...) -> T { ... } }`). Mirror of
 /// `gen_method` adapted for enum receivers — same coroutine dispatch
@@ -7078,7 +7262,7 @@ fn gen_enum_method(
         state.bind("self", recv_name, Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
     {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
@@ -7101,9 +7285,8 @@ fn gen_enum_method(
     // If the body is value-producing (non-Unit return), make sure we
     // emit a final ret. Otherwise fall through to ret void.
     if !state.terminated {
-        if uses_sret {
-            state.emit_terminator("ret void");
-        } else if matches!(return_ty, Ty::Unit) {
+        if uses_sret || matches!(return_ty, Ty::Unit) {
+            // sret returns the value through the hidden pointer; Unit has none.
             state.emit_terminator("ret void");
         } else {
             // Unreachable in well-formed bodies; sema enforces explicit
@@ -7235,7 +7418,7 @@ fn gen_gen_enum_method(
         state.bind("self", format!("%{}", next_idx), Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
     {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
@@ -7304,7 +7487,7 @@ fn gen_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
-    is_lib: bool,
+    _is_lib: bool,
 ) {
     // v0.0.5 Phase 2B: gen-method dispatch. Same lowering as
     // `gen_gen_function` for free fns but adapted to method receiver
@@ -7475,7 +7658,7 @@ fn gen_method(
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(")");
+    out.push(')');
     out.push_str(fn_attrs);
     out.push_str(" {\n");
     out.push_str("entry:\n");
@@ -7555,7 +7738,7 @@ fn gen_method(
     // params register a scope-exit drop. Non-`take` value-passed params are
     // bit-duplicates of the caller's value, so codegen does NOT register a
     // drop for them (the caller still owns the original).
-    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in
+    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
         m.params.iter().zip(sig.params.iter()).enumerate()
     {
         let idx = next_idx + i as u32;
@@ -7838,11 +8021,15 @@ struct FnState<'a> {
     /// the slot and `ret void`; `None` → emit `ret <ty> <val>` as usual.
     sret_slot: Option<String>,
     /// Phase 5 Slice 5.D: when emitting an `export extern fn` whose return
-    /// type lowers to a coerced C-ABI integer class (≤8 → i64, 9..16 →
-    /// `[2 x i64]`), `StmtKind::Return` packs the value through an
-    /// alloca and emits `ret <coerced>` instead of `ret <original>`.
+    /// type lowers to a coerced C-ABI register class (≤8 → i64/double,
+    /// 9..16 → `[2 x i64]` / SysV two-eightbyte structs), `StmtKind::Return`
+    /// packs the value through an alloca and emits `ret <coerced>` instead
+    /// of `ret <original>`. Carries `(llvm_ty, size, align)` straight from
+    /// the `CAbiClass::Coerce` classification so the staging slot's memset
+    /// covers the coerced type's true store size (name-matching the type
+    /// string under-sized SysV `{ i64, i64 }`-family returns to 8 bytes).
     /// `None` means no coercion is needed (Direct return).
-    coerce_ret: Option<String>,
+    coerce_ret: Option<(String, u64, u64)>,
     /// v0.0.3 Phase 5 Slice 5B: shared registry of per-O trampolines
     /// requested by `__cplus_thread_spawn` call sites within this
     /// function's body. After all function bodies are emitted, the
@@ -7878,8 +8065,8 @@ struct FnState<'a> {
     /// Bench impact: closes the May 17 → today raytracer NEON 2-lane
     /// regression. Before the cache, `v.x * v.x` emitted two GEPs +
     /// two loads + one fmul; that interleaved-duplicate-load pattern
-    /// defeated the SLP-vectorizer. With the cache it emits one GEP
-    /// + one load + `fmul %v.x, %v.x` — the standard adjacent-load
+    /// defeated the SLP-vectorizer. With the cache it emits one GEP +
+    /// one load + `fmul %v.x, %v.x` — the standard adjacent-load
     /// pattern the vectorizer recognizes.
     field_load_cache: std::collections::HashMap<(String, String), (String, Ty)>,
 }
@@ -8384,6 +8571,7 @@ impl<'a> FnState<'a> {
     ///     `preserve_nonecc` to match the callee's CC.
     ///   - Anything else → no-op (Copy types and structs without Drop
     ///     don't need teardown).
+    ///
     /// Emit a pointer to payload value `pi` of a tagged enum at `enum_ptr`,
     /// using byte offsets (not slot indices) so multi-payload variants with a
     /// value larger than 8 bytes lay out correctly. Used by construction, match
@@ -8885,7 +9073,6 @@ impl<'a> FnState<'a> {
                     self.register_value_drop(&binding.name, &bind_slot, &fty, true);
                     self.bind(&binding.name, bind_slot, fty);
                 }
-                return;
             }
             StmtKind::Let { name, ty, init, .. } => {
                 // Resolve declared type up front (always present for the
@@ -9237,7 +9424,7 @@ impl<'a> FnState<'a> {
                             // is the conservative correct default.
                             self.gen_store(&ret_ty, &v, &slot);
                             self.emit_terminator("ret void");
-                        } else if let Some(coerced) = self.coerce_ret.clone() {
+                        } else if let Some((coerced, sz, al)) = self.coerce_ret.clone() {
                             // Stage the original-typed value through a
                             // stack slot, then reload via the coerced
                             // LLVM type. The slot must be sized for the
@@ -9246,17 +9433,11 @@ impl<'a> FnState<'a> {
                             // beyond the original size are caller-side
                             // undefined per the C ABI — `0`-initializing
                             // them keeps the load deterministic for the
-                            // common scalar-output case.
+                            // common scalar-output case. Size and align
+                            // come from the C-ABI classification itself,
+                            // covering every coerce shape (i64, double,
+                            // [2 x i64], SysV `{ i64, i64 }`-family).
                             let lty = self.lty(&ret_ty);
-                            // Use coerce_ret's name to size the alloca.
-                            // Convention: i64 → 8 bytes align 8; [2 x i64] → 16/8.
-                            let (sz, al) = if coerced == "i64" {
-                                (8u64, 8u64)
-                            } else if coerced.contains("[2 x i64]") {
-                                (16, 8)
-                            } else {
-                                (8, 8)
-                            };
                             let tmp = self.alloca_named_raw("ret.coerce", &coerced, al);
                             // Zero-initialize so unused tail bytes are 0,
                             // not poison. memset via i8 store is cheap;
@@ -10670,8 +10851,8 @@ impl<'a> FnState<'a> {
     /// v0.0.11 Phase 4: `#size_of::[T]()` — GEP-null trick, folded to a
     /// constant at -O1+.
     fn gen_intrinsic_size_of(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
-        let t = ty_from(&type_args[0], &self.types);
-        let llvm_t = llvm_ty(&t, &self.types);
+        let t = ty_from(&type_args[0], self.types);
+        let llvm_t = llvm_ty(&t, self.types);
         let ptr_tmp = self.next_tmp();
         let int_tmp = self.next_tmp();
         self.emit(&format!(
@@ -10685,8 +10866,8 @@ impl<'a> FnState<'a> {
     /// v0.0.11 Phase 4: `#align_of::[T]()` — GEP-null on `{ i1, T }` to
     /// extract T's alignment offset. Folded to a constant at -O1+.
     fn gen_intrinsic_align_of(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
-        let t = ty_from(&type_args[0], &self.types);
-        let llvm_t = llvm_ty(&t, &self.types);
+        let t = ty_from(&type_args[0], self.types);
+        let llvm_t = llvm_ty(&t, self.types);
         let ptr_tmp = self.next_tmp();
         let int_tmp = self.next_tmp();
         self.emit(&format!(
@@ -10702,7 +10883,7 @@ impl<'a> FnState<'a> {
     /// the aggregate back as a value. `llvm.memset.p0.i64` is already
     /// declared in the preamble (see `write_preamble`).
     fn gen_intrinsic_zero(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
-        let t = ty_from(&type_args[0], &self.types);
+        let t = ty_from(&type_args[0], self.types);
         let slot = self.alloca_anon(t.clone());
         if let Some((sz, _al)) = static_layout(&t, self.types) {
             if sz > 0 {
@@ -10729,6 +10910,7 @@ impl<'a> FnState<'a> {
     ///   - return type: void (0 outputs), the scalar type (1), or an anonymous
     ///     struct unpacked with `extractvalue` (N>1). Each output's result is
     ///     stored back into its place.
+    ///
     /// `sideeffect` is always set so a side-effecting, output-free asm (a fence)
     /// isn't deleted. Tier 1 (`#asm("dmb ish")`) is the no-operand degenerate
     /// case → `call void asm sideeffect "dmb ish", ""()`.
@@ -10933,12 +11115,54 @@ impl<'a> FnState<'a> {
         // intrinsic call against args[1].
         let sel_args = std::slice::from_ref(&args[1]);
         let (sel_val, _) = self.gen_intrinsic_selector(sel_args);
-        // Type-check the forwarded args (sema already did this; gen_expr
-        // is what produces the LLVM values).
-        let mut typed_args: Vec<(String, Ty)> = Vec::with_capacity(args.len().saturating_sub(2));
+        // Forwarded args lower through the same C-ABI classification as any
+        // extern call — objc_msgSend IS a C call. Small aggregates coerce to
+        // their register class, MEMORY-class aggregates pass indirectly
+        // (byval on x86_64-sysv, pointer-to-copy on aarch64), narrow ints
+        // carry zeroext/signext. Before 2026-07-07 this path passed raw
+        // aggregate types and by-value aggregate returns — the same
+        // x0-vs-x8 register mismatch the `#[link_name = "objc_msgSend"]`
+        // extern-fn path was fixed for (`objc_msgsend_sret_return_
+        // attributes_call_slot`); the intrinsic had missed that fix.
+        let mut argstr = format!("ptr {recv_val}, ptr {sel_val}");
         for a in &args[2..] {
             let (v, t) = self.gen_expr(a).expect("#msg_send forwarded arg");
-            typed_args.push((v, t));
+            let lowered = match classify_c_abi(&t, self.types) {
+                CAbiClass::Coerce {
+                    llvm_ty,
+                    size,
+                    align,
+                } => {
+                    let t_lty = self.lty(&t);
+                    let (_, struct_al) = static_layout(&t, self.types).unwrap_or((size, align));
+                    let slot = self.alloca_named_raw("msg.arg.coerce", &llvm_ty, align);
+                    self.emit(&format!("store {t_lty} {v}, ptr {slot}, align {struct_al}"));
+                    let coerced = self.next_tmp();
+                    self.emit(&format!("{coerced} = load {llvm_ty}, ptr {slot}, align {align}"));
+                    format!("{llvm_ty} {coerced}")
+                }
+                CAbiClass::Indirect => {
+                    let t_lty = self.lty(&t);
+                    let (_, al) = static_layout(&t, self.types).expect("indirect arg has layout");
+                    let slot = self.alloca_anon(t.clone());
+                    self.emit(&format!("store {t_lty} {v}, ptr {slot}, align {al}"));
+                    if indirect_uses_byval() {
+                        format!("ptr byval({t_lty}) align {al} {slot}")
+                    } else {
+                        format!("ptr {slot}")
+                    }
+                }
+                CAbiClass::Direct => {
+                    let ext = abi_ext_attr(&t);
+                    if ext.is_empty() {
+                        format!("{} {}", self.lty(&t), v)
+                    } else {
+                        format!("{} {} {}", self.lty(&t), ext, v)
+                    }
+                }
+            };
+            argstr.push_str(", ");
+            argstr.push_str(&lowered);
         }
         // Resolve the return type. Sema accepts the `-> T` ascription as
         // an AST `Type`; resolve it against the type tables here.
@@ -10946,29 +11170,65 @@ impl<'a> FnState<'a> {
             Some(rt) => ty_from(rt, self.types),
             None => Ty::Unit,
         };
-        let ret_llvm = if matches!(ret_ty, Ty::Unit) {
-            "void".to_string()
-        } else {
-            self.lty(&ret_ty)
-        };
-        // Build the call. Format:
-        //   %r = call <ret_llvm> (ptr, ptr, ...) @objc_msgSend(ptr %recv, ptr %sel, <typed args...>)
-        let mut argstr = format!("ptr {recv_val}, ptr {sel_val}");
-        for (v, t) in &typed_args {
-            argstr.push_str(", ");
-            argstr.push_str(&format!("{} {}", self.lty(t), v));
-        }
         // CRITICAL: NOT variadic on aarch64-darwin (see emit_intrinsic_runtime_decls
         // comment in generate_inner). Per-call non-variadic signature; LLVM
         // accepts shape divergence between this and the 2-arg declare with
         // opaque pointers.
         if matches!(ret_ty, Ty::Unit) {
             self.emit(&format!("call void @objc_msgSend({argstr})"));
-            None
-        } else {
-            let r = self.next_tmp();
-            self.emit(&format!("{r} = call {ret_llvm} @objc_msgSend({argstr})"));
-            Some((r, ret_ty))
+            return None;
+        }
+        match classify_c_abi_return(&ret_ty, self.types) {
+            // MEMORY-class return: hidden result slot, attributed `sret(...)`
+            // at the call site so it lands in x8 on AArch64 (not x0 — the
+            // receiver-clobber crash). x86_64 additionally routes through the
+            // dedicated `objc_msgSend_stret` entry point, which expects the
+            // result pointer as its first regular argument; arm64 libobjc has
+            // no _stret variant — the standard entry handles x8.
+            CAbiClass::Indirect => {
+                let slot = self.alloca_anon(ret_ty.clone());
+                let (sz, al) =
+                    static_layout(&ret_ty, self.types).expect("sret return type has layout");
+                let inner = self.lty(&ret_ty);
+                let symbol = if active_target().arch == TargetArch::X86_64 {
+                    "objc_msgSend_stret"
+                } else {
+                    "objc_msgSend"
+                };
+                self.emit(&format!(
+                    "call void @{symbol}(ptr sret({inner}) noalias nonnull noundef \
+                     writable dereferenceable({sz}) align {al} {slot}, {argstr})"
+                ));
+                let v = self.next_tmp();
+                self.gen_load(&v, &ret_ty, &slot);
+                Some((v, ret_ty))
+            }
+            // Small aggregate: the callee returns the coerced register class;
+            // reconstruct the struct through a slot (mirrors gen_named_call's
+            // Coerce return arm).
+            CAbiClass::Coerce { llvm_ty, align, .. } => {
+                let cv = self.next_tmp();
+                self.emit(&format!("{cv} = call {llvm_ty} @objc_msgSend({argstr})"));
+                let slot = self.alloca_named_raw("msg.ret.coerce", &llvm_ty, align);
+                self.emit(&format!("store {llvm_ty} {cv}, ptr {slot}, align {align}"));
+                let v = self.next_tmp();
+                self.gen_load(&v, &ret_ty, &slot);
+                Some((v, ret_ty))
+            }
+            CAbiClass::Direct => {
+                let r = self.next_tmp();
+                let ext = abi_ext_attr(&ret_ty);
+                let ret_ext = if ext.is_empty() {
+                    String::new()
+                } else {
+                    format!("{ext} ")
+                };
+                let ret_llvm = self.lty(&ret_ty);
+                self.emit(&format!(
+                    "{r} = call {ret_ext}{ret_llvm} @objc_msgSend({argstr})"
+                ));
+                Some((r, ret_ty))
+            }
         }
     }
 
@@ -11238,10 +11498,11 @@ impl<'a> FnState<'a> {
     /// - `c + (a * b)`   → `llvm.fmuladd.fN(a, b, c)`
     /// - `(a * b) - c`   → `llvm.fmuladd.fN(a, b, -c)` via fneg
     /// - `c - (a * b)`   → `llvm.fmuladd.fN(-a, b, c)` (negate one factor)
+    ///
     /// All on a float type. Sides must agree on type.
     fn try_emit_fmuladd(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> Option<(String, Ty)> {
         // Helper: when an Expr is a `Binary(Mul, a, b)`, return (a, b).
-        fn as_mul<'e>(e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+        fn as_mul(e: &Expr) -> Option<(&Expr, &Expr)> {
             if let ExprKind::Binary {
                 op: BinOp::Mul,
                 lhs,
@@ -11579,8 +11840,8 @@ impl<'a> FnState<'a> {
             BinOp::Mul => "smul",
             _ => unreachable!(),
         };
-        let llvm_t = self.lty(&ty);
-        let bits = ty_bit_width(&ty);
+        let llvm_t = self.lty(ty);
+        let bits = ty_bit_width(ty);
         let pair = self.next_tmp();
         self.emit(&format!(
             "{pair} = call {{{llvm_t}, i1}} @llvm.{intrinsic}.with.overflow.i{bits}({llvm_t} {l}, {llvm_t} {r})"
@@ -11615,14 +11876,14 @@ impl<'a> FnState<'a> {
             (BinOp::Mod, false) => "urem",
             _ => unreachable!(),
         };
-        let llvm_t = self.lty(&ty);
+        let llvm_t = self.lty(ty);
         let zero_check = self.next_tmp();
         self.emit(&format!("{zero_check} = icmp eq {llvm_t} {r}, 0"));
         // v0.0.24 de-Rust soundness: signed `INT_MIN / -1` (and `INT_MIN % -1`)
         // overflow is UB in LLVM `sdiv`/`srem` — trap on it as well. Unsigned
         // division has no overflow case, so only the zero check applies there.
         let trap_check = if ty.is_signed_int() {
-            let bits = ty_bit_width(&ty);
+            let bits = ty_bit_width(ty);
             let int_min = format!("-{}", 1u128 << (bits - 1));
             let l_is_min = self.next_tmp();
             self.emit(&format!("{l_is_min} = icmp eq {llvm_t} {l}, {int_min}"));
@@ -12241,7 +12502,7 @@ impl<'a> FnState<'a> {
             // `i64` as targets; the cast is a bare expression. Lowers
             // to LLVM `ptrtoint`. All four target widths produce `i64` at
             // the IR level (every C+ 64-bit-int type lowers to LLVM `i64`).
-            (Ty::RawPtr(_), b) if matches!(b, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
+            (Ty::RawPtr(_), Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
                 self.emit(&format!("{r} = ptrtoint {from_t} {v} to {to_t}"));
                 return (r, to);
             }
@@ -12272,7 +12533,7 @@ impl<'a> FnState<'a> {
             }
             // fn-pointer → 64-bit integer: `ptrtoint` (identical to the
             // `RawPtr → 64-bit int` arm; sema admits only usize/u64/isize/i64).
-            (Ty::FnPtr { .. }, b) if matches!(b, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
+            (Ty::FnPtr { .. }, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
                 self.emit(&format!("{r} = ptrtoint {from_t} {v} to {to_t}"));
                 return (r, to);
             }
@@ -12298,27 +12559,28 @@ impl<'a> FnState<'a> {
         // Direct named calls (callee is an Ident matching a sig) fall through
         // to the existing gen_named_call path.
         if let ExprKind::Ident(name) = &callee.kind {
-            if let Some((slot, ty)) = self.lookup(name).cloned() {
-                if let Ty::FnPtr {
+            if let Some((
+                slot,
+                Ty::FnPtr {
                     params,
                     param_takes,
                     param_refs,
                     return_type,
-                } = ty
-                {
-                    let v = self.next_tmp();
-                    // v0.0.7 Slice 1.2: fn-ptr load — ptr leaf.
-                    let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
-                    self.gen_load(&v, &fnptr_ty, &slot);
-                    return self.gen_indirect_call(
-                        &v,
-                        &params,
-                        &param_takes,
-                        &param_refs,
-                        &return_type,
-                        args,
-                    );
-                }
+                },
+            )) = self.lookup(name).cloned()
+            {
+                let v = self.next_tmp();
+                // v0.0.7 Slice 1.2: fn-ptr load — ptr leaf.
+                let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
+                self.gen_load(&v, &fnptr_ty, &slot);
+                return self.gen_indirect_call(
+                    &v,
+                    &params,
+                    &param_takes,
+                    &param_refs,
+                    &return_type,
+                    args,
+                );
             }
         }
         // Struct-of-callbacks calls (`recv.field(args)` where `field` is a
@@ -12410,11 +12672,10 @@ impl<'a> FnState<'a> {
                             static_layout(pty, self.types).expect("indirect arg has layout");
                         let slot = self.alloca_anon(pty.clone());
                         self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
-                        // x86_64-sysv passes MEMORY-class aggregates on the
-                        // stack via `byval`; aarch64-darwin (and the Xtensa
-                        // import convention) share the slot through a bare
-                        // pointer.
-                        let ty_str = if x86_64_indirect_uses_byval() {
+                        // x86_64-sysv and Xtensa pass MEMORY-class aggregates
+                        // on the stack via `byval`; aarch64-darwin and Win64
+                        // share the slot through a bare pointer.
+                        let ty_str = if indirect_uses_byval() {
                             format!("ptr byval({pty_lty}) align {al}")
                         } else {
                             // Win64 (and aarch64-darwin): plain `ptr` to the copy.
@@ -12603,7 +12864,7 @@ impl<'a> FnState<'a> {
         // `#drop_in_place::[T](p: *T)` → call the monomorphized `T::drop(p)`
         // when T has Drop, else nothing.
         if name == "__cplus_drop_in_place" {
-            let t = ty_from(&type_args[0], &self.types);
+            let t = ty_from(&type_args[0], self.types);
             let (p_val, _) = self.gen_expr(&args[0]).expect("drop_in_place ptr arg");
             self.gen_drop_in_place(&t, &p_val);
             return Some(None);
@@ -12615,7 +12876,7 @@ impl<'a> FnState<'a> {
         &mut self,
         name: &str,
         args: &[Expr],
-        type_args: &[Type],
+        _type_args: &[Type],
     ) -> Option<(String, Ty)> {
         // v0.0.8 bench-gap finding 1: a call may mutate any local
         // bound by `ref x: T` / `take x: T` in the callee's
@@ -12722,12 +12983,12 @@ impl<'a> FnState<'a> {
                                 static_layout(pty, self.types).expect("indirect arg has layout");
                             let slot = self.alloca_anon(pty.clone());
                             self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
-                            // aarch64-darwin (and the Xtensa import convention)
-                            // share the caller-allocated slot through a bare
-                            // pointer; x86_64-sysv passes MEMORY-class aggregates
-                            // on the stack via `byval` — matching the import-decl
-                            // side and the clang callee.
-                            let ty_str = if x86_64_indirect_uses_byval() {
+                            // aarch64-darwin and Win64 share the caller-
+                            // allocated slot through a bare pointer;
+                            // x86_64-sysv and Xtensa pass MEMORY-class
+                            // aggregates on the stack via `byval` — matching
+                            // the import-decl side and the clang callee.
+                            let ty_str = if indirect_uses_byval() {
                                 let inner = self.lty(pty);
                                 format!("ptr byval({inner}) align {al}")
                             } else {
@@ -13101,12 +13362,11 @@ impl<'a> FnState<'a> {
             return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
         }
         let tramp_sym = self.tramps.register_spawn(&o_ty, self.types);
-        let (size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
         // v0.0.4 Phase 2 Slice 2H ctx layout:
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
         //   fn_ptr:             @ 8
-        //   result_slot:        @ 16
-        let total_size = 16 + size;
+        //   result_slot:        @ 16  (coerce-padded — see thread_result_slot_size)
+        let total_size = 16 + thread_result_slot_size(&o_ty, self.types);
         let ctx = self.next_tmp();
         self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
         // refcount = 2 (plain store — not yet shared with the worker).
@@ -13185,16 +13445,15 @@ impl<'a> FnState<'a> {
             return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
         }
         let tramp_sym = self.tramps.register_spawn_with(&i_ty, &o_ty);
-        let (o_size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
-        let (i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
-        // v0.0.4 Phase 2 Slice 2H ctx layout:
+        let (_i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
+        // v0.0.4 Phase 2 Slice 2H ctx layout, computed by
+        // `spawn_with_ctx_layout` — shared with `emit_spawn_with_tramp` so
+        // the call site and the trampoline can never disagree:
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
         //   fn_ptr:             @ 8
-        //   result_slot:        @ 16
-        //   input_slot:         @ 16 + size_of(O), aligned to align_of(I)
-        let input_off_unaligned = 16 + o_size;
-        let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
-        let total_size = input_off + i_size;
+        //   result_slot:        @ 16  (coerce-padded)
+        //   input_slot:         @ input_off
+        let (input_off, total_size) = spawn_with_ctx_layout(&i_ty, &o_ty, self.types);
         let ctx = self.next_tmp();
         self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
         // refcount = 2 (plain store — not yet shared with the worker).
@@ -13799,6 +14058,38 @@ impl<'a> FnState<'a> {
         Ty::Struct(StructId(0))
     }
 
+    /// True iff `gen_place` resolves this receiver to a real place (no
+    /// value-fallback spill). Mirrors `gen_place`'s arms exactly — including
+    /// the `trivial_block_tail` `{ *p }` shortcut and the deref `*p` arm — so
+    /// the method-call pre-evaluation only fires on genuine rvalue receivers
+    /// and never diverts a place read into a bit-copy.
+    fn method_receiver_is_place(&self, e: &Expr) -> bool {
+        if let Some(inner) = Self::trivial_block_tail(e) {
+            return self.method_receiver_is_place(inner);
+        }
+        matches!(
+            &e.kind,
+            ExprKind::Ident(_)
+                | ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        )
+    }
+
+    /// Receiver VALUE for a blessed-name handler: reuse the once-evaluated
+    /// `pre` (a non-place rvalue receiver, already emitted) or, for a place
+    /// receiver (`pre == None`), read it now — a place read is side-effect-free
+    /// and idempotent, so re-reading it on the generic fall-through is safe.
+    fn blessed_recv_value(&mut self, receiver: &Expr, pre: &Option<(String, Ty)>) -> (String, Ty) {
+        match pre {
+            Some(v) => v.clone(),
+            None => self.gen_expr(receiver).expect("blessed receiver has a value"),
+        }
+    }
+
     fn gen_method_call(
         &mut self,
         receiver: &Expr,
@@ -13811,11 +14102,34 @@ impl<'a> FnState<'a> {
         // can't outlive a mutation. (See `gen_named_call` for the
         // same rationale.)
         self.invalidate_field_load_cache();
+        // Evaluate a NON-PLACE (rvalue) receiver EXACTLY ONCE up front. A
+        // blessed-name handler (`to_text`/`to_bits`/`next`/`hash`/`eq`) that
+        // fails its receiver-type guard falls through to the generic path,
+        // which would call `gen_place` and evaluate the receiver a SECOND time
+        // — doubling side effects (`n.bump().hash()` printed "BB") and, for an
+        // owned rvalue, leaking the first result. Pre-evaluating once and
+        // routing both the blessed and generic paths through that value fixes
+        // it. A place receiver (Ident/Field/Index) is re-read cheaply with no
+        // side effects, so it keeps the lazy path (`pre = None`); an rvalue has
+        // no persistent place anyway, so spilling its single evaluation is
+        // exactly what `gen_place` would do.
+        // Only pre-evaluate a receiver that `gen_place` would handle via its
+        // value-fallback spill (a genuine rvalue). Its place arms — Ident,
+        // Field, Index, deref `*p`, and a trivial `{ *p }` block that resolves
+        // to a place — must go through `gen_place` unchanged, or a raw-pointer
+        // read (`{ *p }`) would be spilled as a bit-copy instead of aliasing
+        // the real place (breaking mutate-through-pointer code, e.g.
+        // flex_layout's node access).
+        let pre: Option<(String, Ty)> = if self.method_receiver_is_place(receiver) {
+            None
+        } else {
+            self.gen_expr(receiver)
+        };
         // Phase 8 slice 8.STR.6: blessed `to_string()` on primitives + `str`.
         // The receiver is a primitive value, not a place — handle before
         // gen_place (which expects a place-producing expression).
         if name.name == "to_text" && args.is_empty() {
-            let (rv, rt) = self.gen_expr(receiver).expect("to_text receiver has value");
+            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
             if Self::is_blessed_to_text_receiver_codegen(&rt) {
                 let (sv, _) = self.gen_to_text_intrinsic(&rv, &rt);
                 return Some(self.lang_string_or_string(sv));
@@ -13824,7 +14138,7 @@ impl<'a> FnState<'a> {
         // v0.0.12 G-045: blessed `to_bits()` on a float scalar → LLVM
         // `bitcast` to the same-width unsigned int. Bit-preserving, zero-cost.
         if name.name == "to_bits" && args.is_empty() {
-            let (rv, rt) = self.gen_expr(receiver).expect("to_bits receiver has value");
+            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
             let uty = match rt {
                 Ty::F16 => Some(Ty::U16),
                 Ty::F32 => Some(Ty::U32),
@@ -13845,7 +14159,7 @@ impl<'a> FnState<'a> {
         // Inline lowering: check coro.done → if done return None; else
         // read promise into v, resume coroutine, return Some(v).
         if name.name == "next" && args.is_empty() {
-            let (rv, rt) = self.gen_expr(receiver).expect("iter.next receiver value");
+            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
             if let Some(elem) = self.unwrap_iterator_ty(&rt) {
                 return Some(self.gen_iter_next_intrinsic(&rv, &rt, &elem));
             }
@@ -13854,7 +14168,7 @@ impl<'a> FnState<'a> {
         // receivers. Routes to `gen_hash_intrinsic` which emits FNV-1a on
         // the underlying bytes (str) or a multiplicative mixer (integers).
         if name.name == "hash" && args.is_empty() {
-            let (rv, rt) = self.gen_expr(receiver).expect("hash receiver has value");
+            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
             if Self::is_blessed_hash_receiver_codegen(&rt) {
                 return Some(self.gen_hash_intrinsic(&rv, &rt));
             }
@@ -13862,7 +14176,7 @@ impl<'a> FnState<'a> {
         // v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` for primitive +
         // str receivers. Lowers to the same icmp / memcmp shape as `==`.
         if name.name == "eq" && args.len() == 1 {
-            let (lv, lt) = self.gen_expr(receiver).expect("eq receiver");
+            let (lv, lt) = self.blessed_recv_value(receiver, &pre);
             if Self::is_blessed_eq_receiver_codegen(&lt) {
                 let (rv, _) = self.gen_expr(&args[0]).expect("eq arg");
                 return Some(self.gen_eq_intrinsic(&lv, &rv, &lt));
@@ -13873,7 +14187,7 @@ impl<'a> FnState<'a> {
         // safe in any context. Sema rejected the call on any non-pointer
         // receiver, so reaching here with a non-pointer is impossible.
         if (name.name == "is_null" || name.name == "is_not_null") && args.is_empty() {
-            let (pv, pt) = self.gen_expr(receiver).expect("is_null receiver");
+            let (pv, pt) = self.blessed_recv_value(receiver, &pre);
             if matches!(pt, Ty::RawPtr(_)) {
                 let r = self.next_tmp();
                 let cmp = if name.name == "is_null" { "eq" } else { "ne" };
@@ -13885,7 +14199,7 @@ impl<'a> FnState<'a> {
         // T-many bytes the pointer refers to. Companion to `#zero::[T]()`.
         // Uses `llvm.memset.p0.i64` (already declared in the preamble).
         if name.name == "write_zeroed" && args.is_empty() {
-            let (pv, pt) = self.gen_expr(receiver).expect("write_zeroed receiver");
+            let (pv, pt) = self.blessed_recv_value(receiver, &pre);
             if let Ty::RawPtr(inner) = pt {
                 if let Some((sz, _al)) = static_layout(&inner, self.types) {
                     if sz > 0 {
@@ -13897,9 +14211,20 @@ impl<'a> FnState<'a> {
                 return None;
             }
         }
-        // Materialize the receiver as a place (pointer) — works for Ident,
-        // Field chains, and value-producing temporaries (gen_place handles each).
-        let (recv_ptr, recv_ty) = self.gen_place(receiver);
+        // Materialize the receiver as a place (pointer). A place receiver goes
+        // through `gen_place` (Ident / Field chains); a pre-evaluated rvalue
+        // receiver is spilled to a temp whose address is the place — the same
+        // spill `gen_place`'s value fallback does, but reusing the SINGLE
+        // up-front evaluation so a side-effectful chained receiver isn't run
+        // twice.
+        let (recv_ptr, recv_ty) = match &pre {
+            Some((val, ty)) => {
+                let slot = self.alloca_anon(ty.clone());
+                self.gen_store(ty, val, &slot);
+                (slot, ty.clone())
+            }
+            None => self.gen_place(receiver),
+        };
         // Phase 8 slice 8.STR.3: blessed methods on `Text` are
         // intrinsic — no MethodSig lookup, no mangled-name call.
         if matches!(recv_ty, Ty::String) {
@@ -13966,38 +14291,38 @@ impl<'a> FnState<'a> {
             .cloned()
         else {
             let sinfo = &self.types.struct_defs[id.0 as usize];
-            if let Some((idx, ft)) = sinfo
+            if let Some((
+                idx,
+                Ty::FnPtr {
+                    params,
+                    param_takes,
+                    param_refs,
+                    return_type,
+                },
+            )) = sinfo
                 .fields
                 .iter()
                 .enumerate()
                 .find(|(_, (fname, _))| fname == &name.name)
                 .map(|(i, (_, t))| (i as u32, t.clone()))
             {
-                if let Ty::FnPtr {
-                    params,
-                    param_takes,
-                    param_refs,
-                    return_type,
-                } = ft
-                {
-                    let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
-                    let field_ptr = self.next_tmp();
-                    self.emit(&format!(
-                        "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {idx}"
-                    ));
-                    let fn_val = self.next_tmp();
-                    // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
-                    let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
-                    self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
-                    return self.gen_indirect_call(
-                        &fn_val,
-                        &params,
-                        &param_takes,
-                        &param_refs,
-                        &return_type,
-                        args,
-                    );
-                }
+                let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
+                let field_ptr = self.next_tmp();
+                self.emit(&format!(
+                    "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {idx}"
+                ));
+                let fn_val = self.next_tmp();
+                // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
+                let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
+                self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
+                return self.gen_indirect_call(
+                    &fn_val,
+                    &params,
+                    &param_takes,
+                    &param_refs,
+                    &return_type,
+                    args,
+                );
             }
             unreachable!("sema validated")
         };
@@ -15955,7 +16280,7 @@ impl<'a> FnState<'a> {
                 // caller discards (the gen_method_call wrapper only
                 // returns it when not Ty::Unit, but mirroring other
                 // store-shaped helpers — they return unit via 0/Unit).
-                return ("0".to_string(), Ty::Unit);
+                ("0".to_string(), Ty::Unit)
             }
             "and" | "or" | "xor" => {
                 let (b, _) = self.gen_expr(&args[0]).expect("simd bitwise arg");
@@ -16036,13 +16361,9 @@ impl<'a> FnState<'a> {
             //      bit-width-matched lane size).
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
                 let (b, _) = self.gen_expr(&args[0]).expect("simd cmp arg");
-                let op_kind = if elem.is_float() {
-                    "fcmp"
-                } else if elem.is_signed_int() {
-                    "icmp"
-                } else {
-                    "icmp"
-                };
+                // `icmp` for every integer lane — signedness is carried by the
+                // predicate (`slt`/`ult`…) selected below, not the opcode.
+                let op_kind = if elem.is_float() { "fcmp" } else { "icmp" };
                 let pred = match (method, elem.is_float(), elem.is_signed_int()) {
                     // Float `ne` is UNORDERED (`une`), like scalar `!=` and C — a NaN
                     // lane compares not-equal (true); every other predicate is ordered.
@@ -16785,6 +17106,34 @@ mod tests {
             touch_calls, 1,
             "chained receiver must lower exactly one `touch` call:\n{ir}"
         );
+    }
+
+    /// Blessed-name variant of the double-eval bug: a user type with a method
+    /// whose name collides with a blessed intrinsic (`hash`/`eq`/`next`/…) hit
+    /// the blessed handler, which evaluated the receiver, failed its type
+    /// guard, and fell through to the generic path — evaluating a
+    /// side-effectful rvalue receiver a SECOND time. `bump().hash()` must lower
+    /// exactly one `bump` call.
+    #[test]
+    fn blessed_name_method_evaluates_receiver_once() {
+        for method in ["hash", "next", "to_bits", "to_text"] {
+            let ir = gen_src(&format!(
+                "struct N {{ v: i32 }} \
+                 impl N {{ \
+                     fn bump(ref this) -> N {{ this.v = this.v +% 1; return N {{ v: this.v }}; }} \
+                     fn {method}(this) -> i64 {{ return this.v as i64; }} \
+                 }} \
+                 fn main() -> i32 {{ var n: N = N {{ v: 0 }}; let _h: i64 = n.bump().{method}(); return 0; }}"
+            ));
+            let bump_calls = ir
+                .lines()
+                .filter(|l| l.contains("call ") && l.contains("bump"))
+                .count();
+            assert_eq!(
+                bump_calls, 1,
+                "blessed-name `{method}` chained receiver must lower exactly one `bump` call:\n{ir}"
+            );
+        }
     }
 
     /// Companion to `chained_method_call_evaluates_receiver_once`: the
@@ -18716,9 +19065,8 @@ mod tests {
             "expected alloca for array: {ir}"
         );
         // Five stores (one per element).
-        assert_eq!(
+        assert!(
             ir.matches("store i32").count() >= 5,
-            true,
             "expected ≥5 stores: {ir}"
         );
     }
@@ -20793,6 +21141,164 @@ mod tests {
             "expected second trampoline (distinct (I, O) pair), got:\n{ir}"
         );
     }
+
+    // ---- 2026-07-07 spawn ABI audit: the trampolines must call the worker
+    // with its DEFINITION ABI. Workers are address-taken (never fastcc), so
+    // Copy-struct returns/params take the C-ABI classification and Text/
+    // non-Copy aggregates take widened sret. Before the fix both trampolines
+    // called by raw value — SIGBUS/SIGSEGV on every aggregate I/O shape.
+
+    const SPAWN_ABI_PRELUDE: &str = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+         struct Big { a: i64, b: i64, c: i64 } \
+         struct Odd { a: i32, b: i32, c: i32 } ";
+
+    #[test]
+    fn thread_spawn_big_copy_struct_return_uses_sret_trampoline() {
+        // >16-byte Copy struct: the worker's def is `void @f(ptr sret(%Big))`
+        // on both aarch64 and x86_64. The trampoline must pass the ctx result
+        // slot as the sret arg — a raw `call %Big %f()` reads x0 as the
+        // result while the callee wrote through x8 (the crash shape).
+        let src = format!(
+            "{SPAWN_ABI_PRELUDE}fn make_big() -> Big {{ return Big {{ a: 1, b: 2, c: 3 }}; }} \
+             fn main() -> i32 {{ \
+                 let h: JoinHandle[Big] = {{ #thread_spawn::[Big](make_big) }}; \
+                 return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_Big(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 700).min(ir.len())];
+        assert!(
+            tramp.contains("call void %f(ptr sret(%Big)"),
+            "spawn trampoline must call the worker through sret, got:\n{tramp}"
+        );
+        assert!(
+            !tramp.contains("call %Big %f()"),
+            "spawn trampoline must not call a >16B Copy struct worker by value:\n{tramp}"
+        );
+    }
+
+    #[test]
+    fn thread_spawn_with_big_copy_struct_io_matches_worker_abi() {
+        // Big input AND Big output through spawn_with. Return: sret into the
+        // ctx result slot. Input: >16-byte Copy struct params pass INDIRECTLY
+        // (bare ptr on aarch64, byval ptr on x86_64-sysv) — the trampoline
+        // hands the worker the input slot's address, never a loaded %Big.
+        let src = format!(
+            "{SPAWN_ABI_PRELUDE}fn echo(take b: Big) -> Big {{ return b; }} \
+             fn main() -> i32 {{ \
+                 let h: JoinHandle[Big] = {{ #thread_spawn_with::[Big, Big](Big {{ a: 1, b: 2, c: 3 }}, echo) }}; \
+                 return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 900).min(ir.len())];
+        assert!(
+            tramp.contains("call void %f(ptr sret(%Big)"),
+            "spawn_with trampoline must sret a >16B Copy struct return:\n{tramp}"
+        );
+        assert!(
+            tramp.contains("%input_slot)"),
+            "spawn_with trampoline must pass the indirect input by slot address:\n{tramp}"
+        );
+        assert!(
+            !tramp.contains("load %Big"),
+            "spawn_with trampoline must not load an indirect-class input by value:\n{tramp}"
+        );
+    }
+
+    #[test]
+    fn thread_spawn_with_coerced_copy_struct_input_not_raw_value() {
+        // 12-byte Copy struct input coerces to its register class at the
+        // worker's def ([2 x i64] on aarch64, { i64, i64 } on x86_64-sysv).
+        // The trampoline must load+pass the COERCED type, never the raw
+        // struct type the old code used.
+        let src = format!(
+            "{SPAWN_ABI_PRELUDE}fn sum(take o: Odd) -> i32 {{ return o.a +% o.b +% o.c; }} \
+             fn main() -> i32 {{ \
+                 let h: JoinHandle[i32] = {{ #thread_spawn_with::[Odd, i32](Odd {{ a: 1, b: 2, c: 3 }}, sum) }}; \
+                 return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 700).min(ir.len())];
+        assert!(
+            !tramp.contains("load %Odd") && !tramp.contains("%f(%Odd"),
+            "spawn_with trampoline must pass a coerced Copy struct in its register class:\n{tramp}"
+        );
+    }
+
+    #[test]
+    fn thread_spawn_with_noncopy_struct_return_uses_sret_trampoline() {
+        // Non-Copy (Drop-carrying) O takes cpc's widened sret at the def —
+        // the spawn_with trampoline shipped with NO sret branch at all.
+        let src = format!(
+            "{SPAWN_ABI_PRELUDE}struct NC {{ opaque p: *u8 }} \
+             impl NC {{ fn drop(ref this) {{ return; }} }} \
+             fn make(take n: i32) -> NC {{ return NC {{ p: {{ 0 as *u8 }} }}; }} \
+             fn main() -> i32 {{ \
+                 let h: JoinHandle[NC] = {{ #thread_spawn_with::[i32, NC](1 as i32, make) }}; \
+                 return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 700).min(ir.len())];
+        assert!(
+            tramp.contains("call void %f(ptr sret(%NC)"),
+            "spawn_with trampoline must sret a non-Copy struct return:\n{tramp}"
+        );
+    }
+
+    #[test]
+    fn best_mangled_match_is_exact_first_and_order_independent() {
+        // Exact target beats a qualified suffix hit regardless of table
+        // order, and among suffix-only hits the smallest name wins — the
+        // old first-match-in-table-order loop resolved `Future__i32` vs
+        // `pkg.Future__i32` by whichever the table listed first.
+        let a = ["pkg.Future__i32", "Future__i32"];
+        let b = ["Future__i32", "pkg.Future__i32"];
+        let find = |names: &[&'static str]| {
+            best_mangled_match(
+                names.iter().enumerate().map(|(i, n)| (i, *n)),
+                "Future__i32",
+            )
+            .map(|i| names[i])
+        };
+        assert_eq!(find(&a), Some("Future__i32"));
+        assert_eq!(find(&b), Some("Future__i32"));
+        // Suffix-only candidates: deterministic smallest-name tie-break.
+        let c = ["z.Future__i32", "a.Future__i32"];
+        let d = ["a.Future__i32", "z.Future__i32"];
+        assert_eq!(find(&c), Some("a.Future__i32"));
+        assert_eq!(find(&d), Some("a.Future__i32"));
+        // A nested-instantiation shape must never match (argument-list
+        // position, not a template boundary).
+        assert_eq!(find(&["Option__pkg.Future__i32"]), None);
+    }
+
+    #[test]
+    fn thread_ctx_pads_result_slot_for_coerced_return() {
+        // A 12-byte Copy struct O coerces to a 16-byte register class; the
+        // trampoline stores the FULL coerced value into the ctx result slot.
+        // Both the spawn malloc and the spawn_with layout must pad the slot
+        // to the coerce size (16+16=32, not 16+12=28) or the store tramples
+        // the bytes after the slot (the input, or heap metadata).
+        let src = format!(
+            "{SPAWN_ABI_PRELUDE}fn make_odd() -> Odd {{ return Odd {{ a: 1, b: 2, c: 3 }}; }} \
+             fn main() -> i32 {{ \
+                 let h: JoinHandle[Odd] = {{ #thread_spawn::[Odd](make_odd) }}; \
+                 return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        assert!(
+            ir.contains("call ptr @malloc(i64 32)"),
+            "spawn ctx must pad a coerced 12-byte result slot to 16 (16+16=32):\n{ir}"
+        );
+    }
     #[test]
     fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
@@ -21315,6 +21821,28 @@ mod tests {
         assert!(
             ir.contains("i32 @add(i32 noundef") && !ir.contains("@add(i64"),
             "scalar-only export must not coerce, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn coerced_return_memset_covers_full_coerce_size() {
+        // A 12-byte struct return coerces to a 16-byte two-register class
+        // ([2 x i64] on aarch64, `{ i64, i64 }` on x86_64-sysv). The staging
+        // slot's zero-memset must cover the classification's size — the old
+        // name-matching sizing recognized only "i64"/"[2 x i64]" strings and
+        // zeroed 8 of 16 bytes for the SysV struct forms.
+        let ir = gen_src(
+            "#[repr(C)] struct P { a: i64, b: i32 }\n\
+             export extern fn make() -> P { return P { a: 1, b: 2 }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let ms_line = ir
+            .lines()
+            .find(|l| l.contains("llvm.memset") && l.contains("ret.coerce"))
+            .expect("coerced return stages through a zeroed slot");
+        assert!(
+            ms_line.contains("i8 0, i64 16,"),
+            "memset must cover the 16-byte coerce class, got: {ms_line}"
         );
     }
 
@@ -21938,7 +22466,7 @@ mod tests {
         // forwarded `s`. We check for the pattern `call ptr @objc_msgSend(ptr ..., ptr ..., ptr ...)`.
         let call_idx = ir
             .find("call ptr @objc_msgSend(")
-            .expect(&format!("missing msg_send call; IR:\n{ir}"));
+            .unwrap_or_else(|| panic!("missing msg_send call; IR:\n{ir}"));
         let call_line_end = ir[call_idx..].find('\n').unwrap();
         let call_line = &ir[call_idx..call_idx + call_line_end];
         let ptr_count = call_line.matches("ptr").count();
@@ -21984,6 +22512,66 @@ mod tests {
         assert!(
             call_line.matches("ptr").count() >= 3,
             "expected sret slot + recv + sel operands; got line:\n{call_line}"
+        );
+    }
+
+    #[test]
+    fn msg_send_intrinsic_struct_return_uses_c_abi() {
+        // 2026-07-07: the `#msg_send` INTRINSIC (distinct from the
+        // `#[link_name="objc_msgSend"]` extern-fn path) lowered struct
+        // returns/args by value with no C-ABI classification — the same
+        // x0/x8 register mismatch the extern-fn path was fixed for. It must
+        // now route through classify_c_abi_return / classify_c_abi.
+        //
+        // A 24-byte struct return is Indirect on AArch64: the call must be
+        // `void`-typed with an `sret(%Size)`-attributed leading result slot.
+        let ir = gen_src_mono(
+            "struct Size { w: u64, h: u64, d: u64 }\n\
+             fn main() -> i32 {\n\
+                 let o: *u8 = 0 as *u8;\n\
+                 let s: Size = #msg_send(o, \"maxThreadsPerThreadgroup\") -> Size;\n\
+                 return s.w as i32;\n\
+             }",
+        );
+        // No by-value aggregate return survives.
+        assert!(
+            !ir.contains("call %Size @objc_msgSend"),
+            "struct return must not be by-value across objc_msgSend; IR:\n{ir}"
+        );
+        let call_idx = ir
+            .find("call void @objc_msgSend(")
+            .unwrap_or_else(|| panic!("expected void sret msgSend call; IR:\n{ir}"));
+        let call_line = &ir[call_idx..call_idx + ir[call_idx..].find('\n').unwrap()];
+        assert!(
+            call_line.contains("sret(%Size)"),
+            "sret slot must be attributed so it lands in x8; got:\n{call_line}"
+        );
+        assert!(
+            call_line.matches("ptr").count() >= 3,
+            "expected sret slot + recv + sel operands; got:\n{call_line}"
+        );
+    }
+
+    #[test]
+    fn msg_send_intrinsic_small_struct_return_coerces() {
+        // A 16-byte 2×f64 struct is an HFA on AArch64 — returned in FP
+        // registers, coerced to `[2 x double]`, NOT by-value `%Pt` and NOT
+        // sret. The reconstructed value goes through a slot.
+        let ir = gen_src_mono(
+            "struct Pt { x: f64, y: f64 }\n\
+             fn main() -> i32 {\n\
+                 let o: *u8 = 0 as *u8;\n\
+                 let p: Pt = #msg_send(o, \"position\") -> Pt;\n\
+                 return p.x as i32;\n\
+             }",
+        );
+        assert!(
+            !ir.contains("call %Pt @objc_msgSend"),
+            "small struct return must coerce, not pass by value; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("call [2 x double] @objc_msgSend("),
+            "2xf64 HFA return must coerce to [2 x double]; IR:\n{ir}"
         );
     }
 

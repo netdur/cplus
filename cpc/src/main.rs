@@ -816,6 +816,7 @@ struct TestOpts {
 ///      PATH / `update-alternatives` choice.
 ///   3. `clang-21`, `clang-20`, `clang-19` in descending order — the
 ///      side-by-side versioned binaries.
+///
 /// If nothing qualifies, fall back to bare `clang` so the existing failure
 /// path (clang rejecting the IR) still surfaces a clear compiler error.
 fn clang_program() -> &'static str {
@@ -867,6 +868,7 @@ fn clang_program_for(t: &TargetSpec) -> Result<String, String> {
 ///   2. `$IDF_TOOLS_PATH` — ESP-IDF's tools root override. Set-but-wrong is
 ///      an error naming the variable, never a fallback.
 ///   3. `~/.espressif` — the default `idf_tools.py` install root.
+///
 /// Inside the root: `tools/esp-clang/<newest-version>/esp-clang/bin/clang`,
 /// which must report LLVM >= 19 (cpc's IR floor; esp-clang 20.1.1+ in
 /// practice).
@@ -970,6 +972,7 @@ fn newest_version_dir(dir: &Path) -> Option<PathBuf> {
 ///   3. The Android SDK's default `ndk/` directory for the host OS
 ///      (`~/Library/Android/sdk/ndk`, `~/Android/Sdk/ndk`,
 ///      `%LOCALAPPDATA%\Android\Sdk\ndk`), newest installed version.
+///
 /// The resolved clang must report LLVM >= 19: cpc emits `preserve_nonecc`,
 /// which older LLVM rejects — that means NDK r28.2+ (r27 ships clang 18).
 fn ndk_clang() -> &'static Result<String, String> {
@@ -1297,8 +1300,8 @@ fn manifest_diag(
 ///   - `vendor/<name>/Cplus.toml` exists (E0854) and parses cleanly.
 ///   - Vendor manifest's `[package].name == <name>` (E0855).
 ///   - For each name in `[link].bundled`:
-///       host triple is in `[link].triples` (E0862),
-///       `vendor/<name>/src/lib/<host-triple>/<basename>` exists (E0860).
+///     host triple is in `[link].triples` (E0862),
+///     `vendor/<name>/src/lib/<host-triple>/<basename>` exists (E0860).
 ///   - No `.a`/`.dylib`/`.so` files under any
 ///     `vendor/<name>/src/lib/<triple>/` that aren't in `[link].bundled`
 ///     (E0861). Applies even when a package declares no `[link]` table —
@@ -1771,7 +1774,7 @@ fn build_project(
 /// the executable build via the manifest's `[[bin]]` vs `[lib]` choice.
 ///
 /// Pipeline (mirrors the bin path's structure):
-///   1. Load + sema-check the lib root source (via `load_and_check_project`).
+///   1. Load + sema-check the lib root source (via `load_and_check_project_full`).
 ///   2. Reject `fn main` if defined (E0409) — libraries don't have entry points.
 ///   3. Emit IR; write IR to temp `.ll`; run `clang -c` → `target/<mode>/<name>.o`.
 ///   4. For `staticlib` / `both`: `ar rcs target/<mode>/lib<name>.a <name>.o`.
@@ -2100,31 +2103,6 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
     ExitCode::SUCCESS
 }
 
-/// Run the resolver + sema for a project. Sema diagnostics are emitted to
-/// stderr; on error we return a failure ExitCode. On success returns the
-/// merged Program and the entry file id.
-fn load_and_check_project(
-    entry: &Path,
-    root: &Path,
-    diag_mode: DiagMode,
-) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
-    // Legacy single-file path: no manifest, no dep list. `None` keeps
-    // pre-Slice-2B file-relative resolution semantics.
-    load_and_check_project_full(entry, root, diag_mode, false, None, None)
-}
-
-/// Phase 5 Slice 5.A: variant that passes `is_lib` to the resolver so
-/// library-entry items skip name qualification (exposed as bare C-callable
-/// symbols).
-fn load_and_check_project_with_mode(
-    entry: &Path,
-    root: &Path,
-    diag_mode: DiagMode,
-    is_lib: bool,
-) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
-    load_and_check_project_full(entry, root, diag_mode, is_lib, None, None)
-}
-
 /// v0.0.12 realtime Phase 8: synthesize `[profile.realtime]` contract
 /// attributes onto every function defined in the entry package. A function is
 /// "local" iff its origin file's canonical path lives under the project root
@@ -2271,11 +2249,11 @@ fn load_and_check_project_full(
         apply_realtime_profile(&mut loaded.program, &loaded.files, root, profile);
     }
     // Lower `if let` / `guard let` (slice 4A.5) before sema. GAP 3: hand
-    // lower the per-file source map (like attrs / sema) so an E0X30 / E0X36 in
+    // lower the per-file source map (like attrs / sema) so an E0911 / E0912 in
     // an imported file renders against that file, not the entry file.
     let lower_diags = lower::lower_multi(
         &mut loaded.program,
-        &entry.to_path_buf(),
+        entry,
         &entry_src,
         loaded.files.clone(),
     );
@@ -2309,7 +2287,7 @@ fn load_and_check_project_full(
     // through the per-file source map (like sema) so a borrow error in an
     // imported module names that module's file, not the entry file.
     let bc_diags =
-        borrowck::check_multi(&loaded.program, &entry.to_path_buf(), &entry_src, &loaded.files);
+        borrowck::check_multi(&loaded.program, entry, &entry_src, &loaded.files);
     let bc_errors = bc_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -2317,6 +2295,27 @@ fn load_and_check_project_full(
         emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
     }
     if bc_errors {
+        return Err(ExitCode::FAILURE);
+    }
+    // Guard against a self-growing generic (`fn rec[T]() { rec::[*T](); }`)
+    // whose instantiation set never converges — monomorphization would hang.
+    // Runs the same fixed-point propagation mono uses, capped; a breach is
+    // E0910 at the offending template. Must precede monomorphization (which
+    // would otherwise loop before any diagnostic could be produced).
+    let inst_diags = monomorphize::check_instantiation_bounds(
+        &loaded.program,
+        &mono,
+        entry,
+        &entry_src,
+        &loaded.files,
+    );
+    let inst_errors = inst_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
+    for d in &inst_diags {
+        emit_diag_multi(d, diag_mode, &entry_src, &loaded.files);
+    }
+    if inst_errors {
         return Err(ExitCode::FAILURE);
     }
     // Slice 7GEN.5a: monomorphization. Generic-fn templates are
@@ -2398,14 +2397,14 @@ fn run_monomorphize(
 /// hints; the resolved behavior is picked from these):
 ///
 ///   - `--stdin`:    read source from stdin, write formatted to stdout.
-///                   No file arguments allowed.
+///     No file arguments allowed.
 ///   - `--emit`:     read each file argument, write formatted to stdout.
-///                   Multiple files are concatenated in order.
+///     Multiple files are concatenated in order.
 ///   - `--check`:    read each file argument, exit 1 if formatting would
-///                   change anything, 0 otherwise. Prints a unified diff
-///                   per changed file to stderr.
+///     change anything, 0 otherwise. Prints a unified diff
+///     per changed file to stderr.
 ///   - default:      rewrite each file argument in place. A directory
-///                   argument recurses for `*.cplus` files.
+///     argument recurses for `*.cplus` files.
 ///
 /// Lex errors surface as structured `Diagnostic`s via `--diagnostics=...`.
 fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode {
@@ -2763,7 +2762,7 @@ fn build_program(
         Ok(t) => t,
         Err(e) => {
             let lm = LineMap::new(src);
-            let d = diag::from_lex(&e, &file.to_path_buf(), &lm, src);
+            let d = diag::from_lex(&e, file, &lm, src);
             emit_diag(&d, mode, src);
             return Err(ExitCode::FAILURE);
         }
@@ -2772,7 +2771,7 @@ fn build_program(
         Ok(p) => p,
         Err(e) => {
             let lm = LineMap::new(src);
-            let d = diag::from_parse(&e, &file.to_path_buf(), &lm, src);
+            let d = diag::from_parse(&e, file, &lm, src);
             emit_diag(&d, mode, src);
             return Err(ExitCode::FAILURE);
         }
@@ -2787,7 +2786,7 @@ fn build_program(
     if attr_errors {
         return Err(ExitCode::FAILURE);
     }
-    let lower_diags = lower::lower(&mut prog, &file.to_path_buf(), src);
+    let lower_diags = lower::lower(&mut prog, file, src);
     let lower_errors = lower_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -2810,7 +2809,7 @@ fn build_program(
     if had_errors {
         return Err(ExitCode::FAILURE);
     }
-    let bc_diags = borrowck::check(&prog, &file.to_path_buf(), src);
+    let bc_diags = borrowck::check(&prog, file, src);
     let bc_errors = bc_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -3691,7 +3690,7 @@ fn build_ir(
             Ok(t) => t,
             Err(e) => {
                 let lm = LineMap::new(src);
-                let d = diag::from_lex(&e, &file.to_path_buf(), &lm, src);
+                let d = diag::from_lex(&e, file, &lm, src);
                 emit_diag(&d, mode, src);
                 return Err(ExitCode::FAILURE);
             }
@@ -3700,7 +3699,7 @@ fn build_ir(
             Ok(p) => p,
             Err(e) => {
                 let lm = LineMap::new(src);
-                let d = diag::from_parse(&e, &file.to_path_buf(), &lm, src);
+                let d = diag::from_parse(&e, file, &lm, src);
                 emit_diag(&d, mode, src);
                 return Err(ExitCode::FAILURE);
             }
@@ -3726,9 +3725,9 @@ fn build_ir(
     // route the per-file source map through lower (like attrs / sema) so a
     // lower-pass error in an imported file renders against that file.
     let lower_diags = if files_map.is_empty() {
-        lower::lower(&mut prog, &file.to_path_buf(), src)
+        lower::lower(&mut prog, file, src)
     } else {
-        lower::lower_multi(&mut prog, &file.to_path_buf(), src, files_map.clone())
+        lower::lower_multi(&mut prog, file, src, files_map.clone())
     };
     let lower_errors = lower_diags
         .iter()
@@ -3749,7 +3748,7 @@ fn build_ir(
         return Err(ExitCode::FAILURE);
     }
     // Phase 5 borrow checker (slice 5BC.2a). Same per-file routing as sema.
-    let bc_diags = borrowck::check_multi(&prog, &file.to_path_buf(), src, &files_map);
+    let bc_diags = borrowck::check_multi(&prog, file, src, &files_map);
     let bc_errors = bc_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -3757,6 +3756,22 @@ fn build_ir(
         emit_diag_multi(d, mode, src, &files_map);
     }
     if bc_errors {
+        return Err(ExitCode::FAILURE);
+    }
+    // Self-growing generic guard (E0910): a `fn rec[T]() { rec::[*T](); }`
+    // expands without bound and would hang monomorphization. Detect + report
+    // before mono runs. Both `cpc check` (via `run_check` → `build_ir`) and
+    // `cpc build` reach codegen through this function, so guarding here covers
+    // the fast-feedback and the emit paths alike.
+    let inst_diags =
+        monomorphize::check_instantiation_bounds(&prog, &mono, file, src, &files_map);
+    let inst_errors = inst_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
+    for d in &inst_diags {
+        emit_diag_multi(d, mode, src, &files_map);
+    }
+    if inst_errors {
         return Err(ExitCode::FAILURE);
     }
     let post_mono = run_monomorphize(prog, &mono, &files_map);
@@ -4007,7 +4022,7 @@ fn dump_header(input: PathBuf, lib_name: Option<&str>, diag_mode: DiagMode) -> E
 /// Public so the library build pipeline (5.A) can call it alongside the
 /// `.a` / `.dylib` artifact emission.
 fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String {
-    use cplus_core::ast::{ItemKind, TypeKind};
+    use cplus_core::ast::ItemKind;
     let mut out = String::new();
     out.push_str(&format!(
         "// Generated by cpc — public C ABI for `{lib_name}`. Do not edit.\n"
@@ -4622,12 +4637,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
     if !in_place {
         println!("  cd {}", name.as_deref().unwrap());
     }
+    println!("  cpc pm install       # fetch dependencies into vendor/");
     println!("  cpc build            # compile and link");
     println!();
     println!(
-        "note: Cplus.toml pins stdlib to this toolchain (v{}); vendor it into",
+        "note: Cplus.toml pins stdlib to this toolchain (v{}); `cpc pm install`",
         env!("CARGO_PKG_VERSION")
     );
-    println!("      vendor/stdlib before building.");
+    println!("      clones it from git into vendor/stdlib.");
     ExitCode::SUCCESS
 }

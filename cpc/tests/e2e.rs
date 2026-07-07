@@ -1252,7 +1252,7 @@ fn inline_asm_tier3_naked_fn_runs_aarch64() {
     );
 }
 
-// GAP 3 (v0.0.19): a lower-pass error (E0X30 bad static initializer) in an
+// GAP 3 (v0.0.19): a lower-pass error (E0911 bad static initializer) in an
 // imported file must render against THAT file in a multi-file build, not the
 // entry file. Before `lower_multi`, the diagnostic pointed at the entry file.
 #[test]
@@ -1281,14 +1281,14 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let line = stderr
         .lines()
-        .find(|l| l.contains("E0X30"))
-        .expect("expected an E0X30 diagnostic line");
+        .find(|l| l.contains("E0911"))
+        .expect("expected an E0911 diagnostic line");
     let v: serde_json::Value = serde_json::from_str(line).expect("diagnostic is JSON");
-    assert_eq!(v["code"], "E0X30");
+    assert_eq!(v["code"], "E0911");
     let file = v["primary"]["file"].as_str().unwrap_or("");
     assert!(
         file.ends_with("lib.cplus"),
-        "E0X30 must point at lib.cplus, got {file}"
+        "E0911 must point at lib.cplus, got {file}"
     );
     assert_eq!(
         v["primary"]["start"]["line"], 1,
@@ -15215,7 +15215,7 @@ fn const_static_emits_expected_globals() {
 
 // v0.0.24 #9 stage 3d: the old `const_static_mut_write_outside_unsafe_rejected`
 // test is removed — there is no `static mut` and no `unsafe` gate on a static
-// write (E0X34 retired; access is bare). The positive rule "a static write is
+// write (the write-accountability code was retired; access is bare). The positive rule "a static write is
 // bare" is covered by the sema test `static_write_is_bare`.
 
 // ---- v0.0.9 follow-up: `static FOO: str = "..."`. Lowers to a
@@ -15456,7 +15456,7 @@ fn realtime_profile_rejects_local_allocation() {
         dir.join("Cplus.toml"),
         "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
          [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
-         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+         [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
     std::fs::write(
@@ -15490,7 +15490,7 @@ fn realtime_profile_clean_program_passes() {
         dir.join("Cplus.toml"),
         "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
          [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
-         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+         [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
     std::fs::write(
@@ -15770,7 +15770,7 @@ fn g044_array_literal_element_coercion() {
 
 /// G-043 (llama.cplus): a `static` array initializer may be an explicit element
 /// list (`[10, 20, 30, 40]`), a fill (`[v; N]`), or nested arrays — previously
-/// rejected with E0X30 (literal-only). Elements coerce to the declared element
+/// rejected with E0911 (literal-only). Elements coerce to the declared element
 /// type (the static-position analog of G-044).
 #[test]
 fn g043_static_array_initializer() {
@@ -15803,7 +15803,7 @@ fn g043_static_array_initializer() {
 }
 
 /// G-043 guard: `const` stays literal-only — an array initializer on a `const`
-/// is still E0X30 (consts are inlined at use sites; arrays belong in `static`).
+/// is still E0911 (consts are inlined at use sites; arrays belong in `static`).
 #[test]
 fn g043_const_array_initializer_still_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -15824,7 +15824,7 @@ fn g043_const_array_initializer_still_rejected() {
         "const array initializer must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
+    assert!(stderr.contains("E0911"), "expected E0911, got: {stderr}");
 }
 
 /// G-034 (llama.cplus): an indexed write to a `pub static mut [T; N]` resolved
@@ -16491,10 +16491,10 @@ fn struct_literal_static_compiles_and_runs() {
     assert_eq!(run.status.code(), Some(121), "expected exit 121");
 }
 
-// A struct-literal static with a non-literal field value is rejected (E0X30),
+// A struct-literal static with a non-literal field value is rejected (E0911),
 // and the generic struct-literal form is excluded.
 #[test]
-fn struct_literal_static_non_literal_field_rejected_e0x30() {
+fn struct_literal_static_non_literal_field_rejected_e0911() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
@@ -16515,7 +16515,7 @@ fn struct_literal_static_non_literal_field_rejected_e0x30() {
         .expect("invoke cpc");
     assert!(!out.status.success(), "expected compile failure");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
+    assert!(stderr.contains("E0911"), "expected E0911, got: {stderr}");
 }
 
 // v0.0.13: const-eval for array lengths — `[T; N]` and `[v; N]` where `N` is a
@@ -16561,9 +16561,9 @@ fn const_array_length_compiles_and_runs() {
     assert_eq!(run.status.code(), Some(17), "expected exit 17");
 }
 
-// An unknown const-name array length is rejected with E0X36.
+// An unknown const-name array length is rejected with E0912.
 #[test]
-fn unknown_const_array_length_rejected_e0x36() {
+fn unknown_const_array_length_rejected_e0912() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("badlen.cplus");
@@ -16581,7 +16581,7 @@ fn unknown_const_array_length_rejected_e0x36() {
         .expect("invoke cpc");
     assert!(!out.status.success(), "expected compile failure");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0X36"), "expected E0X36, got: {stderr}");
+    assert!(stderr.contains("E0912"), "expected E0912, got: {stderr}");
 }
 
 // v0.0.13 (topic D): `#[inline(always)]` emits `alwaysinline`, which LLVM honors
@@ -16641,7 +16641,7 @@ fn realtime_report_json_flags_violations() {
         dir.join("Cplus.toml"),
         "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
          [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
-         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\n",
+         [profile.realtime]\ndeny-alloc = true\ndeny-block = true\n",
     )
     .unwrap();
     std::fs::write(
@@ -16683,7 +16683,7 @@ fn realtime_report_clean_exits_zero() {
         dir.join("Cplus.toml"),
         "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
          [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
-         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+         [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
     std::fs::write(
@@ -17650,9 +17650,17 @@ fn target_esp32_emits_32_bit_ir_with_xtensa_abi() {
         ir.contains("declare i32 @c_take_v3([3 x i32])"),
         "12-byte aggregate must coerce to [3 x i32]: {ir}"
     );
+    // The esp-clang probe pinned Xtensa's >24-byte convention as indirect
+    // BYVAL (a stack copy, like x86_64-sysv) — the bring-up left the import
+    // declare/call sites bare-ptr, mismatching both clang and cpc's own fn
+    // definitions. Declare and call site must carry byval.
     assert!(
-        ir.contains("declare i64 @c_take_big(ptr)"),
-        "32-byte aggregate must pass indirect: {ir}"
+        ir.contains("declare i64 @c_take_big(ptr byval(%Big) align 8)"),
+        "32-byte aggregate must pass indirect byval on Xtensa: {ir}"
+    );
+    assert!(
+        ir.contains("call i64 @c_take_big(ptr byval(%Big) align 8 "),
+        "the call site must carry the same byval attr as the declare: {ir}"
     );
     // No foreign-arch intrinsics in the preamble.
     assert!(
@@ -18169,44 +18177,6 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
 }
 
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
-
-/// The minimal-screen demo from `vendor/uikit/README.md`: a white window
-/// with a centered label, built inside `application:didFinishLaunchingWith
-/// Options:`, exported through the `cplus_app_main` entry convention.
-const UIKIT_DEMO_LIB: &str = r#"
-import "uikit/runtime" as rt;
-import "uikit/application" as app;
-import "uikit/screen" as screen;
-import "uikit/window" as window;
-import "uikit/controllers" as controllers;
-import "uikit/view" as view;
-
-fn did_finish(recv: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
-    let bounds: rt::Rect = screen::Screen::main().bounds();
-    let win: window::Window = window::Window::new(bounds);
-    let vc: controllers::ViewController = controllers::ViewController::new();
-    let root: view::View = vc.view();
-    root.set_background_color(view::Color::white());
-    let label_frame: rt::Rect = rt::make_rect(
-        0.0,
-        bounds.size.height / 2.0 - 40.0,
-        bounds.size.width,
-        80.0,
-    );
-    let label: view::Label = view::Label::new(label_frame);
-    label.set_text("Hello from C+");
-    label.set_text_alignment(view::text_alignment_center());
-    label.set_text_color(view::Color::system_blue());
-    root.add_subview(label.as_view_obj());
-    win.set_root_view_controller(vc);
-    win.make_key_and_visible();
-    return 1;
-}
-
-export extern fn cplus_app_main(argc: i32, argv: *u8) -> i32 {
-    return app::run(argc, argv, did_finish);
-}
-"#;
 
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()

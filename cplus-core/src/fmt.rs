@@ -41,7 +41,7 @@ impl FormatError {
         match self {
             FormatError::Lex(e) => {
                 let lm = crate::diagnostics::LineMap::new(src);
-                crate::diagnostics::from_lex(e, &file.to_path_buf(), &lm, src)
+                crate::diagnostics::from_lex(e, file, &lm, src)
             }
         }
     }
@@ -186,14 +186,15 @@ impl<'a> Printer<'a> {
             // `else |Pat|` complement pattern, which hug the pattern. Decide from
             // the pipe's neighbours: `idx` when the pipe is `curr`, `idx - 1` when
             // it's `prev` (same-line, so `prev` is the immediately preceding token).
-            let space = if matches!(tok.kind, TokenKind::Pipe)
-                && matches!(pipe_role(all, idx), PipeRole::PatternClose)
-            {
-                false // `…)|` — tight before the closing delimiter
-            } else if matches!(prev, TokenKind::Pipe)
-                && matches!(pipe_role(all, idx - 1), PipeRole::PatternOpen)
-            {
-                false // `|Pat` — tight after the opening delimiter
+            // Both delimiters of an `else |Pat|` complement pattern hug the
+            // pattern: `…)|` is tight before the close, `|Pat` tight after the
+            // open. Everything else gets normal context-based spacing.
+            let hugs_pattern = (matches!(tok.kind, TokenKind::Pipe)
+                && matches!(pipe_role(all, idx), PipeRole::PatternClose))
+                || (matches!(prev, TokenKind::Pipe)
+                    && matches!(pipe_role(all, idx - 1), PipeRole::PatternOpen));
+            let space = if hugs_pattern {
+                false
             } else {
                 needs_space_between_ctx(self.prev_prev_kind.as_ref(), prev, &tok.kind)
             };
@@ -557,14 +558,13 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
 
     // Function-call / index-call boundary: ident or `)` or `]` immediately
     // followed by `(` or `[` is tight.
-    if matches!(curr, LParen | LBracket) {
-        if matches!(
+    if matches!(curr, LParen | LBracket)
+        && matches!(
             prev,
             Ident(_) | SelfLower | SelfUpper | RParen | RBracket | RBrace | Int(..) | Float(..)
         ) {
             return false;
         }
-    }
 
     // v0.0.6 Slice 1A: `include_bytes!("path")` macro form. The
     // parser only accepts `Ident Bang LParen Str RParen` as a single

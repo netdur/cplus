@@ -1,38 +1,32 @@
-use crate::id::{PackageId, PackageIdError};
-use serde::{Deserialize, Serialize};
+//! Read the parts of a `Cplus.toml` the package manager cares about.
+//!
+//! `cpc pm` shares the one manifest format the rest of the toolchain uses
+//! (`cpc init` writes it, `cpc build` consumes it). This crate stays standalone
+//! (no dependency on the compiler crates), so it re-reads the same file with a
+//! deliberately narrow view: the package's `name`/`version` and the
+//! `[dependencies]` table. Every other table (`[[bin]]`, `[lib]`, `[link]`,
+//! `[profile]`, …) is ignored — building packages is `cpc build`'s job, not
+//! this tool's.
+
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// The manifest filename, shared with `cpc init` / `cpc build`.
+pub const MANIFEST_NAME: &str = "Cplus.toml";
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
-    pub schema_version: u32,
-    pub package: Package,
-    pub deps: Deps,
-    pub root: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Package {
-    pub id: PackageId,
+    pub name: String,
     pub version: String,
-    pub license: Option<String>,
-    pub language: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct Deps {
-    pub public: BTreeMap<String, Dependency>,
-    pub private: BTreeMap<String, Dependency>,
-    pub build: BTreeMap<String, Dependency>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Dependency {
-    Constraint(String),
-    LocalPath { path: String },
+    /// `[dependencies]`: package name → raw spec string. The string is a git
+    /// tree-URL (`…/tree/<ref>/<subpath>@<version>`) for a pinned dependency,
+    /// or a bare version / `*` for a monorepo sibling. See [`crate::spec`].
+    pub deps: BTreeMap<String, String>,
+    /// Directory the manifest lives in (used to place `vendor/`).
+    pub root: PathBuf,
 }
 
 #[derive(Debug)]
@@ -45,47 +39,30 @@ pub enum ManifestError {
         path: PathBuf,
         source: toml::de::Error,
     },
-    PackageId {
-        path: PathBuf,
-        source: PackageIdError,
-    },
-    MissingPackage {
-        path: PathBuf,
-    },
-    UnsupportedSchemaVersion {
-        path: PathBuf,
-        version: u32,
-    },
 }
 
 impl Manifest {
+    /// Read and parse the `Cplus.toml` at `path`. `root` is taken from the
+    /// file's parent directory (canonicalized) so `vendor/` lands beside it.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ManifestError> {
         let path = path.as_ref();
         let source = fs::read_to_string(path).map_err(|source| ManifestError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-
-        Self::parse_with_root(&source, manifest_root(path)?).map_err(|error| match error {
+        let root = manifest_root(path)?;
+        Self::parse_with_root(&source, root).map_err(|error| match error {
             ManifestError::Parse { source, .. } => ManifestError::Parse {
                 path: path.to_path_buf(),
                 source,
             },
-            ManifestError::PackageId { source, .. } => ManifestError::PackageId {
-                path: path.to_path_buf(),
-                source,
-            },
-            ManifestError::MissingPackage { .. } => ManifestError::MissingPackage {
-                path: path.to_path_buf(),
-            },
-            ManifestError::UnsupportedSchemaVersion { version, .. } => {
-                ManifestError::UnsupportedSchemaVersion {
-                    path: path.to_path_buf(),
-                    version,
-                }
-            }
-            ManifestError::Io { .. } => error,
+            other => other,
         })
+    }
+
+    /// Load a project's manifest given its directory (`<dir>/Cplus.toml`).
+    pub fn load_dir(dir: impl AsRef<Path>) -> Result<Self, ManifestError> {
+        Self::load(dir.as_ref().join(MANIFEST_NAME))
     }
 
     pub fn parse(source: &str) -> Result<Self, ManifestError> {
@@ -94,97 +71,39 @@ impl Manifest {
 
     pub fn parse_with_root(source: &str, root: PathBuf) -> Result<Self, ManifestError> {
         let raw: RawManifest = toml::from_str(source).map_err(|source| ManifestError::Parse {
-            path: root.join("pkg.toml"),
+            path: root.join(MANIFEST_NAME),
             source,
         })?;
-        let raw_package = raw.package.ok_or_else(|| ManifestError::MissingPackage {
-            path: root.join("pkg.toml"),
-        })?;
-        let schema_version = raw.schema_version.unwrap_or(1);
-        if schema_version != 1 {
-            return Err(ManifestError::UnsupportedSchemaVersion {
-                path: root.join("pkg.toml"),
-                version: schema_version,
-            });
-        }
-
         Ok(Self {
-            schema_version,
-            package: Package {
-                id: PackageId::new(&raw_package.id).map_err(|source| ManifestError::PackageId {
-                    path: root.join("pkg.toml"),
-                    source,
-                })?,
-                version: raw_package.version,
-                license: raw_package.license,
-                language: raw_package.language,
-            },
-            deps: raw.deps.unwrap_or_default().into(),
+            name: raw.package.name,
+            version: raw.package.version,
+            deps: raw.dependencies,
             root,
         })
     }
 }
 
 fn manifest_root(path: &Path) -> Result<PathBuf, ManifestError> {
-    Ok(path
-        .parent()
+    path.parent()
         .unwrap_or_else(|| Path::new("."))
         .canonicalize()
         .map_err(|source| ManifestError::Io {
             path: path.to_path_buf(),
             source,
-        })?)
+        })
 }
 
 #[derive(Debug, Deserialize)]
 struct RawManifest {
-    #[serde(rename = "manifest-version")]
-    schema_version: Option<u32>,
-    package: Option<RawPackage>,
-    deps: Option<RawDeps>,
+    package: RawPackage,
+    #[serde(default)]
+    dependencies: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawPackage {
-    id: String,
+    name: String,
     version: String,
-    license: Option<String>,
-    language: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawDeps {
-    #[serde(default)]
-    public: BTreeMap<String, RawDependency>,
-    #[serde(default)]
-    private: BTreeMap<String, RawDependency>,
-    #[serde(default)]
-    build: BTreeMap<String, RawDependency>,
-}
-
-impl From<RawDeps> for Deps {
-    fn from(raw: RawDeps) -> Self {
-        Self {
-            public: raw.public.into_iter().map(convert_dep).collect(),
-            private: raw.private.into_iter().map(convert_dep).collect(),
-            build: raw.build.into_iter().map(convert_dep).collect(),
-        }
-    }
-}
-
-fn convert_dep((id, dep): (String, RawDependency)) -> (String, Dependency) {
-    let dep = match dep {
-        RawDependency::Constraint(version) => Dependency::Constraint(version),
-        RawDependency::LocalPath { path } => Dependency::LocalPath { path },
-    };
-    (id, dep)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawDependency {
-    Constraint(String),
-    LocalPath { path: String },
 }
 
 impl fmt::Display for ManifestError {
@@ -196,17 +115,6 @@ impl fmt::Display for ManifestError {
             ManifestError::Parse { path, source } => {
                 write!(f, "failed to parse {}: {source}", path.display())
             }
-            ManifestError::PackageId { path, source } => {
-                write!(f, "invalid package id in {}: {source}", path.display())
-            }
-            ManifestError::MissingPackage { path } => {
-                write!(f, "{} is missing required [package] table", path.display())
-            }
-            ManifestError::UnsupportedSchemaVersion { path, version } => write!(
-                f,
-                "{} uses unsupported manifest-version {version}",
-                path.display()
-            ),
         }
     }
 }
@@ -218,81 +126,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_manifest_sketch() {
-        // Unknown tables (an older manifest's [api]/[build]/etc.) are ignored —
-        // the PM only reads identity + deps.
+    fn parses_a_cpc_init_manifest() {
+        // Exactly what `cpc init` writes. Unknown tables ([[bin]]) are ignored.
         let manifest = Manifest::parse(
             r#"
 [package]
-id = "github.com/sled/tools/parser"
-version = "2.1.0"
-license = "MIT OR Apache-2.0"
-language = "c11"
+name    = "Inspect"
+version = "0.0.1"
+edition = "2026"
 
-[build]
-command = "./scripts/build.sh"
+[[bin]]
+name = "Inspect"
+path = "src/main.cplus"
 
-[deps.public]
-"github.com/sled/tools/types" = "^1.4"
-
-[deps.private]
-"github.com/madler/zlib" = "^1.3"
+[dependencies]
+stdlib = "https://github.com/netdur/cplus/tree/main/vendor/stdlib@0.0.26"
 "#,
         )
         .unwrap();
 
+        assert_eq!(manifest.name, "Inspect");
+        assert_eq!(manifest.version, "0.0.1");
         assert_eq!(
-            manifest.package.id.to_string(),
-            "github.com/sled/tools/parser"
-        );
-        assert_eq!(manifest.package.version, "2.1.0");
-        assert_eq!(manifest.package.language, "c11");
-        assert_eq!(
-            manifest.deps.public["github.com/sled/tools/types"],
-            Dependency::Constraint("^1.4".to_string())
+            manifest.deps["stdlib"],
+            "https://github.com/netdur/cplus/tree/main/vendor/stdlib@0.0.26"
         );
     }
 
     #[test]
-    fn parses_local_path_dependency() {
+    fn parses_a_vendor_package_manifest_with_bare_deps() {
+        // A vendored package's own manifest declares siblings as bare names.
         let manifest = Manifest::parse(
             r#"
 [package]
-id = "github.com/sled/tools/parser"
-version = "2.1.0"
-language = "c11"
+name = "appkit"
+version = "0.0.26"
 
-[deps.public]
-"github.com/sled/tools/types" = { path = "../types" }
+[dependencies]
+stdlib     = "*"
+objc       = "*"
+quartzcore = "*"
+
+[link]
+frameworks = ["AppKit"]
 "#,
         )
         .unwrap();
 
-        assert_eq!(
-            manifest.deps.public["github.com/sled/tools/types"],
-            Dependency::LocalPath {
-                path: "../types".to_string()
-            }
-        );
+        assert_eq!(manifest.name, "appkit");
+        assert_eq!(manifest.deps.len(), 3);
+        assert_eq!(manifest.deps["objc"], "*");
     }
 
     #[test]
-    fn rejects_unknown_schema_version() {
-        let error = Manifest::parse(
+    fn dependencies_absent_yields_empty_map() {
+        let manifest = Manifest::parse(
             r#"
-manifest-version = 2
-
 [package]
-id = "github.com/sled/tools/parser"
-version = "2.1.0"
-language = "c11"
+name = "leaf"
+version = "0.0.1"
 "#,
         )
-        .unwrap_err();
+        .unwrap();
+        assert!(manifest.deps.is_empty());
+    }
 
-        assert!(matches!(
-            error,
-            ManifestError::UnsupportedSchemaVersion { version: 2, .. }
-        ));
+    #[test]
+    fn missing_package_table_is_a_parse_error() {
+        let error = Manifest::parse("[dependencies]\nstdlib = \"*\"\n").unwrap_err();
+        assert!(matches!(error, ManifestError::Parse { .. }));
     }
 }

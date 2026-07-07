@@ -1348,7 +1348,7 @@ impl ObjcEmitter {
             // overrides skip) would abort / throw / return a broken object at runtime —
             // note it and move on, so it never becomes a callable `new()`.
             if is_init_family && !bindable_inits.contains(&sel) {
-                let why = if method_marks_unavailable(&m) {
+                let why = if method_marks_unavailable(m) {
                     "`NS_UNAVAILABLE` init, not a constructor"
                 } else {
                     "init not bound (curated overrides skip)"
@@ -2042,7 +2042,7 @@ impl ObjcEmitter {
             .enumerate()
             .find_map(|(i, (_, qt))| self.resolve_block_type(qt).map(|bt| (i, bt)))
         {
-            self.emit_block_method(objc_class, &ty, &sel, is_instance, ret_qt, &params, bidx, &block_qt, &ov_name, &ov_params);
+            self.emit_block_method(objc_class, ty, &sel, is_instance, ret_qt, &params, bidx, &block_qt, &ov_name, &ov_params);
             return;
         }
 
@@ -6060,7 +6060,7 @@ mod tests {
             "layer() returns the cross-package type:\n{out}");
         assert!(out.contains("import \"quartzcore/quartzcore\" as quartzcore;"),
             "foreign import emitted:\n{out}");
-        assert!(out.contains("struct CALayer") == false, "no local CALayer stub:\n{out}");
+        assert!(!out.contains("struct CALayer"), "no local CALayer stub:\n{out}");
         // The +0 foreign accessor wraps through the foreign package's `from_raw`
         // (which retains on quartzcore's side) — no explicit retain at this site.
         assert!(out.contains("return option::some(quartzcore::Layer::from_raw(obj));"),

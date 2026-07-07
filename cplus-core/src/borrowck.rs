@@ -63,7 +63,7 @@ use crate::diagnostics::{Applicability, DiagCode, Diagnostic, LineMap, Severity,
 use crate::lexer::Span;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Place / PlaceState (5BC.1)
@@ -550,6 +550,17 @@ struct SigTable {
     fns: HashMap<String, FnEntry>,
     /// Methods keyed by `Type.method` (codegen dot-mangling form).
     methods: HashMap<String, FnEntry>,
+    /// Rule E-VIEW aggregate/receiver arms (2026-07-07): declared field types
+    /// per struct, so a field-path method receiver (`holder.field.view()`)
+    /// can be typed and its `Type.method` entry looked up. Only
+    /// `TypeKind::Path` steps are ever followed; generic instantiations stay
+    /// conservative (no borrow recorded), matching the pre-mono posture of
+    /// the rest of this pass.
+    struct_fields: HashMap<String, HashMap<String, Type>>,
+    /// Enum names, so `Enum::Variant(args)` calls are recognized as payload
+    /// aggregates (views in the payload borrow like any aggregate capture)
+    /// rather than associated-fn calls.
+    enums: std::collections::HashSet<String>,
 }
 
 /// v0.0.24 #9: the borrowck mirror of codegen's `effective_move` — does passing
@@ -589,6 +600,18 @@ impl SigTable {
                             return_borrow_flavor,
                         },
                     );
+                }
+                ItemKind::Struct(s) => {
+                    t.struct_fields.insert(
+                        s.name.name.clone(),
+                        s.fields
+                            .iter()
+                            .map(|f| (f.name.name.clone(), f.ty.clone()))
+                            .collect(),
+                    );
+                }
+                ItemKind::Enum(e) => {
+                    t.enums.insert(e.name.name.clone());
                 }
                 ItemKind::Impl(b) => {
                     for m in &b.methods {
@@ -882,6 +905,7 @@ fn detect_method_view(
 /// 2. Parameter type non-`Copy` (Copy `ref x` is local-mutability, not a borrow).
 /// 3. Non-`Copy` return type.
 /// 4. Every `return EXPR;` rooted at the parameter (same body-walk as E1).
+///
 /// When all checks pass, the return is an *exclusive* borrow of the parameter.
 fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
@@ -906,6 +930,7 @@ fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSou
 /// 2. Impl-target type non-`Copy`.
 /// 3. Non-`Copy` return type.
 /// 4. Every `return EXPR;` rooted at `this`.
+///
 /// The return is an exclusive borrow of `this`.
 fn detect_method_e2_mut(
     b: &ImplBlock,
@@ -1019,6 +1044,7 @@ fn detect_fn_e3(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
 /// 3. Every `return EXPR;` rooted at some `ref`-param. At least one
 ///    return exists. Returns of fresh-constructed values on any path
 ///    disqualify.
+///
 /// Result is an exclusive multi-source borrow — the caller's binding
 /// is tied to every parameter in `indices`.
 fn detect_fn_e3_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
@@ -1204,10 +1230,10 @@ fn check_expr_returns_e3(
         ExprKind::Range { start, end, .. } => {
             start
                 .as_deref()
-                .is_none_or(|s| check_expr_returns_e3(s, param_names, roots, found))
+                .map_or(true, |s| check_expr_returns_e3(s, param_names, roots, found))
                 && end
                     .as_deref()
-                    .is_none_or(|e| check_expr_returns_e3(e, param_names, roots, found))
+                    .map_or(true, |e| check_expr_returns_e3(e, param_names, roots, found))
         }
         ExprKind::Assign { target, value, .. } => {
             check_expr_returns_e3(target, param_names, roots, found)
@@ -1392,10 +1418,10 @@ fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
         ExprKind::Range { start, end, .. } => {
             start
                 .as_deref()
-                .is_none_or(|s| check_expr_returns(s, root, found))
+                .map_or(true, |s| check_expr_returns(s, root, found))
                 && end
                     .as_deref()
-                    .is_none_or(|e| check_expr_returns(e, root, found))
+                    .map_or(true, |e| check_expr_returns(e, root, found))
         }
         ExprKind::Assign { target, value, .. } => {
             check_expr_returns(target, root, found) && check_expr_returns(value, root, found)
@@ -1790,22 +1816,25 @@ impl<'p> Analyzer<'p> {
     ///     in 6BC.2.
     fn acquire_borrows(
         &mut self,
-        places: Vec<Place>,
+        places: Vec<(Place, BorrowFlavor)>,
         borrower: &str,
         borrower_span: Span,
-        flavor: BorrowFlavor,
         state: &mut BTreeMap<Place, PlaceState>,
     ) {
         // Dedup defensively — a buggy classifier could repeat the same
         // place; we don't want it to inflate the BorrowedShared count.
+        // Flavor rides per-place (an aggregate can capture a shared view of
+        // one owner and an exclusive one of another in the same literal).
         let mut seen = std::collections::BTreeSet::new();
-        let unique: Vec<Place> = places
+        let unique: Vec<(Place, BorrowFlavor)> = places
             .into_iter()
-            .filter(|p| seen.insert(p.clone()))
+            .filter(|(p, _)| seen.insert(p.clone()))
             .collect();
-        self.binding_borrows_from
-            .insert(borrower.to_string(), unique.clone());
-        for place in unique {
+        self.binding_borrows_from.insert(
+            borrower.to_string(),
+            unique.iter().map(|(p, _)| p.clone()).collect(),
+        );
+        for (place, flavor) in unique {
             let set = self.live_borrows.entry(place.clone()).or_default();
             set.insert(borrower.to_string(), borrower_span);
             let new_state = match flavor {
@@ -1862,64 +1891,132 @@ impl<'p> Analyzer<'p> {
     ///   * **5BC.4 / Rule E3**: shared multi-param → one entry per param.
     ///   * **6BC.2 / Rule E1-mut**: exclusive single-`ref`-param → one entry.
     ///   * **6BC.2 / Rule E2-mut**: exclusive `ref this` method → receiver place.
-    fn classify_borrow_source(&self, e: &Expr) -> (Vec<Place>, BorrowFlavor) {
-        let ExprKind::Call { callee, args, .. } = &e.kind else {
-            return (Vec::new(), BorrowFlavor::Shared);
-        };
+    fn classify_borrow_source(&self, e: &Expr) -> Vec<(Place, BorrowFlavor)> {
+        match &e.kind {
+            ExprKind::Call { callee, args, .. } => self.classify_call_borrow(callee, args),
+            // Rule E-VIEW aggregate arm (2026-07-07): a view produced inside
+            // an aggregate literal escapes into the aggregate binding, so
+            // `let w: Slot = Slot { s: t.view() };` must record `w` as a
+            // borrower of `t` exactly like the direct `let s: str = t.view();`
+            // form. Before this arm the owner stayed `Owned` and could be
+            // moved/dropped while `w.s` still pointed into it (safe-code
+            // use-after-free). Recurses so nested aggregates compose.
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => fields
+                .iter()
+                .flat_map(|f| self.classify_borrow_source(&f.value))
+                .collect(),
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => elements
+                .iter()
+                .flat_map(|el| self.classify_borrow_source(el))
+                .collect(),
+            ExprKind::ArrayFill { fill, .. } => self.classify_borrow_source(fill),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The call arm of `classify_borrow_source`: free fns with a detected
+    /// return-borrow elision, view-returning methods (`SelfReceiver`), and
+    /// non-generic enum-variant constructors (`Enum::Variant(payload)`, which
+    /// parse as a `Call` with a `Path` callee and capture payload views like
+    /// any aggregate).
+    fn classify_call_borrow(&self, callee: &Expr, args: &[Expr]) -> Vec<(Place, BorrowFlavor)> {
         match &callee.kind {
             ExprKind::Ident(fn_name) => {
                 let Some(entry) = self.sigs.fns.get(fn_name) else {
-                    return (Vec::new(), BorrowFlavor::Shared);
+                    return Vec::new();
                 };
                 let Some(rb) = entry.return_borrow.as_ref() else {
-                    return (Vec::new(), BorrowFlavor::Shared);
+                    return Vec::new();
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
-                let places = match rb {
-                    ReturnBorrowSource::Param(idx) => {
-                        place_from_arg(args, *idx as usize).into_iter().collect()
+                // A non-place argument in a borrowed position may itself be a
+                // view-producing expression (`first(t.view())`): the result
+                // then borrows whatever the argument borrows, so recurse
+                // instead of dropping the source on the floor.
+                let arg_sources = |idx: usize| -> Vec<(Place, BorrowFlavor)> {
+                    match place_from_arg(args, idx) {
+                        Some(p) => vec![(p, flavor)],
+                        None => args
+                            .get(idx)
+                            .map(|a| self.classify_borrow_source(a))
+                            .unwrap_or_default(),
                     }
-                    ReturnBorrowSource::MultiParam(indices) => {
-                        let mut out = Vec::with_capacity(indices.len());
-                        for &idx in indices {
-                            match place_from_arg(args, idx as usize) {
-                                Some(p) => out.push(p),
-                                None => return (Vec::new(), BorrowFlavor::Shared),
-                            }
-                        }
-                        out
-                    }
+                };
+                match rb {
+                    ReturnBorrowSource::Param(idx) => arg_sources(*idx as usize),
+                    ReturnBorrowSource::MultiParam(indices) => indices
+                        .iter()
+                        .flat_map(|&idx| arg_sources(idx as usize))
+                        .collect(),
                     // `SelfReceiver` doesn't apply to free-function calls.
                     ReturnBorrowSource::SelfReceiver => Vec::new(),
-                };
-                (places, flavor)
+                }
             }
             ExprKind::Field {
                 receiver,
                 name: method_name,
             } => {
-                let ExprKind::Ident(recv_name) = &receiver.kind else {
-                    return (Vec::new(), BorrowFlavor::Shared);
+                // Any place expression works as a receiver (`t.view()`,
+                // `holder.field.view()`); the borrow lands on the receiver
+                // place, so moving any prefix of it conflicts via the
+                // partial-place overlap rules. Non-place receivers (chained
+                // calls) stay untracked — typing them needs return-type info
+                // this table doesn't carry.
+                let Some(place) = place_from_expr(receiver) else {
+                    return Vec::new();
                 };
-                let Some(bt) = self.binding_type(recv_name) else {
-                    return (Vec::new(), BorrowFlavor::Shared);
-                };
-                let TypeKind::Path(type_name) = &bt.kind else {
-                    return (Vec::new(), BorrowFlavor::Shared);
+                let Some(type_name) = self.place_type_name(receiver) else {
+                    return Vec::new();
                 };
                 let key = format!("{type_name}.{}", method_name.name);
                 let Some(entry) = self.sigs.methods.get(&key) else {
-                    return (Vec::new(), BorrowFlavor::Shared);
+                    return Vec::new();
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
                 match entry.return_borrow.as_ref() {
-                    Some(ReturnBorrowSource::SelfReceiver) => {
-                        (vec![Place::root(recv_name)], flavor)
-                    }
-                    _ => (Vec::new(), BorrowFlavor::Shared),
+                    Some(ReturnBorrowSource::SelfReceiver) => vec![(place, flavor)],
+                    _ => Vec::new(),
                 }
             }
-            _ => (Vec::new(), BorrowFlavor::Shared),
+            // `Enum::Variant(payload)` — payload views escape into the value.
+            ExprKind::Path { segments } => {
+                let is_enum_ctor =
+                    segments.len() == 2 && self.sigs.enums.contains(&segments[0].name);
+                if !is_enum_ctor {
+                    return Vec::new();
+                }
+                args.iter()
+                    .flat_map(|a| self.classify_borrow_source(a))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Resolve the declared type NAME of a place expression: a bare binding
+    /// via `binding_types`, a field path by walking the SigTable's struct
+    /// field types. Returns `None` (conservative: no borrow recorded) for
+    /// anything it cannot follow — unannotated bindings, generic
+    /// instantiations, index projections.
+    fn place_type_name(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(name) => match &self.binding_type(name)?.kind {
+                TypeKind::Path(p) => Some(p.clone()),
+                _ => None,
+            },
+            ExprKind::Field { receiver, name } => {
+                let recv_ty = self.place_type_name(receiver)?;
+                let fty = self.sigs.struct_fields.get(&recv_ty)?.get(&name.name)?;
+                match &fty.kind {
+                    TypeKind::Path(p) => Some(p.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1959,7 +2056,7 @@ pub fn analyze(prog: &Program) -> ProgramAnalysis {
 /// proper `Diagnostic`s against the given file context. Multi-file
 /// projects pass the entry file's path / source; per-file routing is a
 /// follow-up (sema-style threading via `current_file`).
-pub fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
+pub fn check(prog: &Program, file: &Path, src: &str) -> Vec<Diagnostic> {
     check_multi(prog, file, src, &std::collections::BTreeMap::new())
 }
 
@@ -1973,7 +2070,7 @@ pub fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
 /// story in single-file mode.
 pub fn check_multi(
     prog: &Program,
-    entry_file: &PathBuf,
+    entry_file: &Path,
     entry_src: &str,
     files: &std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
@@ -2002,7 +2099,7 @@ pub fn check_multi(
         .collect()
 }
 
-fn raw_to_diagnostic(r: RawDiag, file: &PathBuf, src: &str, lm: &LineMap) -> Diagnostic {
+fn raw_to_diagnostic(r: RawDiag, file: &Path, src: &str, lm: &LineMap) -> Diagnostic {
     let suggestions = match r.suggestion {
         Some((span, replacement, description)) => vec![Suggestion {
             applicability: Applicability::MaybeIncorrect,
@@ -2135,27 +2232,25 @@ fn e0384_for_method(
     Some(build_e0384(&key, &m.params, ret, m.name.span))
 }
 
-fn build_e0384(name: &str, params: &[Param], _ret: &Type, span: Span) -> RawDiag {
-    let example_param = &params[0].name.name;
+fn build_e0384(name: &str, _params: &[Param], _ret: &Type, span: Span) -> RawDiag {
     RawDiag {
         code: "E0384",
         message: format!(
-            "cannot infer which parameter the return of `{name}` borrows from — \
-             requires an explicit `borrow REGION T` annotation"
+            "cannot infer which parameter the return of `{name}` borrows from"
         ),
         primary: span,
         suggestion: Some((
             span,
             String::new(),
-            format!(
-                "the body has at least one return rooted at a parameter, but the \
-                 borrow checker cannot determine which parameter every return path \
-                 derives from. Annotate the signature explicitly, e.g. \
-                 `fn {name}({}: borrow A T, ...) -> borrow A T` if the return \
-                 borrows from `{}`. The literal `borrow REGION T` parser support \
-                 lands in Phase 6 slice 6BC.5.",
-                example_param, example_param
-            ),
+            // The old `borrow REGION T` annotation is retired and unwritable, so
+            // the remedy is structural: a view return is only tracked when it
+            // derives from exactly ONE non-Copy parameter.
+            "different return paths borrow from different parameters, so the \
+             borrow checker cannot pin the result to a single source. Restructure \
+             so every return path borrows from the SAME parameter (a view return \
+             is tied to exactly one non-Copy parameter), or return an owned value \
+             instead of a view."
+                .to_string(),
         )),
         label: None,
     }
@@ -2184,7 +2279,7 @@ fn any_return_rooted_at_param(block: &Block, param_names: &[&str]) -> bool {
 fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
     match &s.kind {
         StmtKind::Return(Some(e)) => {
-            expr_root_ident(e).is_some_and(|root| param_names.iter().any(|n| *n == root))
+            expr_root_ident(e).is_some_and(|root| param_names.contains(&root))
         }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => false,
         StmtKind::Let { init, .. } => init
@@ -2380,17 +2475,14 @@ impl Analyzer<'_> {
     fn apply_stmt(&mut self, stmt: &Stmt, state: &mut BTreeMap<Place, PlaceState>) {
         match &stmt.kind {
             StmtKind::Let { name, ty, init, .. } => {
-                let mut borrow_sources: Vec<Place> = Vec::new();
-                let mut borrow_flavor = BorrowFlavor::Shared;
+                let mut borrow_sources: Vec<(Place, BorrowFlavor)> = Vec::new();
                 if let Some(e) = init {
                     // 5BC.3b/5BC.4/6BC.2: classify *before* walking. The
                     // walk's call-handler does the regular state
                     // transitions (move-arg → Moved, etc.); the
                     // borrow-acquire happens after so it sees the
                     // post-walk state.
-                    let (places, flavor) = self.classify_borrow_source(e);
-                    borrow_sources = places;
-                    borrow_flavor = flavor;
+                    borrow_sources = self.classify_borrow_source(e);
                     // Rule E-VIEW, bare-coercion arm (2026-07-06): binding a
                     // view-typed name (`str` / slice) straight to a non-Copy
                     // place — `let s: str = t;` — coerces owner → view with
@@ -2403,14 +2495,28 @@ impl Analyzer<'_> {
                             if is_view_ty {
                                 if let Some(place) = place_from_expr(e) {
                                     if self.binding_is_non_copy(&place.root) {
-                                        borrow_sources = vec![place];
-                                        borrow_flavor = BorrowFlavor::Shared;
+                                        borrow_sources = vec![(place, BorrowFlavor::Shared)];
                                     }
                                 }
                             }
                         }
                     }
-                    self.apply_expr(e, state);
+                    // Move-site symmetry (2026-07-07): `let y: T = x;` with a
+                    // non-Copy `x` consumes it exactly like a take-call arg —
+                    // the move must be checked against live view borrows
+                    // (E0372) and transition the place. Only the view-
+                    // coercion case above is a borrow, not a move. Before
+                    // this, `let t2: Buf = t;` moved `t` out from under a
+                    // live `let w: str = t.view();` with no diagnostic.
+                    match &e.kind {
+                        ExprKind::Ident(src)
+                            if borrow_sources.is_empty() && self.binding_is_non_copy(src) =>
+                        {
+                            let src = src.clone();
+                            self.apply_move_of_binding(&src, e.span, state);
+                        }
+                        _ => self.apply_expr(e, state),
+                    }
                 }
                 let bt = match ty {
                     Some(t) => BindingType::Known(t.clone()),
@@ -2424,13 +2530,7 @@ impl Analyzer<'_> {
                 // BorrowedShared(N) for shared borrows (Phase 5) or
                 // BorrowedExclusive(name) for exclusive ones (6BC.2).
                 if !borrow_sources.is_empty() {
-                    self.acquire_borrows(
-                        borrow_sources,
-                        &name.name,
-                        name.span,
-                        borrow_flavor,
-                        state,
-                    );
+                    self.acquire_borrows(borrow_sources, &name.name, name.span, state);
                 }
             }
             StmtKind::LetDestructure { fields, init, .. } => {
@@ -2691,18 +2791,34 @@ impl Analyzer<'_> {
             | ExprKind::InferredStructLit { fields }
             | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
-                    self.apply_expr(&f.value, state);
+                    self.apply_aggregate_element(&f.value, state);
                 }
             }
             ExprKind::Field { receiver, .. } => self.apply_expr(receiver, state),
             ExprKind::ArrayFill { fill, .. } => {
                 self.apply_expr(fill, state);
             }
-            ExprKind::ArrayLit { elements }
-            | ExprKind::GenericEnumCall { args: elements, .. }
-            | ExprKind::TupleLit { elements } => {
+            ExprKind::GenericEnumCall {
+                enum_name,
+                args: elements,
+                ..
+            } => {
+                // Enum-variant constructors capture payloads by value (moves);
+                // this node also encodes generic-struct ASSOCIATED-fn calls,
+                // whose args follow the callee's param modes — those stay
+                // plain reads (conservative).
+                let is_enum_ctor = self.sigs.enums.contains(&enum_name.name);
                 for el in elements {
-                    self.apply_expr(el, state);
+                    if is_enum_ctor {
+                        self.apply_aggregate_element(el, state);
+                    } else {
+                        self.apply_expr(el, state);
+                    }
+                }
+            }
+            ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+                for el in elements {
+                    self.apply_aggregate_element(el, state);
                 }
             }
             ExprKind::Index { receiver, index } => {
@@ -2898,6 +3014,55 @@ impl Analyzer<'_> {
     /// this split, a move-arg of an exclusively-borrowed binding would
     /// fire both E0383 and E0372 for one conflict (cascading per
     /// design note §6.3, deferred polish).
+    /// One consume site moving the whole binding `name`: fires the
+    /// maybe-moved check (E0371), the move-while-borrowed check (E0372),
+    /// and transitions the place to `Moved` with borrow cleanup. Shared by
+    /// every move site — call move-args, bare `let`-init moves, and
+    /// aggregate-literal captures — so a view borrow blocks the owner's
+    /// move identically no matter which syntactic form consumes it.
+    fn apply_move_of_binding(
+        &mut self,
+        name: &str,
+        span: Span,
+        state: &mut BTreeMap<Place, PlaceState>,
+    ) {
+        // 5BC.2b / 6BC.2 — moving a MaybePartial binding fires E0371
+        // uniformly. E0383 is suppressed for the move case so cascading
+        // errors don't produce both E0383 and E0372 for one conflict;
+        // E0372 below is the precise diagnostic.
+        self.record_move_arg_use(name, span, state);
+        // 5BC.3b / 6BC.2 — E0372: moving a binding while it is borrowed
+        // by a still-live binding. Message branches on flavor (shared vs
+        // exclusive).
+        self.check_move_against_borrow(name, span, state);
+        if self.binding_is_non_copy(name) {
+            state.insert(Place::root(name), PlaceState::Moved);
+            // Moving x also invalidates any borrowers of x. Clean up
+            // live_borrows entries for x; the borrowers themselves stay
+            // in state (they still exist syntactically but reading them
+            // post-move is undefined). E0372 already fired for this
+            // case, so suppress cascading errors.
+            self.live_borrows.remove(&Place::root(name));
+            // Also: if the source binding `name` itself was a borrower
+            // of something else, its move now releases that borrow.
+            self.drop_borrower(name, state);
+        }
+    }
+
+    /// One element of an aggregate literal (struct field, array element,
+    /// tuple element, enum payload). A bare non-Copy binding is captured by
+    /// value — a move, routed through `apply_move_of_binding` so live view
+    /// borrows block it (E0372). Everything else walks normally.
+    fn apply_aggregate_element(&mut self, e: &Expr, state: &mut BTreeMap<Place, PlaceState>) {
+        match &e.kind {
+            ExprKind::Ident(name) if self.binding_is_non_copy(name) => {
+                let name = name.clone();
+                self.apply_move_of_binding(&name, e.span, state);
+            }
+            _ => self.apply_expr(e, state),
+        }
+    }
+
     fn record_move_arg_use(&mut self, name: &str, span: Span, state: &BTreeMap<Place, PlaceState>) {
         let Some(st) = state.get(&Place::root(name)) else {
             return;
@@ -2944,6 +3109,19 @@ impl Analyzer<'_> {
             self.check_method_receiver_claim(receiver, &method.name, state);
         }
         self.apply_expr(callee, state);
+
+        // Non-generic enum-variant constructor (`Wrap::V(payload)`) — the
+        // payloads are by-value captures (moves), same as any aggregate
+        // literal element. Route them through the aggregate walker so a
+        // live view borrow blocks moving the owner into the payload.
+        if let ExprKind::Path { segments } = &callee.kind {
+            if segments.len() == 2 && self.sigs.enums.contains(&segments[0].name) {
+                for a in args {
+                    self.apply_aggregate_element(a, state);
+                }
+                return;
+            }
+        }
 
         let mut move_flags: Option<Vec<bool>> = match &callee.kind {
             ExprKind::Ident(name) => self.sigs.fn_param_moves(name).cloned(),
@@ -3045,30 +3223,7 @@ impl Analyzer<'_> {
                 .unwrap_or(false);
             if arg_is_move {
                 if let ExprKind::Ident(name) = &arg.kind {
-                    // 5BC.2b / 6BC.2 — moving a MaybePartial binding
-                    // fires E0371 uniformly. E0383 is suppressed for
-                    // the move-arg case so cascading errors don't
-                    // produce both E0383 and E0372 for one conflict;
-                    // E0372 below is the precise diagnostic.
-                    self.record_move_arg_use(name, arg.span, state);
-                    // 5BC.3b / 6BC.2 — E0372: moving a binding while it
-                    // is borrowed by a still-live binding. Message
-                    // branches on flavor (shared vs exclusive).
-                    self.check_move_against_borrow(name, arg.span, state);
-                    if self.binding_is_non_copy(name) {
-                        state.insert(Place::root(name), PlaceState::Moved);
-                        // Moving x also invalidates any borrowers of x.
-                        // Clean up live_borrows entries for x; the
-                        // borrowers themselves stay in state (they
-                        // still exist syntactically but reading them
-                        // post-move is undefined). E0372 already fired
-                        // for this case, so suppress cascading errors.
-                        self.live_borrows.remove(&Place::root(name));
-                        // Also: if the source binding `name` itself was
-                        // a borrower of something else, its move now
-                        // releases that borrow.
-                        self.drop_borrower(name, state);
-                    }
+                    self.apply_move_of_binding(name, arg.span, state);
                     continue;
                 }
             }
@@ -3373,7 +3528,7 @@ impl Analyzer<'_> {
             return;
         };
         let key = format!("{type_name}.{method_name}");
-        if self.sigs.methods.get(&key).is_none() {
+        if !self.sigs.methods.contains_key(&key) {
             return;
         }
         let place = Place::root(recv_name);
@@ -5691,5 +5846,120 @@ fn caller() {
             !codes.iter().any(|c| c == "E0383"),
             "E0383 should not fire after moving the exclusive borrower; got {codes:?}"
         );
+    }
+
+    // ---- 2026-07-07 — view escape via aggregate capture (CRITICAL UAF) ----
+    //
+    // A view (`str`) produced inside an aggregate literal escapes into the
+    // aggregate binding; the owner must stay move-blocked while the aggregate
+    // lives, exactly as with a direct `let s: str = t.view();`. Before the
+    // fix `classify_borrow_source` only recognized direct call initializers,
+    // so every aggregate shape below was a safe-code use-after-free.
+
+    const VIEW_PRELUDE: &str = "\
+struct Buf { opaque p: *u8 }
+impl Buf {
+  fn new() -> Buf { return Buf { p: { 0 as *u8 } }; }
+  fn view(this) -> str { return \"x\"; }
+  fn drop(ref this) { return; }
+}
+struct Slot { s: str }
+struct Nest { inner: Slot }
+struct Holder { b: Buf }
+impl Holder { fn drop(ref this) { return; } }
+enum Wrap { V(str), N }
+fn consume(take t: Buf) -> i32 { return 0; }
+fn consume_h(take h: Holder) -> i32 { return 0; }
+";
+
+    #[test]
+    fn view_captured_into_aggregate_blocks_owner_move() {
+        // Every aggregate shape that can hold a view must record the borrow.
+        let shapes: &[(&str, &str)] = &[
+            ("struct_lit", "let w: Slot = Slot { s: t.view() };"),
+            ("nested_struct_lit", "let w: Nest = Nest { inner: Slot { s: t.view() } };"),
+            ("array_lit", "let w: [str; 1] = [t.view()];"),
+            ("tuple_lit", "let w: (str, i32) = (t.view(), 1);"),
+            ("enum_payload", "let w: Wrap = Wrap::V(t.view());"),
+        ];
+        for (sname, capture) in shapes {
+            let src = format!(
+                "{VIEW_PRELUDE}fn f_{sname}() {{ let t: Buf = Buf::new(); {capture} let _c: i32 = consume(t); return; }}"
+            );
+            let codes = check_src(&src);
+            assert!(
+                codes.iter().any(|c| c == "E0372"),
+                "[view-escape {sname}] expected E0372 (move while view captured in aggregate), got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_method_on_field_path_receiver_blocks_owner_move() {
+        // `h.b.view()` — the receiver is a field path, not a bare ident.
+        // The borrow lands on the sub-place `h.b`, so moving `h` conflicts
+        // via the partial-place overlap rules.
+        let src = format!(
+            "{VIEW_PRELUDE}fn f() {{ let h: Holder = Holder {{ b: Buf::new() }}; \
+             let w: str = h.b.view(); let _c: i32 = consume_h(h); return; }}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "[view-escape field-path] expected E0372, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn owner_move_sites_blocked_while_view_live() {
+        // Move-site symmetry: with a live view of `t`, EVERY consume site
+        // must reject the owner's move — not just call move-args. The bare
+        // `let` re-bind and aggregate captures were unchecked before the fix.
+        let sites: &[(&str, &str)] = &[
+            ("take_call", "let _c: i32 = consume(t);"),
+            ("let_rebind", "let t2: Buf = t;"),
+            ("struct_field", "let h2: Holder = Holder { b: t };"),
+            ("array_elem", "let a2: [Buf; 1] = [t];"),
+            ("tuple_elem", "let p2: (Buf, i32) = (t, 1);"),
+        ];
+        for (sname, mv) in sites {
+            let src = format!(
+                "{VIEW_PRELUDE}fn f_{sname}() {{ let t: Buf = Buf::new(); \
+                 let w: str = t.view(); {mv} return; }}"
+            );
+            let codes = check_src(&src);
+            assert!(
+                codes.iter().any(|c| c == "E0372"),
+                "[move-site {sname}] expected E0372 (move while view live), got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_without_view_capture_stays_clean() {
+        // Negative controls: aggregates that own their contents outright
+        // must not invent borrows, and moving the owner after the view
+        // borrower has itself been consumed is legal.
+        let clean: &[(&str, &str)] = &[
+            // aggregate of owned values — no view, no borrow
+            (
+                "owned_capture",
+                "let t: Buf = Buf::new(); let h: Holder = Holder { b: t }; return;",
+            ),
+            // a view of `t` must not block moving an unrelated owner `u`
+            (
+                "unrelated_owner",
+                "let t: Buf = Buf::new(); let u: Buf = Buf::new(); \
+                 let w: str = t.view(); let _c: i32 = consume(u); return;",
+            ),
+        ];
+        for (cname, body) in clean {
+            let src = format!("{VIEW_PRELUDE}fn f_{cname}() {{ {body} }}");
+            let codes = check_src(&src);
+            assert!(
+                !codes.iter().any(|c| c == "E0372"),
+                "[clean {cname}] unexpected E0372: {codes:?}"
+            );
+        }
     }
 }

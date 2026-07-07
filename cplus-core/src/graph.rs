@@ -1741,6 +1741,7 @@ impl<'a> Resolver<'a> {
     ///   3. short-name fallback (`fn_by_name[short_name(...)]`, unique) — a
     ///      safety net for any qualified form whose `::`→`.` reconstruction
     ///      didn't line up, accepted only when the short name is unambiguous.
+    ///
     /// A miss at all three is a genuine non-resolution (e.g. a fn-pointer
     /// indirection) and is counted as `unresolved`.
     fn resolve_fn_name(&self, name: &str) -> Option<String> {

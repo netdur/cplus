@@ -225,6 +225,18 @@ pub enum ManifestError {
         entry: String,
         message: String,
     },
+    /// (E0868): a `[lib].path` / `[[bin]].path` resolves outside the package
+    /// directory (absolute, or a `..` chain). A package's source targets must
+    /// live inside its own tree — the same containment the import paths
+    /// enforce (E0859/E0914); a hostile vendored manifest must not be able to
+    /// point compilation at arbitrary host files. `[link]` paths are exempt:
+    /// search paths and `${VAR}`-expanded extra objects legitimately name
+    /// external SDK locations.
+    TargetPathEscapes {
+        path: PathBuf,
+        target: String,
+        requested: String,
+    },
 }
 
 impl fmt::Display for ManifestError {
@@ -273,6 +285,17 @@ impl fmt::Display for ManifestError {
                     path.display()
                 )
             }
+            ManifestError::TargetPathEscapes {
+                path,
+                target,
+                requested,
+            } => {
+                write!(
+                    f,
+                    "manifest {}: `{target}` path `{requested}` resolves outside the package directory",
+                    path.display()
+                )
+            }
         }
     }
 }
@@ -294,7 +317,8 @@ impl ManifestError {
             | ManifestError::UnsupportedCrateType { path, .. }
             | ManifestError::InvalidDependencyName { path, .. }
             | ManifestError::BundledRequiresTriples { path }
-            | ManifestError::EnvExpansion { path, .. } => path.clone(),
+            | ManifestError::EnvExpansion { path, .. }
+            | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
             file: path.clone(),
@@ -357,6 +381,15 @@ impl ManifestError {
                 "E0865",
                 format!("cannot expand `{entry}` in `[link]`: {message}"),
             ),
+            ManifestError::TargetPathEscapes {
+                target, requested, ..
+            } => (
+                "E0868",
+                format!(
+                    "`{target}` path `{requested}` resolves outside the package directory — \
+                     source targets must live inside the package tree"
+                ),
+            ),
         };
         Diagnostic {
             severity: Severity::Error,
@@ -370,9 +403,30 @@ impl ManifestError {
     }
 }
 
+/// Lexically resolve `.` / `..` in `joined` (no filesystem access — the
+/// target file may not exist yet at parse time) and report whether the
+/// result leaves `root`. `root` is already canonicalized by the caller, so
+/// a prefix compare is meaningful. An absolute `path` key survives
+/// `root.join` unchanged and fails the prefix check unless it happens to
+/// point back inside the package.
+fn target_path_escapes(root: &Path, joined: &Path) -> bool {
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    !out.starts_with(root)
+}
+
 /// On-disk schema. Kept distinct from the public `Manifest` so we can apply
 /// defaults and validation before exposing.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawManifest {
     package: RawPackage,
     #[serde(default, rename = "bin")]
@@ -395,24 +449,33 @@ struct RawManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawProfiles {
     #[serde(default)]
     realtime: Option<RawRealtimeProfile>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawRealtimeProfile {
-    #[serde(default)]
+    // Kebab-case keys to match the rest of the manifest (`extra-objects`,
+    // `search-paths`, `crate-type`). These drive the project-wide
+    // `#[no_alloc]`/`#[no_block]` safety gate — a silently-dropped mis-cased
+    // key (the snake_case spelling that used to be required) meant a CI gate
+    // the author believed was on was actually off. With `deny_unknown_fields`
+    // the old snake spelling is now a hard parse error, not a silent drop.
+    #[serde(default, rename = "deny-alloc")]
     deny_alloc: bool,
-    #[serde(default)]
+    #[serde(default, rename = "deny-block")]
     deny_block: bool,
-    #[serde(default)]
+    #[serde(default, rename = "deny-unknown-extern")]
     deny_unknown_extern: bool,
-    #[serde(default)]
+    #[serde(default, rename = "stack-limit")]
     stack_limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawLinkSpec {
     #[serde(default)]
     frameworks: Vec<String>,
@@ -431,6 +494,7 @@ struct RawLinkSpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawLib {
     name: Option<String>,
     path: Option<String>,
@@ -443,6 +507,7 @@ struct RawLib {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawPackage {
     name: Option<String>,
     version: Option<String>,
@@ -450,6 +515,7 @@ struct RawPackage {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawBin {
     name: Option<String>,
     path: Option<String>,
@@ -513,10 +579,20 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         None => None,
         Some(rl) => {
             let lib_name = rl.name.clone().unwrap_or_else(|| name.clone());
-            let lib_path = rl
-                .path
-                .map(|p| root.join(p))
-                .unwrap_or_else(|| root.join("src").join("lib.cplus"));
+            let lib_path = match rl.path {
+                Some(p) => {
+                    let joined = root.join(&p);
+                    if target_path_escapes(&root, &joined) {
+                        return Err(ManifestError::TargetPathEscapes {
+                            path: manifest_path.to_path_buf(),
+                            target: "[lib]".to_string(),
+                            requested: p,
+                        });
+                    }
+                    joined
+                }
+                None => root.join("src").join("lib.cplus"),
+            };
             let crate_type = match rl.crate_type.as_deref() {
                 None | Some("both") => CrateType::Both,
                 Some("staticlib") => CrateType::Staticlib,
@@ -554,18 +630,28 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             .into_iter()
             .map(|b| {
                 let bin_name = b.name.clone().unwrap_or_else(|| name.clone());
-                let bin_path = b
-                    .path
-                    .map(|p| root.join(p))
-                    .unwrap_or_else(|| root.join("src").join("main.cplus"));
-                BinTarget {
+                let bin_path = match b.path {
+                    Some(p) => {
+                        let joined = root.join(&p);
+                        if target_path_escapes(&root, &joined) {
+                            return Err(ManifestError::TargetPathEscapes {
+                                path: manifest_path.to_path_buf(),
+                                target: format!("[[bin]] `{bin_name}`"),
+                                requested: p,
+                            });
+                        }
+                        joined
+                    }
+                    None => root.join("src").join("main.cplus"),
+                };
+                Ok(BinTarget {
                     name: bin_name,
                     path: bin_path,
                     frameworks: b.frameworks,
                     libs: b.libs,
-                }
+                })
             })
-            .collect()
+            .collect::<Result<Vec<_>, ManifestError>>()?
     };
 
     // Phase 2: convert raw `[link]` to LinkSpec + enforce
@@ -760,10 +846,10 @@ mod tests {
             name = "rt"
 
             [profile.realtime]
-            deny_alloc = true
-            deny_block = true
-            deny_unknown_extern = true
-            stack_limit = 4096
+            deny-alloc = true
+            deny-block = true
+            deny-unknown-extern = true
+            stack-limit = 4096
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         let p = m.realtime_profile.expect("profile parsed");
@@ -774,13 +860,45 @@ mod tests {
     }
 
     #[test]
-    fn profile_realtime_defaults_when_fields_omitted() {
+    fn profile_realtime_snake_case_key_is_rejected() {
+        // The old snake_case spelling is now a hard parse error (not a silent
+        // drop that leaves the safety gate off).
         let text = r#"
             [package]
             name = "rt"
 
             [profile.realtime]
             deny_alloc = true
+        "#;
+        assert!(
+            parse_in(&std::env::temp_dir(), text).is_err(),
+            "snake_case `deny_alloc` must be rejected under kebab-case + deny_unknown_fields"
+        );
+    }
+
+    #[test]
+    fn unknown_manifest_key_is_rejected() {
+        // A typo'd package key (`verison`) must be a hard error, not silently
+        // ignored.
+        let text = r#"
+            [package]
+            name = "x"
+            verison = "1.0"
+        "#;
+        assert!(
+            parse_in(&std::env::temp_dir(), text).is_err(),
+            "unknown manifest key must be rejected"
+        );
+    }
+
+    #[test]
+    fn profile_realtime_defaults_when_fields_omitted() {
+        let text = r#"
+            [package]
+            name = "rt"
+
+            [profile.realtime]
+            deny-alloc = true
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         let p = m.realtime_profile.expect("profile parsed");
@@ -1483,5 +1601,37 @@ mod tests {
         assert!(!super::is_valid_dep_name("std.lib"));
         assert!(!super::is_valid_dep_name("std/lib"));
         assert!(!super::is_valid_dep_name(" std"));
+    }
+
+    #[test]
+    fn bin_path_escaping_package_is_rejected_e0868() {
+        // A `[[bin]].path` with a `..` chain (or absolute path) must not
+        // point compilation at files outside the package tree — the same
+        // containment the import paths enforce (E0859/E0914).
+        for bad in ["../../outside/main.cplus", "/etc/hosts"] {
+            let text = format!(
+                "[package]\nname = \"esc\"\n\n[[bin]]\nname = \"esc\"\npath = \"{bad}\"\n"
+            );
+            let err = parse_in(&std::env::temp_dir(), &text)
+                .expect_err("escaping bin path must be rejected");
+            assert_eq!(err.to_diagnostic().code, DiagCode("E0868"), "path: {bad}");
+        }
+    }
+
+    #[test]
+    fn lib_path_escaping_package_is_rejected_e0868() {
+        let text = "[package]\nname = \"esc\"\n\n[lib]\npath = \"../sibling/lib.cplus\"\n";
+        let err = parse_in(&std::env::temp_dir(), text)
+            .expect_err("escaping lib path must be rejected");
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0868"));
+    }
+
+    #[test]
+    fn in_tree_target_paths_are_allowed() {
+        // Nested and `./`-relative in-tree paths must keep working; only a
+        // path that actually leaves the package root is rejected.
+        let text = "[package]\nname = \"ok\"\n\n[[bin]]\nname = \"ok\"\npath = \"./tools/../src/main.cplus\"\n";
+        let m = parse_in(&std::env::temp_dir(), text).expect("in-tree bin path parses");
+        assert!(m.bins[0].path.ends_with("src/main.cplus"));
     }
 }
