@@ -621,7 +621,8 @@ impl Surface {
 
     // WRITE: set a field's text with optimistic concurrency. `base_version` is
     // the version the agent last read (`text_version`); a racing edit yields
-    // `VersionConflict`. On `Allowed`, sends `setStringValue:` then bumps.
+    // `VersionConflict`. On `Allowed`, sends the class-appropriate setter then
+    // bumps.
     fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
@@ -634,7 +635,15 @@ impl Surface {
                     return surface::Outcome::Stale;
                 }
                 let ns: *u8 = bridge::nsstring(value);
-                perform_on_main(this.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
+                // NSTextView sets its content via `setString:`; NSControl via
+                // `setStringValue:` (which NSTextView silently ignores) — the
+                // write must branch exactly like the read in `node_text`.
+                let sel_name: *u8 = if is_kind(this.view_of(node), #str_ptr("NSTextView\0")) {
+                    #str_ptr("setString:\0")
+                } else {
+                    #str_ptr("setStringValue:\0")
+                };
+                perform_on_main(this.view_of(node), rt::sel(sel_name), ns);
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }

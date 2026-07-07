@@ -158,6 +158,41 @@ fn removed_view_reports_stale_not_uaf() {
 }
 
 #[test]
+fn set_text_persists_on_field_and_text_view() {
+    // Regression: set_text always sent `setStringValue:`, which NSTextView
+    // silently ignores — the outcome was Allowed but the text never landed
+    // (bugs/agent-appkit-set-text-nstextview.md). Both setter paths must
+    // actually persist on the widget.
+    let win = fixture_window(300.0f64, 240.0f64);
+    let content = content_of(win);
+    let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 200.0, h: 24.0 });
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), "name");
+    let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 90.0, w: 200.0, h: 80.0 });
+    content.add_subview(tv.as_view());
+    agent::set_agent_id(tv.as_view().raw(), "desc");
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("name", "AgentApp", s.text_version("name")),
+        surface::Outcome::Allowed);
+    assert surface::outcome_eq(
+        s.set_text("desc", "a multi-line\ndescription", s.text_version("desc")),
+        surface::Outcome::Allowed);
+
+    // Read back through the widgets themselves: NSControl via `stringValue`,
+    // NSTextView via `string`.
+    let ftxt: text::Text = bridge::to_text(rt::msg_id(f.as_view().raw(), rt::sel(#str_ptr("stringValue\0"))));
+    assert ftxt.view() == "AgentApp";
+    let ttxt: text::Text = bridge::to_text(rt::msg_id(tv.as_view().raw(), rt::sel(#str_ptr("string\0"))));
+    assert ttxt.view() == "a multi-line\ndescription";
+
+    // Both writes bumped their versions.
+    assert s.text_version("name") > (0 as u64);
+    assert s.text_version("desc") > (0 as u64);
+}
+
+#[test]
 fn describe_survives_a_replaced_tree() {
     // A full describe on a surface whose views were ALL removed must not
     // crash (views are retained; reads land on live, detached objects).
