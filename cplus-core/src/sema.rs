@@ -16266,7 +16266,7 @@ fn substitute_param_in_type_ast_with_tables(
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
             if let Some(concrete) = subst.get(name) {
-                TypeKind::Path(ty_to_source_name_with_tables(concrete, structs, enums))
+                ty_to_type_ast_kind_with_tables(concrete, structs, enums, ty.span)
             } else {
                 TypeKind::Path(name.clone())
             }
@@ -16325,6 +16325,50 @@ fn substitute_param_in_type_ast_with_tables(
     Type {
         kind,
         span: ty.span,
+    }
+}
+
+/// Structural counterpart of `ty_to_source_name_with_tables` for the
+/// substitution path above. Types with no source-level *name* — raw
+/// pointers, slices, fn-pointers, arrays — can't round-trip through a
+/// rendered `Path` (they'd collapse to `<raw-ptr>` / `<slice>` / ... and
+/// fire E0303 at re-resolution; that's how `Vec[*Node]` used to fail via
+/// the `Option[*T]` patterns in Vec's methods). Build the structured
+/// `TypeKind` instead, recursing until a nameable leaf.
+fn ty_to_type_ast_kind_with_tables(
+    ty: &Ty,
+    structs: &[StructDef],
+    enums: &[EnumDef],
+    span: ByteSpan,
+) -> TypeKind {
+    let node = |inner: &Ty| Type {
+        kind: ty_to_type_ast_kind_with_tables(inner, structs, enums, span),
+        span,
+    };
+    match ty {
+        Ty::RawPtr(inner) => TypeKind::RawPtr(Box::new(node(inner))),
+        Ty::Slice(inner) => TypeKind::Slice(Box::new(node(inner))),
+        Ty::Array(elem, n) => TypeKind::Array {
+            elem: Box::new(node(elem)),
+            len: *n,
+            len_name: None,
+        },
+        Ty::FnPtr {
+            params,
+            param_takes,
+            param_refs,
+            return_type,
+        } => TypeKind::FnPtr {
+            params: params.iter().map(node).collect(),
+            param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
+            return_type: if matches!(**return_type, Ty::Unit) {
+                None
+            } else {
+                Some(Box::new(node(return_type)))
+            },
+        },
+        _ => TypeKind::Path(ty_to_source_name_with_tables(ty, structs, enums)),
     }
 }
 
@@ -22375,6 +22419,84 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0341"), "expected E0341, got: {codes:?}");
+    }
+
+    #[test]
+    fn generic_enum_pattern_raw_ptr_type_arg_clean() {
+        // vec-of-raw-pointers bug (2026-07-08): instantiating a generic
+        // struct with a raw-pointer arg (`Holder[*Node]`) drives the
+        // pattern-discovery pass over the impl body's `Opt[T]` / `Opt[*T]`
+        // patterns with `T := *Node`. The AST substitution used to render
+        // the pointer arg as the unresolvable `<raw-ptr>` Path and fire
+        // E0303; it must build a structured `TypeKind::RawPtr` instead.
+        // Mirrors the `Option[*T]` patterns in stdlib Vec's each/fold/iter.
+        assert_clean(
+            "enum Opt[T] { Some(T), None } \
+             struct Node { v: i64 } \
+             struct Holder[T] { n: i64 } \
+             impl Holder[T] { \
+                 fn probe(this, o: Opt[T]) -> i64 { \
+                     let q: Opt[*T] = Opt[*T]::None; \
+                     let a: i64 = match o { \
+                         Opt[T]::Some(_) => 1, \
+                         Opt[T]::None => 0, \
+                     }; \
+                     let b: i64 = match q { \
+                         Opt[*T]::Some(_) => 1, \
+                         Opt[*T]::None => 0, \
+                     }; \
+                     return a + b; \
+                 } \
+             } \
+             fn main() -> i32 { \
+                 let h: Holder[*Node] = Holder[*Node] { n: 3 }; \
+                 let o: Opt[*Node] = Opt[*Node]::None; \
+                 return (h.probe(o) - 1) as i32; \
+             }",
+        );
+    }
+
+    #[test]
+    fn generic_enum_pattern_raw_ptr_wrong_arg_e0341() {
+        // Structured pointer args must still participate in pattern/scrutinee
+        // mismatch detection: `Opt[*bool]::Some` against an `Opt[*Node]`
+        // scrutinee resolves to a different EnumId and is rejected.
+        let codes = errors(
+            "enum Opt[T] { Some(T), None } \
+             struct Node { v: i64 } \
+             fn pick(o: Opt[*Node]) -> i32 { \
+                 return match o { \
+                     Opt[*bool]::Some(_) => 1, \
+                     Opt[*bool]::None => 0, \
+                 }; \
+             } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0341"), "expected E0341, got: {codes:?}");
+    }
+
+    #[test]
+    fn generic_enum_pattern_fn_ptr_type_arg_clean() {
+        // Same lossy-render path as the raw-pointer case: a fn-ptr type arg
+        // used to collapse to `<fn-ptr>` during pattern-discovery
+        // substitution. Must round-trip structurally.
+        assert_clean(
+            "enum Opt[T] { Some(T), None } \
+             struct Holder[T] { n: i64 } \
+             impl Holder[T] { \
+                 fn probe(this, o: Opt[T]) -> i64 { \
+                     return match o { \
+                         Opt[T]::Some(_) => 1, \
+                         Opt[T]::None => 0, \
+                     }; \
+                 } \
+             } \
+             fn main() -> i32 { \
+                 let h: Holder[fn(i64) -> i64] = Holder[fn(i64) -> i64] { n: 3 }; \
+                 let o: Opt[fn(i64) -> i64] = Opt[fn(i64) -> i64]::None; \
+                 return (h.probe(o) - 1) as i32; \
+             }",
+        );
     }
 
     // ---- Phase 7 slice 7GEN.5e step 4 + 7GEN.6: bounds + blessed interfaces ----
