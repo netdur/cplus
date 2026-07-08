@@ -25,8 +25,10 @@
 // a flipped document view).
 
 import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -323,6 +325,108 @@ fn box() -> flex::Node {
 // row content to `fill_scroll`.
 fn scroll_view(s: ak::ScrollView) -> flex::Node {
     return fixed_view(s.as_view());
+}
+
+// ==========================================================================
+// Form inputs — editable widgets. `@ui` shipped none of these; each was a
+// hand-built raw AppKit view. Read a value back by stashing the node's
+// `payload()` at construction, then passing that pointer to the matching
+// reader (`field_text` / `area_text` / `popup_index`). Give each a size in
+// the layout — a definite width, and for a field a height around 22.
+// ==========================================================================
+
+// An editable single-line text field. Built through the +0 `textFieldWithString`
+// factory so ownership balances the way `label` does. Read the current value
+// with `field_text(node.payload())`.
+fn text_field(placeholder: str = "", value: str = "", agent_id: str = "") -> flex::Node {
+    let tf = ak::TextField::text_field_with_string(value);
+    tf.set_editable(true);
+    tf.set_bezeled(true);
+    tf.set_bezel_style(ak::TextFieldBezelStyle::NSTextFieldSquareBezel);
+    if placeholder != "" { tf.set_placeholder_string(placeholder); }
+    tag_agent(tf.as_view().raw(), agent_id);
+    return view(tf.as_view());
+}
+
+// The current text of a `text_field`, by its payload view pointer.
+fn field_text(view_ptr: *u8) -> text::Text {
+    return ak::TextField::from_raw(view_ptr).as_control().string_value();
+}
+
+// A bordered, scrollable, editable multi-line editor (an NSTextView inside an
+// NSScrollView). Size it with a definite `.height(...)` or `.grow(1.0)`. Read
+// the value with `area_text(node.payload())`. `placeholder` is accepted for
+// symmetry with `text_field` but is not drawn — NSTextView has no placeholder;
+// supply a separate prompt label if you need one.
+fn text_area(placeholder: str = "", value: str = "", agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 };
+    let scroll = ak::ScrollView::new(zero);
+    scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    scroll.set_has_vertical_scroller(true);
+    let tv = ak::TextView::new_with_frame(zero);
+    tv.set_editable(true);
+    tv.set_rich_text(false);
+    tv.as_text().set_font(ak::Font::system_font_of_size(13.0f64));
+    if value != "" { tv.as_text().set_string(value); }
+    // Track the scroll's content width as it resizes.
+    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    scroll.set_document_view(tv.as_view());
+    tag_agent(scroll.as_view().raw(), agent_id);
+    return fixed_view(scroll.as_view());
+}
+
+// The current text of a `text_area`, by its (scroll-view) payload pointer.
+fn area_text(view_ptr: *u8) -> text::Text {
+    return match ak::ScrollView::from_raw(view_ptr).document_view() {
+        option::Option[ak::View]::Some(dv) => ak::TextView::from_raw(dv.raw()).as_text().string(),
+        option::Option[ak::View]::None => text::from_str(""),
+    };
+}
+
+// A dropdown / popup selector. `items` are the visible titles in order;
+// `selected` is the initially-chosen index. Read the chosen index with
+// `popup_index(node.payload())`.
+fn popup(items: vec::Vec[text::Text], selected: i64 = 0 as i64, agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 };
+    let p = ak::PopUpButton::new(zero, false);
+    var i: usize = 0 as usize;
+    while i < items.count() {
+        match items.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => { p.add_item_with_title((*t).view()); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if selected >= (0 as i64) && selected < (items.count() as i64) { p.select_item_at_index(selected); }
+    tag_agent(p.as_view().raw(), agent_id);
+    return view(p.as_view());
+}
+
+// The selected index of a `popup`, by its payload pointer (-1 if none).
+fn popup_index(view_ptr: *u8) -> i64 {
+    return ak::PopUpButton::from_raw(view_ptr).index_of_selected_item();
+}
+
+// Run a modal folder picker and return the chosen directory path, or None if
+// the user cancelled. This is a helper, not a node — call it from an action
+// handler (e.g. a "Choose…" button) and feed the result into a text_field.
+fn choose_directory() -> option::Option[text::Text] {
+    let panel = ak::OpenPanel::open_panel();
+    panel.set_can_choose_directories(true);
+    panel.set_can_choose_files(false);
+    panel.set_allows_multiple_selection(false);
+    panel.as_save_panel().set_can_create_directories(true);
+    let resp: i64 = panel.as_save_panel().run_modal();
+    if resp != (1 as i64) { return option::Option[text::Text]::None; }   // NSModalResponseOK == 1
+    match panel.as_save_panel().u_r_l() {
+        option::Option[ak::URL]::Some(u) => {
+            let ns: *u8 = rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0")));
+            if ns == { 0 as *u8 } { return option::Option[text::Text]::None; }
+            return option::some(bridge::to_text(ns));
+        }
+        option::Option[ak::URL]::None => { return option::Option[text::Text]::None; }
+    }
+    return option::Option[text::Text]::None;
 }
 
 // ==========================================================================
@@ -756,6 +860,32 @@ fn test_link_and_plain_buttons_wire_actions() {
     let pt: *u8 = rt::msg_id(pb.payload(), rt::sel(#str_ptr("target\0")));
     assert lt != (0 as *u8);
     assert pt != (0 as *u8);
+}
+
+#[test]
+fn test_text_field_reads_back_its_value() {
+    let n: flex::Node = text_field(placeholder: "Project name", value: "Iris");
+    assert n.has_payload();
+    assert field_text(n.payload()).equals("Iris");
+}
+
+#[test]
+fn test_text_area_reads_back_its_value() {
+    let n: flex::Node = text_area(value: "a longer multi-line description");
+    assert n.has_payload();
+    assert area_text(n.payload()).equals("a longer multi-line description");
+}
+
+#[test]
+fn test_popup_holds_items_and_selection() {
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Claude Code"));
+    items.append(text::from_str("Codex"));
+    items.append(text::from_str("Antigravity"));
+    let n: flex::Node = popup(items, selected: 2 as i64);
+    assert n.has_payload();
+    assert ak::PopUpButton::from_raw(n.payload()).number_of_items() == (3 as i64);
+    assert popup_index(n.payload()) == (2 as i64);
 }
 
 #[test]
